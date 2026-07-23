@@ -28,6 +28,7 @@ class ServerConfig(BaseModel):
 
 class DbConfig(BaseModel):
     path: str = Field(default="data/teahouse.db", description="SQLite database file path")
+    workspace_base: str = Field(default="data", description="Workspace data directory path")
 
 
 class Config(BaseModel):
@@ -91,7 +92,10 @@ def _migrate_config(data: dict) -> bool:
         data["master_key"] = ""
         changed = True
     if "db" not in data:
-        data["db"] = {"path": "data/teahouse.db"}
+        data["db"] = {"path": "data/teahouse.db", "workspace_base": "data"}
+        changed = True
+    if "workspace_base" not in data.get("db", {}):
+        data.setdefault("db", {})["workspace_base"] = "data"
         changed = True
     if "server" not in data:
         data["server"] = {"host": "127.0.0.1", "port": 8000}

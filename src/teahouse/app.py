@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,37 +15,16 @@ from sse_starlette.sse import EventSourceResponse
 
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
-from .database.connection import set_db_path
+from .database.connection import set_db_path, execute, generate_uuid
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
 from .database.users import ensure_default_admin
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
+from .database.workspaces import get_workspace_by_user, ensure_workspace_dirs, build_blank_prototype_zip, create_prototype, list_prototypes
 from .routes.auth import router as auth_router
 from .routes.llm_configs import router as llm_configs_router
-
-
-# ---------------------------------------------------------------------------
-# In-memory app state
-# ---------------------------------------------------------------------------
-
-class AppState:
-    def __init__(self) -> None:
-        self.config: Config | None = None
-        self._sse_queues: list[asyncio.Queue] = []
-
-    def broadcast(self, event: str, data: object) -> None:
-        payload = {"event": event, "data": data}
-        stale: list[asyncio.Queue] = []
-        for q in self._sse_queues:
-            try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
-                stale.append(q)
-        for q in stale:
-            self._sse_queues.remove(q)
-
-
-state = AppState()
+from .routes.workspaces import router as workspaces_router
+from .state import state
 
 
 # ---------------------------------------------------------------------------
@@ -60,13 +40,41 @@ async def lifespan(app: FastAPI):
     # 2. Init database
     set_db_path(cfg.db.path)
     await run_migrations()
+
+    # 3. Ensure default admin exists (after migrations add safe_name column)
     await ensure_default_admin()
 
-    # 3. Init crypto / JWT
+    # 4. Init crypto / JWT
     configure_jwt(cfg.jwt_secret)
     configure_crypto(cfg.master_key or cfg.jwt_secret)
 
     # 4. Init LLM client — no global instance; resolved per-request from DB
+
+    # 5. Ensure all existing users have a workspace + blank prototype
+    try:
+        from .database.users import list_users, ensure_unique_safe_name
+        all_users = await list_users()
+        for u in all_users:
+            ws = await get_workspace_by_user(u["id"])
+            if not ws:
+                safe = await ensure_unique_safe_name(u["username"])
+                now = __import__("time").time() * 1000
+                ws_id = generate_uuid()
+                await execute(
+                    "INSERT INTO workspaces (id, user_id, name, safe_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (ws_id, u["id"], "默认工作区", safe, int(now), int(now)),
+                )
+                ws = await get_workspace_by_user(u["id"])
+            if ws:
+                zip_path = await build_blank_prototype_zip(ws, Path(state.workspace_base))
+                existing = await list_prototypes(ws["id"])
+                if not any(p["is_builtin"] for p in existing):
+                    ws_dir = Path(state.workspace_base) / "workspaces" / ws["safe_name"]
+                    zip_rel = str(zip_path.relative_to(ws_dir))
+                    await create_prototype(ws["id"], None, "空白模板", "默认空白原型，包含基础目录结构", zip_rel, is_builtin=True)
+    except Exception:
+        pass  # non-critical
+
     yield
 
 
@@ -88,6 +96,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(llm_configs_router)
+app.include_router(workspaces_router)
 
 
 # ---------------------------------------------------------------------------

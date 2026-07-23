@@ -20,7 +20,7 @@ Thumbs.db
 teahouse.yaml
 
 # Teahouse — instance data (generated at runtime)
-instances/
+data/
 take_out/
 
 # Node / frontend

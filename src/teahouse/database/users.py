@@ -1,11 +1,37 @@
 """
 User CRUD operations.
 """
+import re
 from typing import Optional
 
 import bcrypt
 
 from .connection import generate_uuid, current_timestamp, execute, fetch_one, fetch_all
+
+
+# ===== Safe name utilities =====
+
+def make_safe_name(name: str) -> str:
+    """Generate a filesystem-safe name from a username."""
+    safe = name.lower().strip()
+    safe = re.sub(r"[^a-z0-9一-鿿_-]", "_", safe)
+    safe = re.sub(r"_+", "_", safe)
+    safe = safe.strip("_")
+    return safe or f"user_{generate_uuid()[:8]}"
+
+
+async def ensure_unique_safe_name(base: str) -> str:
+    """Append suffix if safe_name already exists."""
+    safe = make_safe_name(base)
+    existing = await fetch_one("SELECT id FROM users WHERE safe_name = ?", (safe,))
+    if not existing:
+        return safe
+    for i in range(1, 100):
+        candidate = f"{safe}_{i}"
+        existing = await fetch_one("SELECT id FROM users WHERE safe_name = ?", (candidate,))
+        if not existing:
+            return candidate
+    return f"{safe}_{generate_uuid()[:8]}"
 
 
 # ===== Password utilities =====
@@ -36,11 +62,20 @@ async def create_user(
     now = current_timestamp()
     user_id = generate_uuid()
     hashed = hash_password(password)
+    safe_name = await ensure_unique_safe_name(username)
 
     await execute(
-        "INSERT INTO users (id, username, display_name, hashed_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, username, display_name, hashed, now, now),
+        "INSERT INTO users (id, username, safe_name, display_name, hashed_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, safe_name, display_name, hashed, now, now),
     )
+
+    # Auto-create default workspace for the new user
+    ws_id = generate_uuid()
+    await execute(
+        "INSERT INTO workspaces (id, user_id, name, safe_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (ws_id, user_id, "默认工作区", safe_name, now, now),
+    )
+
     return await get_user_by_id(user_id)
 
 
