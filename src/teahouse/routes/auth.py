@@ -75,6 +75,18 @@ async def api_register(body: RegisterRequest):
     user = await create_user(body.username, body.password, body.display_name)
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")
+
+    # Auto-create built-in blank prototype (only once globally, but idempotent)
+    try:
+        from ..database.workspaces import list_prototypes, create_prototype, register_builtin_prototype_source_path
+        from pathlib import Path
+        existing = await list_prototypes(user["id"])
+        if not any(p["is_builtin"] for p in existing):
+            source_path = register_builtin_prototype_source_path(Path("data"))
+            await create_prototype(None, "空白模板", "默认空白原型，包含基础目录结构", source_path, is_builtin=True)
+    except Exception:
+        pass
+
     token = await login(body.username, body.password)
     return {
         "token": token,

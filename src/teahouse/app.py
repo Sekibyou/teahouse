@@ -15,15 +15,20 @@ from sse_starlette.sse import EventSourceResponse
 
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
-from .database.connection import set_db_path, execute, generate_uuid
+from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
-from .database.users import ensure_default_admin
+from .database.users import ensure_default_admin, list_users
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
-from .database.workspaces import get_workspace_by_user, ensure_workspace_dirs, build_blank_prototype_zip, create_prototype, list_prototypes
+from .database.workspaces import (
+    list_prototypes,
+    create_prototype,
+    register_builtin_prototype_source_path,
+)
 from .routes.auth import router as auth_router
 from .routes.llm_configs import router as llm_configs_router
 from .routes.workspaces import router as workspaces_router
+from .routes.session import router as session_router
 from .state import state
 
 
@@ -50,28 +55,16 @@ async def lifespan(app: FastAPI):
 
     # 4. Init LLM client — no global instance; resolved per-request from DB
 
-    # 5. Ensure all existing users have a workspace + blank prototype
+    # 5. Ensure all existing users have the built-in blank prototype registered
     try:
-        from .database.users import list_users, ensure_unique_safe_name
         all_users = await list_users()
         for u in all_users:
-            ws = await get_workspace_by_user(u["id"])
-            if not ws:
-                safe = await ensure_unique_safe_name(u["username"])
-                now = __import__("time").time() * 1000
-                ws_id = generate_uuid()
-                await execute(
-                    "INSERT INTO workspaces (id, user_id, name, safe_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (ws_id, u["id"], "默认工作区", safe, int(now), int(now)),
-                )
-                ws = await get_workspace_by_user(u["id"])
-            if ws:
-                zip_path = await build_blank_prototype_zip(ws, Path(state.workspace_base))
-                existing = await list_prototypes(ws["id"])
-                if not any(p["is_builtin"] for p in existing):
-                    ws_dir = Path(state.workspace_base) / "workspaces" / ws["safe_name"]
-                    zip_rel = str(zip_path.relative_to(ws_dir))
-                    await create_prototype(ws["id"], None, "空白模板", "默认空白原型，包含基础目录结构", zip_rel, is_builtin=True)
+            # Register built-in blank prototype if not already present
+            existing = await list_prototypes(u["id"])
+            if not any(p["is_builtin"] for p in existing):
+                source_path = register_builtin_prototype_source_path(Path(state.workspace_base))
+                await create_prototype(None, "空白模板", "默认空白原型，包含基础目录结构", source_path, is_builtin=True)
+            break  # Built-in prototype is global — only register once
     except Exception:
         pass  # non-critical
 
@@ -97,6 +90,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(llm_configs_router)
 app.include_router(workspaces_router)
+app.include_router(session_router)
 
 
 # ---------------------------------------------------------------------------
