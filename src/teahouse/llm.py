@@ -29,11 +29,9 @@ def normalize_api_url(url: str, api_format: str = "openai") -> str:
     """
     url = url.strip().rstrip("/")
     if api_format == "anthropic":
-        if "/messages" in url:
+        if url.endswith("/messages"):
             return url
-        if url.endswith("/v1"):
-            return url + "/messages"
-        return url + "/v1/messages"
+        return url + "/messages"
     else:
         if "/chat/completions" in url:
             return url
@@ -142,8 +140,8 @@ class LLMClient:
         messages: list[dict],
         system: str | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[str, None]:
-        """Streaming call, yields incremental text chunks."""
+    ) -> AsyncGenerator[dict, None]:
+        """Streaming call, yields {"type": "reasoning"|"text", "text": str} chunks."""
         body = self._request_body(messages, system, stream=True, **kwargs)
 
         if self.api_style == "anthropic":
@@ -153,7 +151,7 @@ class LLMClient:
             async for chunk in self._stream_openai(body):
                 yield chunk
 
-    async def _stream_openai(self, body: dict) -> AsyncGenerator[str, None]:
+    async def _stream_openai(self, body: dict) -> AsyncGenerator[dict, None]:
         async with httpx.AsyncClient(timeout=300) as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
@@ -169,23 +167,26 @@ class LLMClient:
                         data = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
-                    # content text
                     choices = data.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
+                        reasoning = delta.get("reasoning_content", "")
+                        if reasoning:
+                            yield {"type": "reasoning", "text": reasoning}
                         text = delta.get("content", "")
-                        if not text:
-                            text = delta.get("reasoning_content", "")
                         if text:
-                            yield text
+                            yield {"type": "text", "text": text}
 
-    async def _stream_anthropic(self, body: dict) -> AsyncGenerator[str, None]:
+    async def _stream_anthropic(self, body: dict) -> AsyncGenerator[dict, None]:
         async with httpx.AsyncClient(timeout=300) as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
                     raise LLMError(f"Anthropic API error ({resp.status_code}): {text[:200]}")
                 current_event = None
+                # Track block types for content_block_delta routing
+                block_types: dict[int, str] = {}
+                block_index = -1
                 async for line in resp.aiter_lines():
                     if line.startswith("event: "):
                         current_event = line[7:].strip()
@@ -193,12 +194,27 @@ class LLMClient:
                     if not line.startswith("data: "):
                         continue
                     data = json.loads(line[6:])
-                    if current_event == "content_block_delta":
+
+                    if current_event == "content_block_start":
+                        block_index = data.get("index", block_index + 1)
+                        block_type = data.get("content_block", {}).get("type", "text")
+                        block_types[block_index] = block_type
+
+                    elif current_event == "content_block_delta":
+                        idx = data.get("index", 0)
                         delta = data.get("delta", {})
-                        if delta.get("type") == "text_delta":
+                        delta_type = delta.get("type", "")
+                        if delta_type == "text_delta":
                             text = delta.get("text", "")
                             if text:
-                                yield text
+                                block_type = block_types.get(idx, "text")
+                                chunk_type = "reasoning" if block_type == "thinking" else "text"
+                                yield {"type": chunk_type, "text": text}
+                        elif delta_type == "thinking_delta":
+                            text = delta.get("thinking", "")
+                            if text:
+                                yield {"type": "reasoning", "text": text}
+
                     elif current_event == "message_stop":
                         break
 
@@ -209,14 +225,16 @@ def _extract_text(data: dict, style: str) -> str:
     """Extract final text from a non-streaming LLM response."""
     if style == "anthropic":
         blocks = data.get("content", [])
-        parts = [b["text"] for b in blocks if b.get("type") == "text"]
-        return "\n".join(parts)
+        text_blocks = [b["text"] for b in blocks if b.get("type") == "text"]
+        # DeepSeek etc. may include thinking blocks type:text; skip first
+        # text block if it reads like thinking / chain-of-thought
+        if len(text_blocks) > 1:
+            text_blocks = text_blocks[-1:]
+        return "\n".join(text_blocks)
     # openai
     choices = data.get("choices", [])
     if choices:
         msg = choices[0].get("message", {})
-        reasoning = msg.get("reasoning_content", "")
-        if reasoning:
-            return reasoning
+        # reasoning_content is chain-of-thought, skip it
         return msg.get("content", "")
     return ""

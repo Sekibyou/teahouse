@@ -43,3 +43,24 @@ export interface ActiveSession {
     dir_path: string
   } | null
 }
+
+export interface LLMConfig {
+  id: string
+  user_id: string
+  label: string
+  api_url: string
+  api_key: string
+  api_format: string
+  model_name: string
+  max_tokens: number
+  temperature: number
+  is_default: number
+  is_enabled: number
+  created_at: number
+  updated_at: number
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system"
+  content: string
+}

@@ -4,12 +4,14 @@ Teahouse — FastAPI 应用入口
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -153,36 +155,45 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
     ))
 
 
-@app.post("/v1/chat")
-async def chat(body: ChatRequest, request: Request):
-    # Try to identify the user from the Authorization header (optional for chat)
+async def _chat_common(body: ChatRequest, request: Request):
+    """Shared logic: resolve user + LLM client. Called by both streaming and non-streaming paths."""
     user_id: str | None = None
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         from .database.auth import validate_token
         try:
-            user_info = validate_token(auth_header[7:])
+            user_info = await validate_token(auth_header[7:])
             user_id = user_info.user_id
         except Exception:
-            pass  # anonymous chat if token is invalid
-
+            pass
     client = await _resolve_llm_config(body.llm_config_id, user_id)
+    return client
 
-    if body.stream:
-        full_response = ""
-        async for text in client.send_message_stream(
-            body.messages, system=body.system
-        ):
-            full_response += text
-            state.broadcast("llm_chunk", {"text": text})
-        state.broadcast("llm_done", {"full_text": full_response})
-        return {"status": "streaming", "full_text": full_response}
-    else:
-        text = await client.send_message(
-            body.messages, system=body.system
-        )
+
+@app.post("/v1/chat")
+async def chat(body: ChatRequest, request: Request):
+    client = await _chat_common(body, request)
+
+    if not body.stream:
+        text = await client.send_message(body.messages, system=body.system)
         state.broadcast("llm_done", {"full_text": text})
-        return {"status": "ok", "data": text}
+        return {"status": "ok", "full_text": text}
+
+    async def sse_stream():
+        async for chunk in client.send_message_stream(body.messages, system=body.system):
+            event = chunk["type"]  # "reasoning" or "text"
+            yield f"event: {event}\ndata: {json.dumps(chunk)}\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

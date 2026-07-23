@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig } from "./types"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -159,5 +159,57 @@ export const sessionApi = {
 
   setActive: async (instanceId: string) => {
     return put<{ status: string; instance_id: string }>("/api/session/active", { instance_id: instanceId })
+  },
+}
+
+// LLM Configs API
+export const llmConfigsApi = {
+  list: async () => {
+    return get<{ configs: LLMConfig[] }>("/api/llm-configs/")
+  },
+
+  create: async (data: {
+    label: string; api_url: string; api_key: string; model_name: string
+    api_format?: string; max_tokens?: number; temperature?: number; is_default?: boolean
+  }) => {
+    return post<{ config: LLMConfig }>("/api/llm-configs/", data)
+  },
+
+  update: async (id: string, data: Record<string, unknown>) => {
+    return put<{ config: LLMConfig }>(`/api/llm-configs/${id}`, data)
+  },
+
+  delete: async (id: string) => {
+    return del<{ status: string }>(`/api/llm-configs/${id}`)
+  },
+}
+
+// Chat API
+export const chatApi = {
+  send: async (messages: { role: string; content: string }[]) => {
+    return post<{ status: string; full_text: string }>("/v1/chat", {
+      messages,
+      stream: false,
+    })
+  },
+
+  /** Streaming chat: returns a ReadableStream of SSE events.
+   *  Each chunk has the shape { type: "reasoning" | "text", text: string }.
+   *  The stream ends with event: done. */
+  sendStream: async (messages: { role: string; content: string }[]) => {
+    const token = getAuthToken()
+    const response = await fetch(`${API_BASE_URL}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ messages, stream: true }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "请求失败" }))
+      throw new Error(err.detail || `HTTP ${response.status}`)
+    }
+    return response.body!
   },
 }

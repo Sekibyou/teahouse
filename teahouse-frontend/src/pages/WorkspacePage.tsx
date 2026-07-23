@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { instancesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
+import { ChatPanel } from "@/components/ChatPanel"
 import type { FileTreeNode } from "@/lib/types"
 
 export function WorkspacePage() {
@@ -228,17 +229,9 @@ export function WorkspacePage() {
         )}
       </div>
 
-      {/* Right panel — AI (placeholder) */}
+      {/* Right panel — Chat */}
       <aside className="w-96 border-l border-border shrink-0 flex flex-col bg-muted/10">
-        <div className="p-3 border-b border-border">
-          <h3 className="text-sm font-semibold">AI 助手</h3>
-        </div>
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p className="text-sm">即将推出</p>
-        </div>
-        <div className="p-3 border-t border-border">
-          <Input placeholder="输入指令..." disabled className="text-sm" />
-        </div>
+        <ChatPanel />
       </aside>
 
       {/* Create Dialog */}

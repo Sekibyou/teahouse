@@ -1,6 +1,6 @@
-import { Sun, Moon, LogOut, User } from "lucide-react"
+import { Sun, Moon, LogOut, User, Settings } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Outlet } from "react-router-dom"
+import { Outlet, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { useAuth, useAuthActions } from "@/stores/authStore"
 import { LoginPage } from "@/pages/LoginPage"
@@ -8,6 +8,7 @@ import { LoginPage } from "@/pages/LoginPage"
 export function MainLayout() {
   const { isAuthenticated, isLoading, user } = useAuth()
   const { clearAuth } = useAuthActions()
+  const navigate = useNavigate()
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     const shouldBeDark = saved ? saved === "dark" : true
@@ -62,6 +63,9 @@ export function MainLayout() {
           </div>
           <Button variant="ghost" size="icon" onClick={toggleTheme}>
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => navigate("/settings")}>
+            <Settings className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon" onClick={clearAuth}>
             <LogOut className="h-4 w-4" />
