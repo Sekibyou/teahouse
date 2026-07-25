@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { chatApi } from "@/lib/api"
 import { getActiveInstance } from "@/stores/sessionStore"
@@ -28,12 +28,20 @@ function nextId() {
   return `msg-${++msgIdCounter}`
 }
 
-export function ChatPanel() {
+const MODIFYING_TOOLS = new Set(["Write", "Edit", "WriteLine"])
+
+interface ChatPanelProps {
+  onFileChanged?: (filePath: string) => void
+}
+
+export function ChatPanel({ onFileChanged }: ChatPanelProps) {
   const [messages, setMessages] = useState<RichMessage[]>([])
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
+  const [isStreaming, setIsStreaming] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
+  const latestToolCallsRef = useRef<ToolCallEvent[]>([])
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -46,6 +54,10 @@ export function ChatPanel() {
   // Auto-scroll when messages change
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
+  const handleStop = useCallback(() => {
+    aborterRef.current?.abort()
+  }, [])
+
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
     if (!text) return
@@ -56,7 +68,12 @@ export function ChatPanel() {
     setMessages(newMessages)
     setInput("")
     setError("")
+    setIsStreaming(true)
+    latestToolCallsRef.current = []
     scrollToBottom()
+
+    const abortController = new AbortController()
+    aborterRef.current = abortController
 
     try {
       const activeInst = getActiveInstance()
@@ -66,11 +83,13 @@ export function ChatPanel() {
       if (shouldUseTools) {
         stream = await chatApi.sendToolStream(
           newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
-          activeInst!.id
+          activeInst!.id,
+          abortController.signal,
         )
       } else {
         stream = await chatApi.sendStream(
-          newMessages.map((m) => ({ role: m.role, content: m.content || "" }))
+          newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          abortController.signal,
         )
       }
 
@@ -101,12 +120,12 @@ export function ChatPanel() {
             const data = JSON.parse(dataStr)
 
             if (currentType === "tool_call") {
-              // Add tool call to assistant message
+              const tc: ToolCallEvent = { id: data.id, name: data.name, args: data.args }
+              latestToolCallsRef.current = [...latestToolCallsRef.current, tc]
               setMessages((prev) =>
                 prev.map((m) => {
                   if (m.id !== assistantMsg.id) return m
-                  const toolCalls = [...(m.toolCalls || [])]
-                  toolCalls.push({ id: data.id, name: data.name, args: data.args })
+                  const toolCalls = [...(m.toolCalls || []), tc]
                   return { ...m, toolCalls }
                 })
               )
@@ -116,6 +135,9 @@ export function ChatPanel() {
 
             if (currentType === "tool_result") {
               // Update tool call with result
+              latestToolCallsRef.current = latestToolCallsRef.current.map((tc) =>
+                tc.id === data.id ? { ...tc, result: data.result } : tc
+              )
               setMessages((prev) =>
                 prev.map((m) => {
                   if (m.id !== assistantMsg.id) return m
@@ -125,6 +147,18 @@ export function ChatPanel() {
                   return { ...m, toolCalls }
                 })
               )
+
+              // Notify parent if a file-modifying tool was used
+              if (onFileChanged) {
+                const matched = latestToolCallsRef.current.find((tc) => tc.id === data.id)
+                if (matched && MODIFYING_TOOLS.has(matched.name)) {
+                  const filePath = matched.args.path as string
+                  if (filePath) {
+                    onFileChanged(filePath)
+                  }
+                }
+              }
+
               scrollToBottom()
               return
             }
@@ -182,6 +216,10 @@ export function ChatPanel() {
         )
       )
     } catch (err) {
+      // Ignore abort errors (user clicked stop)
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return
+      }
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsg.id
@@ -190,6 +228,9 @@ export function ChatPanel() {
         )
       )
       setError(err instanceof Error ? err.message : "请求失败")
+    } finally {
+      setIsStreaming(false)
+      aborterRef.current = null
     }
   }
 
@@ -248,10 +289,11 @@ export function ChatPanel() {
           <Button
             size="icon"
             className="shrink-0"
-            onClick={handleSend}
-            disabled={!input.trim()}
+            onClick={isStreaming ? handleStop : handleSend}
+            disabled={!isStreaming && !input.trim()}
+            variant={isStreaming ? "destructive" : "default"}
           >
-            <Send className="h-4 w-4" />
+            {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
       </div>
@@ -267,6 +309,8 @@ function AssistantBubble({ message }: { message: RichMessage }) {
 
   const { status, reasoning, content, toolCalls } = message
   const hasToolCalls = toolCalls && toolCalls.length > 0
+  const allToolCallsDone = hasToolCalls && toolCalls!.every(tc => tc.result !== undefined)
+  const isGenerating = status !== "done" && hasToolCalls && allToolCallsDone && !content
 
   return (
     <div className="max-w-[85%] space-y-1">
@@ -329,6 +373,15 @@ function AssistantBubble({ message }: { message: RichMessage }) {
         </div>
       )}
 
+      {/* Generating: tool calls done, text not yet started */}
+      {isGenerating && (
+        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>生成中...</span>
+          <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
+        </div>
+      )}
+
       {/* Thinking / reasoning block */}
       {(status === "reasoning" || (reasoning && status !== "pending")) && (
         <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
@@ -365,7 +418,7 @@ function AssistantBubble({ message }: { message: RichMessage }) {
       )}
 
       {/* Streaming no content yet but past pending (shouldn't happen often) */}
-      {status === "streaming" && !content && !reasoning && (
+      {status === "streaming" && !content && !reasoning && !hasToolCalls && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
           <Loader2 className="h-3 w-3 animate-spin" />
           等待中...
@@ -381,6 +434,7 @@ function formatToolArgs(tc: ToolCallEvent): string {
   if (tc.name === "Read") return args.path as string
   if (tc.name === "Write") return args.path as string
   if (tc.name === "Edit") return args.path as string
+  if (tc.name === "WriteLine") return args.path as string
   if (tc.name === "Glob") return args.pattern as string
   return JSON.stringify(args)
 }

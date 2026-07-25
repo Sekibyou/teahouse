@@ -196,7 +196,7 @@ export const chatApi = {
   /** Streaming chat: returns a ReadableStream of SSE events.
    *  Each chunk has the shape { type: "reasoning" | "text", text: string }.
    *  The stream ends with event: done. */
-  sendStream: async (messages: { role: string; content: string }[]) => {
+  sendStream: async (messages: { role: string; content: string }[], signal?: AbortSignal) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -204,6 +204,7 @@ export const chatApi = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      signal,
       body: JSON.stringify({ messages, stream: true }),
     })
     if (!response.ok) {
@@ -215,7 +216,7 @@ export const chatApi = {
 
   /** Streaming chat with tool use: like sendStream but with tools + instance_id.
    *  Events can include tool_call, tool_result, text, reasoning. */
-  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string) => {
+  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string, signal?: AbortSignal) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -223,6 +224,7 @@ export const chatApi = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      signal,
       body: JSON.stringify({ messages, stream: true, tools: true, instance_id: instanceId }),
     })
     if (!response.ok) {

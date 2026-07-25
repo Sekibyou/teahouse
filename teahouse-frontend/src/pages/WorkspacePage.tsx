@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
@@ -127,6 +127,27 @@ export function WorkspacePage() {
     navigate("/", { replace: true })
   }
 
+  // Keep a ref for latest selectedFile so onFileChanged callback always has current value
+  const selectedFileRef = useRef(selectedFile)
+  selectedFileRef.current = selectedFile
+
+  const onFileChanged = useCallback(async (filePath: string) => {
+    if (!instId) return
+    // Refresh file tree
+    const res = await instancesApi.listFiles(instId)
+    if (res.ok) setFileTree(res.data || [])
+    // Reload editor if the modified file is currently open
+    const currentSelected = selectedFileRef.current
+    if (currentSelected && (!filePath || filePath === currentSelected)) {
+      const r = await instancesApi.readFile(instId, currentSelected)
+      if (r.ok) {
+        setFileContent(r.data!.content)
+        setEditedContent(r.data!.content)
+        setIsDirty(false)
+      }
+    }
+  }, [instId])
+
   const toggleExpand = (path: string) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -198,7 +219,7 @@ export function WorkspacePage() {
       </aside>
 
       {/* Middle panel — Editor */}
-      <div className="flex-1 flex flex-col bg-background min-w-0">
+      <div className="flex-[2] flex flex-col bg-background min-w-0">
         {selectedFile ? (
           <>
             <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
@@ -230,8 +251,8 @@ export function WorkspacePage() {
       </div>
 
       {/* Right panel — Chat */}
-      <aside className="w-96 border-l border-border shrink-0 flex flex-col bg-muted/10">
-        <ChatPanel />
+      <aside className="flex-[3] border-l border-border flex flex-col bg-muted/10 min-w-0">
+        <ChatPanel onFileChanged={onFileChanged} />
       </aside>
 
       {/* Create Dialog */}
