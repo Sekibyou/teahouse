@@ -212,4 +212,23 @@ export const chatApi = {
     }
     return response.body!
   },
+
+  /** Streaming chat with tool use: like sendStream but with tools + instance_id.
+   *  Events can include tool_call, tool_result, text, reasoning. */
+  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string) => {
+    const token = getAuthToken()
+    const response = await fetch(`${API_BASE_URL}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ messages, stream: true, tools: true, instance_id: instanceId }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "请求失败" }))
+      throw new Error(err.detail || `HTTP ${response.status}`)
+    }
+    return response.body!
+  },
 }

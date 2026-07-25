@@ -46,11 +46,21 @@ def preprocess_messages(messages: list[dict], api_format: str) -> list[dict]:
     """Merge consecutive same-role messages, ensure first non-system is user."""
     m = messages
 
-    # Merge consecutive same-role messages
+    # Merge consecutive same-role messages (skip tool/function messages)
     merged = []
     for msg in m:
+        if msg.get("tool_calls") or msg.get("tool_call_id") or msg.get("role") in ("tool", "function"):
+            merged.append(dict(msg))
+            continue
+        content = msg.get("content")
+        if content is None:
+            merged.append(dict(msg))
+            continue
         if merged and merged[-1]["role"] == msg["role"]:
-            merged[-1]["content"] += "\n" + msg["content"]
+            prev_content = merged[-1].get("content", "")
+            if prev_content is None:
+                prev_content = ""
+            merged[-1]["content"] = prev_content + "\n" + content
         else:
             merged.append(dict(msg))
     m = merged
@@ -102,6 +112,11 @@ class LLMClient:
             if self.api_style == "openai":
                 body["stream_options"] = {"include_usage": True}
 
+        # Include tools if provided via kwargs
+        tools = kwargs.pop("tools", None)
+        if tools:
+            body["tools"] = tools
+
         messages = preprocess_messages(messages, self.api_style)
 
         if self.api_style == "anthropic":
@@ -134,6 +149,44 @@ class LLMClient:
             raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
         data = resp.json()
         return _extract_text(data, self.api_style)
+
+    async def send_message_full(
+        self,
+        messages: list[dict],
+        system: str | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        """Non-streaming call, returns the full raw response dict (for tool use parsing).
+
+        When tools are provided, skips preprocess_messages to preserve tool call structure.
+        """
+        cfg = self.config
+
+        if kwargs.get("tools"):
+            body: dict[str, Any] = {
+                "model": kwargs.get("model", cfg.model),
+                "max_tokens": kwargs.get("max_tokens", cfg.max_tokens),
+                "temperature": kwargs.get("temperature", cfg.temperature),
+                "tools": kwargs["tools"],
+            }
+            if self.api_style == "anthropic":
+                body["messages"] = messages
+                if system:
+                    body["system"] = system
+            else:
+                # Copy messages to avoid mutating original
+                msgs = list(messages)
+                if system:
+                    msgs.insert(0, {"role": "system", "content": system})
+                body["messages"] = msgs
+        else:
+            body = self._request_body(messages, system, stream=False, **kwargs)
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(self._api_url, headers=self._headers(), json=body)
+        if resp.status_code >= 400:
+            raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
+        return resp.json()
 
     async def send_message_stream(
         self,
@@ -226,8 +279,6 @@ def _extract_text(data: dict, style: str) -> str:
     if style == "anthropic":
         blocks = data.get("content", [])
         text_blocks = [b["text"] for b in blocks if b.get("type") == "text"]
-        # DeepSeek etc. may include thinking blocks type:text; skip first
-        # text block if it reads like thinking / chain-of-thought
         if len(text_blocks) > 1:
             text_blocks = text_blocks[-1:]
         return "\n".join(text_blocks)
@@ -235,6 +286,49 @@ def _extract_text(data: dict, style: str) -> str:
     choices = data.get("choices", [])
     if choices:
         msg = choices[0].get("message", {})
-        # reasoning_content is chain-of-thought, skip it
         return msg.get("content", "")
     return ""
+
+
+def _extract_tool_calls(data: dict, style: str) -> list[dict] | None:
+    """Extract tool_calls from a non-streaming LLM response.
+
+    Returns a list of {id, type, function: {name, arguments}} dicts,
+    or None if no tool_calls present.
+    """
+    if style == "anthropic":
+        blocks = data.get("content", [])
+        tool_blocks = [b for b in blocks if b.get("type") == "tool_use"]
+        if not tool_blocks:
+            return None
+        result = []
+        for tb in tool_blocks:
+            result.append({
+                "id": tb["id"],
+                "type": "function",
+                "function": {
+                    "name": tb["name"],
+                    "arguments": json.dumps(tb["input"]) if not isinstance(tb["input"], str) else tb["input"],
+                },
+            })
+        return result
+    # openai
+    choices = data.get("choices", [])
+    if not choices:
+        return None
+    msg = choices[0].get("message", {})
+    tool_calls = msg.get("tool_calls")
+    if not tool_calls:
+        return None
+    # Normalize to our format
+    result = []
+    for tc in tool_calls:
+        result.append({
+            "id": tc.get("id", ""),
+            "type": tc.get("type", "function"),
+            "function": {
+                "name": tc["function"]["name"],
+                "arguments": tc["function"]["arguments"],
+            },
+        })
+    return result

@@ -1,10 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Loader2, ChevronDown, ChevronRight, Brain } from "lucide-react"
+import { Send, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { chatApi } from "@/lib/api"
+import { getActiveInstance } from "@/stores/sessionStore"
 import type { ChatMessage } from "@/lib/types"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
+
+interface ToolCallEvent {
+  id: string
+  name: string
+  args: Record<string, unknown>
+  result?: string
+}
 
 interface RichMessage {
   id: string
@@ -12,6 +20,7 @@ interface RichMessage {
   content: string
   reasoning: string
   status: MsgStatus
+  toolCalls?: ToolCallEvent[]
 }
 
 let msgIdCounter = 0
@@ -37,12 +46,12 @@ export function ChatPanel() {
   // Auto-scroll when messages change
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
-  const handleSend = async () => {
+  const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
     if (!text) return
 
     const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-    const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending" }
+    const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", toolCalls: [] }
     const newMessages = [...messages, userMsg, assistantMsg]
     setMessages(newMessages)
     setInput("")
@@ -50,9 +59,21 @@ export function ChatPanel() {
     scrollToBottom()
 
     try {
-      const stream = await chatApi.sendStream(
-        newMessages.map((m) => ({ role: m.role, content: m.content || "" }))
-      )
+      const activeInst = getActiveInstance()
+      const shouldUseTools = useTools && activeInst !== null
+
+      let stream: ReadableStream<Uint8Array>
+      if (shouldUseTools) {
+        stream = await chatApi.sendToolStream(
+          newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          activeInst!.id
+        )
+      } else {
+        stream = await chatApi.sendStream(
+          newMessages.map((m) => ({ role: m.role, content: m.content || "" }))
+        )
+      }
+
       const reader = stream.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
@@ -78,6 +99,36 @@ export function ChatPanel() {
 
           try {
             const data = JSON.parse(dataStr)
+
+            if (currentType === "tool_call") {
+              // Add tool call to assistant message
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== assistantMsg.id) return m
+                  const toolCalls = [...(m.toolCalls || [])]
+                  toolCalls.push({ id: data.id, name: data.name, args: data.args })
+                  return { ...m, toolCalls }
+                })
+              )
+              scrollToBottom()
+              return
+            }
+
+            if (currentType === "tool_result") {
+              // Update tool call with result
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== assistantMsg.id) return m
+                  const toolCalls = (m.toolCalls || []).map((tc) =>
+                    tc.id === data.id ? { ...tc, result: data.result } : tc
+                  )
+                  return { ...m, toolCalls }
+                })
+              )
+              scrollToBottom()
+              return
+            }
+
             const chunkText = data.text || ""
             if (!chunkText) return
 
@@ -212,16 +263,69 @@ export function ChatPanel() {
 
 function AssistantBubble({ message }: { message: RichMessage }) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [toolCallsOpen, setToolCallsOpen] = useState(true)
 
-  const { status, reasoning, content } = message
+  const { status, reasoning, content, toolCalls } = message
+  const hasToolCalls = toolCalls && toolCalls.length > 0
 
   return (
     <div className="max-w-[85%] space-y-1">
       {/* Pending: waiting */}
-      {status === "pending" && (
+      {status === "pending" && !hasToolCalls && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
           <Loader2 className="h-3 w-3 animate-spin" />
           等待中...
+        </div>
+      )}
+
+      {/* Tool calls */}
+      {hasToolCalls && (
+        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+          <button
+            className="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
+            onClick={() => setToolCallsOpen(!toolCallsOpen)}
+          >
+            {toolCallsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Terminal className="h-3 w-3" />
+            <span>工具调用</span>
+            <span className="text-[10px] ml-auto">{toolCalls.length} 次</span>
+          </button>
+          {toolCallsOpen && (
+            <div className="border-t border-border divide-y divide-border">
+              {toolCalls.map((tc, i) => (
+                <div key={tc.id} className="px-3 py-2 text-xs space-y-1">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Terminal className="h-3 w-3 shrink-0" />
+                    <span className="font-mono font-medium text-foreground">{tc.name}</span>
+                    <span className="font-mono opacity-60 truncate">
+                      {formatToolArgs(tc)}
+                    </span>
+                  </div>
+                  {tc.result !== undefined && (
+                    <div className="mt-1">
+                      {tc.result.startsWith("Error") ? (
+                        <div className="flex items-start gap-1.5 text-red-500">
+                          <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                          <span className="font-mono whitespace-pre-wrap">{tc.result}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-1.5 text-green-600 dark:text-green-400">
+                          <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+                          <span className="font-mono whitespace-pre-wrap line-clamp-3">{tc.result}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {tc.result === undefined && (
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>执行中...</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -269,4 +373,14 @@ function AssistantBubble({ message }: { message: RichMessage }) {
       )}
     </div>
   )
+}
+
+/** Format tool call args for compact display */
+function formatToolArgs(tc: ToolCallEvent): string {
+  const args = tc.args
+  if (tc.name === "Read") return args.path as string
+  if (tc.name === "Write") return args.path as string
+  if (tc.name === "Edit") return args.path as string
+  if (tc.name === "Glob") return args.pattern as string
+  return JSON.stringify(args)
 }

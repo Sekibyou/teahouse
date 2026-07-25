@@ -17,6 +17,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
+from .llm import _extract_text, _extract_tool_calls
+from .tools import TOOLS, execute_tool
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
@@ -26,6 +28,7 @@ from .database.workspaces import (
     list_prototypes,
     create_prototype,
     register_builtin_prototype_source_path,
+    get_instance,
 )
 from .routes.auth import router as auth_router
 from .routes.llm_configs import router as llm_configs_router
@@ -130,6 +133,8 @@ class ChatRequest(BaseModel):
     system: str | None = None
     llm_config_id: str | None = None  # which LLM config to use; None = default
     stream: bool = True
+    tools: bool = False  # Enable tool use (Director tools)
+    instance_id: str | None = None  # Required when tools=True
 
 
 async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) -> LLMClient:
@@ -170,9 +175,177 @@ async def _chat_common(body: ChatRequest, request: Request):
     return client
 
 
+MAX_TOOL_ROUNDS = 15  # Safety limit for tool use iterations
+
+
+async def _tool_use_loop(
+    client: LLMClient,
+    messages: list[dict],
+    instance_dir: Path,
+    system: str | None = None,
+):
+    """Run tool use loop: call LLM → execute tools → feed back results → repeat until LLM returns text.
+
+    Yields SSE-compatible dict events: tool_call, tool_result, then text chunks.
+    """
+    api_style = client.api_style
+    msg = list(messages)
+
+    # System instruction for tool use
+    tool_system = (
+        "你是一个写作助手的导演 AI，负责操作文件系统来推进创作。"
+        "你有 Read、Write、Edit、Glob 四个工具可用。"
+        "你可以通过调用工具来读取设定、创建楼层文件、编辑内容等。"
+        "所有文件路径都是相对于实例根目录的。"
+    )
+    if system:
+        tool_system = tool_system + "\n\n" + system
+
+    for _round in range(MAX_TOOL_ROUNDS):
+        # Call LLM with tools
+        resp = await client.send_message_full(msg, system=tool_system, tools=TOOLS)
+
+        # Check for errors
+        if "error" in resp:
+            yield {"type": "text", "text": f"LLM API error: {resp['error']}"}
+            return
+
+        # Extract tool calls
+        tool_calls = _extract_tool_calls(resp, api_style)
+
+        # If no tool calls, extract text and yield it
+        if not tool_calls:
+            text = _extract_text(resp, api_style)
+            if text:
+                yield {"type": "text", "text": text}
+            return
+
+        # Add assistant message with tool_calls to the conversation
+        if api_style == "anthropic":
+            assistant_msg = {"role": "assistant"}
+            # Anthropic: content is list of blocks
+            content_blocks = resp.get("content", [])
+            text_blocks = [b for b in content_blocks if b.get("type") == "text"]
+            text_content = text_blocks[0]["text"] if text_blocks else None
+            # Build content array: text blocks + tool_use blocks
+            content_array = []
+            if text_content:
+                content_array.append({"type": "text", "text": text_content})
+            for tc in tool_calls:
+                content_array.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "input": json.loads(tc["function"]["arguments"]),
+                })
+            assistant_msg["content"] = content_array
+            msg.append(assistant_msg)
+        else:
+            # OpenAI format: content must be null when tool_calls present
+            choices = resp.get("choices", [])
+            ai_content = None
+            if choices:
+                msg_data = choices[0].get("message", {})
+                ai_content = msg_data.get("content") or None
+
+            assistant_msg = {
+                "role": "assistant",
+                "content": ai_content,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": tc["type"],
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+            msg.append(assistant_msg)
+
+        # Process each tool call
+        for tc in tool_calls:
+            tc_id = tc["id"]
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError:
+                args = {}
+
+            # Yield tool_call event
+            yield {"type": "tool_call", "id": tc_id, "name": name, "args": args}
+
+            # Execute
+            result = await execute_tool(name, args, instance_dir)
+
+            # Yield tool_result event
+            yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
+
+            # Feed result back to LLM as a tool_result message
+            if api_style == "anthropic":
+                msg.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tc_id,
+                            "content": result,
+                        }
+                    ],
+                })
+            else:
+                msg.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": result,
+                })
+
+    # If we exhausted rounds, yield a message
+    yield {"type": "text", "text": "（已达到工具调用上限，请简化指令或重试）"}
+
+
 @app.post("/v1/chat")
 async def chat(body: ChatRequest, request: Request):
     client = await _chat_common(body, request)
+
+    if body.tools:
+        if not body.instance_id:
+            raise HTTPException(status_code=400, detail="instance_id required when tools=True")
+
+        # Resolve instance directory
+        auth_header = request.headers.get("authorization", "")
+        user_id = None
+        if auth_header.startswith("Bearer "):
+            from .database.auth import validate_token
+            try:
+                user_info = await validate_token(auth_header[7:])
+                user_id = user_info.user_id
+            except Exception:
+                pass
+
+        inst = await get_instance(body.instance_id)
+        if not inst or (user_id and inst["user_id"] != user_id):
+            raise HTTPException(status_code=404, detail="Instance not found")
+
+        instance_dir = Path(inst["dir_path"])
+
+        async def sse_tool_stream():
+            async for event in _tool_use_loop(client, body.messages, instance_dir, system=body.system):
+                event_type = event.get("type", "tool_call")
+                yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+            yield "event: done\ndata: {}\n\n"
+
+        return StreamingResponse(
+            sse_tool_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     if not body.stream:
         text = await client.send_message(body.messages, system=body.system)
