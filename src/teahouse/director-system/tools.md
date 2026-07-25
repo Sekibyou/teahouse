@@ -40,3 +40,11 @@
 按 glob 模式匹配文件路径。例如：`**/*.md` 匹配所有 markdown 文件，`floors/floor-*.md` 匹配楼层文件。
 
 - `pattern`：glob 模式，相对于实例根目录
+
+## Generate
+
+**【实验性工具】** 构造正文生成请求。
+
+- `messages`：消息数组，每项包含 role 和 content。content 中可使用 `{{path}}` 占位符引用文件内容。
+- 占位符替换后，完整的请求会输出到 `current/generate-output.json` 供调试。
+- 当前不会真正调用 LLM。

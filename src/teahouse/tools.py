@@ -9,8 +9,12 @@ path traversal protection, atomic operations with clear success/failure.
 """
 from __future__ import annotations
 
+import json
+import secrets
 from pathlib import Path
 from typing import Any
+
+from .placeholder import resolve_messages_placeholders
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +140,26 @@ TOOLS: list[dict] = [
                     },
                 },
                 "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Generate",
+            "description": "【实验性工具】构造正文生成请求。接收一组 messages，替换其中的 {{path}} 占位符为实际文件内容，将处理后的完整请求输出到 current/generate-output.json 以供调试。当前处于实验阶段，不会真正调用 LLM。请直接向用户汇报本工具返回的结果。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                        },
+                        "description": "消息数组，每项包含 role 和 content。content 中可包含 {{path}} 占位符。",
+                    },
+                },
+                "required": ["messages"],
             },
         },
     },
@@ -306,6 +330,33 @@ async def execute_glob(instance_dir: Path, args: dict[str, Any]) -> str:
     return f"{info}\n{result}"
 
 
+async def execute_generate(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Generate tool — debug version.
+
+    1. Resolve {{path}} placeholders in messages
+    2. Write the resolved messages to current/generate-output.json
+    3. Return a random verification string
+    """
+    messages = args.get("messages", [])
+
+    # Resolve placeholders
+    resolved = resolve_messages_placeholders(messages, instance_dir)
+
+    # Write output to current/generate-output.json
+    output_path = instance_dir / "current" / "generate-output.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Generate random verification string
+    token = secrets.token_hex(4)  # 8 hex chars
+    return (
+        f"【实验性工具 Generate 已执行】\n"
+        f"占位符替换后的 messages 已写入 current/generate-output.json\n"
+        f"验证令牌：{token}\n\n"
+        f"请在聊天中直接向用户汇报以上验证令牌。"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -316,6 +367,7 @@ TOOL_EXECUTORS = {
     "Edit": execute_edit,
     "WriteLine": execute_edit_line,
     "Glob": execute_glob,
+    "Generate": execute_generate,
 }
 
 
