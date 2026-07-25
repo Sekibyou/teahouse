@@ -19,6 +19,7 @@ from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
 from .tools import TOOLS, execute_tool
+from .director_system import assemble_system_prompt
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
@@ -182,24 +183,18 @@ async def _tool_use_loop(
     client: LLMClient,
     messages: list[dict],
     instance_dir: Path,
-    system: str | None = None,
 ):
     """Run tool use loop: call LLM → execute tools → feed back results → repeat until LLM returns text.
+
+    The system prompt is assembled automatically from director-system/ templates
+    and the instance's teahouse.md.
 
     Yields SSE-compatible dict events: tool_call, tool_result, then text chunks.
     """
     api_style = client.api_style
     msg = list(messages)
 
-    # System instruction for tool use
-    tool_system = (
-        "你是一个写作助手的导演 AI，负责操作文件系统来推进创作。"
-        "你有 Read、Write、Edit、Glob 四个工具可用。"
-        "你可以通过调用工具来读取设定、创建楼层文件、编辑内容等。"
-        "所有文件路径都是相对于实例根目录的。"
-    )
-    if system:
-        tool_system = tool_system + "\n\n" + system
+    tool_system = assemble_system_prompt(instance_dir)
 
     for _round in range(MAX_TOOL_ROUNDS):
         # Call LLM with tools
@@ -332,7 +327,7 @@ async def chat(body: ChatRequest, request: Request):
         instance_dir = Path(inst["dir_path"])
 
         async def sse_tool_stream():
-            async for event in _tool_use_loop(client, body.messages, instance_dir, system=body.system):
+            async for event in _tool_use_loop(client, body.messages, instance_dir):
                 event_type = event.get("type", "tool_call")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
             yield "event: done\ndata: {}\n\n"
