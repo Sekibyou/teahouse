@@ -26,3 +26,6 @@ take_out/
 # Node / frontend
 node_modules/
 dist/
+
+# Test
+tests/
