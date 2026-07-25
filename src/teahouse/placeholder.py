@@ -2,15 +2,15 @@
 Placeholder resolver — replaces {{path}} syntax with actual file contents.
 
 Supported syntax:
-  {{path}}                                  Full file
-  {{path:10-30}}                            Line range (1-indexed, inclusive)
-  {{path:10-30 from="A" to="B"}}            Line range then anchor crop
-  {{path:from="A" to="B"}}                  Anchor-based range
-  {{path:from="A"}}                         From anchor to end
-  {{path:to="B"}}                           From start to anchor
-  {{glob:pattern}}                          Glob-matched files, sorted
+  {{path}}                               Full file
+  {{path:10-30}}                         Line range (1-indexed, inclusive)
+  {{path:10-20|from="A"|to="B"}}         Line range then anchor crop
+  {{path|from="A"|to="B"}}               Anchor-based range
+  {{path|from="A"}}                      From anchor to end
+  {{path|to="B"}}                        From start to anchor
+  {{glob:pattern}}                       Glob-matched files, sorted
 
-Multiple ranges are NOT joined — use separate {{...}} invocations instead.
+Note: use | as the anchor separator, : for the line range.
 """
 from __future__ import annotations
 
@@ -89,42 +89,47 @@ def _resolve_glob(pattern: str, instance_dir: Path) -> str:
 
 
 def _resolve_file(raw: str, instance_dir: Path) -> str:
-    # Separate file path from modifiers (everything after first colon)
-    colon_pos = raw.find(":")
-    if colon_pos == -1:
-        return _read_full(raw.strip(), instance_dir)
+    # Split on | to separate file/line-range from anchor modifiers
+    # e.g. "test.md:10-30|from=A|to=B" → ["test.md:10-30", "from=A", "to=B"]
+    pipe_parts = _split_pipes_outside_quotes(raw)
+    base_part = pipe_parts[0].strip()  # e.g. "test.md" or "test.md:10-30"
+    anchor_parts = pipe_parts[1:]      # e.g. ['from="A"', 'to="B"']
 
-    file_path = raw[:colon_pos].strip()
-    modifiers = raw[colon_pos + 1:].strip()
+    # Parse base: separate file path from optional line range
+    colon_pos = base_part.find(":")
+    if colon_pos == -1:
+        file_path = base_part
+        line_range = None
+    else:
+        file_path = base_part[:colon_pos].strip()
+        line_range = _extract_line_range(base_part[colon_pos + 1:].strip())
 
     full = _resolve_file_path(instance_dir, file_path)
     content = full.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
-    total = len(lines)
 
-    # === Apply range narrowing in order ===
-
-    # 1. Line range (10-30)
-    line_range = _extract_line_range(modifiers)
+    # 1. Line range
     if line_range is not None:
         start, end = line_range
         start = max(0, start)
-        end = min(total, end)
+        end = min(len(lines), end)
         if start >= end:
             raise PlaceholderError(f"Line range out of bounds: {start+1}-{end}")
         lines = lines[start:end]
 
-    # 2. from= anchor
-    from_a = _extract_quoted(modifiers, "from")
-    if from_a is not None:
-        idx = _find_anchor_line(from_a, lines)
-        lines = lines[idx:]
+    # 2. Anchor modifiers (from= / to=)
+    for part in anchor_parts:
+        part = part.strip()
+        from_a = _extract_quoted(part, "from")
+        to_a = _extract_quoted(part, "to")
 
-    # 3. to= anchor
-    to_a = _extract_quoted(modifiers, "to")
-    if to_a is not None:
-        idx = _find_anchor_line(to_a, lines)
-        lines = lines[: idx + 1]  # include the anchor line
+        if from_a is not None:
+            idx = _find_anchor_line(from_a, lines)
+            lines = lines[idx:]
+
+        if to_a is not None:
+            idx = _find_anchor_line(to_a, lines)
+            lines = lines[: idx + 1]  # include the anchor line
 
     return "".join(lines)
 
@@ -148,14 +153,14 @@ def _resolve_file_path(instance_dir: Path, file_path: str) -> Path:
 # Modifier parsing
 # =====================================================================
 
-LINE_RANGE_RE = re.compile(r"(?<!\S)(\d+)\s*-\s*(\d+)(?!\S)")
+LINE_RANGE_RE = re.compile(r"^(\d+)\s*-\s*(\d+)$")
 
 
 def _extract_line_range(s: str) -> Optional[tuple[int, int]]:
     """Extract 0-indexed [start, end) from a 'start-end' pattern.
-
     Returns None if no line range found.
     """
+    s = s.strip()
     m = LINE_RANGE_RE.search(s)
     if not m:
         return None
@@ -166,6 +171,24 @@ def _extract_line_range(s: str) -> Optional[tuple[int, int]]:
     if start >= end:
         raise PlaceholderError(f"Empty line range: {start+1}-{end}")
     return (start, end)
+
+
+def _split_pipes_outside_quotes(s: str) -> list[str]:
+    """Split string by | that are not inside double quotes."""
+    parts: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for ch in s:
+        if ch == '"':
+            in_quotes = not in_quotes
+            current.append(ch)
+        elif ch == "|" and not in_quotes:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current))
+    return parts
 
 
 def _extract_quoted(s: str, key: str) -> Optional[str]:
