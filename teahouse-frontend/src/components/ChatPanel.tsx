@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { chatApi } from "@/lib/api"
 import { getActiveInstance } from "@/stores/sessionStore"
 import type { ChatMessage } from "@/lib/types"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
 
@@ -409,8 +411,10 @@ function AssistantBubble({ message }: { message: RichMessage }) {
 
       {/* Text content */}
       {(status === "streaming" || status === "done") && content && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm whitespace-pre-wrap break-words">
-          {content}
+        <div className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert max-w-none break-words">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {content}
+          </ReactMarkdown>
           {status === "streaming" && (
             <span className="inline-block w-2 h-4 bg-foreground/50 ml-0.5 animate-pulse" />
           )}
