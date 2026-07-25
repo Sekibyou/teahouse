@@ -97,7 +97,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "WriteLine",
-            "description": "按行号替换文件中的指定行。使用前请先调用 Read 工具确认行号。注意：new_content 必须精确包含目标行的原始换行符。如果原行末尾有 \\n，new_content 也必须以 \\n 结尾，否则会导致行合并。建议从 Read 输出中复制整行内容，修改后作为 new_content 传入。适合替换整行内容（如变量值、配置项）。",
+            "description": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。注意：new_content 中的 \\n 会被自动处理，无需手动添加换行符。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -272,12 +272,19 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     if end_line > total:
         return f"Error: end_line ({end_line}) exceeds file length ({total} lines)"
 
-    # Replace the range [start_line-1, end_line) with new_content.
-    # We use simple string replacement on the file content rather than line-by-line
-    # reconstruction, so the AI's new_content is used exactly as given.
+    # Decode literal \n and \r\n in JSON string to real newlines.
+    # LLMs pass these as literal backslash-n in JSON tool-call args.
+    decoded = new_content.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+    # If replacing a single line and the new content doesn't end with a newline,
+    # append the original line ending so the next line doesn't merge into this one.
+    if start_line == end_line and not decoded.endswith("\n") and total > start_line:
+        decoded += lines[start_line - 1][-1] if lines[start_line - 1][-1] in ("\n", "\r") else "\n"
+
+    # Replace the range [start_line-1, end_line) with decoded content.
     before = "".join(lines[: start_line - 1])
     after = "".join(lines[end_line:])
-    new_file = before + new_content + after
+    new_file = before + decoded + after
 
     full.write_text(new_file, encoding="utf-8")
     return f"Successfully replaced lines {start_line}–{end_line} in {path}"
