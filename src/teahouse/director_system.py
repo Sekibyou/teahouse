@@ -31,9 +31,82 @@ TEMPLATE_FILES = [
 INSTANCE_TEAHOUSE = "teahouse.md"
 SKILLS_DIR = "skills"
 
-# Directories/files to exclude from the tree display
-TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "current"}
-TREE_EXCLUDE_PREFIX = ("current/",)
+# Directories excluded entirely from tree display
+TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules"}
+
+# Directories whose contents are summarized rather than expanded
+FOLD_DIRS = {"floors", "sessions"}
+# Directories shown as name only (no file listing, no subdirectory expansion)
+COMPACT_DIRS = {"skills", "current"}
+
+
+def _summarize_dir(dir_path: Path, name: str) -> str:
+    """Build a one-line summary for a folded directory.
+
+    floors/: show newest floor and sum file, total count.
+    sessions/: show newest session file, total count.
+    """
+    files = sorted([f for f in dir_path.iterdir() if f.is_file()])
+    total = len(files)
+
+    if name == "floors":
+        floors = [f for f in files if re.match(r"^floor-\d+\.md$", f.name)]
+        sums = [f for f in files if re.match(r"^sum-\d+\.md$", f.name)]
+        newest_floor = floors[-1].name if floors else None
+        newest_sum = sums[-1].name if sums else None
+        parts = []
+        if newest_floor:
+            parts.append(f"Newest: {newest_floor}")
+        if newest_sum:
+            parts.append(f"Newest: {newest_sum}")
+        parts.append(f"Total: {total} files")
+        return f"floors/  ({'; '.join(parts)})"
+
+    if name == "sessions":
+        newest = files[-1].name if files else None
+        parts = []
+        if newest:
+            parts.append(f"Newest: {newest}")
+        parts.append(f"Total: {total} files")
+        return f"sessions/  ({'; '.join(parts)})"
+
+    return f"{name}/  ({total} files)"
+
+
+def _scan_tree(instance_dir: Path) -> str:
+    """Build a tree representation of the instance directory.
+
+    Rules:
+    - All root-level entries are shown (nothing hidden at root).
+    - floors/ and sessions/ are folded into a one-line summary.
+    - skills/ and current/ are shown as directory name only (compact).
+    - Other directories (settings/, variables/, etc.) are fully expanded.
+    """
+    lines: list[str] = []
+    root = instance_dir.resolve()
+
+    def _walk(dir_path: Path, prefix: str = ""):
+        entries = sorted(
+            [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
+            key=lambda e: (not e.is_dir(), e.name),
+        )
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+
+            if entry.is_dir() and entry.name in FOLD_DIRS:
+                lines.append(f"{prefix}{connector}{_summarize_dir(entry, entry.name)}")
+            elif entry.is_dir() and entry.name in COMPACT_DIRS:
+                lines.append(f"{prefix}{connector}{entry.name}/")
+            else:
+                display_name = entry.name + ("/" if entry.is_dir() else "")
+                lines.append(f"{prefix}{connector}{display_name}")
+                if entry.is_dir():
+                    extension = "    " if is_last else "│   "
+                    _walk(entry, prefix + extension)
+
+    _walk(root)
+    return "\n".join(lines)
 
 
 def _scan_skills(instance_dir: Path) -> str:
@@ -73,32 +146,6 @@ def _scan_skills(instance_dir: Path) -> str:
         return "（实例中没有任何 Skill）"
 
     return "可用 Skill：\n" + "\n".join(entries)
-
-
-def _scan_tree(instance_dir: Path) -> str:
-    """Build a tree representation of the instance directory.
-
-    Excludes runtime/generated directories (current/, __pycache__, .git, etc.).
-    """
-    lines: list[str] = []
-    root = instance_dir.resolve()
-
-    def _walk(dir_path: Path, prefix: str = ""):
-        entries = sorted(
-            [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
-            key=lambda e: (not e.is_dir(), e.name),  # dirs first, then files
-        )
-        for i, entry in enumerate(entries):
-            is_last = i == len(entries) - 1
-            connector = "└── " if is_last else "├── "
-            display_name = entry.name + ("/" if entry.is_dir() else "")
-            lines.append(f"{prefix}{connector}{display_name}")
-            if entry.is_dir():
-                extension = "    " if is_last else "│   "
-                _walk(entry, prefix + extension)
-
-    _walk(root)
-    return "\n".join(lines)
 
 
 def assemble_system_prompt(instance_dir: Path) -> str:

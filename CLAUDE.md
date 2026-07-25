@@ -109,3 +109,45 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 ## 文档
 
 详细设计文档见 [docs/](docs/) 目录。
+
+## 实例目录结构
+
+每个实例在 `data/<user>/instances/<id>/` 下，结构如下：
+
+```
+teahouse.md          实例配置文件，始终实时注入导演上下文
+settings/            设定文件夹（角色、世界观等）
+  characters.yaml
+  world.yaml
+skills/              Skill 包，每个子目录一个 Skill
+  <skill-name>/
+    SKILL.md          Skill 元数据 + 完整指令（Load 阶段读取）
+    examples/         可选，示例文件
+    references/       可选，参考文档
+    assets/           可选，静态资源
+    scripts/          可选，可执行脚本
+variables/           变量文件夹（故事状态跟踪）
+  active.yaml         当前活跃变量
+  key_variables.yaml  关键变量列表
+  key_variables_schema.yaml
+floors/              正文楼层 + 总结（归档，commit 后不可变）
+  floor-001.md        正文楼层，编号递增
+  sum-001.md          总结，编号递增（与楼层编号独立）
+sessions/            会话持久化存储
+  session-<timestamp>.json
+current/             临时文件夹，提交时最好为空
+  generate-output.json  Generate 工具占位符替换后的调试产物
+  draft.md            未完成草稿（续写用）
+```
+
+### 目录树显示规则
+
+系统提示词中自动注入目录树，按以下规则折叠以节省 token：
+
+| 目录 | 显示方式 |
+|---|---|
+| `settings/`、`variables/`、根目录文件 | 完全展开 |
+| `current/`、`skills/` | 只显示目录名（紧凑），不展开文件 |
+| `floors/`、`sessions/` | 折叠为统计行，如 `floors/ (Newest: floor-009.md; Total: 9 files)` |
+
+需要深入探索时通过 Glob 工具按需查看。
