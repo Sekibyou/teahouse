@@ -163,6 +163,23 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "SkillRead",
+            "description": "读取指定 Skill 的教学内容，获得完整的方法论和 SOP。Skill 的名称和描述已在系统提示词中列出。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Skill 名称，例如 generate-floor、summarize",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -357,6 +374,24 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any]) -> str:
     )
 
 
+SKILLS_DIR = "skills"
+
+
+async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Read a skill's SKILL.md content."""
+    name = args["name"]
+    skill_dir = instance_dir / SKILLS_DIR / name
+    skill_path = skill_dir / "SKILL.md"
+
+    if not skill_dir.is_dir():
+        return f"Error: Skill '{name}' 不存在"
+    if not skill_path.exists():
+        return f"Error: Skill '{name}' 缺少 SKILL.md"
+
+    content = skill_path.read_text(encoding="utf-8")
+    return f"## Skill: {name}\n\n{content.strip()}"
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -368,6 +403,7 @@ TOOL_EXECUTORS = {
     "WriteLine": execute_edit_line,
     "Glob": execute_glob,
     "Generate": execute_generate,
+    "SkillRead": execute_skill_read,
 }
 
 

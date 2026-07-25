@@ -41,6 +41,12 @@
 
 - `pattern`：glob 模式，相对于实例根目录
 
+## SkillRead
+
+读取指定 Skill 的教学内容（SKILL.md），获得该 Skill 完整的方法论和 SOP。
+
+- `name`：Skill 名称，例如 `generate-floor`、`summarize`
+
 ## Generate
 
 **【实验性工具】** 构造正文生成请求。

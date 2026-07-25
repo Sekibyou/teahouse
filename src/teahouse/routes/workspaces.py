@@ -266,3 +266,135 @@ async def delete_instance_entry(
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ===== Skills =====
+
+SKILLS_DIR = "skills"
+
+
+def _get_skill_dir(instance_dir: Path, skill_name: str) -> Path:
+    return instance_dir / SKILLS_DIR / skill_name
+
+
+def _read_file_text(path: Path) -> str | None:
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+@router.get("/instances/{instance_id}/skills")
+async def list_skills(instance_id: str, user: UserInfo = Depends(require_user)):
+    """List all skills in an instance."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    skills_dir = instance_dir / SKILLS_DIR
+    if not skills_dir.is_dir():
+        return []
+    result = []
+    for entry in sorted(skills_dir.iterdir()):
+        if entry.is_dir():
+            result.append({
+                "name": entry.name,
+                "path": f"{SKILLS_DIR}/{entry.name}",
+                "has_skill": (entry / "SKILL.md").exists(),
+                "has_examples": (entry / "examples").is_dir(),
+            })
+    return result
+
+
+@router.get("/instances/{instance_id}/skills/{skill_name}")
+async def get_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+    """Read a skill's full content (SKILL.md + examples)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    skill_dir = _get_skill_dir(instance_dir, skill_name)
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    skill_content = _read_file_text(skill_dir / "SKILL.md")
+    examples_dir = skill_dir / "examples"
+    examples = []
+    if examples_dir.is_dir():
+        for f in sorted(examples_dir.iterdir()):
+            if f.is_file():
+                examples.append({"name": f.name, "content": f.read_text(encoding="utf-8")})
+    return {"name": skill_name, "prompt": skill_content, "examples": examples}
+
+
+class CreateSkillRequest(BaseModel):
+    prompt: str
+
+
+@router.post("/instances/{instance_id}/skills/{skill_name}")
+async def create_skill(instance_id: str, skill_name: str, body: CreateSkillRequest, user: UserInfo = Depends(require_user)):
+    """Create a new skill with a SKILL.md."""
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_-]+$', skill_name):
+        raise HTTPException(status_code=400, detail="Skill name must contain only letters, numbers, hyphens, underscores")
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    skill_dir = _get_skill_dir(instance_dir, skill_name)
+    if skill_dir.exists():
+        raise HTTPException(status_code=409, detail=f"Skill '{skill_name}' already exists")
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(body.prompt, encoding="utf-8")
+    return {"name": skill_name, "status": "created"}
+
+
+@router.put("/instances/{instance_id}/skills/{skill_name}")
+async def update_skill(instance_id: str, skill_name: str, body: CreateSkillRequest, user: UserInfo = Depends(require_user)):
+    """Update a skill's SKILL.md."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    skill_dir = _get_skill_dir(instance_dir, skill_name)
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    (skill_dir / "SKILL.md").write_text(body.prompt, encoding="utf-8")
+    return {"name": skill_name, "status": "updated"}
+
+
+@router.delete("/instances/{instance_id}/skills/{skill_name}")
+async def delete_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+    """Delete a skill. Built-in skills (generate-floor, summarize) are protected."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    if skill_name in ("generate-floor", "summarize"):
+        raise HTTPException(status_code=400, detail="Cannot delete built-in skills")
+    instance_dir = _resolve_instance_dir(inst)
+    skill_dir = _get_skill_dir(instance_dir, skill_name)
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    shutil.rmtree(skill_dir)
+    return {"name": skill_name, "status": "deleted"}
+
+
+@router.post("/instances/{instance_id}/skills/{skill_name}/export")
+async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+    """Export a skill as a reusable zip package."""
+    import zipfile, tempfile
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    skill_dir = _get_skill_dir(instance_dir, skill_name)
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    export_path = Path(tempfile.gettempdir()) / f"skill-{skill_name}.zip"
+    with zipfile.ZipFile(export_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp in skill_dir.rglob("*"):
+            if fp.is_file():
+                zf.write(fp, str(fp.relative_to(skill_dir.parent)))
+    return {"name": skill_name, "export_path": str(export_path)}
