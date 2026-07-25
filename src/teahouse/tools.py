@@ -147,7 +147,7 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "Generate",
-            "description": "【实验性工具】构造正文生成请求。接收一组 messages，替换其中的 {{path}} 占位符为实际文件内容，将处理后的完整请求输出到 current/generate-output.json 以供调试。当前处于实验阶段，不会真正调用 LLM。请直接向用户汇报本工具返回的结果。",
+            "description": "【实验性工具】构造正文生成请求。content 中可使用 {{path}} 占位符引用文件内容，支持切片语法：{{path:N-M}}（行号范围）、{{path:from=\"A\" to=\"B\"}}（锚点范围）、{{path:10-30 from=\"A\" to=\"B\"}}（混合）。替换后的完整请求输出到 current/generate-output.json 以供调试。当前处于实验阶段，不会真正调用 LLM。请直接向用户汇报本工具返回的结果。",
             "parameters": {
                 "type": "object",
                 "properties": {
