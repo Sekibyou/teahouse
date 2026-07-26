@@ -418,7 +418,22 @@ export function WorkspacePage() {
         instanceId={instId || ""}
         open={showGitDialog}
         onClose={() => setShowGitDialog(false)}
-        onRefresh={() => { loadGitStatus(); loadFileTree() }}
+        onRefresh={async () => {
+          loadGitStatus()
+          loadFileTree()
+          loadFileStatuses()
+          // Reload currently open file if any
+          if (instId && selectedFile) {
+            setContentReady(false)
+            const res = await instancesApi.readFile(instId, selectedFile)
+            if (res.ok) {
+              setFileContent(res.data!.content)
+              setEditedContent(res.data!.content)
+              setIsDirty(false)
+              setContentReady(true)
+            }
+          }
+        }}
       />
 
       {/* Confirm delete dialog */}
