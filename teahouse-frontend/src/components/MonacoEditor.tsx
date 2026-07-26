@@ -1,5 +1,5 @@
-import { useEffect, useRef, useMemo, useCallback } from "react"
-import Editor, { DiffEditor as ReactDiffEditor, type OnMount, loader } from "@monaco-editor/react"
+import { useEffect, useRef, useMemo, useCallback, useState } from "react"
+import { DiffEditor as ReactDiffEditor, loader } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 
 // ---- CDN config ----
@@ -10,7 +10,6 @@ loader.config({
 })
 
 // ---- Theme helpers ----
-// Background set to transparent — parent container provides the correct --background.
 
 const LIGHT_THEME = "teahouse-light"
 const DARK_THEME = "teahouse-dark"
@@ -69,11 +68,6 @@ function isDarkMode(): boolean {
 
 // ---- Inline diff decorations via headless Monaco DiffEditor ----
 
-/**
- * Use Monaco's built-in diff engine (headless DiffEditor) to compute
- * line-level changes between original and modified text, then convert
- * them into editor decorations for the gutter.
- */
 async function computeLineDecorations(
   monaco: typeof Monaco,
   original: string,
@@ -103,7 +97,6 @@ async function computeLineDecorations(
       const isDelete = origLen > 0 && modLen === 0
       const isInsert = origLen === 0 && modLen > 0
 
-      // Replace: first N modified lines are "modified", the rest are "added"
       const replaced = Math.min(origLen, modLen)
 
       for (let ln = c.modifiedStartLineNumber; ln <= c.modifiedEndLineNumber; ln++) {
@@ -170,45 +163,93 @@ export function MonacoEditor({
   readOnly = false,
   className,
 }: MonacoEditorProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
+  const onChangeRef = useRef(onChange)
+  const onSaveRef = useRef(onSave)
+  const onMountRef = useRef(onMount)
+  const [monacoReady, setMonacoReady] = useState<typeof Monaco | null>(null)
 
-  const handleMount: OnMount = useCallback((editor, monaco) => {
-    editorRef.current = editor
-    monacoRef.current = monaco
-    defineThemes(monaco)
-    monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
-    onMount?.(editor, monaco)
-  }, [onMount])
+  // Keep callback refs up-to-date
+  onChangeRef.current = onChange
+  onSaveRef.current = onSave
+  onMountRef.current = onMount
 
-  // Theme following via MutationObserver
+  // Load Monaco once
   useEffect(() => {
-    const monaco = monacoRef.current
-    if (!monaco) return
-
-    const observer = new MutationObserver(() => {
+    let disposed = false
+    loader.init().then((monaco) => {
+      if (disposed) return
+      defineThemes(monaco)
       monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
+      setMonacoReady(monaco)
     })
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    })
-    return () => observer.disconnect()
+    return () => { disposed = true }
   }, [])
 
-  // Ctrl+S binding
+  // Create/dispose editor instance & model on every value/language change
   useEffect(() => {
-    const editor = editorRef.current
-    if (!editor || !onSave) return
-    const disposable = editor.addAction({
-      id: "teahouse-save",
-      label: "Save File",
-      keybindings: [monacoRef.current!.KeyMod.CtrlCmd | monacoRef.current!.KeyCode.KeyS],
-      run: () => onSave(),
+    const monaco = monacoReady
+    if (!monaco || !containerRef.current) return
+
+    // Dispose previous editor & its model
+    if (editorRef.current) {
+      editorRef.current.getModel()?.dispose()
+      editorRef.current.dispose()
+      editorRef.current = null
+    }
+
+    // Create a fresh model (unique per value, no reuse = no stale undo stack)
+    const model = monaco.editor.createModel(value, language)
+
+    const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = {
+      model,
+      minimap: { enabled: minimap },
+      fontSize: 13,
+      lineNumbers: "on",
+      scrollBeyondLastLine: false,
+      wordWrap: "on",
+      tabSize: 2,
+      automaticLayout: true,
+      padding: { top: 12 },
+      readOnly,
+      glyphMargin: true,
+      folding: true,
+      matchBrackets: "never",
+      ...options,
+    }
+
+    const editor = monaco.editor.create(containerRef.current, mergedOptions)
+    editorRef.current = editor
+    monacoRef.current = monaco
+
+    // Listen for changes
+    editor.onDidChangeModelContent(() => {
+      onChangeRef.current?.(editor.getValue())
     })
-    return () => disposable.dispose()
-  }, [onSave])
+
+    // Ctrl+S
+    if (onSaveRef.current) {
+      editor.addAction({
+        id: "teahouse-save",
+        label: "Save File",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+        run: () => onSaveRef.current?.(),
+      })
+    }
+
+    onMountRef.current?.(editor, monaco)
+
+    return () => {
+      model.dispose()
+      editor.dispose()
+      editorRef.current = null
+      monacoRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monacoReady, value, language])
 
   // Apply diff decorations
   useEffect(() => {
@@ -236,33 +277,24 @@ export function MonacoEditor({
     return () => { cancelled = true }
   }, [value, original, language])
 
-  const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
-    minimap: { enabled: minimap },
-    fontSize: 13,
-    lineNumbers: "on",
-    scrollBeyondLastLine: false,
-    wordWrap: "on",
-    tabSize: 2,
-    automaticLayout: true,
-    padding: { top: 12 },
-    readOnly,
-    glyphMargin: true,
-    folding: true,
-    matchBrackets: "never",
-    ...options,
-  }), [minimap, readOnly, options])
+  // Theme following via MutationObserver
+  useEffect(() => {
+    const monaco = monacoReady
+    if (!monaco) return
+
+    const observer = new MutationObserver(() => {
+      monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    })
+    return () => observer.disconnect()
+  }, [monacoReady])
 
   return (
     <div className={className} style={{ height, width: "100%" }}>
-      <Editor
-        height="100%"
-        language={language}
-        value={value}
-        onChange={(val) => onChange?.(val || "")}
-        theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
-        onMount={handleMount}
-        options={mergedOptions}
-      />
+      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
     </div>
   )
 }

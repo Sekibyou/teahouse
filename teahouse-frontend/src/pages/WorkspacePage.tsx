@@ -4,8 +4,7 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, ArrowLeft, FileText,
-  GitBranch as GitBranchIcon, CheckCircle2, AlertCircle,
-  Edit3,
+  GitBranch as GitBranchIcon, Edit3,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -78,6 +77,9 @@ export function WorkspacePage() {
 
   useEffect(() => {
     loadFileStatuses()
+    // Poll file statuses every 5s for real-time updates
+    const interval = setInterval(loadFileStatuses, 5000)
+    return () => clearInterval(interval)
   }, [loadFileStatuses])
 
   // Redirect if no active instance
@@ -259,11 +261,35 @@ export function WorkspacePage() {
               <span className="text-xs font-mono flex-1 truncate" title={gitStatus.current_branch}>
                 {gitStatus.current_branch || "main"}
               </span>
-              {gitStatus.has_uncommitted ? (
-                <AlertCircle className="h-3 w-3 text-yellow-500 shrink-0" />
-              ) : (
-                <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-              )}
+              {(() => {
+                const counts = { added: 0, modified: 0, deleted: 0, untracked: 0 }
+                for (const st of fileStatuses.values()) {
+                  if (st === "A" || st === "?") counts.added++
+                  else if (st === "M") counts.modified++
+                  else if (st === "D") counts.deleted++
+                  else if (st === "R") counts.modified++
+                }
+                const total = counts.added + counts.modified + counts.deleted
+                return total > 0 ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {counts.added > 0 && (
+                      <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none">
+                        +{counts.added}
+                      </span>
+                    )}
+                    {counts.modified > 0 && (
+                      <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none">
+                        ~{counts.modified}
+                      </span>
+                    )}
+                    {counts.deleted > 0 && (
+                      <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none">
+                        -{counts.deleted}
+                      </span>
+                    )}
+                  </div>
+                ) : null
+              })()}
               <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
             </>
           ) : (
@@ -308,6 +334,7 @@ export function WorkspacePage() {
             </div>
             <div className="flex-1 w-full overflow-hidden">
               <MonacoEditor
+                key={selectedFile}
                 value={editedContent}
                 original={fileContent}
                 onSave={handleSave}
