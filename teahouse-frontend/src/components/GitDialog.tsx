@@ -235,6 +235,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     if (res.ok) {
       await loadFileStatuses()
       await loadStatus()
+      onRefresh()
     } else {
       setError(res.error || "还原失败")
     }

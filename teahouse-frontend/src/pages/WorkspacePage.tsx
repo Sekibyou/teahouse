@@ -464,10 +464,15 @@ export function WorkspacePage() {
           // Reload currently open file if any
           if (instId && selectedFile) {
             setContentReady(false)
-            const res = await instancesApi.readFile(instId, selectedFile)
-            if (res.ok) {
-              setFileContent(res.data!.content)
-              setEditedContent(res.data!.content)
+            const [fileRes, headRes] = await Promise.all([
+              instancesApi.readFile(instId, selectedFile),
+              gitApi.showFile(instId, selectedFile),
+            ])
+            if (fileRes.ok) {
+              setFileContent(fileRes.data!.content)
+              setEditedContent(fileRes.data!.content)
+              const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
+              setGitHeadContent(headContent)
               setIsDirty(false)
               setContentReady(true)
             }
