@@ -19,11 +19,17 @@ class GitError(Exception):
 def _git_run(args: list[str], cwd: Path) -> str:
     """Run a git command and return stdout. Raises GitError on failure."""
     try:
+        import os
+        env = os.environ.copy()
+        env["GIT_PAGER"] = "cat"
+        env["GIT_TERMINAL_PROMPT"] = "0"
         result = subprocess.run(
             ["git"] + args,
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            env=env,
             timeout=30,
         )
     except FileNotFoundError:
