@@ -245,8 +245,8 @@ export const gitApi = {
     return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, { message })
   },
 
-  branch: async (instanceId: string, action: string, name?: string) => {
-    return post<GitBranchResult>(`/api/instances/${instanceId}/git/branch`, { action, name })
+  branch: async (instanceId: string, action: string, name?: string, startPoint?: string) => {
+    return post<GitBranchResult>(`/api/instances/${instanceId}/git/branch`, { action, name, start_point: startPoint })
   },
 
   log: async (instanceId: string, limit: number = 10) => {
@@ -255,5 +255,35 @@ export const gitApi = {
 
   fileStatus: async (instanceId: string) => {
     return get<{ files: GitFileStatus[] }>(`/api/instances/${instanceId}/git/file-status`)
+  },
+
+  reset: async (instanceId: string, targetHash: string) => {
+    return post<{ status: string; branch: string; message: string }>(
+      `/api/instances/${instanceId}/git/reset`, { target_hash: targetHash }
+    )
+  },
+
+  renameBranch: async (instanceId: string, oldName: string, newName: string) => {
+    return post<{ status: string; branch: string; message: string }>(
+      `/api/instances/${instanceId}/git/rename-branch`, { old_name: oldName, new_name: newName }
+    )
+  },
+
+  deleteBranch: async (instanceId: string, name: string) => {
+    return post<{ status: string; message: string }>(
+      `/api/instances/${instanceId}/git/delete-branch`, { action: "delete", name }
+    )
+  },
+
+  deleteNode: async (instanceId: string, targetHash: string, branchName: string) => {
+    return post<{ status: string; branch: string; message: string }>(
+      `/api/instances/${instanceId}/git/delete-node`, { target_hash: targetHash, branch_name: branchName }
+    )
+  },
+
+  discard: async (instanceId: string, path?: string) => {
+    return post<{ status: string; message: string }>(
+      `/api/instances/${instanceId}/git/discard`, { path }
+    )
   },
 }

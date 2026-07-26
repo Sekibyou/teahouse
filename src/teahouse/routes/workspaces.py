@@ -32,7 +32,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
 )
-from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain
+from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, _git_run, GitError
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +410,7 @@ class GitCommitRequest(BaseModel):
 class GitBranchRequest(BaseModel):
     action: str  # list | create | switch | delete
     name: str | None = None
+    start_point: str | None = None
 
 
 @router.get("/instances/{instance_id}/git/status")
@@ -425,10 +426,10 @@ async def get_git_status(instance_id: str, user: UserInfo = Depends(require_user
         return {"git_initialized": False}
 
     try:
-        from ..git_utils import _git_run, GitError
+        from ..git_utils import GitError
 
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
-        commits = git_log(instance_dir, limit=5)
+        commits = git_log(instance_dir, limit=50, all_branches=True)
         branches = git_branch(instance_dir, "list", None)["branches"]
 
         # Check for uncommitted changes
@@ -475,7 +476,7 @@ async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInf
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        result = git_branch(instance_dir, body.action, body.name)
+        result = git_branch(instance_dir, body.action, body.name, body.start_point)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -507,5 +508,144 @@ async def api_git_file_status(instance_id: str, user: UserInfo = Depends(require
     instance_dir = _resolve_instance_dir(inst)
     try:
         return {"files": git_status_porcelain(instance_dir)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class GitRenameRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+class GitResetRequest(BaseModel):
+    target_hash: str
+
+
+class GitDeleteNodeRequest(BaseModel):
+    target_hash: str
+    branch_name: str
+
+
+@router.post("/instances/{instance_id}/git/reset")
+async def api_git_reset(instance_id: str, body: GitResetRequest, user: UserInfo = Depends(require_user)):
+    """Reset current branch to a target commit (discards commits after it)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        out = git_reset_hard(instance_dir, body.target_hash)
+        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        return {"status": "ok", "branch": branch, "message": out}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/instances/{instance_id}/git/rename-branch")
+async def api_git_rename_branch(instance_id: str, body: GitRenameRequest, user: UserInfo = Depends(require_user)):
+    """Rename a branch."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        out = git_branch_rename(instance_dir, body.old_name, body.new_name)
+        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        return {"status": "ok", "branch": branch, "message": out}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/instances/{instance_id}/git/delete-branch")
+async def api_git_delete_branch(instance_id: str, body: GitBranchRequest, user: UserInfo = Depends(require_user)):
+    """Delete a branch by name."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        out = git_delete_branch(instance_dir, body.name)
+        return {"status": "ok", "message": out}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/instances/{instance_id}/git/delete-node")
+async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user: UserInfo = Depends(require_user)):
+    """Delete a commit node and all its descendants on the given branch.
+
+    Creates a temporary branch from the target's parent, deletes the original branch,
+    then re-creates it with the temp name, effectively removing the node and its children.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        # Get parent hash of target, and all descendants
+        # We need to list all commits reachable from the branch HEAD that are not
+        # in the target's ancestor chain
+        branch_commits = _git_run(
+            ["log", "--oneline", "--format=%H", f"{body.target_hash}..{body.branch_name}"],
+            instance_dir,
+        ).strip().split("\n") if body.target_hash else []
+
+        parent_out = _git_run(
+            ["rev-parse", f"{body.target_hash}^"],
+            instance_dir,
+        )
+
+        temp_branch = f"_delete_temp_{body.target_hash[:7]}"
+
+        # Create temp branch at parent
+        _git_run(["branch", temp_branch, parent_out], instance_dir)
+
+        # Switch to temp branch
+        _git_run(["checkout", temp_branch], instance_dir)
+
+        # Delete the original branch
+        try:
+            git_delete_branch(instance_dir, body.branch_name)
+        except GitError:
+            _git_run(["branch", "-D", body.branch_name], instance_dir)
+
+        # Rename temp to original branch name
+        _git_run(["branch", "-m", body.branch_name], instance_dir)
+
+        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+
+        return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class GitDiscardRequest(BaseModel):
+    path: str | None = None
+
+
+@router.post("/instances/{instance_id}/git/discard")
+async def api_git_discard(instance_id: str, body: GitDiscardRequest, user: UserInfo = Depends(require_user)):
+    """Discard uncommitted changes. If path is provided, restore only that file.
+    Otherwise discard all changes including untracked files."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        if body.path:
+            out = git_restore_file(instance_dir, body.path)
+        else:
+            out = git_discard_changes(instance_dir)
+        return {"status": "ok", "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

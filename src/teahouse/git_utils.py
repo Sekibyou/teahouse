@@ -94,9 +94,22 @@ def git_branch_list(instance_dir: Path) -> list[dict]:
     return branches
 
 
-def git_branch_create(instance_dir: Path, name: str) -> str:
-    """Create a new branch at current HEAD."""
-    return _git_run(["branch", name], instance_dir)
+def git_branch_create(instance_dir: Path, name: str, start_point: str | None = None) -> str:
+    """Create a new branch at current HEAD or at a specific start point."""
+    args = ["branch", name]
+    if start_point:
+        args.append(start_point)
+    return _git_run(args, instance_dir)
+
+
+def git_discard_changes(instance_dir: Path) -> str:
+    """Discard all unstaged changes in the working directory (does NOT delete untracked files)."""
+    return _git_run(["checkout", "--", "."], instance_dir)
+
+
+def git_restore_file(instance_dir: Path, file_path: str) -> str:
+    """Restore a specific file to its last committed state."""
+    return _git_run(["checkout", "--", file_path], instance_dir)
 
 
 def git_branch_switch(instance_dir: Path, name: str) -> str:
@@ -109,12 +122,33 @@ def git_branch_delete(instance_dir: Path, name: str) -> str:
     return _git_run(["branch", "-d", name], instance_dir)
 
 
-def git_branch(instance_dir: Path, action: str, name: Optional[str] = None) -> dict:
+def git_branch_rename(instance_dir: Path, old_name: str, new_name: str) -> str:
+    """Rename a branch from old_name to new_name."""
+    return _git_run(["branch", "-m", old_name, new_name], instance_dir)
+
+
+def git_reset_hard(instance_dir: Path, target_hash: str) -> str:
+    """Reset current branch to target commit, discarding all commits after it."""
+    return _git_run(["reset", "--hard", target_hash], instance_dir)
+
+
+def git_delete_branch(instance_dir: Path, name: str) -> str:
+    """Force-delete a branch."""
+    return _git_run(["branch", "-D", name], instance_dir)
+
+
+def git_rev_parse(instance_dir: Path, ref: str) -> str:
+    """Resolve a git ref to a full commit hash."""
+    return _git_run(["rev-parse", ref], instance_dir)
+
+
+def git_branch(instance_dir: Path, action: str, name: Optional[str] = None, start_point: Optional[str] = None) -> dict:
     """Unified branch operation.
 
     Args:
         action: "list" | "create" | "switch" | "delete"
         name: branch name (required for create/switch/delete)
+        start_point: optional commit hash to create the branch at
 
     Returns:
         dict with action-specific fields.
@@ -127,7 +161,7 @@ def git_branch(instance_dir: Path, action: str, name: Optional[str] = None) -> d
         raise GitError("branch name is required for this action")
 
     if action == "create":
-        out = git_branch_create(instance_dir, name)
+        out = git_branch_create(instance_dir, name, start_point)
         return {"action": "create", "name": name, "message": out}
 
     if action == "switch":
@@ -184,12 +218,13 @@ def git_status_porcelain(instance_dir: Path) -> list[dict]:
     return entries
 
 
-def git_log(instance_dir: Path, limit: int = 10) -> list[dict]:
+def git_log(instance_dir: Path, limit: int = 10, all_branches: bool = False) -> list[dict]:
     """View commit history. Returns [{hash, author, date, message, parents, refs, branch}]."""
-    out = _git_run(
-        ["log", f"--max-count={limit}", "--format=%H|%P|%an|%ai|%s|%D"],
-        instance_dir,
-    )
+    args = ["log"]
+    if all_branches:
+        args.append("--all")
+    args += [f"--max-count={limit}", "--format=%H|%P|%an|%ai|%s|%D"]
+    out = _git_run(args, instance_dir)
     entries = []
     for line in out.split("\n"):
         if not line.strip():
