@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .connection import generate_uuid, current_timestamp, execute, fetch_one, fetch_all
+from ..git_utils import git_init, git_initial_commit
 
 # ---------------------------------------------------------------------------
 # Path utilities
@@ -142,6 +143,13 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
             zf.extractall(target_dir)
     elif source_path.is_dir():
         _copy_dir(source_path, target_dir)
+
+    # Initialize git repository for the instance
+    try:
+        git_init(target_dir)
+        git_initial_commit(target_dir)
+    except Exception:
+        pass  # git not available — instance works without version control
 
 
 def register_builtin_prototype_source_path(base_path: Path) -> str:

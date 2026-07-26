@@ -75,3 +75,23 @@ content 中可使用以下占位符引用文件内容：
 - 行号范围和锚点可混用：`{{file.md:10-30|from="A"|to="B"}}`
 - 锚点值是精确子串匹配，必须唯一出现一次
 - 如果不确定行号，优先使用 `from=` 锚点语法
+
+## GitCommit
+
+执行一次 git 提交，锁定当前实例所有文件的状态。
+
+- `message`：提交信息，建议格式：`floor-NNN: 简短描述` 或 `summary-NNN: 简短描述`
+
+返回值包含：commit hash、当前分支名、变更文件列表。
+
+## GitBranch
+
+分支管理操作，用于剧情分支存档和回档。
+
+- `action`：`list` / `create` / `switch` / `delete`
+- `name`：分支名（create/switch/delete 时需要）
+
+- `list`：列出所有分支
+- `create`：基于当前 HEAD 创建新分支
+- `switch`：切换到已有分支（会改变 `floors/`、`variables/`、`settings/` 等的文件内容）
+- `delete`：删除分支（安全模式，未合并时拒绝）

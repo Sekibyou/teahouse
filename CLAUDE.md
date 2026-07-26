@@ -107,6 +107,37 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 
 第三方可通过 API 自行编写前端（QQ 桥接、Web 前端、游戏引擎接入等）。
 
+## 实例版本控制 (Git)
+
+每个实例创建时自动执行 `git init` + 初始 commit。实例是一个独立的 git 仓库，与主仓库隔离。
+
+### Git 工具
+
+导演可通过 `GitCommit` 和 `GitBranch` 两个工具操作版本控制：
+
+- **GitCommit(message)**：`git add -A && git commit`，锁定实例所有文件状态。楼层完成/总结结束时自动调用（通过提示词约定）。
+- **GitBranch(action, name?)**：分支管理。`list` 列出所有分支，`create` 创建新分支，`switch` 切换分支，`delete` 删除分支。
+
+### 调用时机
+
+- **楼层完成时**：导演调用 `GitCommit("floor-NNN: 简单描述")`
+- **总结完成时**：导演调用 `GitCommit("summary-NNN: 描述")`
+- **用户手动**：用户可通过前端按钮或对话要求提交
+- **分支操作**：由用户手动控制（前端 UI 或对话中要求导演执行）
+
+### 切换分支的特殊说明
+
+`GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`floors/`、`variables/`、`settings/` 等）。切换后：
+1. 当前对话的上下文（messages）保留在前端 localStorage 中，导演不会失忆
+2. 下一次系统提示词组装时会自动读取目标分支的文件状态
+3. 如需查看旧分支的楼层文件，可用 `Read` 工具加路径前缀（如果能拿到具体路径），或者切回去查看
+
+### 技术约束
+
+- **依赖 git**：运行环境必须安装 git 并可在 PATH 中访问
+- **不需要 merge**：分支是 AVG 式的剧情分支存档，不做合并
+- **sessions/ 不纳入版本控制**：对话历史由前端 localStorage 管理
+
 ## 文档
 
 详细设计文档见 [docs/](docs/) 目录。

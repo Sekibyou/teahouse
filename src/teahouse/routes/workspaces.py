@@ -32,6 +32,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
 )
+from ..git_utils import git_commit, git_branch, git_log
 
 
 # ---------------------------------------------------------------------------
@@ -398,3 +399,98 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
             if fp.is_file():
                 zf.write(fp, str(fp.relative_to(skill_dir.parent)))
     return {"name": skill_name, "export_path": str(export_path)}
+
+
+# ===== Git operations =====
+
+class GitCommitRequest(BaseModel):
+    message: str
+
+
+class GitBranchRequest(BaseModel):
+    action: str  # list | create | switch | delete
+    name: str | None = None
+
+
+@router.get("/instances/{instance_id}/git/status")
+async def get_git_status(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get the current git branch, recent commits, and dirty status."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    if not (instance_dir / ".git").is_dir():
+        return {"git_initialized": False}
+
+    try:
+        from ..git_utils import _git_run, GitError
+
+        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        commits = git_log(instance_dir, limit=5)
+        branches = git_branch(instance_dir, "list", None)["branches"]
+
+        # Check for uncommitted changes
+        status_out = _git_run(["status", "--porcelain"], instance_dir)
+        has_uncommitted = bool(status_out.strip())
+
+        return {
+            "git_initialized": True,
+            "current_branch": branch,
+            "branches": branches,
+            "recent_commits": commits,
+            "has_uncommitted": has_uncommitted,
+        }
+    except Exception as e:
+        return {"git_initialized": True, "error": str(e)}
+
+
+@router.post("/instances/{instance_id}/git/commit")
+async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInfo = Depends(require_user)):
+    """Commit all changes in the instance."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        result = git_commit(instance_dir, body.message)
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        if "nothing to commit" in error_msg.lower() or "nothing added" in error_msg.lower():
+            return {"commit_hash": None, "branch": "", "files_changed": [], "message": "没有需要提交的变更"}
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/instances/{instance_id}/git/branch")
+async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInfo = Depends(require_user)):
+    """Branch operations: list, create, switch, delete."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        result = git_branch(instance_dir, body.action, body.name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/git/log")
+async def api_git_log(instance_id: str, limit: int = Query(10, description="Commit count"), user: UserInfo = Depends(require_user)):
+    """View git commit history."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        return {"commits": git_log(instance_dir, limit)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

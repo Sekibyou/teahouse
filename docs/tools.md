@@ -179,22 +179,42 @@ SkillExport(skill_name, output_path)
 
 ### GitCommit
 
-执行一次 git 提交。
+执行一次 git 提交（`git add -A && git commit`），锁定当前实例所有文件的状态。
 
 ```
-GitCommit(message, [files])
-→ commit hash
+GitCommit(message)
+→ {commit_hash, branch, files_changed}
 ```
 
-用途：楼层完成或总结时提交。
+- `message`：提交信息，建议格式 `floor-NNN: 简短描述`
+
+用途：楼层完成或总结时提交。每次调用会自动暂存所有变更（`git add -A`），无需手动指定文件列表。
+
+### GitBranch
+
+分支管理操作，用于剧情分支存档和回档。
+
+```
+GitBranch(action, [name])
+→ {action, [branches], [name], [current_branch]}
+```
+
+参数：
+- `action`：`list` / `create` / `switch` / `delete`
+- `name`：分支名（create/switch/delete 时需要）
+
+- `list`：列出所有分支，标记当前分支
+- `create`：基于当前 HEAD 创建新分支
+- `switch`：切换到已有分支（会改变实例目录下所有文件的版本，sessions/ 已移出版本控制）
+- `delete`：删除分支（安全模式，未合并时拒绝）
 
 ### GitLog
 
 查看提交历史。
 
 ```
-GitLog([limit], [format])
-→ 提交历史
+GitLog([limit])
+→ [{hash, author, date, message}]
 ```
 
 用途：确认楼层计数、查看总结历史。

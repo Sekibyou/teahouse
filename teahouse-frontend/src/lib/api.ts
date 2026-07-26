@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry } from "./types"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -232,5 +232,24 @@ export const chatApi = {
       throw new Error(err.detail || `HTTP ${response.status}`)
     }
     return response.body!
+  },
+}
+
+// Git API
+export const gitApi = {
+  getStatus: async (instanceId: string) => {
+    return get<GitStatus>(`/api/instances/${instanceId}/git/status`)
+  },
+
+  commit: async (instanceId: string, message: string) => {
+    return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, { message })
+  },
+
+  branch: async (instanceId: string, action: string, name?: string) => {
+    return post<GitBranchResult>(`/api/instances/${instanceId}/git/branch`, { action, name })
+  },
+
+  log: async (instanceId: string, limit: number = 10) => {
+    return get<{ commits: GitLogEntry[] }>(`/api/instances/${instanceId}/git/log?limit=${limit}`)
   },
 }

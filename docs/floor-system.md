@@ -134,18 +134,22 @@ skill prompt 中说：
 
 ## Git 提交流程
 
+每个实例创建时自动执行 `git init`，实例是一个独立的 git 仓库。
+
+### GitCommit 工具
+
+使用 `GitCommit(message)` 工具执行提交。内部执行 `git add -A && git commit -m "message"`，自动暂存所有变更。
+
 ### 楼层提交
 
-```bash
-git add floors/floor-NNN.md logs/summaries.yaml
-git commit -m "floor-NNN: 简短描述"
+```
+GitCommit("floor-NNN: 简短描述")
 ```
 
 ### 总结提交
 
-```bash
-git add variables/active.yaml logs/summaries.yaml logs/change-log/ floors/
-git commit -m "summary-NNN: 覆盖楼层 M~N 的总结"
+```
+GitCommit("summary-NNN: 覆盖楼层 M~N 的总结")
 ```
 
 ### 提交历史示例
@@ -159,6 +163,17 @@ floor-004: 镇中打探消息
 floor-005: 夜探藏书阁
 summary-002: floor-004~005 总结，变量已更新
 ```
+
+### 分支管理
+
+使用 `GitBranch(action, name?)` 管理分支，用于剧情分支存档和回档：
+
+- **创建分支**：`GitBranch("create", "分支名")` 基于当前 HEAD 创建
+- **切换分支**：`GitBranch("switch", "分支名")` 切换到已有分支，文件随之切换
+- **列出分支**：`GitBranch("list")` 查看所有分支
+- **删除分支**：`GitBranch("delete", "分支名")` 删除已合并的分支
+
+分支切换时，`sessions/` 目录不纳入版本控制，当前对话上下文不受影响。
 
 ## 楼层计数器
 

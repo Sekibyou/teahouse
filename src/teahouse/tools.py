@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .placeholder import resolve_messages_placeholders
+from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,45 @@ TOOLS: list[dict] = [
                     },
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "GitCommit",
+            "description": "执行一次 git 提交，锁定当前实例所有文件的状态。包含完整的楼层文件、设定文件和变量文件。返回 commit hash 和当前分支名。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "提交信息，建议格式：floor-NNN: 简短描述 或 summary-NNN: 简短描述",
+                    },
+                },
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "GitBranch",
+            "description": "分支管理操作。支持创建、切换、列出和删除分支。分支用于剧情分支存档、回档和实验性写作。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "create", "switch", "delete"],
+                        "description": "操作类型：list 列出所有分支，create 创建新分支（基于当前 HEAD），switch 切换到已有分支，delete 删除分支",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "分支名。create/switch/delete 时需要。建议使用有意义的名称，如 retro-回到星罗城、branch-分歧路线",
+                    },
+                },
+                "required": ["action"],
             },
         },
     },
@@ -393,6 +433,69 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Git tool executors
+# ---------------------------------------------------------------------------
+
+
+async def execute_git_commit(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Execute git add -A + git commit."""
+    message = args["message"]
+    try:
+        result = _git_commit(instance_dir, message)
+        files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
+        return (
+            f"提交成功\n"
+            f"  Commit: {result['commit_hash']}\n"
+            f"  Branch: {result['branch']}\n"
+            f"  文件: {files_str}"
+        )
+    except Exception as e:
+        error_msg = str(e)
+        if "nothing to commit" in error_msg.lower() or "nothing added" in error_msg.lower():
+            return "没有需要提交的变更"
+        return f"Git 提交失败: {error_msg}"
+
+
+async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Execute branch operations: list, create, switch, delete."""
+    action = args["action"]
+    name = args.get("name")
+
+    try:
+        result = _git_branch(instance_dir, action, name)
+
+        if action == "list":
+            branches = result["branches"]
+            if not branches:
+                return "（没有分支）"
+            lines = ["分支列表："]
+            for b in branches:
+                marker = "* " if b["is_current"] else "  "
+                lines.append(f"  {marker}{b['name']}  ({b['commit_hash']})")
+            return "\n".join(lines)
+
+        if action == "create":
+            return f"分支 '{name}' 创建成功（基于当前 HEAD）"
+
+        if action == "switch":
+            return f"已切换到分支 '{name}'"
+
+        if action == "delete":
+            return f"分支 '{name}' 已删除"
+
+        return f"未知操作: {action}"
+    except Exception as e:
+        error_msg = str(e)
+        if "already exists" in error_msg:
+            return f"分支 '{name}' 已存在"
+        if "not found" in error_msg or "not a valid branch" in error_msg:
+            return f"分支 '{name}' 不存在"
+        if "cannot delete branch" in error_msg and "not fully merged" in error_msg:
+            return f"无法删除分支 '{name}'：该分支有未合并的提交，请先切换到其他分支再重试"
+        return f"Git 分支操作失败: {error_msg}"
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -404,6 +507,8 @@ TOOL_EXECUTORS = {
     "Glob": execute_glob,
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
+    "GitCommit": execute_git_commit,
+    "GitBranch": execute_git_branch,
 }
 
 

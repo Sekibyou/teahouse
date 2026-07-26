@@ -64,3 +64,42 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system"
   content: string
 }
+
+// Git types
+export interface GitBranch {
+  name: string
+  is_current: boolean
+  commit_hash: string
+  commit_message: string
+}
+
+export interface GitCommitResult {
+  commit_hash: string
+  branch: string
+  files_changed: string[]
+  message?: string
+}
+
+export interface GitBranchResult {
+  action: string
+  branches?: GitBranch[]
+  name?: string
+  current_branch?: string
+  message?: string
+}
+
+export interface GitStatus {
+  git_initialized: boolean
+  current_branch?: string
+  branches?: GitBranch[]
+  recent_commits?: { hash: string; author: string; date: string; message: string }[]
+  has_uncommitted?: boolean
+  error?: string
+}
+
+export interface GitLogEntry {
+  hash: string
+  author: string
+  date: string
+  message: string
+}
