@@ -1,7 +1,6 @@
 import { useEffect, useRef, useMemo, useCallback } from "react"
 import Editor, { DiffEditor as ReactDiffEditor, type OnMount, loader } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
-import DiffMatchPatch from "diff-match-patch"
 
 // ---- CDN config ----
 loader.config({
@@ -68,160 +67,76 @@ function isDarkMode(): boolean {
   return document.documentElement.classList.contains("dark")
 }
 
-// ---- Inline diff decorations ----
-// Uses diff-match-patch for line-level Myers diff, then merges adjacent
-// DELETE+INSERT pairs into MODIFIED when similarity exceeds threshold.
-
-interface DiffLineInfo {
-  lineNumber: number
-  type: "added" | "deleted" | "modified"
-}
-
-const SIMILARITY_THRESHOLD = 0.6
+// ---- Inline diff decorations via headless Monaco DiffEditor ----
 
 /**
- * Levenshtein edit distance between two strings.
- * O(n*m) — fine for typical line lengths (<200 chars).
+ * Use Monaco's built-in diff engine (headless DiffEditor) to compute
+ * line-level changes between original and modified text, then convert
+ * them into editor decorations for the gutter.
  */
-function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length
-  // Use two-row DP to save memory
-  let prev = new Array<number>(n + 1)
-  let curr = new Array<number>(n + 1)
-  for (let j = 0; j <= n; j++) prev[j] = j
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i
-    for (let j = 1; j <= n; j++) {
-      curr[j] = a[i - 1] === b[j - 1]
-        ? prev[j - 1]
-        : 1 + Math.min(prev[j], curr[j - 1], prev[j - 1])
-    }
-    ;[prev, curr] = [curr, prev]
-  }
-  return prev[n]
-}
-
-/**
- * Normalised similarity in [0, 1].
- * 1 = identical, 0 = completely different.
- */
-function lineSimilarity(a: string, b: string): number {
-  if (a === b) return 1
-  if (a.length === 0 || b.length === 0) return 0
-  const dist = levenshtein(a, b)
-  return 1 - dist / Math.max(a.length, b.length)
-}
-
-/**
- * Compute changed lines between original and modified text.
- *
- * Strategy: run diff-match-patch at the character level, then walk the
- * character-level edit script and aggregate changes onto line boundaries.
- *
- * Each newline in the char-level diff naturally separates lines.  We
- * maintain old-side and new-side content fragments per line, so we can
- * tell whether a line was inserted, deleted, or modified.
- */
-function computeLineDiff(original: string, modified: string): DiffLineInfo[] {
-  if (original === modified) return []
-
-  const dmp = new DiffMatchPatch()
-  let diffs = dmp.diff_main(original, modified, true)
-  dmp.diff_cleanupSemantic(diffs)
-
-  // Per-line buffers: walk char by char, split on \n.
-  // A LineBuf accumulates old-side and new-side characters for one
-  // conceptual "line".  When we hit \n, the current line is finalised
-  // and a new empty line starts — EXCEPT for the \n character itself,
-  // which is always EQUAL (both sides have it, it's a line separator).
-  // We treat \n as always-unchanged and never render it as part of a
-  // diff annotation.
-
-  interface LineBuf {
-    oldChars: string
-    newChars: string
-  }
-
-  const lines: LineBuf[] = [{ oldChars: "", newChars: "" }]
-  let li = 0 // current line index
-
-  for (const [op, text] of diffs) {
-    for (const ch of text) {
-      if (ch === "\n") {
-        // Newline — advance to next line regardless of op.
-        // The \n itself is structural, never part of content diff.
-        li++
-        if (li >= lines.length) lines.push({ oldChars: "", newChars: "" })
-      } else if (op === DiffMatchPatch.DIFF_EQUAL) {
-        lines[li].oldChars += ch
-        lines[li].newChars += ch
-      } else if (op === DiffMatchPatch.DIFF_DELETE) {
-        lines[li].oldChars += ch
-      } else if (op === DiffMatchPatch.DIFF_INSERT) {
-        lines[li].newChars += ch
-      }
-    }
-  }
-
-  // Second pass: classify each line by what it has on old vs new side.
-  // Lines where old===new are unchanged and skipped.
-  const result: DiffLineInfo[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const { oldChars, newChars } = lines[i]
-    const modifiedLine = i + 1
-
-    if (oldChars === newChars) {
-      // Unchanged — skip
-      continue
-    }
-
-    if (oldChars !== "" && newChars !== "") {
-      // Both sides have content → modified (with similarity check)
-      const sim = lineSimilarity(oldChars, newChars)
-      result.push({ lineNumber: modifiedLine, type: sim >= SIMILARITY_THRESHOLD ? "modified" : "added" })
-    } else if (newChars !== "") {
-      // Only new side → pure insert
-      result.push({ lineNumber: modifiedLine, type: "added" })
-    } else if (oldChars !== "") {
-      // Only old side → pure delete (line exists in old, not in new)
-      result.push({ lineNumber: modifiedLine, type: "deleted" })
-    }
-  }
-
-  return result
-}
-
-function applyDiffDecorations(
-  editor: Monaco.editor.IStandaloneCodeEditor,
+async function computeLineDecorations(
+  monaco: typeof Monaco,
   original: string,
   modified: string,
-): Monaco.editor.IEditorDecorationsCollection | null {
-  const model = editor.getModel()
-  if (!model) return null
+  language: string,
+): Promise<Monaco.editor.IModelDeltaDecoration[]> {
+  const container = document.createElement("div")
+  const diffEditor = monaco.editor.createDiffEditor(container, {
+    diffAlgorithm: "advanced",
+    ignoreTrimWhitespace: false,
+  })
+  const originalModel = monaco.editor.createModel(original, language)
+  const modifiedModel = monaco.editor.createModel(modified, language)
+  const vm = diffEditor.createViewModel({ original: originalModel, modified: modifiedModel })
+  diffEditor.setModel(vm)
 
-  const diff = computeLineDiff(original, modified)
+  try {
+    await vm.waitForDiff()
+    const changes = diffEditor.getLineChanges()
+    if (!changes) return []
 
-  const decorations: Monaco.editor.IModelDeltaDecoration[] = diff
-    .filter(d => d.type !== "deleted") // deleted lines don't exist in the current model
-    .map(d => {
-      return {
-      range: {
-        startLineNumber: d.lineNumber,
-        startColumn: 1,
-        endLineNumber: d.lineNumber,
-        endColumn: 1,
-      },
-      options: {
-        isWholeLine: true,
-        className: d.type === "modified" ? "monaco-diff-modified-line" : "monaco-diff-added-line",
-        glyphMarginClassName: d.type === "modified" ? "monaco-diff-glyph-modified" : "monaco-diff-glyph-added",
-        glyphMarginHoverMessage: { value: d.type === "modified" ? "修改行" : "新增行" },
-      },
-    }
+    return changes.flatMap(c => {
+      const decs: Monaco.editor.IModelDeltaDecoration[] = []
+
+      const origLen = c.originalEndLineNumber - c.originalStartLineNumber + 1
+      const modLen = c.modifiedEndLineNumber - c.modifiedStartLineNumber + 1
+      const isDelete = origLen > 0 && modLen === 0
+      const isInsert = origLen === 0 && modLen > 0
+
+      // Replace: first N modified lines are "modified", the rest are "added"
+      const replaced = Math.min(origLen, modLen)
+
+      for (let ln = c.modifiedStartLineNumber; ln <= c.modifiedEndLineNumber; ln++) {
+        const offset = ln - c.modifiedStartLineNumber
+        const type = isDelete ? "deleted"
+          : isInsert ? "added"
+          : offset < replaced ? "modified"
+          : "added"
+
+        decs.push({
+          range: { startLineNumber: ln, startColumn: 1, endLineNumber: ln, endColumn: 1 },
+          options: {
+            isWholeLine: true,
+            className: type === "deleted" ? "monaco-diff-deleted-line"
+              : type === "added" ? "monaco-diff-added-line"
+              : "monaco-diff-modified-line",
+            glyphMarginClassName: type === "deleted" ? "monaco-diff-glyph-deleted"
+              : type === "added" ? "monaco-diff-glyph-added"
+              : "monaco-diff-glyph-modified",
+            glyphMarginHoverMessage: {
+              value: type === "deleted" ? "删除行" : type === "added" ? "新增行" : "修改行",
+            },
+          },
+        })
+      }
+      return decs
     })
-
-  return editor.createDecorationsCollection(decorations)
+  } finally {
+    vm.dispose()
+    diffEditor.dispose()
+    originalModel.dispose()
+    modifiedModel.dispose()
+  }
 }
 
 // ---- Editor component ----
@@ -235,6 +150,8 @@ export interface MonacoEditorProps {
   language?: string
   options?: Monaco.editor.IStandaloneEditorConstructionOptions
   onMount?: (editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => void
+  /** Called when Ctrl+S is pressed inside the editor */
+  onSave?: () => void
   minimap?: boolean
   readOnly?: boolean
   className?: string
@@ -248,6 +165,7 @@ export function MonacoEditor({
   language = "plaintext",
   options = {},
   onMount,
+  onSave,
   minimap = false,
   readOnly = false,
   className,
@@ -279,28 +197,44 @@ export function MonacoEditor({
     return () => observer.disconnect()
   }, [])
 
+  // Ctrl+S binding
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || !onSave) return
+    const disposable = editor.addAction({
+      id: "teahouse-save",
+      label: "Save File",
+      keybindings: [monacoRef.current!.KeyMod.CtrlCmd | monacoRef.current!.KeyCode.KeyS],
+      run: () => onSave(),
+    })
+    return () => disposable.dispose()
+  }, [onSave])
+
   // Apply diff decorations
   useEffect(() => {
     const editor = editorRef.current
-    if (!editor || !original) return
+    const monaco = monacoRef.current
+    if (!editor || !monaco || !original) return
 
-    if (decorationsRef.current) {
-      decorationsRef.current.clear()
+    if (value === original) {
+      if (decorationsRef.current) {
+        decorationsRef.current.clear()
+        decorationsRef.current = null
+      }
+      return
     }
 
-    if (value === original) return // clean
+    let cancelled = false
+    computeLineDecorations(monaco, original, value, language).then(decs => {
+      if (cancelled) return
+      if (decorationsRef.current) {
+        decorationsRef.current.clear()
+      }
+      decorationsRef.current = editor.createDecorationsCollection(decs)
+    })
 
-    decorationsRef.current = applyDiffDecorations(editor, original, value)
-  }, [value, original])
-
-  // Apply initial decorations on mount if already dirty
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor || !original) return
-    if (value === original || decorationsRef.current) return
-
-    decorationsRef.current = applyDiffDecorations(editor, original, value)
-  }, [original, value])
+    return () => { cancelled = true }
+  }, [value, original, language])
 
   const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
     minimap: { enabled: minimap },
@@ -314,6 +248,7 @@ export function MonacoEditor({
     readOnly,
     glyphMargin: true,
     folding: true,
+    matchBrackets: "never",
     ...options,
   }), [minimap, readOnly, options])
 

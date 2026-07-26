@@ -5,6 +5,7 @@ import {
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { llmConfigsApi } from "@/lib/api"
 import type { LLMConfig } from "@/lib/types"
 
@@ -19,6 +20,7 @@ export function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState("")
 
@@ -100,9 +102,14 @@ export function SettingsPage() {
     await loadConfigs()
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此配置？")) return
-    await llmConfigsApi.delete(id)
+  const handleDelete = (id: string) => {
+    setDeleteTarget(id)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await llmConfigsApi.delete(deleteTarget)
+    setDeleteTarget(null)
     await loadConfigs()
   }
 
@@ -289,6 +296,17 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Confirm delete dialog */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="确认删除"
+        message="确定删除此配置？此操作不可撤销。"
+        variant="destructive"
+        confirmText="删除"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

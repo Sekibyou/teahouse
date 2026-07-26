@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Play, FolderOpen, Loader2, Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import type { Prototype, Instance } from "@/lib/types"
@@ -18,6 +19,7 @@ export function SessionSelectPage() {
   // Dialog state
   const [showNewSession, setShowNewSession] = useState(false)
   const [showOpenSession, setShowOpenSession] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [selectedProtoId, setSelectedProtoId] = useState<string>("")
   const [instanceName, setInstanceName] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
@@ -68,7 +70,13 @@ export function SessionSelectPage() {
 
   const handleDeleteInstance = async (e: React.MouseEvent, instId: string) => {
     e.stopPropagation()
-    await instancesApi.delete(instId)
+    setDeleteTarget(instId)
+  }
+
+  const confirmDeleteInstance = async () => {
+    if (!deleteTarget) return
+    await instancesApi.delete(deleteTarget)
+    setDeleteTarget(null)
     await loadData()
   }
 
@@ -216,6 +224,17 @@ export function SessionSelectPage() {
           </div>
         </div>
       )}
+
+      {/* Confirm delete instance dialog */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="确认删除实例"
+        message="删除实例将永久删除该实例的所有数据，包括所有楼层和设置。此操作不可撤销。"
+        variant="destructive"
+        confirmText="删除"
+        onConfirm={confirmDeleteInstance}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

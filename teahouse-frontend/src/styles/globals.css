@@ -150,6 +150,15 @@
 
   /* ---- Monaco Editor inline diff decorations ---- */
 
+  /* Remove default focus outline (blue border) */
+  .monaco-editor {
+    outline: none !important;
+  }
+  .monaco-editor.focused {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
   /* Line background — tinted highlight for changed lines */
   .monaco-diff-added-line {
     background: color-mix(in oklch, var(--primary) 8%, transparent);

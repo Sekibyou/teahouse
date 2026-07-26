@@ -13,6 +13,7 @@ import { instancesApi, gitApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { GitDialog } from "@/components/GitDialog"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
@@ -36,6 +37,7 @@ export function WorkspacePage() {
   const [createName, setCreateName] = useState("")
 
   // Rename / delete — not yet implemented, but structure ready
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   const instId = activeInstance?.id
 
@@ -139,6 +141,7 @@ export function WorkspacePage() {
     if (res.ok) {
       setFileContent(editedContent)
       setIsDirty(false)
+      loadFileStatuses()
     }
     setIsSaving(false)
   }
@@ -152,11 +155,17 @@ export function WorkspacePage() {
     setShowCreate(null)
     setCreateName("")
     await loadFileTree()
+    loadFileStatuses()
   }
 
   const handleDeleteEntry = async (path: string) => {
-    if (!instId) return
-    if (!confirm(`确定删除 "${path}" 吗？`)) return
+    setDeleteTarget(path)
+  }
+
+  const confirmDelete = async () => {
+    if (!instId || !deleteTarget) return
+    const path = deleteTarget
+    setDeleteTarget(null)
     await instancesApi.deleteEntry(instId, path)
     if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
       setSelectedFile(null)
@@ -165,6 +174,7 @@ export function WorkspacePage() {
       setIsDirty(false)
     }
     await loadFileTree()
+    loadFileStatuses()
   }
 
   const handleLeaveSession = () => {
@@ -202,17 +212,6 @@ export function WorkspacePage() {
     })
   }
 
-  const getIcon = (node: FileTreeNode) => {
-    if (node.type === "directory") {
-      return expanded.has(node.path) ? (
-        <FolderOpen className="h-4 w-4 text-yellow-500 shrink-0" />
-      ) : (
-        <Folder className="h-4 w-4 text-yellow-500 shrink-0" />
-      )
-    }
-    return <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-  }
-
   if (!activeInstance) return null
 
   return (
@@ -239,6 +238,13 @@ export function WorkspacePage() {
               title="新建文件"
             >
               <Plus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className="p-0.5 rounded hover:bg-muted"
+              onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
+              title="新建文件夹"
+            >
+              <Folder className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -304,6 +310,7 @@ export function WorkspacePage() {
               <MonacoEditor
                 value={editedContent}
                 original={fileContent}
+                onSave={handleSave}
                 onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
                 language={
                   selectedFile?.endsWith(".md") ? "markdown" :
@@ -368,6 +375,17 @@ export function WorkspacePage() {
         onClose={() => setShowGitDialog(false)}
         onRefresh={() => { loadGitStatus(); loadFileTree() }}
       />
+
+      {/* Confirm delete dialog */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="确认删除"
+        message={`确定删除 "${deleteTarget}" 吗？此操作不可撤销。`}
+        variant="destructive"
+        confirmText="删除"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
@@ -389,9 +407,23 @@ function FileTreeView({
   fileStatuses: Map<string, string>
   depth?: number
 }) {
+  const stColor = (st: string | undefined) => {
+    if (!st) return "text-muted-foreground"
+    const m: Record<string, string> = {
+      "M": "text-amber-600 dark:text-amber-400",
+      "A": "text-green-600 dark:text-green-400",
+      "?": "text-green-600 dark:text-green-400",
+      "D": "text-red-600 dark:text-red-400",
+      "R": "text-purple-600 dark:text-purple-400",
+    }
+    return m[st] || "text-muted-foreground"
+  }
+
   return (
     <>
-      {nodes.map((node) => (
+      {nodes
+        .filter(n => n.name !== ".git")
+        .map((node) => (
         <div key={node.path}>
           <div
             className={`flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-muted/50 transition-colors group ${
@@ -415,19 +447,18 @@ function FileTreeView({
                     <ChevronRight className="h-3 w-3" />
                   )}
                 </span>
-                {expanded.has(node.path) ? (
-                  <FolderOpen className="h-4 w-4 text-yellow-500 shrink-0" />
-                ) : (
-                  <Folder className="h-4 w-4 text-yellow-500 shrink-0" />
-                )}
+                {(() => {
+                  const Icon = expanded.has(node.path) ? FolderOpen : Folder
+                  return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                })()}
               </>
             ) : (
               <>
                 <span className="w-3 shrink-0" />
-                <FileIconWithStatus status={node.type === "file" ? fileStatuses.get(node.path) : undefined} />
+                <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
               </>
             )}
-            <span className="flex-1 truncate text-sm">{node.name}</span>
+            <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
 
             {/* Action buttons — visible on hover */}
             <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
@@ -473,37 +504,9 @@ function FileTreeView({
               fileStatuses={fileStatuses}
               depth={depth + 1}
             />
-          )}
-        </div>
-      ))}
+            )}
+          </div>
+        ))}
     </>
-  )
-}
-
-/** Returns a colored status indicator dot + file icon based on git status. */
-function FileIconWithStatus({ status: st }: { status: string | undefined }) {
-  if (!st) {
-    return <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-  }
-  const colorMap: Record<string, string> = {
-    "M": "text-yellow-500",    // modified
-    "A": "text-green-500",     // added
-    "D": "text-red-500",       // deleted
-    "?": "text-blue-400",      // untracked
-    "R": "text-purple-500",    // renamed
-  }
-  const dotColor = colorMap[st] || "text-muted-foreground"
-  const statusLabel: Record<string, string> = {
-    "M": "已修改",
-    "A": "已暂存",
-    "D": "已删除",
-    "?": "未追踪",
-    "R": "已重命名",
-  }
-  return (
-    <span className="relative inline-flex items-center shrink-0" title={statusLabel[st] || st}>
-      <span className={`w-1.5 h-1.5 rounded-full absolute -left-2.5 ${dotColor}`} />
-      <FileText className="h-4 w-4 text-muted-foreground" />
-    </span>
   )
 }

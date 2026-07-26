@@ -22,6 +22,7 @@
 - **React Router** 路由（布局层路由守卫）
 - **Tailwind CSS v4** + OKLCH 色彩空间 + 暗黑模式
 - **pnpm** 进行包管理，严禁混用npm
+- **⚠️ 禁止使用浏览器原生弹窗**（`alert`、`confirm`、`prompt`），一律使用 `ConfirmDialog` 组件（`@/components/ConfirmDialog`）
 
 ## 项目定位
 

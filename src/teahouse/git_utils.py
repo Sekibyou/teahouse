@@ -156,7 +156,7 @@ def git_status_porcelain(instance_dir: Path) -> list[dict]:
             continue
         # First two chars: XY where X=staged status, Y=working-tree status
         raw = line[:2]
-        path = line[3:].strip()
+        path = line[2:].strip()
         staged = raw[0] != " "
 
         if raw[0] == "?" and raw[1] == "?":
