@@ -242,3 +242,11 @@ def git_log(instance_dir: Path, limit: int = 10, all_branches: bool = False) -> 
             "refs": parts[5] if len(parts) > 5 else "",
         })
     return entries
+
+
+def git_show_file(instance_dir: Path, file_path: str) -> str | None:
+    """Return the content of a file at HEAD, or None if the file doesn't exist in HEAD."""
+    try:
+        return _git_run(["show", f"HEAD:{file_path}"], instance_dir)
+    except GitError:
+        return None

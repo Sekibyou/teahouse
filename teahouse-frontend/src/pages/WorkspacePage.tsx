@@ -32,6 +32,24 @@ export function WorkspacePage() {
   const [isDirty, setIsDirty] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [saveToast, setSaveToast] = useState<boolean>(false)
+  const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveToastRef = useRef<HTMLSpanElement | null>(null)
+
+  const showSaveToast = useCallback(() => {
+    if (saveToastTimer.current) clearTimeout(saveToastTimer.current)
+    setSaveToast(true)
+    saveToastTimer.current = setTimeout(() => {
+      const el = saveToastRef.current
+      if (el) {
+        el.style.transition = "opacity 500ms ease-out"
+        el.style.opacity = "0"
+        saveToastTimer.current = setTimeout(() => {
+          setSaveToast(false)
+        }, 500)
+      }
+    }, 1500)
+  }, [])
   // Track whether the file content has finished loading, so MonacoEditor
   // only mounts with a fully-populated model (no undo-"back-to-empty" artifact).
   const [contentReady, setContentReady] = useState(false)
@@ -109,20 +127,32 @@ export function WorkspacePage() {
     loadFileTree()
   }, [loadFileTree])
 
+  // Diff content from git HEAD (null = new file → treat as empty for diff)
+  const [gitHeadContent, setGitHeadContent] = useState<string | null>(null)
+
   // Load file content when selected
   useEffect(() => {
     if (!instId || !selectedFile) {
       setFileContent("")
       setEditedContent("")
+      setGitHeadContent("")
       setIsDirty(false)
       setContentReady(false)
+      setSaveToast(null)
       return
     }
     ;(async () => {
-      const res = await instancesApi.readFile(instId, selectedFile)
-      if (res.ok) {
-        setFileContent(res.data!.content)
-        setEditedContent(res.data!.content)
+      const [fileRes, headRes] = await Promise.all([
+        instancesApi.readFile(instId, selectedFile),
+        gitApi.showFile(instId, selectedFile),
+      ])
+      if (fileRes.ok) {
+        const diskContent = fileRes.data!.content
+        setFileContent(diskContent)
+        setEditedContent(diskContent)
+        // git HEAD content: null if file doesn't exist in HEAD (new/untracked)
+        const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
+        setGitHeadContent(headContent)
         setIsDirty(false)
         setContentReady(true)
       }
@@ -151,6 +181,7 @@ export function WorkspacePage() {
       setFileContent(editedContent)
       setIsDirty(false)
       loadFileStatuses()
+      showSaveToast()
     }
     setIsSaving(false)
   }
@@ -203,10 +234,16 @@ export function WorkspacePage() {
     // Reload editor if the modified file is currently open
     const currentSelected = selectedFileRef.current
     if (currentSelected && (!filePath || filePath === currentSelected)) {
-      const r = await instancesApi.readFile(instId, currentSelected)
-      if (r.ok) {
-        setFileContent(r.data!.content)
-        setEditedContent(r.data!.content)
+      const [fileRes, headRes] = await Promise.all([
+        instancesApi.readFile(instId, currentSelected),
+        gitApi.showFile(instId, currentSelected),
+      ])
+      if (fileRes.ok) {
+        const diskContent = fileRes.data!.content
+        setFileContent(diskContent)
+        setEditedContent(diskContent)
+        const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
+        setGitHeadContent(headContent)
         setIsDirty(false)
       }
     }
@@ -331,6 +368,7 @@ export function WorkspacePage() {
               onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
               onDelete={handleDeleteEntry}
               fileStatuses={fileStatuses}
+              dirtyFile={isDirty ? selectedFile : null}
             />
           )}
         </div>
@@ -343,7 +381,8 @@ export function WorkspacePage() {
             <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
               <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
               <div className="flex items-center gap-2 shrink-0">
-                {isDirty && <span className="text-xs text-yellow-500">未保存</span>}
+                {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
+                {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
                 <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                   {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                   保存
@@ -354,7 +393,7 @@ export function WorkspacePage() {
               <MonacoEditor
                 key={editorKey}
                 value={editedContent}
-                original={fileContent}
+                original={gitHeadContent ?? ""}
                 onSave={handleSave}
                 onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
                 language={
@@ -455,6 +494,7 @@ export function WorkspacePage() {
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
   onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0,
+  dirtyFile,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -466,6 +506,7 @@ function FileTreeView({
   onDelete: (path: string) => void
   fileStatuses: Map<string, string>
   depth?: number
+  dirtyFile?: string | null
 }) {
   const stColor = (st: string | undefined) => {
     if (!st) return "text-muted-foreground"
@@ -519,6 +560,9 @@ function FileTreeView({
               </>
             )}
             <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
+            {node.type === "file" && dirtyFile === node.path && (
+              <span className="shrink-0 w-2 h-2 rounded-full bg-orange-500" title="未保存到磁盘" />
+            )}
 
             {/* Action buttons — visible on hover */}
             <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
@@ -563,6 +607,7 @@ function FileTreeView({
               onDelete={onDelete}
               fileStatuses={fileStatuses}
               depth={depth + 1}
+              dirtyFile={dirtyFile}
             />
             )}
           </div>

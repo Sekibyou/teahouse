@@ -1,5 +1,5 @@
-import { useEffect, useRef, useMemo, useCallback } from "react"
-import Editor, { DiffEditor as ReactDiffEditor, type OnMount, loader } from "@monaco-editor/react"
+import { useEffect, useRef, useMemo, useCallback, useState } from "react"
+import Editor, { type OnMount, loader } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 
 // ---- CDN config ----
@@ -166,6 +166,7 @@ export function MonacoEditor({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
+  const [editorReady, setEditorReady] = useState(false)
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
@@ -188,6 +189,7 @@ export function MonacoEditor({
       existingModel.dispose()
     }
 
+    setEditorReady(true)
     onMount?.(editor, monaco)
   }, [value, language, onMount])
 
@@ -221,11 +223,18 @@ export function MonacoEditor({
 
   // Apply diff decorations
   useEffect(() => {
+    if (!editorReady) return
     const editor = editorRef.current
     const monaco = monacoRef.current
-    if (!editor || !monaco || !original) return
+    if (!editor || !monaco) return
 
-    if (value === original) {
+    // Normalize trailing newlines for comparison — Monaco models always end with \n,
+    // which can cause a spurious empty-line diff when original lacks a trailing newline.
+    const norm = (s: string) => s.replace(/\r\n/g, "\n").trimEnd()
+    const normalizedValue = norm(value)
+    const normalizedOriginal = norm(original)
+
+    if (normalizedValue === normalizedOriginal) {
       if (decorationsRef.current) {
         decorationsRef.current.clear()
         decorationsRef.current = null
@@ -234,7 +243,7 @@ export function MonacoEditor({
     }
 
     let cancelled = false
-    computeLineDecorations(monaco, original, value, language).then(decs => {
+    computeLineDecorations(monaco, normalizedOriginal, normalizedValue, language).then(decs => {
       if (cancelled) return
       if (decorationsRef.current) {
         decorationsRef.current.clear()
@@ -243,7 +252,7 @@ export function MonacoEditor({
     })
 
     return () => { cancelled = true }
-  }, [value, original, language])
+  }, [editorReady, value, original, language])
 
   const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
     minimap: { enabled: minimap },
@@ -269,81 +278,6 @@ export function MonacoEditor({
         onChange={(val) => onChange?.(val || "")}
         theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
         onMount={handleMount}
-        options={mergedOptions}
-      />
-    </div>
-  )
-}
-
-// ---- Diff Editor ----
-
-export interface DiffEditorProps {
-  original: string
-  modified: string
-  language?: string
-  height?: string | number
-  minimap?: boolean
-  options?: Monaco.editor.IDiffEditorConstructionOptions
-  className?: string
-}
-
-export function MonacoDiffEditor({
-  original,
-  modified,
-  language = "plaintext",
-  height = "100%",
-  minimap = false,
-  options = {},
-  className,
-}: DiffEditorProps) {
-  const monacoRef = useRef<typeof Monaco | null>(null)
-
-  const handleDiffMount = useCallback((_editor: unknown, monaco: typeof Monaco) => {
-    monacoRef.current = monaco
-    const theme = monaco.editor.getTheme()
-    if (theme !== LIGHT_THEME && theme !== DARK_THEME) {
-      defineThemes(monaco)
-    }
-    monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
-  }, [])
-
-  useEffect(() => {
-    const monaco = monacoRef.current
-    if (!monaco) return
-    const observer = new MutationObserver(() => {
-      monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
-    })
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    })
-    return () => observer.disconnect()
-  }, [])
-
-  const mergedOptions: Monaco.editor.IDiffEditorConstructionOptions = useMemo(() => ({
-    minimap: { enabled: minimap },
-    fontSize: 13,
-    lineNumbers: "on",
-    scrollBeyondLastLine: false,
-    wordWrap: "on",
-    tabSize: 2,
-    automaticLayout: true,
-    enableSplitViewResizing: true,
-    renderSideBySide: true,
-    diffAlgorithm: "advanced",
-    ignoreTrimWhitespace: false,
-    ...options,
-  }), [minimap, options])
-
-  return (
-    <div className={className} style={{ height, width: "100%" }}>
-      <ReactDiffEditor
-        height="100%"
-        language={language}
-        original={original}
-        modified={modified}
-        theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
-        onMount={handleDiffMount}
         options={mergedOptions}
       />
     </div>

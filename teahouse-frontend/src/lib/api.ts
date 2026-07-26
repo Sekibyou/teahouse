@@ -286,4 +286,10 @@ export const gitApi = {
       `/api/instances/${instanceId}/git/discard`, { path }
     )
   },
+
+  showFile: async (instanceId: string, filePath: string) => {
+    return get<{ content: string | null }>(
+      `/api/instances/${instanceId}/git/show-file?path=${encodeURIComponent(filePath)}`
+    )
+  },
 }

@@ -32,7 +32,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
 )
-from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, _git_run, GitError
+from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +508,22 @@ async def api_git_file_status(instance_id: str, user: UserInfo = Depends(require
     instance_dir = _resolve_instance_dir(inst)
     try:
         return {"files": git_status_porcelain(instance_dir)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/git/show-file")
+async def api_git_show_file(instance_id: str, path: str = Query(...), user: UserInfo = Depends(require_user)):
+    """Return the content of a file at HEAD, or None for new/untracked files."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        content = git_show_file(instance_dir, path)
+        return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
