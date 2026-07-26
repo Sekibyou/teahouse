@@ -21,6 +21,7 @@
 - **Zustand** 状态管理 + persist 中间件
 - **React Router** 路由（布局层路由守卫）
 - **Tailwind CSS v4** + OKLCH 色彩空间 + 暗黑模式
+- **pnpm** 进行包管理，严禁混用npm
 
 ## 项目定位
 
@@ -133,8 +134,6 @@ variables/           变量文件夹（故事状态跟踪）
 floors/              正文楼层 + 总结（归档，commit 后不可变）
   floor-001.md        正文楼层，编号递增
   sum-001.md          总结，编号递增（与楼层编号独立）
-sessions/            会话持久化存储
-  session-<timestamp>.json
 current/             临时文件夹，提交时最好为空
   generate-output.json  Generate 工具占位符替换后的调试产物
   draft.md            未完成草稿（续写用）
@@ -148,6 +147,6 @@ current/             临时文件夹，提交时最好为空
 |---|---|
 | `settings/`、`variables/`、根目录文件 | 完全展开 |
 | `current/`、`skills/` | 只显示目录名（紧凑），不展开文件 |
-| `floors/`、`sessions/` | 折叠为统计行，如 `floors/ (Newest: floor-009.md; Total: 9 files)` |
+| `floors/` | 折叠为统计行，如 `floors/ (Newest: floor-009.md; Total: 9 files)` |
 
 需要深入探索时通过 Glob 工具按需查看。

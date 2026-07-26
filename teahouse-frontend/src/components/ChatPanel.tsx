@@ -6,6 +6,7 @@ import { getActiveInstance } from "@/stores/sessionStore"
 import type { ChatMessage } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { toast } from "sonner"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
 
@@ -38,12 +39,56 @@ interface ChatPanelProps {
 
 export function ChatPanel({ onFileChanged }: ChatPanelProps) {
   const [messages, setMessages] = useState<RichMessage[]>([])
+
+  // Restore messages from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("chat-messages")
+      if (saved) {
+        const parsed = JSON.parse(saved) as RichMessage[]
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed)
+          const maxId = parsed.reduce((max, m) => {
+            const num = parseInt(m.id.replace("msg-", ""), 10)
+            return num > max ? num : max
+          }, 0)
+          if (maxId > 0) msgIdCounter = maxId
+        }
+      }
+    } catch {
+      // localStorage 数据损坏则忽略
+    }
+  }, [])
+
+  // Persist messages to localStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem("chat-messages", JSON.stringify(messages))
+    } catch {
+      // 序列化失败或存储满时忽略
+    }
+  }, [messages])
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
   const latestToolCallsRef = useRef<ToolCallEvent[]>([])
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [commandIndex, setCommandIndex] = useState(0)
+
+  // Available commands for autocomplete
+  const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
+
+  // Compute filtered commands
+  const filteredCommands = input.startsWith("/")
+    ? COMMANDS.filter((c) => c.name.startsWith(input))
+    : []
+
+  // Clamp commandIndex when filtered list shrinks
+  useEffect(() => {
+    setCommandIndex((i) => Math.min(i, Math.max(filteredCommands.length - 1, 0)))
+  }, [filteredCommands.length])
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -63,6 +108,16 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
     if (!text) return
+
+    // /clear 命令：清空当前对话
+    if (text === "/clear") {
+      setMessages([])
+      setInput("")
+      try { localStorage.setItem("chat-messages", "[]") } catch {}
+      toast.success("会话已清空")
+      scrollToBottom()
+      return
+    }
 
     const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
     const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", toolCalls: [] }
@@ -237,6 +292,25 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (filteredCommands.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setCommandIndex((i) => (i + 1) % filteredCommands.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setCommandIndex((i) => (i - 1 + filteredCommands.length) % filteredCommands.length)
+        return
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault()
+        setInput(filteredCommands[commandIndex].name + " ")
+        setCommandIndex(0)
+        inputRef.current?.focus()
+        return
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -278,15 +352,38 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t border-border shrink-0">
+      <div className="p-3 border-t border-border shrink-0 relative">
+        {filteredCommands.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
+            {filteredCommands.map((cmd, i) => (
+              <button
+                key={cmd.name}
+                className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors ${
+                  i === commandIndex ? "bg-accent text-accent-foreground" : "text-popover-foreground"
+                }`}
+                onMouseEnter={() => setCommandIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setInput(cmd.name + " ")
+                  setCommandIndex(0)
+                  inputRef.current?.focus()
+                }}
+              >
+                <span className="font-mono text-primary">{cmd.name}</span>
+                <span className="text-xs text-muted-foreground">{cmd.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
           <textarea
+            ref={inputRef}
             className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring min-h-[40px] max-h-[120px]"
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入消息... (Enter 发送)"
+            placeholder="输入消息... / 查看命令 (Enter 发送)"
           />
           <Button
             size="icon"

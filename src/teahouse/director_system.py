@@ -32,20 +32,16 @@ INSTANCE_TEAHOUSE = "teahouse.md"
 SKILLS_DIR = "skills"
 
 # Directories excluded entirely from tree display
-TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules"}
+TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions"}
 
 # Directories whose contents are summarized rather than expanded
-FOLD_DIRS = {"floors", "sessions"}
+FOLD_DIRS = {"floors", "skills"}
 # Directories shown as name only (no file listing, no subdirectory expansion)
-COMPACT_DIRS = {"skills", "current"}
+COMPACT_DIRS = {"current"}
 
 
 def _summarize_dir(dir_path: Path, name: str) -> str:
-    """Build a one-line summary for a folded directory.
-
-    floors/: show newest floor and sum file, total count.
-    sessions/: show newest session file, total count.
-    """
+    """Build a one-line summary for a folded or compact directory."""
     files = sorted([f for f in dir_path.iterdir() if f.is_file()])
     total = len(files)
 
@@ -56,19 +52,15 @@ def _summarize_dir(dir_path: Path, name: str) -> str:
         newest_sum = sums[-1].name if sums else None
         parts = []
         if newest_floor:
-            parts.append(f"Newest: {newest_floor}")
+            parts.append(f"Newest floor: {newest_floor}")
         if newest_sum:
-            parts.append(f"Newest: {newest_sum}")
+            parts.append(f"Newest sum: {newest_sum}")
         parts.append(f"Total: {total} files")
         return f"floors/  ({'; '.join(parts)})"
 
-    if name == "sessions":
-        newest = files[-1].name if files else None
-        parts = []
-        if newest:
-            parts.append(f"Newest: {newest}")
-        parts.append(f"Total: {total} files")
-        return f"sessions/  ({'; '.join(parts)})"
+    if name == "skills":
+        subdirs = [d for d in dir_path.iterdir() if d.is_dir() and d.name not in TREE_EXCLUDE and not d.name.startswith(".")]
+        return f"skills/  ({len(subdirs)} skills available, see skills list below)"
 
     return f"{name}/  ({total} files)"
 
@@ -78,7 +70,7 @@ def _scan_tree(instance_dir: Path) -> str:
 
     Rules:
     - All root-level entries are shown (nothing hidden at root).
-    - floors/ and sessions/ are folded into a one-line summary.
+    - floors/ is folded into a one-line summary.
     - skills/ and current/ are shown as directory name only (compact).
     - Other directories (settings/, variables/, etc.) are fully expanded.
     """
