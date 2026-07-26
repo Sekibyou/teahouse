@@ -1,5 +1,5 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from "react"
-import { DiffEditor as ReactDiffEditor, loader } from "@monaco-editor/react"
+import { useEffect, useRef, useMemo, useCallback } from "react"
+import Editor, { DiffEditor as ReactDiffEditor, type OnMount, loader } from "@monaco-editor/react"
 import type * as Monaco from "monaco-editor"
 
 // ---- CDN config ----
@@ -163,93 +163,61 @@ export function MonacoEditor({
   readOnly = false,
   className,
 }: MonacoEditorProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
-  const onChangeRef = useRef(onChange)
-  const onSaveRef = useRef(onSave)
-  const onMountRef = useRef(onMount)
-  const [monacoReady, setMonacoReady] = useState<typeof Monaco | null>(null)
 
-  // Keep callback refs up-to-date
-  onChangeRef.current = onChange
-  onSaveRef.current = onSave
-  onMountRef.current = onMount
-
-  // Load Monaco once
-  useEffect(() => {
-    let disposed = false
-    loader.init().then((monaco) => {
-      if (disposed) return
-      defineThemes(monaco)
-      monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
-      setMonacoReady(monaco)
-    })
-    return () => { disposed = true }
-  }, [])
-
-  // Create/dispose editor instance & model on every value/language change
-  useEffect(() => {
-    const monaco = monacoReady
-    if (!monaco || !containerRef.current) return
-
-    // Dispose previous editor & its model
-    if (editorRef.current) {
-      editorRef.current.getModel()?.dispose()
-      editorRef.current.dispose()
-      editorRef.current = null
-    }
-
-    // Create a fresh model (unique per value, no reuse = no stale undo stack)
-    const model = monaco.editor.createModel(value, language)
-
-    const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = {
-      model,
-      minimap: { enabled: minimap },
-      fontSize: 13,
-      lineNumbers: "on",
-      scrollBeyondLastLine: false,
-      wordWrap: "on",
-      tabSize: 2,
-      automaticLayout: true,
-      padding: { top: 12 },
-      readOnly,
-      glyphMargin: true,
-      folding: true,
-      matchBrackets: "never",
-      ...options,
-    }
-
-    const editor = monaco.editor.create(containerRef.current, mergedOptions)
+  const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
+    defineThemes(monaco)
+    monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
 
-    // Listen for changes
-    editor.onDidChangeModelContent(() => {
-      onChangeRef.current?.(editor.getValue())
+    // The <Editor> component sets an empty model then calls setValue(text).
+    // This means "undo" from the user's first edit goes through
+    //   user edit → setValue → empty → nothing
+    // which makes it look like you can undo back to an empty file.
+    // We work around it by creating the model ourselves populated with the
+    // initial text, so the undo stack starts clean.
+    const existingModel = editor.getModel()
+    if (existingModel) {
+      // Create a fresh model pre-populated with the value,
+      // then swap it in so the undo stack has nothing before the content.
+      const freshModel = monaco.editor.createModel(value, language)
+      editor.setModel(freshModel)
+      existingModel.dispose()
+    }
+
+    onMount?.(editor, monaco)
+  }, [value, language, onMount])
+
+  // Theme following via MutationObserver
+  useEffect(() => {
+    const monaco = monacoRef.current
+    if (!monaco) return
+
+    const observer = new MutationObserver(() => {
+      monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
     })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    })
+    return () => observer.disconnect()
+  }, [])
 
-    // Ctrl+S
-    if (onSaveRef.current) {
-      editor.addAction({
-        id: "teahouse-save",
-        label: "Save File",
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-        run: () => onSaveRef.current?.(),
-      })
-    }
-
-    onMountRef.current?.(editor, monaco)
-
-    return () => {
-      model.dispose()
-      editor.dispose()
-      editorRef.current = null
-      monacoRef.current = null
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monacoReady, value, language])
+  // Ctrl+S binding
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || !onSave) return
+    const disposable = editor.addAction({
+      id: "teahouse-save",
+      label: "Save File",
+      keybindings: [monacoRef.current!.KeyMod.CtrlCmd | monacoRef.current!.KeyCode.KeyS],
+      run: () => onSave(),
+    })
+    return () => disposable.dispose()
+  }, [onSave])
 
   // Apply diff decorations
   useEffect(() => {
@@ -277,24 +245,32 @@ export function MonacoEditor({
     return () => { cancelled = true }
   }, [value, original, language])
 
-  // Theme following via MutationObserver
-  useEffect(() => {
-    const monaco = monacoReady
-    if (!monaco) return
-
-    const observer = new MutationObserver(() => {
-      monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
-    })
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    })
-    return () => observer.disconnect()
-  }, [monacoReady])
+  const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
+    minimap: { enabled: minimap },
+    fontSize: 13,
+    lineNumbers: "on",
+    scrollBeyondLastLine: false,
+    wordWrap: "on",
+    tabSize: 2,
+    automaticLayout: true,
+    padding: { top: 12 },
+    readOnly,
+    glyphMargin: true,
+    folding: true,
+    matchBrackets: "never",
+    ...options,
+  }), [minimap, readOnly, options])
 
   return (
     <div className={className} style={{ height, width: "100%" }}>
-      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
+      <Editor
+        height="100%"
+        language={language}
+        onChange={(val) => onChange?.(val || "")}
+        theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
+        onMount={handleMount}
+        options={mergedOptions}
+      />
     </div>
   )
 }

@@ -25,11 +25,16 @@ export function WorkspacePage() {
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  // Increment on file switch to force MonacoEditor remount
+  const [editorKey, setEditorKey] = useState(0)
   const [fileContent, setFileContent] = useState("")
   const [editedContent, setEditedContent] = useState("")
   const [isDirty, setIsDirty] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  // Track whether the file content has finished loading, so MonacoEditor
+  // only mounts with a fully-populated model (no undo-"back-to-empty" artifact).
+  const [contentReady, setContentReady] = useState(false)
 
   // Create dialog state
   const [showCreate, setShowCreate] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
@@ -110,6 +115,7 @@ export function WorkspacePage() {
       setFileContent("")
       setEditedContent("")
       setIsDirty(false)
+      setContentReady(false)
       return
     }
     ;(async () => {
@@ -118,6 +124,7 @@ export function WorkspacePage() {
         setFileContent(res.data!.content)
         setEditedContent(res.data!.content)
         setIsDirty(false)
+        setContentReady(true)
       }
     })()
   }, [instId, selectedFile])
@@ -308,7 +315,18 @@ export function WorkspacePage() {
               expanded={expanded}
               selectedFile={selectedFile}
               onToggle={toggleExpand}
-              onSelect={(path) => { setSelectedFile(path); setIsDirty(false) }}
+              onSelect={(path) => {
+                // Force MonacoEditor to fully remount by clearing then re-setting
+                setSelectedFile(null)
+                setFileContent("")
+                setEditedContent("")
+                setIsDirty(false)
+                // Use setTimeout to let React flush the unmount before setting new file
+                setTimeout(() => {
+                  setEditorKey(k => k + 1)
+                  setSelectedFile(path)
+                }, 0)
+              }}
               onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
               onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
               onDelete={handleDeleteEntry}
@@ -320,7 +338,7 @@ export function WorkspacePage() {
 
       {/* Middle panel — Editor */}
       <div className="flex-[2] flex flex-col bg-background min-w-0">
-        {selectedFile ? (
+        {selectedFile && contentReady ? (
           <>
             <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
               <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
@@ -334,7 +352,7 @@ export function WorkspacePage() {
             </div>
             <div className="flex-1 w-full overflow-hidden">
               <MonacoEditor
-                key={selectedFile}
+                key={editorKey}
                 value={editedContent}
                 original={fileContent}
                 onSave={handleSave}
