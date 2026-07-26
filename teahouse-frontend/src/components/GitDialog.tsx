@@ -54,10 +54,8 @@ const STATUS_MAP: Record<string, { label: string; icon: typeof FileText; color: 
   R: { label: "重命名", icon: FileEdit, color: "text-purple-500" },
 }
 
-let _tempCounter = 0
 function nextTempName(): string {
-  _tempCounter++
-  return `temp-${_tempCounter}`
+  return `temp-${Date.now().toString(36)}`
 }
 
 export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
@@ -79,15 +77,6 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   const [renaming, setRenaming] = useState(false)
   const [newBranchName, setNewBranchName] = useState("")
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-
-  // Confirmation dialog for navigate/reset (non-self clicks)
-  const [confirmAction, setConfirmAction] = useState<{
-    hash: string
-    msg: string
-    branchName: string
-    isOnCurrentBranch: boolean
-    action: "switch" | "reset" | "switch-and-reset"
-  } | null>(null)
 
   const [tab, setTab] = useState<TabKey>("graph")
 
@@ -125,7 +114,6 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setContextNode(null)
-        setConfirmAction(null)
         setConfirmingDelete(false)
         setRenaming(false)
       }
@@ -163,63 +151,26 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     setCommitting(false)
   }
 
-  /** Click on any node: self → context menu, others → confirmation dialog */
+  /** Click on any node → always open context menu */
   const handleNodeClick = useCallback(
     (hash: string, msg: string, isCurrentBranchHead: boolean, isOnCurrentBranch: boolean, branchName: string) => {
-      if (isCurrentBranchHead) {
-        setContextNode({ hash, msg, branchName, isSelf: true, isOnCurrentBranch })
-        return
-      }
-
-      if (gitStatus?.has_uncommitted) {
-        setError("有未提交的变更，请先提交或丢弃")
-        return
-      }
-
       setError("")
-
-      const branchInfo = gitStatus?.branches?.find(b => b.name === branchName)
-      const isOtherLatest = branchInfo?.commit_hash === hash
-
-      let action: "switch" | "reset" | "switch-and-reset"
-      if (isOnCurrentBranch) {
-        action = "reset"
-      } else if (isOtherLatest) {
-        action = "switch"
-      } else {
-        action = "switch-and-reset"
-      }
-
-      setConfirmAction({ hash, msg, branchName, isOnCurrentBranch, action })
+      setContextNode({ hash, msg, branchName, isSelf: isCurrentBranchHead, isOnCurrentBranch })
     },
-    [gitStatus]
+    []
   )
 
-  const executeNodeAction = async () => {
-    if (!confirmAction) return
-    const { hash, branchName, action } = confirmAction
+  const executeNavigate = async (hash: string, branchName: string, isOtherLatest: boolean) => {
     setError("")
-    setConfirmAction(null)
-
     const tempName = nextTempName()
-
     try {
-      if (action === "reset") {
-        // Current branch historical node: create temp at target, switch to it
-        // Original branch stays intact with all its commits
-        await gitApi.branch(instanceId, "create", tempName, hash)
-        const swRes = await gitApi.branch(instanceId, "switch", tempName)
-        if (!swRes.ok) throw new Error(swRes.error || "切换失败")
-      } else if (action === "switch") {
+      if (isOtherLatest) {
         const swRes = await gitApi.branch(instanceId, "switch", branchName)
         if (!swRes.ok) throw new Error(swRes.error || "切换失败")
       } else {
-        // Other branch non-latest: create temp at target hash, switch to it
         await gitApi.branch(instanceId, "create", tempName, hash)
-        const swRes = await gitApi.branch(instanceId, "switch", tempName)
-        if (!swRes.ok) throw new Error(swRes.error || "切换失败")
+        await gitApi.branch(instanceId, "switch", tempName)
       }
-
       await loadStatus()
       await loadFileStatuses()
       onRefresh()
@@ -433,6 +384,72 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                             </div>
 
                             <div className="border-t border-border pt-2 space-y-2">
+                              {/* Navigate actions (non-self nodes only) */}
+                              {!contextNode.isSelf && (() => {
+                                const brInfo = gitStatus?.branches?.find(b => b.name === contextNode.branchName)
+                                const isBranchHead = brInfo?.commit_hash === contextNode.hash
+                                return (
+                                <>
+                                  {isBranchHead ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="w-full justify-start"
+                                      onClick={() => {
+                                        setError("")
+                                        if (gitStatus?.has_uncommitted) {
+                                          setError("有未提交的变更，请先提交或丢弃")
+                                          return
+                                        }
+                                        setContextNode(null)
+                                        executeNavigate(contextNode.hash, contextNode.branchName!, true)
+                                      }}
+                                    >
+                                      <GitBranchIcon className="h-3.5 w-3.5 mr-2" />
+                                      切换到「{contextNode.branchName}」
+                                    </Button>
+                                  ) : (
+                                    <>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full justify-start"
+                                        onClick={() => {
+                                          setError("")
+                                          if (gitStatus?.has_uncommitted) {
+                                            setError("有未提交的变更，请先提交或丢弃")
+                                            return
+                                          }
+                                          setContextNode(null)
+                                          executeNavigate(contextNode.hash, contextNode.branchName!, true)
+                                        }}
+                                      >
+                                        <GitBranchIcon className="h-3.5 w-3.5 mr-2" />
+                                        切换到「{contextNode.branchName}」最新
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full justify-start"
+                                        onClick={() => {
+                                          setError("")
+                                          if (gitStatus?.has_uncommitted) {
+                                            setError("有未提交的变更，请先提交或丢弃")
+                                            return
+                                          }
+                                          setContextNode(null)
+                                          executeNavigate(contextNode.hash, contextNode.branchName!, false)
+                                        }}
+                                      >
+                                        <CornerDownRight className="h-3.5 w-3.5 mr-2" />
+                                        回退到此节点（创建临时分支）
+                                      </Button>
+                                    </>
+                                  )}
+                                </>
+                                )
+                              })()}
+
                               {/* Discard all (self node only) */}
                               {contextNode.isSelf && (
                                 <Button
@@ -489,69 +506,50 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                 </div>
                               )}
 
-                              {/* Delete node */}
-                              {!confirmingDelete ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full justify-start text-red-500 hover:text-red-500"
-                                  onClick={() => {
-                                    setConfirmingDelete(true)
-                                    setRenaming(false)
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                  删除此节点及后续提交
-                                </Button>
-                              ) : (
-                                <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
-                                  <p className="text-xs text-red-500">
-                                    此操作将删除该节点及其之后的所有提交，不可恢复。是否确认？
-                                  </p>
-                                  <div className="flex gap-2">
-                                    <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
-                                      取消
-                                    </Button>
-                                    <Button size="sm" variant="destructive" className="flex-1" onClick={handleDeleteNode}>
-                                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                                      确认删除
-                                    </Button>
+                              {/* Delete node — disabled for HEAD self when it's the only commit on the branch */}
+                              {(() => {
+                                const cbHead = gitStatus?.branches?.find(b => b.name === contextNode.branchName)
+                                // Can't delete if this is self AND the branch only has this commit
+                                const isOnlyCommit = contextNode.isSelf && cbHead && cbHead.commit_hash === contextNode.hash && commits.length <= 1
+                                return !confirmingDelete ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={`w-full justify-start ${isOnlyCommit ? "text-muted-foreground cursor-not-allowed" : "text-red-500 hover:text-red-500"}`}
+                                    disabled={isOnlyCommit}
+                                    onClick={() => {
+                                      if (isOnlyCommit) return
+                                      setConfirmingDelete(true)
+                                      setRenaming(false)
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                    {isOnlyCommit ? "无法删除（唯一提交）" : "删除此节点及后续提交"}
+                                  </Button>
+                                ) : (
+                                  <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+                                    <p className="text-xs text-red-500">
+                                      此操作将删除该节点及其之后的所有提交，不可恢复。是否确认？
+                                    </p>
+                                    <div className="flex gap-2">
+                                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
+                                        取消
+                                      </Button>
+                                      <Button size="sm" variant="destructive" className="flex-1" onClick={handleDeleteNode}>
+                                        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                                        确认删除
+                                      </Button>
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                )
+                              })()}
                             </div>
                           </div>
                         </div>
                       )}
 
                       {/* Confirm navigation/reset dialog */}
-                      {confirmAction && (
-                        <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-10" onClick={() => setConfirmAction(null)}>
-                          <div
-                            className="bg-background rounded-lg shadow-xl border border-border w-96 p-5 space-y-3"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <h4 className="text-sm font-medium">确认操作</h4>
-                            <p className="text-xs text-muted-foreground">
-                              {confirmAction.action === "switch" && `切换到分支「${confirmAction.branchName}」的最新提交？`}
-                              {confirmAction.action === "reset" && `回退到当前分支的此提交？后续提交将保留在临时分支中（可随时切换回来）。`}
-                              {confirmAction.action === "switch-and-reset" && `进入分支「${confirmAction.branchName}」并回退到选中的提交？后续提交将保留在临时分支中。`}
-                            </p>
-                            <div className="text-xs bg-muted/30 rounded p-2 space-y-0.5">
-                              <p><span className="font-mono text-muted-foreground">{confirmAction.hash}</span></p>
-                              <p>{confirmAction.msg}</p>
-                            </div>
-                            <div className="flex justify-end gap-2 pt-1">
-                              <Button size="sm" variant="outline" onClick={() => setConfirmAction(null)}>
-                                取消
-                              </Button>
-                              <Button size="sm" onClick={executeNodeAction}>
-                                {confirmAction.action === "switch" ? "切换" : "确认回退"}
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      {}
                     </div>
                   </div>
                 )}
@@ -816,7 +814,11 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
       const refs = hashToBranches.get(c.hash) || []
       const branchName = hashToBranch.get(c.hash) || currentBranch
       const isOnCurrentBranch = currentBranchCommits.has(c.hash)
-      const bgColor = isOnCurrentBranch ? "#a855f7" : "#9ca3af"
+      const { type } = commitTypeLabel(c.message)
+      // Color by commit type (when on current branch), otherwise gray
+      const activeColor = type === "总结" ? "#22c55e" : type === "暂存" ? "#f59e0b" : "#a855f7"
+      const bgColor = isOnCurrentBranch ? activeColor : "#9ca3af"
+      const nodeW = type === "总结" ? 110 : 180
       const isBranchHead = refs.length > 0
       const isHead = isBranchHead && refs.includes(currentBranch)
       const isHeadOfAny = refs.length > 0
@@ -829,12 +831,11 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
       }
 
       const dagreNode = g.node(c.hash)
-      const { type } = commitTypeLabel(c.message)
 
       nodeList.push({
         id: c.hash,
         type: COMMIT_NODE_TYPE,
-        position: { x: dagreNode.x - NODE_W / 2, y: dagreNode.y - NODE_H / 2 },
+        position: { x: dagreNode.x - nodeW / 2, y: dagreNode.y - NODE_H / 2 },
         data: {
           hash: c.hash,
           message: c.message,
@@ -846,6 +847,7 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
           branchName,
           currentBranch,
           bgColor,
+          nodeW,
           isOnCurrentBranch,
           isCurrentBranchHead: isHead && isLatestOnAnyBranch,
           onNodeClick,
@@ -915,6 +917,7 @@ interface CommitNodeData {
   branchName: string
   currentBranch: string
   bgColor: string
+  nodeW: number
   isOnCurrentBranch: boolean
   isCurrentBranchHead: boolean
   onNodeClick: (hash: string, msg: string, isCurrentHead: boolean, isOnCurrentBranch: boolean, branchName: string) => void
@@ -928,7 +931,7 @@ function CommitNode({ data }: NodeProps<CommitNodeData>) {
       className={`rounded-lg border-2 bg-background shadow-sm hover:shadow-md transition-all cursor-pointer ${
         isDim ? "opacity-35 hover:opacity-65" : ""
       }`}
-      style={{ borderColor: data.bgColor, width: 180 }}
+      style={{ borderColor: data.bgColor, width: data.nodeW }}
       onClick={() => data.onNodeClick(data.hash, data.message, data.isCurrentBranchHead, data.isOnCurrentBranch, data.branchName)}
     >
       <Handle type="target" position={Position.Top} style={{ background: data.bgColor, width: 7, height: 7 }} />
@@ -956,10 +959,7 @@ function CommitNode({ data }: NodeProps<CommitNodeData>) {
             </div>
           )}
           {data.commitType === "暂存" && (
-            <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-              <Save className="h-2.5 w-2.5" />
-              <span>暂存</span>
-            </div>
+            <span className="text-[11px] leading-tight truncate text-amber-600 dark:text-amber-400">{data.message}</span>
           )}
           {data.commitType === "其他" && (
             <span className="text-[10px] text-muted-foreground truncate">{data.message}</span>
