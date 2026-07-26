@@ -32,7 +32,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
 )
-from ..git_utils import git_commit, git_branch, git_log
+from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain
 
 
 # ---------------------------------------------------------------------------
@@ -492,5 +492,20 @@ async def api_git_log(instance_id: str, limit: int = Query(10, description="Comm
     instance_dir = _resolve_instance_dir(inst)
     try:
         return {"commits": git_log(instance_dir, limit)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/git/file-status")
+async def api_git_file_status(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get per-file git status for file tree coloring."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        return {"files": git_status_porcelain(instance_dir)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

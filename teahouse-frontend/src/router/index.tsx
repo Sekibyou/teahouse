@@ -3,11 +3,17 @@ import { MainLayout } from "@/components/MainLayout"
 import { SessionSelectPage } from "@/pages/SessionSelectPage"
 import { WorkspacePage } from "@/pages/WorkspacePage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <MainLayout />,
+    element: (
+      <ErrorBoundary>
+        <MainLayout />
+      </ErrorBoundary>
+    ),
+    ErrorBoundary: () => null,
     children: [
       { index: true, element: <SessionSelectPage /> },
       { path: "workspace", element: <WorkspacePage /> },
@@ -17,5 +23,9 @@ const router = createBrowserRouter([
 ])
 
 export function AppRouter() {
-  return <RouterProvider router={router} />
+  return (
+    <ErrorBoundary>
+      <RouterProvider router={router} fallbackElement={null} />
+    </ErrorBoundary>
+  )
 }

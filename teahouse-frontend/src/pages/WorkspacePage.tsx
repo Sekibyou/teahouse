@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, ArrowLeft, FileText,
@@ -12,7 +13,9 @@ import { instancesApi, gitApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { GitDialog } from "@/components/GitDialog"
-import type { FileTreeNode, GitStatus } from "@/lib/types"
+import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
+
+// Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
 export function WorkspacePage() {
   const navigate = useNavigate()
@@ -40,6 +43,8 @@ export function WorkspacePage() {
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [gitLoading, setGitLoading] = useState(false)
   const [showGitDialog, setShowGitDialog] = useState(false)
+  const [fileStatuses, setFileStatuses] = useState<Map<string, string>>(new Map())
+  const [fileStatusLoading, setFileStatusLoading] = useState(false)
 
   const loadGitStatus = useCallback(async () => {
     if (!instId) return
@@ -51,9 +56,27 @@ export function WorkspacePage() {
     setGitLoading(false)
   }, [instId])
 
+  const loadFileStatuses = useCallback(async () => {
+    if (!instId) return
+    setFileStatusLoading(true)
+    const res = await gitApi.fileStatus(instId)
+    if (res.ok && res.data?.files) {
+      const m = new Map<string, string>()
+      for (const f of res.data.files) {
+        m.set(f.path, f.status)
+      }
+      setFileStatuses(m)
+    }
+    setFileStatusLoading(false)
+  }, [instId])
+
   useEffect(() => {
     loadGitStatus()
   }, [loadGitStatus])
+
+  useEffect(() => {
+    loadFileStatuses()
+  }, [loadFileStatuses])
 
   // Redirect if no active instance
   useEffect(() => {
@@ -257,6 +280,7 @@ export function WorkspacePage() {
               onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
               onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
               onDelete={handleDeleteEntry}
+              fileStatuses={fileStatuses}
             />
           )}
         </div>
@@ -276,12 +300,25 @@ export function WorkspacePage() {
                 </Button>
               </div>
             </div>
-            <textarea
-              className="flex-1 w-full resize-none bg-transparent p-4 font-mono text-sm outline-none border-0"
-              value={editedContent}
-              onChange={e => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
-              placeholder="文件内容..."
-            />
+            <div className="flex-1 w-full overflow-hidden">
+              <MonacoEditor
+                value={editedContent}
+                original={fileContent}
+                onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
+                language={
+                  selectedFile?.endsWith(".md") ? "markdown" :
+                  selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
+                  selectedFile?.endsWith(".js") ? "javascript" :
+                  selectedFile?.endsWith(".py") ? "python" :
+                  selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
+                  selectedFile?.endsWith(".json") ? "json" :
+                  selectedFile?.endsWith(".css") ? "css" :
+                  selectedFile?.endsWith(".html") ? "html" :
+                  selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
+                  "plaintext"
+                }
+              />
+            </div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -339,7 +376,7 @@ export function WorkspacePage() {
 
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
-  onCreateFile, onCreateFolder, onDelete, depth = 0,
+  onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -349,6 +386,7 @@ function FileTreeView({
   onCreateFile: (parentPath: string) => void
   onCreateFolder: (parentPath: string) => void
   onDelete: (path: string) => void
+  fileStatuses: Map<string, string>
   depth?: number
 }) {
   return (
@@ -386,7 +424,7 @@ function FileTreeView({
             ) : (
               <>
                 <span className="w-3 shrink-0" />
-                <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FileIconWithStatus status={node.type === "file" ? fileStatuses.get(node.path) : undefined} />
               </>
             )}
             <span className="flex-1 truncate text-sm">{node.name}</span>
@@ -432,11 +470,40 @@ function FileTreeView({
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
               onDelete={onDelete}
+              fileStatuses={fileStatuses}
               depth={depth + 1}
             />
           )}
         </div>
       ))}
     </>
+  )
+}
+
+/** Returns a colored status indicator dot + file icon based on git status. */
+function FileIconWithStatus({ status: st }: { status: string | undefined }) {
+  if (!st) {
+    return <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+  }
+  const colorMap: Record<string, string> = {
+    "M": "text-yellow-500",    // modified
+    "A": "text-green-500",     // added
+    "D": "text-red-500",       // deleted
+    "?": "text-blue-400",      // untracked
+    "R": "text-purple-500",    // renamed
+  }
+  const dotColor = colorMap[st] || "text-muted-foreground"
+  const statusLabel: Record<string, string> = {
+    "M": "已修改",
+    "A": "已暂存",
+    "D": "已删除",
+    "?": "未追踪",
+    "R": "已重命名",
+  }
+  return (
+    <span className="relative inline-flex items-center shrink-0" title={statusLabel[st] || st}>
+      <span className={`w-1.5 h-1.5 rounded-full absolute -left-2.5 ${dotColor}`} />
+      <FileText className="h-4 w-4 text-muted-foreground" />
+    </span>
   )
 }

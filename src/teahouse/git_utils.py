@@ -142,6 +142,48 @@ def git_branch(instance_dir: Path, action: str, name: Optional[str] = None) -> d
     raise GitError(f"Unknown branch action: {action}")
 
 
+def git_status_porcelain(instance_dir: Path) -> list[dict]:
+    """Parse `git status --porcelain` to get per-file status.
+
+    Returns [{path, status, staged}] where status is one of:
+        M=modified, A=added, D=deleted, R=renamed, ?=untracked
+    staged=True if the change is in the index (staged for commit).
+    """
+    out = _git_run(["status", "--porcelain"], instance_dir)
+    entries = []
+    for line in out.split("\n"):
+        if not line.strip():
+            continue
+        # First two chars: XY where X=staged status, Y=working-tree status
+        raw = line[:2]
+        path = line[3:].strip()
+        staged = raw[0] != " "
+
+        if raw[0] == "?" and raw[1] == "?":
+            status = "?"
+        elif raw[0] == "!" and raw[1] == "!":
+            continue  # ignored
+        elif raw[1] == "M":
+            status = "M"
+        elif raw[0] == "M":
+            status = "M"
+        elif raw[0] == "A":
+            status = "A"
+        elif raw[0] == "D":
+            status = "D"
+        elif raw[1] == "D":
+            status = "D"
+        elif raw[0] == "R":
+            status = "R"
+        elif raw[1] == "?":
+            status = "?"
+        else:
+            status = raw.strip()
+
+        entries.append({"path": path, "status": status, "staged": staged})
+    return entries
+
+
 def git_log(instance_dir: Path, limit: int = 10) -> list[dict]:
     """View commit history. Returns [{hash, author, date, message, parents, refs, branch}]."""
     out = _git_run(

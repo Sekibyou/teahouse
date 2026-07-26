@@ -1,13 +1,25 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import {
   GitBranch as GitBranchIcon, GitCommitHorizontal, Loader2,
   CheckCircle2, AlertCircle, X, RotateCcw, GitFork, Plus,
-  History, FileText, ArrowLeftRight,
+  History, ArrowLeftRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { gitApi } from "@/lib/api"
 import type { GitStatus, GitBranch, GitLogEntry } from "@/lib/types"
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  Handle,
+  Position,
+  type Node,
+  type Edge,
+  type NodeProps,
+} from "reactflow"
+import "reactflow/dist/style.css"
 
 interface GitDialogProps {
   instanceId: string
@@ -211,68 +223,21 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
             </div>
           ) : (
             <>
-              {/* Tab: 分支图 */}
+              {/* Tab: 分支图 — ReactFlow */}
               {tab === "graph" && (
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground mb-2">
                     提交历史（共 {commits.length} 条）。点击任一提交可回档或创建分支。
                   </p>
 
-                  {/* ReactFlow placeholder */}
                   {commits.length > 0 ? (
-                    <div className="border border-border rounded-lg bg-muted/10 overflow-hidden">
-                      {/* Simple timeline-style graph (ReactFlow replacement planned) */}
-                      <div className="p-3 space-y-0.5">
-                        {commits.map((c, i) => {
-                          const isLatest = i === 0
-                          const isBranchHead = branches.some(b => b.commit_hash === c.hash)
-                          return (
-                            <div key={c.hash} className="relative pl-6 pb-3 group">
-                              {/* Timeline line */}
-                              {i < commits.length - 1 && (
-                                <div className="absolute left-[11px] top-3 bottom-0 w-px bg-border" />
-                              )}
-                              {/* Dot */}
-                              <div className={`absolute left-2 top-1.5 w-[7px] h-[7px] rounded-full border-2 ${
-                                isLatest
-                                  ? "bg-primary border-primary"
-                                  : "bg-background border-muted-foreground"
-                              }`} />
-                              {/* Content */}
-                              <div className="flex items-start gap-2">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-mono font-medium">{c.hash}</span>
-                                    {isLatest && (
-                                      <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                                        HEAD → {currentBranch}
-                                      </span>
-                                    )}
-                                    {isBranchHead && !isLatest && (
-                                      <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
-                                        {branches.find(b => b.commit_hash === c.hash)?.name}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] text-muted-foreground ml-auto">
-                                      {c.date?.slice(0, 10)}
-                                    </span>
-                                  </div>
-                                  <p className="text-sm truncate mt-0.5">{c.message}</p>
-                                </div>
-                                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button
-                                    className="px-2 py-0.5 text-[10px] rounded border border-border hover:bg-muted transition-colors"
-                                    onClick={() => handleRevertCheckout(c.hash, c.message)}
-                                    title="基于此提交创建新分支"
-                                  >
-                                    <Plus className="h-3 w-3 inline" /> 分支
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
+                    <div style={{ height: Math.max(300, commits.length * 72 + 60) }} className="border border-border rounded-lg bg-muted/10 overflow-hidden relative">
+                      <GitGraphView
+                        commits={commits}
+                        branches={branches}
+                        currentBranch={currentBranch}
+                        onRevert={handleRevertCheckout}
+                      />
                     </div>
                   ) : (
                     <div className="text-center py-8 text-sm text-muted-foreground">
@@ -448,3 +413,214 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     </div>
   )
 }
+
+// ---- ReactFlow Git Graph ----
+
+const COMMIT_NODE_TYPE = "commitNode"
+
+interface GitGraphViewProps {
+  commits: GitLogEntry[]
+  branches: GitBranch[]
+  currentBranch: string
+  onRevert: (hash: string, msg: string) => void
+}
+
+function GitGraphView({ commits, branches, currentBranch, onRevert }: GitGraphViewProps) {
+  // Assign a "lane" (column) to each branch based on parent relationships
+  const { nodes, edges } = useMemo(() => {
+    const nodeList: Node[] = []
+    const edgeList: Edge[] = []
+    const branchColors = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4", "#a855f7", "#ec4899"]
+    const branchColorMap = new Map<string, string>()
+
+    // Build a map: commit hash → list of branch names pointing to it
+    const hashToBranches = new Map<string, string[]>()
+    for (const b of branches) {
+      const list = hashToBranches.get(b.commit_hash) || []
+      list.push(b.name)
+      hashToBranches.set(b.commit_hash, list)
+    }
+
+    // Assign colors to branches
+    let colorIdx = 0
+    for (const b of branches) {
+      if (!branchColorMap.has(b.name)) {
+        branchColorMap.set(b.name, branchColors[colorIdx++ % branchColors.length])
+      }
+    }
+
+    // Assign lanes (x position) — simple approach: each unique parent chain gets its own lane
+    const hashToLane = new Map<string, number>()
+    const laneBranchName = new Map<number, string>()
+    let nextLane = 0
+
+    // Process commits from newest (index 0) to oldest
+    for (const c of commits) {
+      const branchRefs = hashToBranches.get(c.hash) || []
+
+      // Determine lane: if this commit is a branch head, use that branch's lane
+      let lane = -1
+      if (branchRefs.length > 0) {
+        // First branch pointing here gets the lane
+        for (const bName of branchRefs) {
+          for (const [l, bn] of laneBranchName) {
+            if (bn === bName) { lane = l; break }
+          }
+          if (lane >= 0) break
+        }
+        if (lane < 0) {
+          lane = nextLane++
+          laneBranchName.set(lane, branchRefs[0])
+        }
+      } else {
+        // Follow parent's lane
+        if (c.parents.length > 0) {
+          lane = hashToLane.get(c.parents[0]) ?? 0
+        } else {
+          lane = 0
+        }
+      }
+      hashToLane.set(c.hash, lane)
+
+      // Determine color based on branch
+      let bgColor = branchColorMap.get(currentBranch) || "#6366f1"
+      if (branchRefs.length > 0) {
+        const branchName = branchRefs[0]
+        bgColor = branchColorMap.get(branchName) || bgColor
+      } else {
+        // Inherit from parent
+        if (c.parents.length > 0) {
+          for (const [bName, bInfo] of Object.entries(
+            Object.fromEntries(branches.map(b => [b.name, b]))
+          )) {
+            if (c.parents.includes(bInfo.commit_hash)) {
+              bgColor = branchColorMap.get(bName) || bgColor
+              break
+            }
+          }
+        }
+      }
+
+      const isLatest = commits.indexOf(c) === 0
+      const isBranchHead = branchRefs.length > 0
+
+      nodeList.push({
+        id: c.hash,
+        type: COMMIT_NODE_TYPE,
+        position: { x: lane * 220 + 20, y: commits.indexOf(c) * 80 + 10 },
+        data: {
+          hash: c.hash,
+          message: c.message,
+          date: c.date?.slice(0, 10) || "",
+          isLatest,
+          isBranchHead,
+          branchRefs,
+          currentBranch,
+          bgColor,
+          onRevert,
+        },
+      })
+
+      // Create edges to parents
+      for (const parent of c.parents) {
+        edgeList.push({
+          id: `${c.hash}->${parent}`,
+          source: parent,
+          target: c.hash,
+          type: "smoothstep",
+          style: { stroke: bgColor, strokeWidth: 2, opacity: 0.6 },
+          animated: isLatest,
+        })
+      }
+    }
+
+    return { nodes: nodeList, edges: edgeList }
+  }, [commits, branches, currentBranch, onRevert])
+
+  if (nodes.length === 0) {
+    return <div className="text-center py-8 text-sm text-muted-foreground">暂无提交记录</div>
+  }
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      fitView
+      attributionPosition="bottom-left"
+      minZoom={0.3}
+      maxZoom={2}
+      panOnDrag
+      zoomOnScroll
+      selectNodesOnDrag={false}
+    >
+      <Background gap={20} size={1} />
+      <Controls showInteractive={false} />
+      <MiniMap
+        nodeColor={(n) => (n.data as CommitNodeData)?.bgColor || "#6366f1"}
+        style={{ width: 120, height: 80 }}
+      />
+    </ReactFlow>
+  )
+}
+
+interface CommitNodeData {
+  hash: string
+  message: string
+  date: string
+  isLatest: boolean
+  isBranchHead: boolean
+  branchRefs: string[]
+  currentBranch: string
+  bgColor: string
+  onRevert: (hash: string, msg: string) => void
+}
+
+function CommitNode({ data }: NodeProps<CommitNodeData>) {
+  return (
+    <div
+      className="group rounded-lg border-2 bg-background shadow-sm hover:shadow-md transition-shadow min-w-[180px] cursor-pointer"
+      style={{ borderColor: data.bgColor }}
+      onClick={() => data.onRevert(data.hash, data.message)}
+    >
+      <Handle type="target" position={Position.Top} style={{ background: data.bgColor, width: 8, height: 8 }} />
+      <div className="px-3 py-2 space-y-1">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: data.bgColor }} />
+          <span className="text-[10px] font-mono font-medium">{data.hash}</span>
+          {data.isLatest && (
+            <span className="text-[9px] bg-primary/10 text-primary px-1 rounded ml-auto">
+              HEAD
+            </span>
+          )}
+        </div>
+        {data.branchRefs.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {data.branchRefs.map(br => (
+              <span
+                key={br}
+                className={`text-[9px] px-1.5 rounded ${
+                  br === data.currentBranch
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {br}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="text-xs leading-tight line-clamp-2">{data.message}</p>
+        <p className="text-[9px] text-muted-foreground">{data.date}</p>
+      </div>
+      <div className="hidden group-hover:flex absolute -bottom-4 left-1/2 -translate-x-1/2 gap-1">
+        <span className="text-[9px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded whitespace-nowrap">
+          回档/分支
+        </span>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: data.bgColor, width: 8, height: 8 }} />
+    </div>
+  )
+}
+
+const nodeTypes = { [COMMIT_NODE_TYPE]: CommitNode }

@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -251,5 +251,9 @@ export const gitApi = {
 
   log: async (instanceId: string, limit: number = 10) => {
     return get<{ commits: GitLogEntry[] }>(`/api/instances/${instanceId}/git/log?limit=${limit}`)
+  },
+
+  fileStatus: async (instanceId: string) => {
+    return get<{ files: GitFileStatus[] }>(`/api/instances/${instanceId}/git/file-status`)
   },
 }

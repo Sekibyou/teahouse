@@ -95,3 +95,11 @@ content 中可使用以下占位符引用文件内容：
 - `create`：基于当前 HEAD 创建新分支
 - `switch`：切换到已有分支（会改变 `floors/`、`variables/`、`settings/` 等的文件内容）
 - `delete`：删除分支（安全模式，未合并时拒绝）
+
+## GitLog
+
+查看实例的 git 提交历史。
+
+- `limit`（可选）：返回的最大提交数，默认 10
+
+返回列表包含：commit hash、作者、日期、提交信息、父 commit 哈希列表（用于绘制提交图）。

@@ -99,7 +99,19 @@ export interface GitStatus {
 
 export interface GitLogEntry {
   hash: string
+  hash_full: string
+  parents: string[]
+  parents_full: string[]
   author: string
   date: string
   message: string
+  refs: string
 }
+
+export interface GitFileStatus {
+  path: string
+  status: string  // M A D ? R
+  staged: boolean
+}
+
+export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig }

@@ -82,6 +82,16 @@ Read current/draft.md
 
 Generate 工具会返回一个验证令牌，表示请求已成功构造。检查 `current/generate-output.json` 确认占位符替换正确后，向用户报告令牌。
 
+### 步骤 8：提交楼层
+
+楼层内容生成完毕后（用户确认满意），执行 Git 提交锁定楼层文件状态：
+
+```
+GitCommit("floor-NNN: 简短描述")
+```
+
+提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
+
 ## 注意事项
 
 - 不要一次性塞入太多楼层全文——这会导致上下文过长。使用行号范围或锚点语法截取关键部分。

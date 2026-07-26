@@ -220,6 +220,22 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "GitLog",
+            "description": "查看实例的 git 提交历史。返回最近的提交列表，包含 commit hash、作者、日期和提交信息。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回的最大提交数，默认 10",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -495,6 +511,21 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
         return f"Git 分支操作失败: {error_msg}"
 
 
+async def execute_git_log(instance_dir: Path, args: dict[str, Any]) -> str:
+    """View git commit history."""
+    limit = args.get("limit", 10)
+    try:
+        entries = _git_log(instance_dir, limit)
+        if not entries:
+            return "（没有提交记录）"
+        lines = [f"最近 {len(entries)} 条提交："]
+        for e in entries:
+            lines.append(f"  {e['hash']}  {e['date'][:10]}  {e['message']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"查看提交历史失败: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -509,6 +540,7 @@ TOOL_EXECUTORS = {
     "SkillRead": execute_skill_read,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
+    "GitLog": execute_git_log,
 }
 
 

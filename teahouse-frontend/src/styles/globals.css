@@ -147,4 +147,40 @@
     scrollbar-width: thin;
     scrollbar-color: var(--muted-foreground) transparent;
   }
+
+  /* ---- Monaco Editor inline diff decorations ---- */
+
+  /* Line background — tinted highlight for changed lines */
+  .monaco-diff-added-line {
+    background: color-mix(in oklch, var(--primary) 8%, transparent);
+  }
+  .monaco-diff-modified-line {
+    background: color-mix(in oklch, #f59e0b 8%, transparent);
+  }
+  .monaco-diff-deleted-line {
+    background: color-mix(in oklch, #ef4444 6%, transparent);
+  }
+
+  /* Glyph margin (gutter) markers — narrow bar that sits in the gutter area */
+  .monaco-diff-glyph-added {
+    background: #22c55e;
+    width: 3px !important;
+    margin-left: 3px;
+    border-radius: 1px;
+    min-height: 14px;
+  }
+  .monaco-diff-glyph-modified {
+    background: #eab308;
+    width: 3px !important;
+    margin-left: 3px;
+    border-radius: 1px;
+    min-height: 14px;
+  }
+  .monaco-diff-glyph-deleted {
+    background: #ef4444;
+    width: 3px !important;
+    margin-left: 3px;
+    border-radius: 1px;
+    min-height: 14px;
+  }
 }
