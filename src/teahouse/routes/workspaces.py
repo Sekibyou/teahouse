@@ -617,12 +617,37 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
         except GitError:
             _git_run(["branch", "-D", body.branch_name], instance_dir)
 
-        # Rename temp to original branch name
-        _git_run(["branch", "-m", body.branch_name], instance_dir)
+        # Check if the target branch still has commits at or before parent_out
+        # (i.e. does the branch have any commits other than what's already in parent?)
+        # If not, the branch has no unique commits — just switch to main and delete it
+        branch_has_content = True
+        try:
+            # Check how many commits are reachable from parent_out
+            rev_count = _git_run(
+                ["rev-list", "--count", parent_out],
+                instance_dir,
+            )
+            branch_has_content = int(rev_count) > 0
+        except Exception:
+            pass
 
-        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
-
-        return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
+        if not branch_has_content:
+            # The branch has no unique commits beyond the root. Delete it and go to main
+            _git_run(["branch", "-D", body.branch_name], instance_dir)
+            # Check if main exists, otherwise use the first branch found
+            all_branches = git_branch_list(instance_dir)
+            main_branch = next((b["name"] for b in all_branches if b["name"] in ("main", "master")), None)
+            if not main_branch and all_branches:
+                main_branch = all_branches[0]["name"]
+            if main_branch and main_branch != body.branch_name:
+                _git_run(["checkout", main_branch], instance_dir)
+            branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交，分支 {body.branch_name} 已清理"}
+        else:
+            # Rename temp to original branch name
+            _git_run(["branch", "-m", body.branch_name], instance_dir)
+            branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
