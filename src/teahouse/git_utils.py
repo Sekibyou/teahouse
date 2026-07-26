@@ -143,20 +143,25 @@ def git_branch(instance_dir: Path, action: str, name: Optional[str] = None) -> d
 
 
 def git_log(instance_dir: Path, limit: int = 10) -> list[dict]:
-    """View commit history. Returns [{hash, author, date, message, branch}]."""
+    """View commit history. Returns [{hash, author, date, message, parents, refs, branch}]."""
     out = _git_run(
-        ["log", f"--max-count={limit}", "--format=%H|%an|%ai|%s"],
+        ["log", f"--max-count={limit}", "--format=%H|%P|%an|%ai|%s|%D"],
         instance_dir,
     )
     entries = []
     for line in out.split("\n"):
         if not line.strip():
             continue
-        parts = line.split("|", 3)
+        parts = line.split("|", 5)
+        parents = parts[1].split() if len(parts) > 1 and parts[1] else []
         entries.append({
-            "hash": parts[0][:7],
-            "author": parts[1] if len(parts) > 1 else "",
-            "date": parts[2] if len(parts) > 2 else "",
-            "message": parts[3] if len(parts) > 3 else "",
+            "hash": parts[0][:7] if len(parts) > 0 else "",
+            "hash_full": parts[0] if len(parts) > 0 else "",
+            "parents": [p[:7] for p in parents],
+            "parents_full": parents,
+            "author": parts[2] if len(parts) > 2 else "",
+            "date": parts[3] if len(parts) > 3 else "",
+            "message": parts[4] if len(parts) > 4 else "",
+            "refs": parts[5] if len(parts) > 5 else "",
         })
     return entries

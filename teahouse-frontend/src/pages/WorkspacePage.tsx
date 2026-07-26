@@ -3,15 +3,16 @@ import { useNavigate } from "react-router-dom"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, ArrowLeft, FileText,
-  GitCommitHorizontal, GitBranch as GitBranchIcon, GitFork,
-  CheckCircle2, AlertCircle,
+  GitBranch as GitBranchIcon, CheckCircle2, AlertCircle,
+  Edit3,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { instancesApi, gitApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { ChatPanel } from "@/components/ChatPanel"
-import type { FileTreeNode, GitBranch, GitStatus } from "@/lib/types"
+import { GitDialog } from "@/components/GitDialog"
+import type { FileTreeNode, GitStatus } from "@/lib/types"
 
 export function WorkspacePage() {
   const navigate = useNavigate()
@@ -38,11 +39,7 @@ export function WorkspacePage() {
   // Git state
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [gitLoading, setGitLoading] = useState(false)
-  const [showCommitDialog, setShowCommitDialog] = useState(false)
-  const [commitMessage, setCommitMessage] = useState("")
-  const [showBranchDialog, setShowBranchDialog] = useState(false)
-  const [branchAction, setBranchAction] = useState<"create" | "switch">("create")
-  const [branchName, setBranchName] = useState("")
+  const [showGitDialog, setShowGitDialog] = useState(false)
 
   const loadGitStatus = useCallback(async () => {
     if (!instId) return
@@ -57,30 +54,6 @@ export function WorkspacePage() {
   useEffect(() => {
     loadGitStatus()
   }, [loadGitStatus])
-
-  const handleGitCommit = async () => {
-    if (!instId || !commitMessage.trim()) return
-    const res = await gitApi.commit(instId, commitMessage.trim())
-    if (res.ok) {
-      setShowCommitDialog(false)
-      setCommitMessage("")
-      await loadGitStatus()
-      await loadFileTree()
-    }
-  }
-
-  const handleGitBranch = async () => {
-    if (!instId) return
-    if (branchAction === "create" && !branchName.trim()) return
-
-    const res = await gitApi.branch(instId, branchAction, branchName.trim() || undefined)
-    if (res.ok) {
-      setShowBranchDialog(false)
-      setBranchName("")
-      await loadGitStatus()
-      await loadFileTree()
-    }
-  }
 
   // Redirect if no active instance
   useEffect(() => {
@@ -247,46 +220,25 @@ export function WorkspacePage() {
           </div>
         </div>
 
-        {/* Git status bar */}
-        <div className="px-3 py-1.5 border-b border-border flex items-center gap-2 text-xs text-muted-foreground">
+        {/* Git status bar — click to open git dialog */}
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border cursor-pointer hover:bg-muted/30 transition-colors" onClick={() => setShowGitDialog(true)}>
           {gitLoading ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
           ) : gitStatus ? (
             <>
-              <GitBranchIcon className="h-3 w-3 shrink-0" />
-              <span className="font-mono truncate" title={gitStatus.current_branch}>
+              <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs font-mono flex-1 truncate" title={gitStatus.current_branch}>
                 {gitStatus.current_branch || "main"}
               </span>
-              {gitStatus.has_uncommitted && (
-                <span className="flex items-center gap-0.5 text-yellow-500 ml-auto shrink-0">
-                  <AlertCircle className="h-3 w-3" />
-                  <span>未提交</span>
-                </span>
+              {gitStatus.has_uncommitted ? (
+                <AlertCircle className="h-3 w-3 text-yellow-500 shrink-0" />
+              ) : (
+                <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
               )}
-              {!gitStatus.has_uncommitted && (
-                <span className="flex items-center gap-0.5 text-green-500 ml-auto shrink-0">
-                  <CheckCircle2 className="h-3 w-3" />
-                </span>
-              )}
-              <div className="flex items-center gap-0.5 ml-1 shrink-0">
-                <button
-                  className="p-0.5 rounded hover:bg-muted"
-                  onClick={() => { setCommitMessage(""); setShowCommitDialog(true) }}
-                  title="提交变更"
-                >
-                  <GitCommitHorizontal className="h-3 w-3" />
-                </button>
-                <button
-                  className="p-0.5 rounded hover:bg-muted"
-                  onClick={() => { setBranchName(""); setBranchAction("create"); setShowBranchDialog(true) }}
-                  title="分支管理"
-                >
-                  <GitFork className="h-3 w-3" />
-                </button>
-              </div>
+              <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
             </>
           ) : (
-            <span className="text-[10px]">Git 不可用</span>
+            <span className="text-[10px] text-muted-foreground">Git 不可用</span>
           )}
         </div>
 
@@ -372,116 +324,13 @@ export function WorkspacePage() {
         </div>
       )}
 
-      {/* Commit Dialog */}
-      {showCommitDialog && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCommitDialog(false)}>
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold flex items-center gap-2">
-              <GitCommitHorizontal className="h-4 w-4" />
-              提交变更
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              当前分支：<span className="font-mono">{gitStatus?.current_branch || "main"}</span>
-              {gitStatus?.has_uncommitted && "（有未提交的变更）"}
-            </p>
-            <Input
-              value={commitMessage}
-              onChange={e => setCommitMessage(e.target.value)}
-              placeholder="floor-NNN: 简短描述"
-              autoFocus
-              onKeyDown={e => { if (e.key === "Enter") handleGitCommit() }}
-            />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowCommitDialog(false)}>取消</Button>
-              <Button size="sm" onClick={handleGitCommit} disabled={!commitMessage.trim()}>提交</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Branch Dialog */}
-      {showBranchDialog && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowBranchDialog(false)}>
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold flex items-center gap-2">
-              <GitFork className="h-4 w-4" />
-              分支管理
-            </h3>
-
-            {/* Branch list */}
-            {gitStatus?.branches && gitStatus.branches.length > 0 && (
-              <div className="space-y-1 max-h-32 overflow-y-auto">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">已有分支</p>
-                {gitStatus.branches.map(b => (
-                  <div key={b.name} className="flex items-center gap-2 text-xs px-2 py-1 rounded hover:bg-muted/50">
-                    <GitBranchIcon className="h-3 w-3 shrink-0" />
-                    <span className={`font-mono ${b.is_current ? "font-bold text-primary" : ""}`}>
-                      {b.name}
-                    </span>
-                    {b.is_current && <span className="text-[10px] text-muted-foreground ml-auto">当前</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Tabs: create / switch */}
-            <div className="flex gap-1 bg-muted rounded-lg p-1">
-              <button
-                className={`flex-1 text-xs py-1 rounded-md transition-colors ${branchAction === "create" ? "bg-background shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setBranchAction("create")}
-              >
-                创建
-              </button>
-              <button
-                className={`flex-1 text-xs py-1 rounded-md transition-colors ${branchAction === "switch" ? "bg-background shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setBranchAction("switch")}
-              >
-                切换
-              </button>
-            </div>
-
-            {branchAction === "create" ? (
-              <div className="space-y-2">
-                <Input
-                  value={branchName}
-                  onChange={e => setBranchName(e.target.value)}
-                  placeholder="新分支名称（如 retro-回到星罗城）"
-                  autoFocus
-                  onKeyDown={e => { if (e.key === "Enter") handleGitBranch() }}
-                />
-                <p className="text-[10px] text-muted-foreground">基于当前 HEAD 创建新分支</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <select
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-                  value={branchName}
-                  onChange={e => setBranchName(e.target.value)}
-                >
-                  <option value="">选择分支...</option>
-                  {gitStatus?.branches?.filter(b => !b.is_current).map(b => (
-                    <option key={b.name} value={b.name}>{b.name}</option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-muted-foreground">
-                  切换到已有分支。当前未提交的变更需要先提交，否则切换将被拒绝。
-                </p>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowBranchDialog(false)}>取消</Button>
-              <Button
-                size="sm"
-                onClick={handleGitBranch}
-                disabled={branchAction === "create" ? !branchName.trim() : !branchName}
-              >
-                {branchAction === "create" ? "创建" : "切换"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Git Dialog — single unified dialog */}
+      <GitDialog
+        instanceId={instId || ""}
+        open={showGitDialog}
+        onClose={() => setShowGitDialog(false)}
+        onRefresh={() => { loadGitStatus(); loadFileTree() }}
+      />
     </div>
   )
 }

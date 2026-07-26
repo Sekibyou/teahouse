@@ -8,7 +8,9 @@ Directory layout:
 """
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -120,7 +122,12 @@ async def delete_instance(instance_id: str) -> bool:
     # Delete the instance directory
     dir_path = Path(inst["dir_path"])
     if dir_path.exists():
-        shutil.rmtree(dir_path)
+
+        def _on_rm_error(func, path, exc_info):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+
+        shutil.rmtree(dir_path, onerror=_on_rm_error)
     await execute("DELETE FROM instances WHERE id = ?", (instance_id,))
     return True
 
