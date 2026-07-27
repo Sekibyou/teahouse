@@ -61,13 +61,15 @@ Read current/draft.md
 
 ### 步骤 6：构造 Generate 请求
 
-使用 Generate 工具发送正文写作请求。messages 结构示例：
+使用 Generate 工具发送正文写作请求，生成位置为 `current/draft-{{当前楼层+1}}-1.md`。
+
+messages 结构示例：
 
 ```json
 [
   {
     "role": "system",
-    "content": "你是一位小说创作AI。\n字数要求：约3000字。\n风格要求：保持与前文一致的叙事风格。"
+    "content": "你是一位小说创作AI。\n字数要求：约3000字。\n风格要求：保持与前文一致的叙事风格。\n请将正文写入 current/draft-{{N}}-1.md"
   },
   {
     "role": "user",
@@ -78,19 +80,36 @@ Read current/draft.md
 
 使用 `{{path}}` 占位符引用文件内容，后端会自动替换为实际内容。
 
-### 步骤 7：处理生成结果
+### 步骤 7：输出到前端
 
-Generate 工具会返回一个验证令牌，表示请求已成功构造。检查 `current/generate-output.json` 确认占位符替换正确后，向用户报告令牌。
-
-### 步骤 8：提交楼层
-
-楼层内容生成完毕后（用户确认满意），执行 Git 提交锁定楼层文件状态：
+生成完成后，使用 Output 工具将正文推送到前端：
 
 ```
-GitCommit("floor-NNN: 简短描述")
+Output(
+  content: "{{current/draft-{{N}}-1.md}}",
+  label: "ep{{N}}",
+  note: "第{{N}}章正文第一版",
+  mode: "append"
+)
 ```
 
-提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
+label 必须遵循 `teahouse.md` 中约定的命名规则：以 `ep` 开头接数字（如 `ep1`、`ep51`）。前端会自动提取 ep 块并展示最高编号章节。
+
+### 步骤 8：通知用户并等待指示
+
+通知用户查看产物。等待用户进一步指示。
+
+- 如果用户要求返工：生成 `current/draft-{{N}}-2.md`（编号递增），然后使用 Output replace 更新：
+  ```
+  Output(
+    content: "{{current/draft-{{N}}-2.md}}",
+    label: "ep{{N}}",
+    note: "第{{N}}章正文第二版",
+    mode: "replace",
+    target_uuid: "<之前 append 返回的 uuid>"
+  )
+  ```
+- 如果用户确认提交：将 draft 文件移动到 `floors/` 文件夹，按楼层编号重命名为 `floor-{{N}}.md`，执行 `GitCommit("floor-{{N}}: 简短描述")` 提交。提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
 
 ## 注意事项
 

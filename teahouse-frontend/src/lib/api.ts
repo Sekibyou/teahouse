@@ -295,6 +295,21 @@ export const gitApi = {
   },
 }
 
+// Output blocks API
+export const outputBlocksApi = {
+  list: async (instanceId: string) => {
+    return get<{ blocks: { uuid: string; label: string; note: string }[] }>(
+      `/api/instances/${instanceId}/output-blocks`
+    )
+  },
+
+  get: async (instanceId: string, uuid: string) => {
+    return get<{ uuid: string; label: string; note: string; content: string; rendered: string }>(
+      `/api/instances/${instanceId}/output-blocks/${uuid}`
+    )
+  },
+}
+
 // LLM Providers API
 export const llmProvidersApi = {
   list: () => get<{ providers: LLMProvider[] }>("/api/llm/providers/"),

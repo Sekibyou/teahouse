@@ -23,6 +23,8 @@ def _git_run(args: list[str], cwd: Path) -> str:
         env = os.environ.copy()
         env["GIT_PAGER"] = "cat"
         env["GIT_TERMINAL_PROMPT"] = "0"
+        # Disable path quoting so CJK filenames don't get octal-escaped
+        args = ["-c", "core.quotepath=false"] + args
         result = subprocess.run(
             ["git"] + args,
             cwd=cwd,
@@ -103,13 +105,34 @@ def git_branch_create(instance_dir: Path, name: str, start_point: str | None = N
 
 
 def git_discard_changes(instance_dir: Path) -> str:
-    """Discard all unstaged changes in the working directory (does NOT delete untracked files)."""
-    return _git_run(["checkout", "--", "."], instance_dir)
+    """Discard all uncommitted changes: restore tracked files AND delete untracked files."""
+    result1 = _git_run(["checkout", "--", "."], instance_dir)
+    result2 = _git_run(["clean", "-fd"], instance_dir)
+    return f"{result1}\n{result2}"
 
 
 def git_restore_file(instance_dir: Path, file_path: str) -> str:
-    """Restore a specific file to its last committed state."""
-    return _git_run(["checkout", "--", file_path], instance_dir)
+    """Restore a specific file to its last committed state.
+
+    For tracked files: git checkout to restore.
+    For untracked files: delete them (they have no committed state to restore to).
+    """
+    full_path = instance_dir / file_path
+    # Check if the file is tracked by git
+    try:
+        _git_run(["ls-files", "--error-unmatch", file_path], instance_dir)
+        # Tracked — restore to HEAD
+        return _git_run(["checkout", "--", file_path], instance_dir)
+    except Exception:
+        # Untracked — delete it
+        if full_path.exists():
+            import shutil
+            if full_path.is_dir():
+                shutil.rmtree(full_path)
+            else:
+                full_path.unlink()
+            return f"Removed untracked: {file_path}"
+        return f"File not found: {file_path}"
 
 
 def git_branch_switch(instance_dir: Path, name: str) -> str:

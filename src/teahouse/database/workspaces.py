@@ -153,16 +153,10 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
 
     # Initialize git repository for the instance
     try:
-        _write_gitignore(target_dir)
         git_init(target_dir)
         git_initial_commit(target_dir)
     except Exception:
         pass  # git not available — instance works without version control
-
-
-def _write_gitignore(target_dir: Path) -> None:
-    """Write a .gitignore that excludes current/ (temporary working files)."""
-    (target_dir / ".gitignore").write_text("current/todo.json\n", encoding="utf-8")
 
 
 def register_builtin_prototype_source_path(base_path: Path) -> str:

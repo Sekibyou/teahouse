@@ -160,26 +160,19 @@
     }
   },
   {
-    "name": "TodoWrite",
-    "description": "全量覆盖写入任务清单，用于追踪当前写作会话的进度",
-    "usage": "全量覆盖写入任务清单。每次调用传入完整的 todos 数组替换当前清单。用于在复杂的多步骤创作任务中追踪进度、组织工作。\n\n参数：\n- `todos`（必填）：任务数组，每项包含：\n  - `content`（必填）：任务描述，祈使句（如\"完成第三章的打斗场景\"）\n  - `status`（必填）：pending / in_progress / completed\n  - `activeForm`（必填）：进行时描述（如\"正在写打斗场景\"）\n\n规则：\n- 同时只能有一个任务为 in_progress\n- 整个清单通过一次调用全量覆盖——无需单独的创建/更新/删除\n- 完成后标记为 completed，不要从数组中删除已完成任务\n- 清单仅存在于当前会话，不持久化到文件",
+    "name": "Output",
+    "description": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。",
+    "usage": "管理前端可见的输出内容块。每个块有唯一 uuid（后端自动分配），通过 label 供前端筛选，note 为人类可读备注。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块\n\n当前活跃的输出块列表已注入系统提示词，可参考其 uuid 和 label 进行操作。",
     "parameters": {
       "type": "object",
       "properties": {
-        "todos": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "content": {"type": "string"},
-              "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
-              "activeForm": {"type": "string"}
-            },
-            "required": ["content", "status", "activeForm"]
-          }
-        }
+        "content": {"type": "string"},
+        "label": {"type": "string"},
+        "note": {"type": "string"},
+        "mode": {"type": "string", "enum": ["append", "replace", "delete"]},
+        "target_uuid": {"type": "string"}
       },
-      "required": ["todos"]
+      "required": ["content", "label", "note", "mode"]
     }
   }
 ]

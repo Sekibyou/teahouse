@@ -140,12 +140,34 @@ def _scan_skills(instance_dir: Path) -> str:
     return "可用 Skill：\n" + "\n".join(entries)
 
 
+def _scan_output_blocks(instance_dir: Path) -> str:
+    """Read .teahouse/output-blocks.yaml and build a summary for the system prompt."""
+    teahouse_dir = instance_dir / ".teahouse"
+    blocks_file = teahouse_dir / "output-blocks.yaml"
+    if not blocks_file.exists():
+        return "当前活跃输出块：无"
+
+    import yaml
+    data = yaml.safe_load(blocks_file.read_text(encoding="utf-8"))
+    if data is None:
+        return "当前活跃输出块：无"
+
+    blocks = data.get("blocks", [])
+    if not blocks:
+        return "当前活跃输出块：无"
+
+    lines = ["当前活跃输出块："]
+    for b in blocks:
+        lines.append(f"  - uuid: {b['uuid']} | label: {b['label']} | note: {b['note']}")
+    return "\n".join(lines)
+
+
 def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> str:
     """Assemble the full system prompt for the Director.
 
     Reads template files from director-system/ in order,
     injects the tools usage guide, then appends: instance directory tree,
-    skills catalogue, and teahouse.md.
+    skills catalogue, output blocks list, and teahouse.md.
     """
     parts: list[str] = []
 
@@ -166,7 +188,10 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     # 4. Skills catalogue (name + description from SKILL.md)
     parts.append(_scan_skills(instance_dir))
 
-    # 5. Instance teahouse.md
+    # 5. Output blocks list
+    parts.append(_scan_output_blocks(instance_dir))
+
+    # 6. Instance teahouse.md
     teahouse_path = instance_dir / INSTANCE_TEAHOUSE
     if teahouse_path.exists():
         parts.append(teahouse_path.read_text(encoding="utf-8").strip())

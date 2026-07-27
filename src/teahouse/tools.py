@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid as _uuid
 from pathlib import Path
 from typing import Any
 
-from .placeholder import resolve_messages_placeholders
+from .placeholder import resolve_placeholders, resolve_messages_placeholders
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup
 from .state import state
 
+import yaml
 import time
 
 
@@ -448,8 +450,152 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Todo tool executor
+# Output tool executor — manages .teahouse/output-blocks.yaml
 # ---------------------------------------------------------------------------
+
+TEHOUSE_DIR = ".teahouse"
+OUTPUT_BLOCKS_FILE = "output-blocks.yaml"
+
+
+def _output_blocks_path(instance_dir: Path) -> Path:
+    """Get the path to output-blocks.yaml, ensuring .teahouse/ exists."""
+    teahouse_dir = instance_dir / TEHOUSE_DIR
+    teahouse_dir.mkdir(parents=True, exist_ok=True)
+    return teahouse_dir / OUTPUT_BLOCKS_FILE
+
+
+def _load_output_blocks(instance_dir: Path) -> list[dict]:
+    """Load the output blocks list from disk. Returns empty list if file doesn't exist."""
+    path = _output_blocks_path(instance_dir)
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return []
+    return data.get("blocks", [])
+
+
+def _save_output_blocks(instance_dir: Path, blocks: list[dict]) -> None:
+    """Save the output blocks list to disk."""
+    path = _output_blocks_path(instance_dir)
+    content = yaml.dump({"blocks": blocks}, allow_unicode=True, default_flow_style=False)
+    path.write_text(content, encoding="utf-8")
+
+
+async def execute_output(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Manage output blocks: append, replace, or delete.
+
+    content supports {{path}} placeholder syntax for referencing file content.
+    """
+    mode = args["mode"]
+    content_template = args["content"]
+    label = args["label"]
+    note = args["note"]
+
+    blocks = _load_output_blocks(instance_dir)
+
+    if mode == "append":
+        # Resolve placeholders to produce rendered text
+        try:
+            rendered = resolve_placeholders(content_template, instance_dir)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
+
+        block_uuid = _uuid.uuid4().hex[:12]
+        block = {
+            "uuid": block_uuid,
+            "label": label,
+            "note": note,
+            "content": content_template,
+            "rendered": rendered,
+        }
+        blocks.append(block)
+        _save_output_blocks(instance_dir, blocks)
+
+        state.broadcast("output.append", {
+            "uuid": block_uuid,
+            "label": label,
+            "note": note,
+            "rendered": rendered,
+            "instance_id": instance_dir.name,
+        })
+
+        return (
+            f"输出块已添加\n"
+            f"  uuid: {block_uuid}\n"
+            f"  label: {label}\n"
+            f"  note: {note}\n"
+            f"  rendered 长度: {len(rendered)} 字符"
+        )
+
+    elif mode == "replace":
+        target_uuid = args.get("target_uuid")
+        if not target_uuid:
+            return "Error: replace 模式需要 target_uuid 参数"
+
+        # Find the block
+        idx = None
+        for i, b in enumerate(blocks):
+            if b["uuid"] == target_uuid:
+                idx = i
+                break
+        if idx is None:
+            return f"Error: 未找到 uuid={target_uuid} 的输出块。可用 uuid 请参考系统提示词中的输出块列表。"
+
+        try:
+            rendered = resolve_placeholders(content_template, instance_dir)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
+
+        blocks[idx]["content"] = content_template
+        blocks[idx]["rendered"] = rendered
+        blocks[idx]["label"] = label
+        blocks[idx]["note"] = note
+        _save_output_blocks(instance_dir, blocks)
+
+        state.broadcast("output.replace", {
+            "uuid": target_uuid,
+            "label": label,
+            "note": note,
+            "rendered": rendered,
+            "instance_id": instance_dir.name,
+        })
+
+        return (
+            f"输出块已替换\n"
+            f"  uuid: {target_uuid}\n"
+            f"  label: {label}\n"
+            f"  note: {note}\n"
+            f"  rendered 长度: {len(rendered)} 字符"
+        )
+
+    elif mode == "delete":
+        target_uuid = args.get("target_uuid")
+        if not target_uuid:
+            return "Error: delete 模式需要 target_uuid 参数"
+
+        idx = None
+        for i, b in enumerate(blocks):
+            if b["uuid"] == target_uuid:
+                idx = i
+                break
+        if idx is None:
+            return f"Error: 未找到 uuid={target_uuid} 的输出块"
+
+        removed = blocks[idx]
+        del blocks[idx]
+        _save_output_blocks(instance_dir, blocks)
+
+        state.broadcast("output.delete", {
+            "uuid": target_uuid,
+            "label": removed["label"],
+            "note": removed["note"],
+            "instance_id": instance_dir.name,
+        })
+
+        return f"输出块已删除\n  uuid: {target_uuid}\n  label: {removed['label']}\n  note: {removed['note']}"
+
+    return f"Error: 未知 mode '{mode}'，支持 append / replace / delete"
 
 
 async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -646,6 +792,7 @@ TOOL_EXECUTORS = {
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
+    "Output": execute_output,
     "TodoWrite": execute_todo_write,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,

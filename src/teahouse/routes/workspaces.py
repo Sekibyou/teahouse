@@ -401,6 +401,51 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
     return {"name": skill_name, "export_path": str(export_path)}
 
 
+# ===== Output blocks =====
+
+
+@router.get("/instances/{instance_id}/output-blocks")
+async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get all active output blocks (summary: uuid, label, note)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..tools import _load_output_blocks
+    blocks = _load_output_blocks(instance_dir)
+    return {
+        "blocks": [
+            {"uuid": b["uuid"], "label": b["label"], "note": b["note"]}
+            for b in blocks
+        ]
+    }
+
+
+@router.get("/instances/{instance_id}/output-blocks/{uuid}")
+async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends(require_user)):
+    """Get a single output block's full data (content, rendered, label, note)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..tools import _load_output_blocks
+    blocks = _load_output_blocks(instance_dir)
+    for b in blocks:
+        if b["uuid"] == uuid:
+            return {
+                "uuid": b["uuid"],
+                "label": b["label"],
+                "note": b["note"],
+                "content": b["content"],
+                "rendered": b["rendered"],
+            }
+    raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")
+
+
 # ===== Git operations =====
 
 class GitCommitRequest(BaseModel):
