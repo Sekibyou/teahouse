@@ -272,10 +272,9 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     """Generate tool — resolves placeholders, calls writer LLM, writes result to file.
 
     1. Resolve {{path}} placeholders in messages
-    2. Write resolved messages to current/generate-output.json for debugging
-    3. Call the writer slot LLM (non-streaming)
-    4. Write generated text to the specified output path
-    5. Return summary with file path, word count, and first 50 chars preview
+    2. Call the writer slot LLM (non-streaming)
+    3. Write generated text to the specified output path
+    4. Return summary with file path, word count, and first 50 chars preview
     """
     messages = args.get("messages", [])
     output_path_str = args.get("path", "")
@@ -294,12 +293,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     # Step 1: Resolve placeholders
     resolved = resolve_messages_placeholders(messages, instance_dir)
 
-    # Step 2: Write resolved messages for debugging
-    debug_path = instance_dir / "current" / "generate-output.json"
-    debug_path.parent.mkdir(parents=True, exist_ok=True)
-    debug_path.write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # Step 3: Resolve writer slot LLM client
+    # Step 2: Resolve writer slot LLM client
     if not user_id:
         return (
             "Error: 无法获取用户身份，无法调用正文模型。\n"
