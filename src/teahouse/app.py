@@ -297,8 +297,29 @@ async def _tool_use_loop(
                     "content": result,
                 })
 
-    # If we exhausted rounds, yield a message
-    yield {"type": "text", "text": "（已达到工具调用上限，请简化指令或重试）"}
+    # If we exhausted rounds, notify the LLM so it can summarize or retry
+    if api_style == "anthropic":
+        msg.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "__limit__",
+                    "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
+                }
+            ],
+        })
+    else:
+        msg.append({
+            "role": "tool",
+            "tool_call_id": "__limit__",
+            "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
+        })
+
+    resp = await client.send_message_full(msg, system=tool_system, tools=TOOLS)
+    text = _extract_text(resp, api_style)
+    if text:
+        yield {"type": "text", "text": text}
 
 
 @app.post("/v1/chat")
