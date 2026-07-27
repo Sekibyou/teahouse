@@ -146,6 +146,20 @@
     }
   },
   {
+    "name": "FileOps",
+    "description": "文件和目录操作：创建目录、移动/重命名、删除",
+    "usage": "对实例中的文件和目录执行操作。这些操作会直接覆盖已存在的目标，请确保文件结构正确。\n\n参数：\n- `action`（必填）：操作类型\n  - `mkdir` — 创建目录（自动创建父目录，已存在不报错）\n  - `move` — 移动文件或目录（重命名/移动，目标已存在则覆盖）\n  - `delete` — 删除文件或目录（删除目录时会递归删除其所有内容）\n- `path`（必填）：目标路径，相对于实例根目录\n- `destination`（move 时必填）：目标路径，相对于实例根目录\n\n注意：\n- `mkdir` 自动创建所有必要的父目录，相当于 `mkdir -p`\n- `move` 如果目标已存在则直接覆盖（文件覆盖文件，空目录覆盖空目录，非空目录报错）\n- `delete` 删除目录时会连同内容一起删除，操作不可逆（git 可恢复）\n- ⚠️ 使用这些工具前请确认文件结构——move 和 delete 会直接修改文件系统",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["mkdir", "move", "delete"]},
+        "path": {"type": "string"},
+        "destination": {"type": "string"}
+      },
+      "required": ["action", "path"]
+    }
+  },
+  {
     "name": "TodoWrite",
     "description": "全量覆盖写入任务清单，用于追踪当前写作会话的进度",
     "usage": "全量覆盖写入任务清单。每次调用传入完整的 todos 数组替换当前清单。用于在复杂的多步骤创作任务中追踪进度、组织工作。\n\n参数：\n- `todos`（必填）：任务数组，每项包含：\n  - `content`（必填）：任务描述，祈使句（如\"完成第三章的打斗场景\"）\n  - `status`（必填）：pending / in_progress / completed\n  - `activeForm`（必填）：进行时描述（如\"正在写打斗场景\"）\n\n规则：\n- 同时只能有一个任务为 in_progress\n- 整个清单通过一次调用全量覆盖——无需单独的创建/更新/删除\n- 完成后标记为 completed，不要从数组中删除已完成任务\n- 清单仅存在于当前会话，不持久化到文件",

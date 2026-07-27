@@ -14,6 +14,7 @@ usage guide injected into the director's system prompt.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -389,6 +390,64 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# FileOps tool executor
+# ---------------------------------------------------------------------------
+
+
+async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Create directories, move/rename, or delete files and directories."""
+    action = args["action"]
+    path_str = args["path"]
+
+    full = _validate_path(instance_dir, path_str)
+
+    if action == "mkdir":
+        full.mkdir(parents=True, exist_ok=True)
+        return f"目录已创建（或已存在）：{path_str}"
+
+    if action == "move":
+        destination_str = args.get("destination")
+        if not destination_str:
+            return "Error: move 操作需要 destination 参数"
+        dest = _validate_path(instance_dir, destination_str)
+
+        if not full.exists():
+            return f"Error: 源路径不存在：{path_str}"
+
+        # If destination exists, remove it first (覆盖)
+        if dest.exists():
+            if dest.is_dir() and any(dest.iterdir()):
+                return (
+                    f"Error: 目标目录 '{destination_str}' 已存在且非空，无法覆盖。\n"
+                    f"请先使用 FileOps delete 删除目标目录，或选择其他目标路径。"
+                )
+            # Remove existing file or empty directory
+            if dest.is_dir():
+                dest.rmdir()
+            else:
+                dest.unlink()
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(full), str(dest))
+        state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "action": "move", "instance_id": instance_dir.name})
+        return f"已移动：{path_str} → {destination_str}"
+
+    if action == "delete":
+        if not full.exists():
+            return f"Error: 路径不存在：{path_str}"
+
+        if full.is_dir():
+            shutil.rmtree(full)
+        else:
+            full.unlink()
+
+        state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "action": "delete", "instance_id": instance_dir.name})
+        return f"已删除：{path_str}"
+
+    return f"Error: 未知操作 '{action}'，支持 mkdir / move / delete"
+
+
+# ---------------------------------------------------------------------------
 # Todo tool executor
 # ---------------------------------------------------------------------------
 
@@ -586,6 +645,7 @@ TOOL_EXECUTORS = {
     "Glob": execute_glob,
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
+    "FileOps": execute_file_ops,
     "TodoWrite": execute_todo_write,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
