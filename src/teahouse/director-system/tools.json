@@ -1,0 +1,147 @@
+[
+  {
+    "name": "Read",
+    "description": "读取文件内容，支持指定行范围",
+    "usage": "读取文件内容，支持指定行范围。用于在操作前了解文件当前状态。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 settings/world.yaml、floors/floor-001.md\n- `offset`（可选）：起始行号，从 1 开始。不指定则从文件开头读取\n- `limit`（可选）：最大读取行数。不指定则读取 offset 之后的所有行\n\n注意：path 必须指向文件，读取目录会报错。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "offset": {"type": "integer"},
+        "limit": {"type": "integer"}
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "Write",
+    "description": "写入文件内容（覆盖式），自动创建父目录",
+    "usage": "写入文件内容（覆盖式）。如果文件已存在则完全覆盖，不存在则创建。会自动创建必要的父目录。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 floors/floor-003.md\n- `content`（必填）：写入的文件内容\n\n注意：仅在需要完全重写文件时使用。增量修改请优先使用 Edit 或 WriteLine。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "content": {"type": "string"}
+      },
+      "required": ["path", "content"]
+    }
+  },
+  {
+    "name": "Edit",
+    "description": "精确字符串替换，支持全局替换",
+    "usage": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `replace_all`（可选）：是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，增加更多上下文行使其唯一",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+        "replace_all": {"type": "boolean"}
+      },
+      "required": ["path", "old_string", "new_string"]
+    }
+  },
+  {
+    "name": "WriteLine",
+    "description": "替换文件中的指定行",
+    "usage": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `start_line`（必填）：起始行号，从 1 开始\n- `end_line`（可选）：结束行号（包含）。不指定则仅替换 start_line 这一行\n- `new_content`（必填）：替换后的新行内容，\\n 会被自动处理为真实换行\n\n注意：使用前先用 Read 确认目标行号。每次只替换一行，多行修改请多次调用。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "start_line": {"type": "integer"},
+        "end_line": {"type": "integer"},
+        "new_content": {"type": "string"}
+      },
+      "required": ["path", "start_line", "new_content"]
+    }
+  },
+  {
+    "name": "Glob",
+    "description": "按 glob 模式匹配文件路径",
+    "usage": "按 glob 模式匹配实例中的文件路径。\n\n参数：\n- `pattern`（必填）：glob 模式，相对于实例根目录。例如 **/*.md 匹配所有 markdown，floors/floor-*.md 匹配楼层文件\n\n注意：只返回匹配的文件列表，不返回文件内容。找到目标文件后用 Read 读取内容。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {"type": "string"}
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "name": "Generate",
+    "description": "构造正文生成请求（实验性）",
+    "usage": "【实验性工具】构造正文生成请求。content 中可使用 {{path}} 占位符引用文件内容。替换后的完整请求输出到 current/generate-output.json 以供调试。当前处于实验阶段，不会真正调用 LLM。\n\n参数：\n- `messages`（必填）：消息数组，每项包含 role 和 content\n\n占位符语法：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。执行后直接向用户汇报返回的验证令牌。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      },
+      "required": ["messages"]
+    }
+  },
+  {
+    "name": "SkillRead",
+    "description": "读取 Skill 的完整教学内容和 SOP",
+    "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 generate-floor、summarize\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"}
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "GitCommit",
+    "description": "执行 git 提交，锁定实例文件状态",
+    "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `message`（必填）：提交信息。建议格式：floor-NNN: 简短描述 或 summary-NNN: 简短描述\n\n调用时机：楼层完成或总结完成时。如果没有需要提交的变更，会返回相应提示。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {"type": "string"}
+      },
+      "required": ["message"]
+    }
+  },
+  {
+    "name": "GitBranch",
+    "description": "分支管理（列出、创建、切换、删除、重命名）",
+    "usage": "分支管理操作，用于剧情分支存档、回档和实验性写作。\n\n参数：\n- `action`（必填）：操作类型\n  - `list` — 列出所有分支，* 标记当前\n  - `create` — 基于当前 HEAD 创建新分支\n  - `switch` — 切换到已有分支（会改变 floors/、variables/、settings/ 等的文件内容）\n  - `delete` — 删除分支（安全模式，未合并时拒绝）\n  - `rename` — 重命名分支（常用于将 temp-* 临时分支改名为正式名）\n- `name`（create/switch/delete/rename 时必填）：分支名\n- `new_name`（rename 时必填）：新名称",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["list", "create", "switch", "delete", "rename"]},
+        "name": {"type": "string"},
+        "new_name": {"type": "string"}
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "GitCheckout",
+    "description": "回到历史提交（非破坏性，创建临时分支）",
+    "usage": "回到历史提交进行查看或实验。在目标提交处创建临时分支并切换过去，原分支完全不受影响。\n\n参数：\n- `target_hash`（必填）：目标提交的 hash，可从 GitLog 返回的列表中找到\n\n使用场景：\n- 回顾之前的剧情状态\n- 从历史节点开始\"如果当初…\"的实验性写作\n- 在隔离环境中安全探索不同走向\n\n注意事项：\n- 工作区内容会随之变为历史 commit 的状态（floors/、settings/、variables/ 等）\n- 所有修改都在临时分支上，不影响原分支\n- 回到原分支：使用 GitBranch switch\n- 如果在此临时分支上做了修改并提交，请务必使用 GitBranch rename 改名为有意义的名称（不要以 temp- 开头），否则切换分支时临时分支会被自动清理\n- 如果只是查看历史、没有做任何修改就切走了，临时分支会在下次切换分支时被自动删除",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target_hash": {"type": "string"}
+      },
+      "required": ["target_hash"]
+    }
+  },
+  {
+    "name": "GitLog",
+    "description": "查看 git 提交历史",
+    "usage": "查看实例的 git 提交历史。返回最近的提交列表，包含 commit hash、作者、日期和提交信息。\n\n参数：\n- `limit`（可选）：返回的最大提交数，默认 10\n\n使用场景：回顾历史记录；查找 commit hash 供 GitCheckout 使用。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "limit": {"type": "integer"}
+      }
+    }
+  }
+]

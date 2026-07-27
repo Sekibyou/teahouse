@@ -139,9 +139,33 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 - **不需要 merge**：分支是 AVG 式的剧情分支存档，不做合并
 - **sessions/ 不纳入版本控制**：对话历史由前端 localStorage 管理
 
-## 文档
+## 提示词组装
 
-详细设计文档见 [docs/](docs/) 目录。
+导演（Director）的系统提示词由 `director_system.py` 的 `assemble_system_prompt()` 动态组装，包含以下组件：
+
+```
+1. director-system/role.md       — 角色定义
+2. director-system/behavior.md   — 行为准则（含工具调用上限）
+3. tools.json usage 文本          — 由 load_tools_usage() 从 tools.json 生成
+4. 实例目录树                      — 动态扫描，floors/skills/current 折叠
+5. Skill 目录                      — 解析每个 SKILL.md 的 name + description
+6. 实例 teahouse.md               — 直接注入
+```
+
+### tools.json — 工具定义的唯一数据源
+
+`director-system/tools.json` 是所有导演工具的**唯一数据源**，同时驱动两套输出：
+
+| 输出 | 函数 | 用途 |
+|---|---|---|
+| OpenAI function calling schema | `load_tools()` (tools.py) | 传给 LLM API 作为可调用工具列表 |
+| 自然语言使用指南 | `load_tools_usage()` (tools.py) | 注入导演系统提示词，教导导演如何使用工具 |
+
+每个 tool 条目包含：
+- `name` / `description` / `parameters` — 标准 function calling schema
+- `usage`（可选）— 额外的使用指南、最佳实践、注意事项，注入系统提示词
+
+**添加或修改工具时只需编辑 `tools.json`**，两套输出会自动同步。工具执行器（executor）仍需在 `tools.py` 中注册到 `TOOL_EXECUTORS` 字典。
 
 ## 实例目录结构
 

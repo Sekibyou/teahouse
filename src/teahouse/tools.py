@@ -6,6 +6,10 @@ with a corresponding async executor that operates on an instance's file system.
 
 Following Claude Code's harness design: exact string matching for Edit,
 path traversal protection, atomic operations with clear success/failure.
+
+Tool definitions are loaded from director-system/tools.json — the single
+source of truth for both the LLM function-calling schema and the natural-language
+usage guide injected into the director's system prompt.
 """
 from __future__ import annotations
 
@@ -34,245 +38,65 @@ def _to_base36(n: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool schemas (OpenAI-compatible function calling)
+# Tool schema loading from tools.json
 # ---------------------------------------------------------------------------
 
-TOOLS: list[dict] = [
-    {
+# Default path relative to this file — can be overridden via load_tools()
+_TOOLS_JSON_PATH = Path(__file__).resolve().parent / "director-system" / "tools.json"
+
+# Loaded at module level, reloaded via load_tools()
+TOOLS: list[dict] = []
+
+
+def _raw_tool_to_schema(tool: dict) -> dict:
+    """Convert a raw tool entry from tools.json into an OpenAI function-calling schema dict."""
+    return {
         "type": "function",
         "function": {
-            "name": "Read",
-            "description": "读取文件内容。不指定 offset/limit 则读取整个文件。offset 从 1 开始。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "文件路径，相对于实例根目录。例如: settings/world.yaml, floors/floor-001.md",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "起始行号，从 1 开始。不指定则从文件开头读取。",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大读取行数。不指定则读取 offset 之后的所有行。",
-                    },
-                },
-                "required": ["path"],
-            },
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["parameters"],
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "Write",
-            "description": "写入文件内容（覆盖式）。如果文件已存在则完全覆盖，不存在则创建。会创建必要的父目录。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "文件路径，相对于实例根目录。例如: floors/floor-003.md",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "写入的文件内容",
-                    },
-                },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "Edit",
-            "description": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存，无需再次调用 Read 验证。如果确实需要全局替换所有匹配项，请设置 replace_all=true。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "文件路径，相对于实例根目录",
-                    },
-                    "old_string": {
-                        "type": "string",
-                        "description": "被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）",
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "替换后的字符串",
-                    },
-                    "replace_all": {
-                        "type": "boolean",
-                        "description": "是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置。",
-                    },
-                },
-                "required": ["path", "old_string", "new_string"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "WriteLine",
-            "description": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。注意：new_content 中的 \\n 会被自动处理，无需手动添加换行符。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "文件路径，相对于实例根目录",
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "起始行号，从 1 开始。如果只替换一行，start_line 和 end_line 设为相同值。",
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "结束行号（包含）。如果只替换一行，与 start_line 相同。不指定则仅替换 start_line 这一行。",
-                    },
-                    "new_content": {
-                        "type": "string",
-                        "description": "替换后的新行内容。如果是多行替换，请包含完整的多行文本。",
-                    },
-                },
-                "required": ["path", "start_line", "new_content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "Glob",
-            "description": "按 glob 模式匹配实例中的文件路径。例如: **/*.md 匹配所有 markdown 文件, floors/floor-*.md 匹配楼层文件, * 匹配当前目录下的所有文件和目录。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "glob 模式，相对于实例根目录",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "Generate",
-            "description": "【实验性工具】构造正文生成请求。content 中可使用 {{path}} 占位符引用文件内容，支持切片语法：{{path:N-M}}（行号范围）、{{path:from=\"A\" to=\"B\"}}（锚点范围）、{{path:10-30 from=\"A\" to=\"B\"}}（混合）。替换后的完整请求输出到 current/generate-output.json 以供调试。当前处于实验阶段，不会真正调用 LLM。请直接向用户汇报本工具返回的结果。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "messages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                        },
-                        "description": "消息数组，每项包含 role 和 content。content 中可包含 {{path}} 占位符。",
-                    },
-                },
-                "required": ["messages"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "SkillRead",
-            "description": "读取指定 Skill 的教学内容，获得完整的方法论和 SOP。Skill 的名称和描述已在系统提示词中列出。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Skill 名称，例如 generate-floor、summarize",
-                    },
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "GitCommit",
-            "description": "执行一次 git 提交，锁定当前实例所有文件的状态。包含完整的楼层文件、设定文件和变量文件。返回 commit hash 和当前分支名。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "提交信息，建议格式：floor-NNN: 简短描述 或 summary-NNN: 简短描述",
-                    },
-                },
-                "required": ["message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "GitBranch",
-            "description": "分支管理操作。支持创建、切换、列出、重命名和删除分支。分支用于剧情分支存档、回档和实验性写作。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["list", "create", "switch", "delete", "rename"],
-                        "description": "操作类型：list 列出所有分支，create 创建新分支（基于当前 HEAD），switch 切换到已有分支，delete 删除分支，rename 重命名分支",
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "分支名。create/switch/delete/rename 时需要。建议使用有意义的名称，如 retro-回到星罗城、branch-分歧路线",
-                    },
-                    "new_name": {
-                        "type": "string",
-                        "description": "新分支名。rename 时需要。重命名后的新名称。",
-                    },
-                },
-                "required": ["action"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "GitCheckout",
-            "description": "回退到历史提交（非破坏性）。在目标提交处创建临时分支并切换过去，原分支不受影响。用于回到过去的剧情节点查看或实验性写作。如需切回原分支，请使用 GitBranch switch。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "target_hash": {
-                        "type": "string",
-                        "description": "目标提交的 hash。可从 GitLog 返回的列表中找到。",
-                    },
-                },
-                "required": ["target_hash"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "GitLog",
-            "description": "查看实例的 git 提交历史。返回最近的提交列表，包含 commit hash、作者、日期和提交信息。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "返回的最大提交数，默认 10",
-                    },
-                },
-            },
-        },
-    },
-]
+    }
+
+
+def load_tools(path: Path | None = None) -> list[dict]:
+    """Load tool schemas from tools.json, returning OpenAI-compatible function-calling format.
+
+    Call this once at startup. The result is also stored in the module-level TOOLS variable.
+    """
+    global TOOLS
+    p = path or _TOOLS_JSON_PATH
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    TOOLS = [_raw_tool_to_schema(t) for t in raw]
+    return TOOLS
+
+
+def load_tools_usage(path: Path | None = None) -> str:
+    """Build the natural-language tool usage guide from tools.json.
+
+    Each tool's `usage` field is rendered as a markdown section.
+    Tools without a `usage` field are skipped.
+    Returns the combined text for injection into the director's system prompt.
+    """
+    p = path or _TOOLS_JSON_PATH
+    raw = json.loads(p.read_text(encoding="utf-8"))
+
+    sections = ["# 工具使用指南\n"]
+    for tool in raw:
+        name = tool["name"]
+        usage = tool.get("usage", "")
+        if not usage:
+            continue
+
+        sections.append(f"## {name}\n")
+        sections.append(f"{usage}\n")
+
+    return "\n".join(sections)
+
+
+# Eager-load at import time so existing imports of `TOOLS` still work
+load_tools()
 
 
 # ---------------------------------------------------------------------------

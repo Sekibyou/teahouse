@@ -18,7 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
-from .tools import TOOLS, execute_tool
+from .tools import execute_tool, load_tools, load_tools_usage
 from .director_system import assemble_system_prompt
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
@@ -236,19 +236,22 @@ async def _tool_use_loop(
 ):
     """Run tool use loop: call LLM → execute tools → feed back results → repeat until LLM returns text.
 
-    The system prompt is assembled automatically from director-system/ templates
-    and the instance's teahouse.md.
+    The system prompt is assembled automatically from director-system/ templates,
+    tools.json usage guide, and the instance's teahouse.md.
 
     Yields SSE-compatible dict events: tool_call, tool_result, then text chunks.
     """
     api_style = client.api_style
     msg = list(messages)
 
-    tool_system = assemble_system_prompt(instance_dir)
+    # Load tools from the single source of truth (tools.json)
+    tools = load_tools()
+    tools_usage = load_tools_usage()
+    tool_system = assemble_system_prompt(instance_dir, tools_usage)
 
     for _round in range(MAX_TOOL_ROUNDS):
         # Call LLM with tools
-        resp = await client.send_message_full(msg, system=tool_system, tools=TOOLS)
+        resp = await client.send_message_full(msg, system=tool_system, tools=tools)
 
         # Check for errors
         if "error" in resp:
@@ -356,7 +359,7 @@ async def _tool_use_loop(
         "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
     })
 
-    resp = await client.send_message_full(msg, system=tool_system, tools=TOOLS)
+    resp = await client.send_message_full(msg, system=tool_system, tools=tools)
     text = _extract_text(resp, api_style)
     if text:
         yield {"type": "text", "text": text}

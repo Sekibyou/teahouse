@@ -2,10 +2,11 @@
 Director system prompt assembler.
 
 Assembles the Director's system prompt from:
-1. Template files in director-system/ (role.md, behavior.md, tools.md, ...)
-2. The instance's teahouse.md
-3. A directory tree of the instance (always injected)
-4. A skills catalogue (name + description from each SKILL.md frontmatter)
+1. Template files in director-system/ (role.md, behavior.md)
+2. Tools usage guide from tools.json (loaded separately, passed in)
+3. The instance's teahouse.md
+4. A directory tree of the instance (always injected)
+5. A skills catalogue (name + description from each SKILL.md frontmatter)
 
 All template content lives in markdown files, not in Python code.
 """
@@ -25,7 +26,6 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "director-system"
 TEMPLATE_FILES = [
     "role.md",
     "behavior.md",
-    "tools.md",
 ]
 
 INSTANCE_TEAHOUSE = "teahouse.md"
@@ -140,28 +140,33 @@ def _scan_skills(instance_dir: Path) -> str:
     return "可用 Skill：\n" + "\n".join(entries)
 
 
-def assemble_system_prompt(instance_dir: Path) -> str:
+def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> str:
     """Assemble the full system prompt for the Director.
 
     Reads template files from director-system/ in order,
-    then appends: instance directory tree, skills catalogue, and teahouse.md.
+    injects the tools usage guide, then appends: instance directory tree,
+    skills catalogue, and teahouse.md.
     """
     parts: list[str] = []
 
-    # 1. Template parts (role, behavior, tools)
+    # 1. Template parts (role, behavior)
     for filename in TEMPLATE_FILES:
         filepath = TEMPLATE_DIR / filename
         if filepath.exists():
             parts.append(filepath.read_text(encoding="utf-8").strip())
 
-    # 2. Instance directory tree
+    # 2. Tools usage guide (from tools.json, loaded by caller)
+    if tools_usage_text:
+        parts.append(tools_usage_text.strip())
+
+    # 3. Instance directory tree
     tree = _scan_tree(instance_dir)
     parts.append(f"## 实例目录结构\n\n{tree}")
 
-    # 3. Skills catalogue (name + description from SKILL.md)
+    # 4. Skills catalogue (name + description from SKILL.md)
     parts.append(_scan_skills(instance_dir))
 
-    # 4. Instance teahouse.md
+    # 5. Instance teahouse.md
     teahouse_path = instance_dir / INSTANCE_TEAHOUSE
     if teahouse_path.exists():
         parts.append(teahouse_path.read_text(encoding="utf-8").strip())
