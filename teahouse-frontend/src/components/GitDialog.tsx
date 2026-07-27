@@ -384,17 +384,33 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               )}
                             </div>
 
-                            <div className="border-t border-border pt-2 space-y-2">
+                            <div className="border-t border-border pt-3 space-y-2">
                               {/* Navigate actions (non-self nodes only) */}
                               {!contextNode.isSelf && (() => {
                                 const brInfo = gitStatus?.branches?.find(b => b.name === contextNode.branchName)
                                 const isBranchHead = brInfo?.commit_hash === contextNode.hash
                                 return (
                                 <>
-                                  {isBranchHead ? (
+                                  <Button
+                                    size="default"
+                                    className="w-full justify-start"
+                                    onClick={() => {
+                                      setError("")
+                                      if (gitStatus?.has_uncommitted) {
+                                        setError("有未提交的变更，请先提交或丢弃")
+                                        return
+                                      }
+                                      setContextNode(null)
+                                      executeNavigate(contextNode.hash, contextNode.branchName!, true)
+                                    }}
+                                  >
+                                    <GitBranchIcon className="h-4 w-4 mr-2" />
+                                    切换到「{contextNode.branchName}」
+                                  </Button>
+                                  {!isBranchHead && (
                                     <Button
-                                      variant="outline"
-                                      size="sm"
+                                      variant="secondary"
+                                      size="default"
                                       className="w-full justify-start"
                                       onClick={() => {
                                         setError("")
@@ -403,49 +419,12 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                           return
                                         }
                                         setContextNode(null)
-                                        executeNavigate(contextNode.hash, contextNode.branchName!, true)
+                                        executeNavigate(contextNode.hash, contextNode.branchName!, false)
                                       }}
                                     >
-                                      <GitBranchIcon className="h-3.5 w-3.5 mr-2" />
-                                      切换到「{contextNode.branchName}」
+                                      <CornerDownRight className="h-4 w-4 mr-2" />
+                                      回退到此节点（创建临时分支）
                                     </Button>
-                                  ) : (
-                                    <>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full justify-start"
-                                        onClick={() => {
-                                          setError("")
-                                          if (gitStatus?.has_uncommitted) {
-                                            setError("有未提交的变更，请先提交或丢弃")
-                                            return
-                                          }
-                                          setContextNode(null)
-                                          executeNavigate(contextNode.hash, contextNode.branchName!, true)
-                                        }}
-                                      >
-                                        <GitBranchIcon className="h-3.5 w-3.5 mr-2" />
-                                        切换到「{contextNode.branchName}」最新
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full justify-start"
-                                        onClick={() => {
-                                          setError("")
-                                          if (gitStatus?.has_uncommitted) {
-                                            setError("有未提交的变更，请先提交或丢弃")
-                                            return
-                                          }
-                                          setContextNode(null)
-                                          executeNavigate(contextNode.hash, contextNode.branchName!, false)
-                                        }}
-                                      >
-                                        <CornerDownRight className="h-3.5 w-3.5 mr-2" />
-                                        回退到此节点（创建临时分支）
-                                      </Button>
-                                    </>
                                   )}
                                 </>
                                 )
@@ -454,96 +433,96 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               {/* Discard all (self node only) */}
                               {contextNode.isSelf && (
                                 <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full justify-start text-amber-600 hover:text-amber-600"
+                                  variant="secondary"
+                                  size="default"
+                                  className="w-full justify-start"
                                   onClick={() => {
                                     setContextNode(null)
                                     handleDiscardAll()
                                   }}
                                 >
-                                  <Undo2 className="h-3.5 w-3.5 mr-2" />
+                                  <Undo2 className="h-4 w-4 mr-2" />
                                   丢弃所有未保存修改
                                 </Button>
                               )}
 
-                              {/* Rename */}
-                              {!renaming ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full justify-start"
-                                  onClick={() => {
-                                    setRenaming(true)
-                                    setNewBranchName(contextNode.branchName || "")
-                                    setConfirmingDelete(false)
-                                  }}
-                                >
-                                  <Pencil className="h-3.5 w-3.5 mr-2" />
-                                  修改分支名称
-                                </Button>
-                              ) : (
-                                <div className="space-y-2">
-                                  <Input
-                                    value={newBranchName}
-                                    onChange={e => setNewBranchName(e.target.value)}
-                                    placeholder="新分支名称"
-                                    className="text-sm"
-                                    autoFocus
-                                    onKeyDown={e => {
-                                      if (e.key === "Enter") handleRename()
-                                      if (e.key === "Escape") { setRenaming(false); setNewBranchName("") }
-                                    }}
-                                  />
-                                  <div className="flex gap-2">
-                                    <Button size="sm" variant="outline" className="flex-1" onClick={() => { setRenaming(false); setNewBranchName("") }}>
-                                      取消
-                                    </Button>
-                                    <Button size="sm" className="flex-1" onClick={handleRename} disabled={!newBranchName.trim()}>
-                                      <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                                      确认改名
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Delete node — disabled for HEAD self when it's the only commit on the branch */}
-                              {(() => {
-                                const cbHead = gitStatus?.branches?.find(b => b.name === contextNode.branchName)
-                                // Can't delete if this is self AND the branch only has this commit
-                                const isOnlyCommit = contextNode.isSelf && cbHead && cbHead.commit_hash === contextNode.hash && commits.length <= 1
-                                return !confirmingDelete ? (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className={`w-full justify-start ${isOnlyCommit ? "text-muted-foreground cursor-not-allowed" : "text-red-500 hover:text-red-500"}`}
-                                    disabled={isOnlyCommit}
+                              {/* Secondary actions row */}
+                              <div className="flex gap-2 pt-1">
+                                {/* Rename */}
+                                {!renaming ? (
+                                  <button
+                                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                                     onClick={() => {
-                                      if (isOnlyCommit) return
-                                      setConfirmingDelete(true)
-                                      setRenaming(false)
+                                      setRenaming(true)
+                                      setNewBranchName(contextNode.branchName || "")
+                                      setConfirmingDelete(false)
                                     }}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                    {isOnlyCommit ? "无法删除（唯一提交）" : "删除此节点及后续提交"}
-                                  </Button>
+                                    <Pencil className="h-3 w-3" />
+                                    修改分支名
+                                  </button>
                                 ) : (
-                                  <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
-                                    <p className="text-xs text-red-500">
-                                      此操作将删除该节点及其之后的所有提交，不可恢复。是否确认？
-                                    </p>
+                                  <div className="flex-[2] space-y-2">
+                                    <Input
+                                      value={newBranchName}
+                                      onChange={e => setNewBranchName(e.target.value)}
+                                      placeholder="新分支名称"
+                                      className="text-sm h-7"
+                                      autoFocus
+                                      onKeyDown={e => {
+                                        if (e.key === "Enter") handleRename()
+                                        if (e.key === "Escape") { setRenaming(false); setNewBranchName("") }
+                                      }}
+                                    />
                                     <div className="flex gap-2">
-                                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
+                                      <Button size="sm" variant="outline" className="flex-1" onClick={() => { setRenaming(false); setNewBranchName("") }}>
                                         取消
                                       </Button>
-                                      <Button size="sm" variant="destructive" className="flex-1" onClick={handleDeleteNode}>
-                                        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                                        确认删除
+                                      <Button size="sm" className="flex-1" onClick={handleRename} disabled={!newBranchName.trim()}>
+                                        确认
                                       </Button>
                                     </div>
                                   </div>
-                                )
-                              })()}
+                                )}
+
+                                {/* Delete node */}
+                                {(() => {
+                                  const cbHead = gitStatus?.branches?.find(b => b.name === contextNode.branchName)
+                                  const isOnlyCommit = contextNode.isSelf && cbHead && cbHead.commit_hash === contextNode.hash && commits.length <= 1
+                                  return !confirmingDelete ? (
+                                    <button
+                                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-xs transition-colors ${
+                                        isOnlyCommit
+                                          ? "text-muted-foreground/50 cursor-not-allowed"
+                                          : "text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                                      }`}
+                                      disabled={isOnlyCommit}
+                                      onClick={() => {
+                                        if (isOnlyCommit) return
+                                        setConfirmingDelete(true)
+                                        setRenaming(false)
+                                      }}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      {isOnlyCommit ? "无法删除" : "删除节点"}
+                                    </button>
+                                  ) : (
+                                    <div className="flex-[2] space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2">
+                                      <p className="text-xs text-red-500">
+                                        删除该节点及之后的所有提交，不可恢复。确认？
+                                      </p>
+                                      <div className="flex gap-2">
+                                        <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
+                                          取消
+                                        </Button>
+                                        <Button size="sm" variant="destructive" className="flex-1" onClick={handleDeleteNode}>
+                                          确认删除
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )
+                                })()}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -777,16 +756,37 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
     })
 
     // Assign each commit to a branch name (for display labels, NOT for color)
+    // Strategy: walk back from each branch HEAD; nodes on the current branch
+    // get the current branch name; other-branch nodes get their branch's name.
     const hashToBranch = new Map<string, string>()
+    // First pass: walk back from every other branch's HEAD
+    for (const b of branches) {
+      if (b.name === currentBranch) continue
+      const headCommit = commits.find(c => c.hash === b.commit_hash)
+      if (!headCommit) continue
+      const visited = new Set<string>()
+      const queue = [headCommit]
+      while (queue.length > 0) {
+        const c = queue.shift()!
+        if (visited.has(c.hash)) continue
+        visited.add(c.hash)
+        // Only label if not already on the current branch
+        if (!currentBranchCommits.has(c.hash)) {
+          if (!hashToBranch.has(c.hash)) {
+            hashToBranch.set(c.hash, b.name)
+          }
+        } else {
+          continue // stop at current-branch boundary
+        }
+        for (const parentHash of c.parents) {
+          const parent = commits.find(p => p.hash === parentHash)
+          if (parent) queue.push(parent)
+        }
+      }
+    }
+    // Second pass: remaining unlabeled nodes default to currentBranch
     for (const c of uniqueCommits) {
-      const refs = hashToBranches.get(c.hash) || []
-      if (currentBranchCommits.has(c.hash)) {
-        hashToBranch.set(c.hash, currentBranch)
-      } else if (refs.length > 0) {
-        hashToBranch.set(c.hash, refs[0])
-      } else if (c.parents.length > 0) {
-        hashToBranch.set(c.hash, hashToBranch.get(c.parents[0]) || currentBranch)
-      } else {
+      if (!hashToBranch.has(c.hash)) {
         hashToBranch.set(c.hash, currentBranch)
       }
     }
