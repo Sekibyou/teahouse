@@ -125,7 +125,7 @@ def git_branch_switch_with_cleanup(instance_dir: Path, name: str) -> str:
 
 
 def cleanup_temp_branches(instance_dir: Path) -> list[str]:
-    """Delete temp-* branches that have no unique commits (HEAD is reachable from other refs).
+    """Delete temp-* and _delete_temp_* branches that have no unique commits.
 
     A temp branch is considered "orphaned" if its tip commit is contained in
     at least one other branch — meaning switching away without adding new
@@ -135,7 +135,7 @@ def cleanup_temp_branches(instance_dir: Path) -> list[str]:
     """
     all_branches = git_branch_list(instance_dir)
     all_names = [b["name"] for b in all_branches]
-    temp_branches = [b for b in all_branches if b["name"].startswith("temp-")]
+    temp_branches = [b for b in all_branches if b["name"].startswith("temp-") or b["name"].startswith("_delete_temp_")]
 
     deleted = []
     for tb in temp_branches:

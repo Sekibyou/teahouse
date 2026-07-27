@@ -400,7 +400,7 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Write the full todo list (overwrite). Persists to current/todo.json."""
+    """Write the full todo list (overwrite). Session-only, no persistence."""
     todos = args["todos"]
 
     # Validate
@@ -429,14 +429,6 @@ async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
             f"请将多余的任务改为 pending 后再提交。"
         )
 
-    # Persist
-    output_path = instance_dir / "current" / "todo.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(todos, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
     # Build summary
     counts = {"pending": 0, "in_progress": 0, "completed": 0}
     for item in todos:
@@ -446,8 +438,7 @@ async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
         f"任务清单已更新。\n"
         f"  pending: {counts['pending']}\n"
         f"  in_progress: {counts['in_progress']}\n"
-        f"  completed: {counts['completed']}\n"
-        f"  (已保存至 current/todo.json)"
+        f"  completed: {counts['completed']}"
     )
 
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, ListTodo, Circle, CircleDot, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { chatApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
 import { getActiveInstance } from "@/stores/sessionStore"
@@ -460,14 +460,16 @@ function AssistantBubble({ message }: { message: RichMessage }) {
                   </div>
                   {tc.result !== undefined && (
                     <div className="mt-1">
-                      {tc.result.startsWith("Error") ? (
+                      {tc.name === "TodoWrite" ? (
+                        <TodoWriteResult args={tc.args} result={tc.result} />
+                      ) : tc.result.startsWith("Error") ? (
                         <div className="flex items-start gap-1.5 text-red-500">
                           <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
                           <span className="font-mono whitespace-pre-wrap">{tc.result}</span>
                         </div>
                       ) : (
-                        <div className="flex items-start gap-1.5 text-green-600 dark:text-green-400">
-                          <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+                        <div className="flex items-start gap-1.5 text-muted-foreground">
+                          <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
                           <span className="font-mono whitespace-pre-wrap line-clamp-3">{tc.result}</span>
                         </div>
                       )}
@@ -551,5 +553,70 @@ function formatToolArgs(tc: ToolCallEvent): string {
   if (tc.name === "Edit") return args.path as string
   if (tc.name === "WriteLine") return args.path as string
   if (tc.name === "Glob") return args.pattern as string
+  if (tc.name === "TodoWrite") {
+    const todos = (args.todos as Array<{ status: string }>) || []
+    if (todos.length === 0) return "（空清单）"
+    const done = todos.filter((t) => t.status === "completed").length
+    const active = todos.find((t) => t.status === "in_progress")
+    const parts = [`${todos.length} 项`]
+    if (done > 0) parts.push(`${done} 项已完成`)
+    if (active) parts.push(`进行中: ${(active as { activeForm: string }).activeForm}`)
+    return parts.join("，")
+  }
   return JSON.stringify(args)
+}
+
+/** Render a TodoWrite result as a visual task list */
+function TodoWriteResult({ args, result }: { args: Record<string, unknown>; result: string }) {
+  if (result.startsWith("Error")) {
+    return (
+      <div className="flex items-start gap-1.5 text-red-500">
+        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+        <span className="font-mono whitespace-pre-wrap">{result}</span>
+      </div>
+    )
+  }
+  const todos = (args.todos as Array<{ content: string; status: string }>) || []
+  if (todos.length === 0) {
+    return (
+      <div className="flex items-start gap-1.5 text-green-600 dark:text-green-400">
+        <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+        <span className="font-mono whitespace-pre-wrap line-clamp-3">{result}</span>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <div className="space-y-0.5">
+        {todos.map((t, i) => {
+          const icon =
+            t.status === "completed" ? (
+              <CheckCheck className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
+            ) : t.status === "in_progress" ? (
+              <CircleDot className="h-3 w-3 text-amber-500 shrink-0 mt-0.5" />
+            ) : (
+              <Circle className="h-3 w-3 text-muted-foreground/40 shrink-0 mt-0.5" />
+            )
+          return (
+            <div
+              key={i}
+              className={`flex items-start gap-1.5 ${
+                t.status === "completed"
+                  ? "text-muted-foreground/50 line-through"
+                  : t.status === "in_progress"
+                    ? "text-foreground font-medium"
+                    : "text-muted-foreground"
+              }`}
+            >
+              {icon}
+              <span>{t.content}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-1.5 pt-1.5 border-t border-border/50 text-[10px] text-muted-foreground font-mono">
+        {result}
+      </div>
+    </div>
+  )
 }
