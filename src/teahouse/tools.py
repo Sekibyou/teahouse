@@ -492,6 +492,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
     content_template = args["content"]
     label = args["label"]
     note = args["note"]
+    content_type = args.get("content_type", "text/markdown")
 
     blocks = _load_output_blocks(instance_dir)
 
@@ -509,6 +510,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
             "note": note,
             "content": content_template,
             "rendered": rendered,
+            "content_type": content_type,
         }
         blocks.append(block)
         _save_output_blocks(instance_dir, blocks)
@@ -518,6 +520,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
             "label": label,
             "note": note,
             "rendered": rendered,
+            "content_type": content_type,
             "instance_id": instance_id or instance_dir.name,
         })
 
@@ -552,6 +555,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         blocks[idx]["rendered"] = rendered
         blocks[idx]["label"] = label
         blocks[idx]["note"] = note
+        blocks[idx]["content_type"] = content_type
         _save_output_blocks(instance_dir, blocks)
 
         state.broadcast("output.replace", {
@@ -559,6 +563,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
             "label": label,
             "note": note,
             "rendered": rendered,
+            "content_type": content_type,
             "instance_id": instance_id or instance_dir.name,
         })
 

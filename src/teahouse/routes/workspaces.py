@@ -417,7 +417,7 @@ async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_
     blocks = _load_output_blocks(instance_dir)
     return {
         "blocks": [
-            {"uuid": b["uuid"], "label": b["label"], "note": b["note"]}
+            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content_type": b.get("content_type", "text/markdown")}
             for b in blocks
         ]
     }
@@ -442,6 +442,7 @@ async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends
                 "note": b["note"],
                 "content": b["content"],
                 "rendered": b["rendered"],
+                "content_type": b.get("content_type", "text/markdown"),
             }
     raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")
 

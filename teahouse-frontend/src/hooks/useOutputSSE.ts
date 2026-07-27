@@ -6,6 +6,7 @@ export interface OutputBlock {
   label: string
   note: string
   rendered: string
+  content_type?: string
 }
 
 interface UseOutputSSEOptions {
@@ -57,6 +58,7 @@ export function useOutputSSE({
               label: data.label,
               note: data.note,
               rendered: data.rendered,
+              content_type: data.content_type,
             })
           } else if (e.type === "output.replace") {
             cb.onReplace({
@@ -64,6 +66,7 @@ export function useOutputSSE({
               label: data.label,
               note: data.note,
               rendered: data.rendered,
+              content_type: data.content_type,
             })
           } else if (e.type === "output.delete") {
             cb.onDelete(data.uuid)

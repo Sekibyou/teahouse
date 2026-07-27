@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -13,16 +13,11 @@ interface OutputPanelProps {
 /**
  * OutputPanel — 独立沙盒，用于展示导演推送到前端的输出内容。
  *
- * 通信机制：
- * 1. 挂载时主动 GET /api/instances/{id}/output-blocks 获取全部输出块摘要
- * 2. 对于 label 以 "ep" 开头的块，按数字后缀排序，找出最高 ep
- * 3. 自动 GET 最高 ep 块的全文（rendered）进行展示
- * 4. SSE 实时监听 output.append / output.replace / output.delete 增量更新
- *
- * 未来可作为第三方前端的参考实现——开发者只需：
- *   - GET /api/instances/{id}/output-blocks → 获取摘要
- *   - GET /api/instances/{id}/output-blocks/{uuid} → 获取全文
- *   - SSE /events → 实时更新
+ * 根据 content_type 走不同渲染路径：
+ * - text/markdown（默认）→ ReactMarkdown 渲染
+ * - text/plain → <pre> 保留换行
+ * - text/html → 沙盒 iframe dangerouslySetInnerHTML
+ * - application/javascript → 沙盒 iframe <script> 执行
  */
 export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
   const [blocks, setBlocks] = useState<OutputBlock[]>([])
@@ -59,12 +54,12 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
       setInitialLoading(true)
       const res = await outputBlocksApi.list(instanceId)
       if (res.ok && res.data?.blocks) {
-        // 为每个摘要生成一个占位渲染字段（SSE 事件到来时会被真正的 rendered 填充）
         const initial = res.data.blocks.map((b) => ({
           uuid: b.uuid,
           label: b.label,
           note: b.note,
           rendered: "",
+          content_type: "text/markdown" as const,
         }))
         setBlocks(initial)
       }
@@ -80,7 +75,7 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
         const num = parseInt(b.label.replace(/^ep/i, ""), 10)
         return { ...b, epNum: num }
       })
-      .sort((a, b) => b.epNum - a.epNum) // 降序
+      .sort((a, b) => b.epNum - a.epNum)
     return eps
   }, [blocks])
 
@@ -91,42 +86,34 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
 
   // ---- 首次加载时获取最高 ep 块的正文 ----
   const [activeRendered, setActiveRendered] = useState<string | null>(null)
+  const [activeContentType, setActiveContentType] = useState<string>("text/markdown")
   const [activeEpLoading, setActiveEpLoading] = useState(false)
 
   useEffect(() => {
     if (!instanceId || !activeEpBlock) return
-    // 如果 SSE 已经推送了 rendered，直接用
     if (activeEpBlock.rendered) {
       setActiveRendered(activeEpBlock.rendered)
+      setActiveContentType(activeEpBlock.content_type || "text/markdown")
       return
     }
-    // 否则主动获取
     ;(async () => {
       setActiveEpLoading(true)
       const res = await outputBlocksApi.get(instanceId, activeEpBlock.uuid)
       if (res.ok && res.data) {
         setActiveRendered(res.data.rendered)
+        setActiveContentType(res.data.content_type || "text/markdown")
       }
       setActiveEpLoading(false)
     })()
   }, [instanceId, activeEpBlock?.uuid])
 
-  // SSE replace 更新时同步刷新 activeRendered
+  // SSE replace 更新时同步刷新
   useEffect(() => {
     if (activeEpBlock?.rendered) {
       setActiveRendered(activeEpBlock.rendered)
+      setActiveContentType(activeEpBlock.content_type || "text/markdown")
     }
   }, [activeEpBlock?.rendered])
-
-  // SSE append 更新：如果新块是 ep 块且是最高的，自动展示
-  useEffect(() => {
-    if (epBlocks.length > 0 && !activeRendered) {
-      const latest = epBlocks[0]
-      if (latest.rendered) {
-        setActiveRendered(latest.rendered)
-      }
-    }
-  }, [epBlocks, activeRendered])
 
   // ---- UI ----
 
@@ -161,11 +148,7 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
             <p className="text-sm">加载正文...</p>
           </div>
         ) : activeRendered ? (
-          <div className="prose prose-sm dark:prose-invert prose-chat max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {activeRendered}
-            </ReactMarkdown>
-          </div>
+          <ContentRenderer content={activeRendered} contentType={activeContentType} />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <p className="text-sm">暂无正文内容</p>
@@ -173,7 +156,7 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
         )}
       </div>
 
-      {/* 底部 — 输出块列表（调试用） */}
+      {/* 底部 — 输出块列表 */}
       <div className="border-t border-border shrink-0 max-h-[30%] overflow-auto">
         <div className="px-4 py-2 text-[10px] text-muted-foreground font-mono">
           输出块 ({blocks.length}) | ep 块 ({epBlocks.length})
@@ -192,10 +175,12 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
               onSelect={(b) => {
                 if (b.rendered) {
                   setActiveRendered(b.rendered)
+                  setActiveContentType(b.content_type || "text/markdown")
                 } else if (instanceId) {
                   outputBlocksApi.get(instanceId, b.uuid).then((res) => {
                     if (res.ok && res.data) {
                       setActiveRendered(res.data.rendered)
+                      setActiveContentType(res.data.content_type || "text/markdown")
                     }
                   })
                 }
@@ -208,6 +193,60 @@ export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
   )
 }
 
+// ---- Content renderer — dispatches on content_type ----
+
+function ContentRenderer({ content, contentType }: { content: string; contentType: string }) {
+  if (contentType === "text/html") {
+    return <HtmlSandbox html={content} />
+  }
+  if (contentType === "application/javascript") {
+    return <JsSandbox script={content} />
+  }
+  if (contentType === "text/plain") {
+    return <pre className="text-sm whitespace-pre-wrap font-sans">{content}</pre>
+  }
+  // default: text/markdown
+  return (
+    <div className="prose prose-sm dark:prose-invert prose-chat max-w-none">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+// ---- Sandbox renderers ----
+
+function HtmlSandbox({ html }: { html: string }) {
+  return (
+    <iframe
+      className="w-full min-h-[200px] border-0 rounded bg-white dark:bg-neutral-900"
+      sandbox="allow-scripts"
+      srcDoc={html}
+      title="HTML sandbox"
+    />
+  )
+}
+
+function JsSandbox({ script }: { script: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    container.innerHTML = ""
+    const iframe = document.createElement("iframe")
+    iframe.style.cssText = "width:100%;min-height:200px;border:none;border-radius:0;background:transparent;"
+    iframe.sandbox.add("allow-scripts")
+    iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>${script}</script></body></html>`
+    container.appendChild(iframe)
+  }, [script])
+
+  return <div ref={containerRef} />
+}
+
+// ---- Block list row ----
+
 function OutputBlockRow({
   block,
   isActive,
@@ -218,6 +257,11 @@ function OutputBlockRow({
   onSelect: (block: OutputBlock) => void
 }) {
   const isEp = /^ep\d+$/i.test(block.label)
+  const ct = block.content_type || "text/markdown"
+  const ctLabel =
+    ct === "text/html" ? "HTML" :
+    ct === "application/javascript" ? "JS" :
+    ct === "text/plain" ? "TXT" : "MD"
 
   return (
     <button
@@ -236,8 +280,9 @@ function OutputBlockRow({
         {block.label}
       </span>
       <span className="truncate opacity-60">{block.note}</span>
-      <span className="ml-auto text-[10px] opacity-40 shrink-0">
-        {block.rendered ? `${block.rendered.length}c` : "..."}
+      <span className="ml-auto text-[10px] opacity-40 shrink-0 flex items-center gap-1">
+        <span>{ctLabel}</span>
+        <span>{block.rendered ? `${block.rendered.length}c` : "..."}</span>
       </span>
     </button>
   )

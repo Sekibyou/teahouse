@@ -162,7 +162,7 @@
   {
     "name": "Output",
     "description": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。",
-    "usage": "管理前端可见的输出内容块。每个块有唯一 uuid（后端自动分配），通过 label 供前端筛选，note 为人类可读备注。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块\n\n当前活跃的输出块列表已注入系统提示词，可参考其 uuid 和 label 进行操作。",
+    "usage": "管理前端可见的输出内容块。每个块有唯一 uuid（后端自动分配），通过 label 供前端筛选，note 为人类可读备注。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid\n- `content_type`（可选）：内容类型，默认 \"text/markdown\"\n  - `text/markdown` — Markdown 正文（默认）\n  - `text/plain` — 纯文本，保留换行\n  - `text/html` — HTML 富文本，在沙盒 iframe 中渲染\n  - `application/javascript` — JS 脚本，在沙盒 iframe 中执行\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块\n\n当前活跃的输出块列表已注入系统提示词，可参考其 uuid 和 label 进行操作。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -170,7 +170,8 @@
         "label": {"type": "string"},
         "note": {"type": "string"},
         "mode": {"type": "string", "enum": ["append", "replace", "delete"]},
-        "target_uuid": {"type": "string"}
+        "target_uuid": {"type": "string"},
+        "content_type": {"type": "string", "enum": ["text/markdown", "text/plain", "text/html", "application/javascript"]}
       },
       "required": ["content", "label", "note", "mode"]
     }
