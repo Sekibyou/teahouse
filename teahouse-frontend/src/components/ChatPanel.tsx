@@ -32,6 +32,7 @@ function nextId() {
 }
 
 const MODIFYING_TOOLS = new Set(["Write", "Edit", "WriteLine"])
+const GIT_TOOLS = new Set(["GitCommit", "GitBranch", "GitCheckout"])
 
 interface ChatPanelProps {
   onFileChanged?: (filePath: string) => void
@@ -205,7 +206,7 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
                 })
               )
 
-              // Notify parent if a file-modifying tool was used
+              // Notify parent if a file-modifying or git tool was used
               if (onFileChanged) {
                 const matched = latestToolCallsRef.current.find((tc) => tc.id === data.id)
                 if (matched && MODIFYING_TOOLS.has(matched.name)) {
@@ -213,6 +214,10 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
                   if (filePath) {
                     onFileChanged(filePath)
                   }
+                }
+                if (matched && GIT_TOOLS.has(matched.name)) {
+                  // Empty path signals full workspace refresh
+                  onFileChanged("")
                 }
               }
 

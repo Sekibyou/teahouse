@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/sessionStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { GitDialog } from "@/components/GitDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
@@ -180,7 +181,7 @@ export function WorkspacePage() {
     if (res.ok) {
       setFileContent(editedContent)
       setIsDirty(false)
-      loadFileStatuses()
+      refresh({ fileTree: false, gitStatus: true, editor: false, clearDirty: false })
       showSaveToast()
     }
     setIsSaving(false)
@@ -194,8 +195,7 @@ export function WorkspacePage() {
     await instancesApi.createEntry(instId, fullPath, showCreate.type)
     setShowCreate(null)
     setCreateName("")
-    await loadFileTree()
-    loadFileStatuses()
+    await refresh({ editor: false, clearDirty: false })
   }
 
   const handleDeleteEntry = async (path: string) => {
@@ -213,8 +213,7 @@ export function WorkspacePage() {
       setEditedContent("")
       setIsDirty(false)
     }
-    await loadFileTree()
-    loadFileStatuses()
+    await refresh({ editor: false, clearDirty: false })
   }
 
   const handleLeaveSession = () => {
@@ -222,18 +221,38 @@ export function WorkspacePage() {
     navigate("/", { replace: true })
   }
 
-  // Keep a ref for latest selectedFile so onFileChanged callback always has current value
+  // Keep a ref for latest selectedFile so callbacks always have current value
   const selectedFileRef = useRef(selectedFile)
   selectedFileRef.current = selectedFile
 
+  // Unified refresh hook — used by ChatPanel (after AI tool calls),
+  // GitDialog (after user git operations), and save handlers.
+  const refresh = useWorkspaceRefresh({
+    instId,
+    selectedFileRef,
+    loadFileTree,
+    loadGitStatus,
+    loadFileStatuses,
+    setFileContent,
+    setEditedContent,
+    setGitHeadContent,
+    setIsDirty,
+    setContentReady,
+  })
+
   const onFileChanged = useCallback(async (filePath: string) => {
     if (!instId) return
-    // Refresh file tree
-    const res = await instancesApi.listFiles(instId)
-    if (res.ok) setFileTree(res.data || [])
-    // Reload editor if the modified file is currently open
+    // git tools pass empty path → full refresh
+    if (!filePath) {
+      await refresh()
+      return
+    }
+    // File-modifying tools: refresh file tree + git status, then
+    // only reload editor if the modified file is currently open
+    await refresh({ editor: false })
     const currentSelected = selectedFileRef.current
-    if (currentSelected && (!filePath || filePath === currentSelected)) {
+    if (currentSelected && filePath === currentSelected) {
+      setContentReady(false)
       const [fileRes, headRes] = await Promise.all([
         instancesApi.readFile(instId, currentSelected),
         gitApi.showFile(instId, currentSelected),
@@ -245,9 +264,10 @@ export function WorkspacePage() {
         const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
         setGitHeadContent(headContent)
         setIsDirty(false)
+        setContentReady(true)
       }
     }
-  }, [instId])
+  }, [instId, refresh])
 
   const toggleExpand = (path: string) => {
     setExpanded(prev => {
@@ -457,27 +477,7 @@ export function WorkspacePage() {
         instanceId={instId || ""}
         open={showGitDialog}
         onClose={() => setShowGitDialog(false)}
-        onRefresh={async () => {
-          loadGitStatus()
-          loadFileTree()
-          loadFileStatuses()
-          // Reload currently open file if any
-          if (instId && selectedFile) {
-            setContentReady(false)
-            const [fileRes, headRes] = await Promise.all([
-              instancesApi.readFile(instId, selectedFile),
-              gitApi.showFile(instId, selectedFile),
-            ])
-            if (fileRes.ok) {
-              setFileContent(fileRes.data!.content)
-              setEditedContent(fileRes.data!.content)
-              const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
-              setGitHeadContent(headContent)
-              setIsDirty(false)
-              setContentReady(true)
-            }
-          }
-        }}
+        onRefresh={() => refresh()}
       />
 
       {/* Confirm delete dialog */}
