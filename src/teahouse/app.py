@@ -298,23 +298,13 @@ async def _tool_use_loop(
                 })
 
     # If we exhausted rounds, notify the LLM so it can summarize or retry
-    if api_style == "anthropic":
-        msg.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": "__limit__",
-                    "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
-                }
-            ],
-        })
-    else:
-        msg.append({
-            "role": "tool",
-            "tool_call_id": "__limit__",
-            "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
-        })
+    # Use role "user" (not "tool") because OpenAI strictly validates that
+    # role "tool" messages MUST be responses to a preceding tool_calls message.
+    # A fake tool_call_id like "__limit__" will cause a 400 error.
+    msg.append({
+        "role": "user",
+        "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
+    })
 
     resp = await client.send_message_full(msg, system=tool_system, tools=TOOLS)
     text = _extract_text(resp, api_style)

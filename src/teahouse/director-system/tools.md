@@ -97,13 +97,34 @@ content 中可使用以下占位符引用文件内容：
 
 分支管理操作，用于剧情分支存档和回档。
 
-- `action`：`list` / `create` / `switch` / `delete`
-- `name`：分支名（create/switch/delete 时需要）
+- `action`：`list` / `create` / `switch` / `delete` / `rename`
+- `name`：分支名（create/switch/delete/rename 时需要）
+- `new_name`：新分支名（rename 时需要）
 
-- `list`：列出所有分支
+- `list`：列出所有分支，`*` 标记当前分支
 - `create`：基于当前 HEAD 创建新分支
 - `switch`：切换到已有分支（会改变 `floors/`、`variables/`、`settings/` 等的文件内容）
 - `delete`：删除分支（安全模式，未合并时拒绝）
+- `rename`：将分支 `name` 重命名为 `new_name`
+
+## GitCheckout
+
+回到历史提交进行查看或实验。安全、非破坏性——在目标提交处创建临时分支并切换过去，原分支完全不受影响。
+
+- `target_hash`：目标提交的 hash（可从 GitLog 返回的列表中找到）
+
+返回值包含：新临时分支名、当前 HEAD hash、使用说明。
+
+使用场景：
+- 回顾之前的剧情状态
+- 从历史节点开始"如果当初…"的实验性写作
+- 在隔离环境中安全探索不同走向
+
+注意事项：
+- 工作区内容会随之变为历史 commit 的状态（`floors/`、`settings/`、`variables/` 等）
+- 所有修改都在临时分支上，不影响原分支
+- 回到原分支：使用 `GitBranch switch`
+- 保留实验结果：在临时分支上正常提交即可
 
 ## GitLog
 

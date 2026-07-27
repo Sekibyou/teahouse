@@ -15,7 +15,21 @@ from pathlib import Path
 from typing import Any
 
 from .placeholder import resolve_messages_placeholders
-from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log
+from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_branch_switch as _git_branch_switch, git_rev_parse as _git_rev_parse
+
+import time
+
+
+def _to_base36(n: int) -> str:
+    """Convert int to base-36 string, matching JS Date.now().toString(36)."""
+    chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if n == 0:
+        return "0"
+    result = ""
+    while n > 0:
+        n, rem = divmod(n, 36)
+        result = chars[rem] + result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -202,21 +216,42 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "GitBranch",
-            "description": "分支管理操作。支持创建、切换、列出和删除分支。分支用于剧情分支存档、回档和实验性写作。",
+            "description": "分支管理操作。支持创建、切换、列出、重命名和删除分支。分支用于剧情分支存档、回档和实验性写作。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "create", "switch", "delete"],
-                        "description": "操作类型：list 列出所有分支，create 创建新分支（基于当前 HEAD），switch 切换到已有分支，delete 删除分支",
+                        "enum": ["list", "create", "switch", "delete", "rename"],
+                        "description": "操作类型：list 列出所有分支，create 创建新分支（基于当前 HEAD），switch 切换到已有分支，delete 删除分支，rename 重命名分支",
                     },
                     "name": {
                         "type": "string",
-                        "description": "分支名。create/switch/delete 时需要。建议使用有意义的名称，如 retro-回到星罗城、branch-分歧路线",
+                        "description": "分支名。create/switch/delete/rename 时需要。建议使用有意义的名称，如 retro-回到星罗城、branch-分歧路线",
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "新分支名。rename 时需要。重命名后的新名称。",
                     },
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "GitCheckout",
+            "description": "回退到历史提交（非破坏性）。在目标提交处创建临时分支并切换过去，原分支不受影响。用于回到过去的剧情节点查看或实验性写作。如需切回原分支，请使用 GitBranch switch。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_hash": {
+                        "type": "string",
+                        "description": "目标提交的 hash。可从 GitLog 返回的列表中找到。",
+                    },
+                },
+                "required": ["target_hash"],
             },
         },
     },
@@ -473,11 +508,18 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Execute branch operations: list, create, switch, delete."""
+    """Execute branch operations: list, create, switch, delete, rename."""
     action = args["action"]
     name = args.get("name")
 
     try:
+        if action == "rename":
+            new_name = args.get("new_name")
+            if not name or not new_name:
+                return "Error: rename 操作需要 name 和 new_name 参数"
+            _git_branch_rename(instance_dir, name, new_name)
+            return f"分支 '{name}' 已重命名为 '{new_name}'"
+
         result = _git_branch(instance_dir, action, name)
 
         if action == "list":
@@ -511,6 +553,52 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
         return f"Git 分支操作失败: {error_msg}"
 
 
+async def execute_git_checkout(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Checkout a historical commit: create temp branch at the hash and switch to it.
+
+    Non-destructive — the original branch is untouched. The director can explore
+    on the temp branch and switch back any time with GitBranch switch.
+    """
+    target_hash = args["target_hash"]
+
+    # Validate: resolve the hash
+    try:
+        full_hash = _git_rev_parse(instance_dir, target_hash)
+    except Exception:
+        return f"错误：无法解析 commit hash '{target_hash}'。请检查 hash 是否正确，可先使用 GitLog 查看可用提交。"
+
+    # Generate temp branch name matching frontend pattern: temp-{ms_base36}
+    temp_name = f"temp-{_to_base36(int(time.time() * 1000))}"
+
+    # Step 1: Create temp branch at the target commit
+    try:
+        _git_branch_create(instance_dir, temp_name, target_hash)
+    except Exception as e:
+        return f"错误：无法在 {target_hash[:7]} 处创建临时分支：{e}"
+
+    # Step 2: Switch to the temp branch
+    try:
+        _git_branch_switch(instance_dir, temp_name)
+    except Exception as e:
+        return f"错误：无法切换到临时分支 '{temp_name}'：{e}"
+
+    # Step 3: Confirm current HEAD
+    current_hash = _git_rev_parse(instance_dir, "HEAD")
+
+    return (
+        f"已回退到历史提交。\n"
+        f"  目标提交: {full_hash[:7]}\n"
+        f"  当前分支: {temp_name}（临时分支）\n"
+        f"  当前 HEAD: {current_hash[:7]}\n"
+        f"\n"
+        f"【重要提示】\n"
+        f"  · 当前位于临时分支，原分支未被修改\n"
+        f"  · 可在此查看/实验，修改会自动保存在此临时分支上\n"
+        f"  · 回到原分支：使用 GitBranch switch 操作\n"
+        f"  · 保留实验成果：在临时分支上提交即可"
+    )
+
+
 async def execute_git_log(instance_dir: Path, args: dict[str, Any]) -> str:
     """View git commit history."""
     limit = args.get("limit", 10)
@@ -540,6 +628,7 @@ TOOL_EXECUTORS = {
     "SkillRead": execute_skill_read,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
+    "GitCheckout": execute_git_checkout,
     "GitLog": execute_git_log,
 }
 
