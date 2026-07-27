@@ -458,6 +458,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
     instance_dir = _resolve_instance_dir(inst)
     try:
         result = git_commit(instance_dir, body.message)
+        state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
         return result
     except Exception as e:
         error_msg = str(e)
@@ -477,6 +478,9 @@ async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInf
     instance_dir = _resolve_instance_dir(inst)
     try:
         result = git_branch(instance_dir, body.action, body.name, body.start_point)
+        action = body.action
+        if action in ("switch", "create", "delete"):
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": action, "instance_id": instance_id})
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -554,6 +558,7 @@ async def api_git_reset(instance_id: str, body: GitResetRequest, user: UserInfo 
     try:
         out = git_reset_hard(instance_dir, body.target_hash)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        state.broadcast("workspace_changed", {"tool": "GitReset", "branch": branch, "instance_id": instance_id})
         return {"status": "ok", "branch": branch, "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -571,6 +576,7 @@ async def api_git_rename_branch(instance_id: str, body: GitRenameRequest, user: 
     try:
         out = git_branch_rename(instance_dir, body.old_name, body.new_name)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        state.broadcast("workspace_changed", {"tool": "GitRenameBranch", "branch": branch, "instance_id": instance_id})
         return {"status": "ok", "branch": branch, "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -658,11 +664,13 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
             if main_branch and main_branch != body.branch_name:
                 _git_run(["checkout", main_branch], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交，分支 {body.branch_name} 已清理"}
         else:
             # Rename temp to original branch name
             _git_run(["branch", "-m", body.branch_name], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -685,8 +693,10 @@ async def api_git_discard(instance_id: str, body: GitDiscardRequest, user: UserI
     try:
         if body.path:
             out = git_restore_file(instance_dir, body.path)
+            state.broadcast("file_changed", {"path": body.path, "tool": "GitDiscard", "instance_id": instance_id})
         else:
             out = git_discard_changes(instance_dir)
+            state.broadcast("workspace_changed", {"tool": "GitDiscard", "instance_id": instance_id})
         return {"status": "ok", "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

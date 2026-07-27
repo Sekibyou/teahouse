@@ -31,14 +31,7 @@ function nextId() {
   return `msg-${++msgIdCounter}`
 }
 
-const MODIFYING_TOOLS = new Set(["Write", "Edit", "WriteLine"])
-const GIT_TOOLS = new Set(["GitCommit", "GitBranch", "GitCheckout"])
-
-interface ChatPanelProps {
-  onFileChanged?: (filePath: string) => void
-}
-
-export function ChatPanel({ onFileChanged }: ChatPanelProps) {
+export function ChatPanel() {
   const [messages, setMessages] = useState<RichMessage[]>([])
 
   // Restore messages from localStorage on mount
@@ -205,21 +198,6 @@ export function ChatPanel({ onFileChanged }: ChatPanelProps) {
                   return { ...m, toolCalls }
                 })
               )
-
-              // Notify parent if a file-modifying or git tool was used
-              if (onFileChanged) {
-                const matched = latestToolCallsRef.current.find((tc) => tc.id === data.id)
-                if (matched && MODIFYING_TOOLS.has(matched.name)) {
-                  const filePath = matched.args.path as string
-                  if (filePath) {
-                    onFileChanged(filePath)
-                  }
-                }
-                if (matched && GIT_TOOLS.has(matched.name)) {
-                  // Empty path signals full workspace refresh
-                  onFileChanged("")
-                }
-              }
 
               scrollToBottom()
               return

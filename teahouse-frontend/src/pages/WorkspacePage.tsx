@@ -14,6 +14,7 @@ import { ChatPanel } from "@/components/ChatPanel"
 import { GitDialog } from "@/components/GitDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
+import { useSSERefresh } from "@/hooks/useSSERefresh"
 import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
@@ -225,8 +226,12 @@ export function WorkspacePage() {
   const selectedFileRef = useRef(selectedFile)
   selectedFileRef.current = selectedFile
 
-  // Unified refresh hook — used by ChatPanel (after AI tool calls),
-  // GitDialog (after user git operations), and save handlers.
+  // Keep a ref for isDirty so SSE callback can check without depending on state
+  const isDirtyRef = useRef(isDirty)
+  isDirtyRef.current = isDirty
+
+  // Unified refresh hook — used by GitDialog (after user git operations),
+  // save handlers, and SSE-driven events from the backend.
   const refresh = useWorkspaceRefresh({
     instId,
     selectedFileRef,
@@ -240,34 +245,65 @@ export function WorkspacePage() {
     setContentReady,
   })
 
-  const onFileChanged = useCallback(async (filePath: string) => {
-    if (!instId) return
-    // git tools pass empty path → full refresh
-    if (!filePath) {
-      await refresh()
-      return
-    }
-    // File-modifying tools: refresh file tree + git status, then
-    // only reload editor if the modified file is currently open
-    await refresh({ editor: false })
-    const currentSelected = selectedFileRef.current
-    if (currentSelected && filePath === currentSelected) {
-      setContentReady(false)
-      const [fileRes, headRes] = await Promise.all([
-        instancesApi.readFile(instId, currentSelected),
-        gitApi.showFile(instId, currentSelected),
-      ])
-      if (fileRes.ok) {
-        const diskContent = fileRes.data!.content
-        setFileContent(diskContent)
-        setEditedContent(diskContent)
-        const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
-        setGitHeadContent(headContent)
-        setIsDirty(false)
-        setContentReady(true)
+  // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
+  useSSERefresh({
+    instanceId: instId,
+    onFileChanged: (path: string) => {
+      if (!path) {
+        // empty path means the changed file is the currently open one
+        // AND it's dirty — just refresh tree + git, skip editor
+        refresh({ editor: false })
+        return
       }
-    }
-  }, [instId, refresh])
+      const currentFile = selectedFileRef.current
+      if (currentFile && path === currentFile && isDirtyRef.current) {
+        // Dirty file was modified externally — refresh tree + git but
+        // preserve user's unsaved edits in the editor.
+        refresh({ editor: false })
+        return
+      }
+      // Refresh tree + git, AND reload editor if this file is open
+      refresh({ editor: false })
+      if (currentFile && path === currentFile) {
+        // Update editor content in-place without unmounting Monaco.
+        // Toggling contentReady would destroy/recreate the editor, which
+        // under rapid SSE events can cause "InstantiationService has been disposed".
+        instancesApi.readFile(instId!, currentFile).then(fileRes => {
+          if (fileRes.ok) {
+            setFileContent(fileRes.data!.content)
+            setEditedContent(fileRes.data!.content)
+            setIsDirty(false)
+          }
+        })
+        gitApi.showFile(instId!, currentFile).then(headRes => {
+          if (headRes.ok) {
+            setGitHeadContent(headRes.data?.content ?? "")
+          }
+        })
+      }
+    },
+    onWorkspaceChanged: () => {
+      // Full refresh: tree + git status, then re-read editor content
+      // in-place without unmounting Monaco (avoids "InstantiationService
+      // has been disposed" when events arrive rapidly).
+      refresh({ editor: false })
+      const currentFile = selectedFileRef.current
+      if (currentFile && instId) {
+        instancesApi.readFile(instId, currentFile).then(fileRes => {
+          if (fileRes.ok) {
+            setFileContent(fileRes.data!.content)
+            setEditedContent(fileRes.data!.content)
+            setIsDirty(false)
+          }
+        })
+        gitApi.showFile(instId, currentFile).then(headRes => {
+          if (headRes.ok) {
+            setGitHeadContent(headRes.data?.content ?? "")
+          }
+        })
+      }
+    },
+  })
 
   const toggleExpand = (path: string) => {
     setExpanded(prev => {
@@ -444,7 +480,7 @@ export function WorkspacePage() {
 
       {/* Right panel — Chat */}
       <aside className="flex-[3] border-l border-border flex flex-col bg-muted/10 min-w-0">
-        <ChatPanel onFileChanged={onFileChanged} />
+        <ChatPanel />
       </aside>
 
       {/* Create Dialog */}
@@ -477,7 +513,7 @@ export function WorkspacePage() {
         instanceId={instId || ""}
         open={showGitDialog}
         onClose={() => setShowGitDialog(false)}
-        onRefresh={() => refresh()}
+        onRefresh={() => refresh({ editor: false })}
       />
 
       {/* Confirm delete dialog */}

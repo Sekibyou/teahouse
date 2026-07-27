@@ -97,7 +97,6 @@ export function useWorkspaceRefresh({
 
     const currentFile = selectedFileRef.current
     if (editor && currentFile) {
-      p.setContentReady(false)
       const [fileRes, headRes] = await Promise.all([
         instancesApi.readFile(id, currentFile),
         gitApi.showFile(id, currentFile),
@@ -111,7 +110,6 @@ export function useWorkspaceRefresh({
         if (clearDirty) {
           p.setIsDirty(false)
         }
-        p.setContentReady(true)
       }
     } else if (clearDirty) {
       p.setIsDirty(false)

@@ -16,6 +16,7 @@ from typing import Any
 
 from .placeholder import resolve_messages_placeholders
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup
+from .state import state
 
 import time
 
@@ -344,6 +345,7 @@ async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     full = _validate_path(instance_dir, path)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
+    state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_dir.name})
     return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}"
 
 
@@ -373,10 +375,12 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
     if replace_all:
         new_content = content.replace(old_string, new_string)
         full.write_text(new_content, encoding="utf-8")
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
         return f"Successfully replaced all {count} occurrences in {path}"
     else:
         new_content = content.replace(old_string, new_string, 1)
         full.write_text(new_content, encoding="utf-8")
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
         return f"Successfully applied edit to {path}"
 
 
@@ -419,6 +423,7 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     new_file = before + decoded + after
 
     full.write_text(new_file, encoding="utf-8")
+    state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_dir.name})
     return f"Successfully replaced lines {start_line}–{end_line} in {path}"
 
 
@@ -494,6 +499,7 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any]) -> str:
     try:
         result = _git_commit(instance_dir, message)
         files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
+        state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_dir.name})
         return (
             f"提交成功\n"
             f"  Commit: {result['commit_hash']}\n"
@@ -518,6 +524,7 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
             if not name or not new_name:
                 return "Error: rename 操作需要 name 和 new_name 参数"
             _git_branch_rename(instance_dir, name, new_name)
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "rename", "instance_id": instance_dir.name})
             return f"分支 '{name}' 已重命名为 '{new_name}'"
 
         result = _git_branch(instance_dir, action, name)
@@ -533,12 +540,15 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
             return "\n".join(lines)
 
         if action == "create":
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "create", "instance_id": instance_dir.name})
             return f"分支 '{name}' 创建成功（基于当前 HEAD）"
 
         if action == "switch":
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "switch", "instance_id": instance_dir.name})
             return f"已切换到分支 '{name}'"
 
         if action == "delete":
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "delete", "instance_id": instance_dir.name})
             return f"分支 '{name}' 已删除"
 
         return f"未知操作: {action}"
@@ -584,6 +594,8 @@ async def execute_git_checkout(instance_dir: Path, args: dict[str, Any]) -> str:
 
     # Step 3: Confirm current HEAD
     current_hash = _git_rev_parse(instance_dir, "HEAD")
+
+    state.broadcast("workspace_changed", {"tool": "GitCheckout", "branch": temp_name, "instance_id": instance_dir.name})
 
     return (
         f"已回退到历史提交。\n"
