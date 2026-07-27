@@ -23,6 +23,7 @@ interface UseWorkspaceRefreshParams {
   setGitHeadContent: (v: string) => void
   setIsDirty: (v: boolean) => void
   setContentReady: (v: boolean) => void
+  setSelectedFile: (v: string | null) => void
 }
 
 /**
@@ -43,6 +44,7 @@ export function useWorkspaceRefresh({
   setGitHeadContent,
   setIsDirty,
   setContentReady,
+  setSelectedFile,
 }: UseWorkspaceRefreshParams) {
   const paramsRef = useRef({
     instId,
@@ -54,6 +56,7 @@ export function useWorkspaceRefresh({
     setGitHeadContent,
     setIsDirty,
     setContentReady,
+    setSelectedFile,
   })
   paramsRef.current = {
     instId,
@@ -65,6 +68,7 @@ export function useWorkspaceRefresh({
     setGitHeadContent,
     setIsDirty,
     setContentReady,
+    setSelectedFile,
   }
 
   const refresh = useCallback(async (options?: RefreshOptions) => {
@@ -110,6 +114,14 @@ export function useWorkspaceRefresh({
         if (clearDirty) {
           p.setIsDirty(false)
         }
+      } else {
+        // File no longer exists — clear editor state
+        p.setSelectedFile(null)
+        p.setFileContent("")
+        p.setEditedContent("")
+        p.setGitHeadContent("")
+        p.setContentReady(false)
+        p.setIsDirty(false)
       }
     } else if (clearDirty) {
       p.setIsDirty(false)

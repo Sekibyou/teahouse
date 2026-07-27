@@ -157,6 +157,14 @@ export function WorkspacePage() {
         setGitHeadContent(headContent)
         setIsDirty(false)
         setContentReady(true)
+      } else {
+        // File no longer exists — clear editor
+        setSelectedFile(null)
+        setFileContent("")
+        setEditedContent("")
+        setGitHeadContent("")
+        setContentReady(false)
+        setIsDirty(false)
       }
     })()
   }, [instId, selectedFile])
@@ -243,6 +251,7 @@ export function WorkspacePage() {
     setGitHeadContent,
     setIsDirty,
     setContentReady,
+    setSelectedFile,
   })
 
   // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
@@ -273,11 +282,19 @@ export function WorkspacePage() {
             setFileContent(fileRes.data!.content)
             setEditedContent(fileRes.data!.content)
             setIsDirty(false)
-          }
-        })
-        gitApi.showFile(instId!, currentFile).then(headRes => {
-          if (headRes.ok) {
-            setGitHeadContent(headRes.data?.content ?? "")
+            gitApi.showFile(instId!, currentFile).then(headRes => {
+              if (headRes.ok) {
+                setGitHeadContent(headRes.data?.content ?? "")
+              }
+            })
+          } else {
+            // File no longer exists — clear editor
+            setSelectedFile(null)
+            setFileContent("")
+            setEditedContent("")
+            setGitHeadContent("")
+            setContentReady(false)
+            setIsDirty(false)
           }
         })
       }
@@ -294,11 +311,19 @@ export function WorkspacePage() {
             setFileContent(fileRes.data!.content)
             setEditedContent(fileRes.data!.content)
             setIsDirty(false)
-          }
-        })
-        gitApi.showFile(instId, currentFile).then(headRes => {
-          if (headRes.ok) {
-            setGitHeadContent(headRes.data?.content ?? "")
+            gitApi.showFile(instId, currentFile).then(headRes => {
+              if (headRes.ok) {
+                setGitHeadContent(headRes.data?.content ?? "")
+              }
+            })
+          } else {
+            // File no longer exists — clear editor
+            setSelectedFile(null)
+            setFileContent("")
+            setEditedContent("")
+            setGitHeadContent("")
+            setContentReady(false)
+            setIsDirty(false)
           }
         })
       }
