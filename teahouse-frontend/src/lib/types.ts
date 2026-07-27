@@ -60,6 +60,59 @@ export interface LLMConfig {
   updated_at: number
 }
 
+// New LLM model system types
+export interface LLMProvider {
+  id: string
+  user_id: string
+  name: string
+  api_url: string
+  api_key: string
+  api_format: "openai" | "openai_strict" | "anthropic"
+  is_enabled: number
+  created_at: number
+  updated_at: number
+}
+
+export interface LLMModel {
+  id: string
+  user_id: string
+  name: string
+  provider_id: string
+  model_name: string
+  profile_id: string | null
+  is_enabled: number
+  created_at: number
+  updated_at: number
+  // Joined from provider:
+  provider_name?: string
+  provider_api_format?: string
+  provider_api_url?: string
+}
+
+export interface ModelProfile {
+  id: string
+  user_id: string
+  name: string
+  match_pattern: string | null
+  temperature: number
+  max_tokens: number
+  top_p: number | null
+  frequency_penalty: number | null
+  presence_penalty: number | null
+  created_at: number
+  updated_at: number
+}
+
+export interface SlotBindings {
+  director: string | null
+  writer: string | null
+}
+
+export interface AvailableModel {
+  id: string
+  name: string
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "system"
   content: string
@@ -114,4 +167,4 @@ export interface GitFileStatus {
   staged: boolean
 }
 
-export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig }
+export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel }

@@ -19,6 +19,9 @@ class LLMConfig(BaseModel):
     api_style: str = Field(default="openai", description="API protocol: anthropic or openai")
     max_tokens: int = Field(default=8192, ge=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    top_p: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
 
 
 class ServerConfig(BaseModel):

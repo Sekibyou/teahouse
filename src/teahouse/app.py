@@ -25,6 +25,11 @@ from .database.migrate import run_migrations
 from .database.auth import configure_jwt
 from .database.users import ensure_default_admin, list_users
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
+from .database.llm_providers import configure_crypto as configure_provider_crypto
+from .database.llm_slots import get_all_slot_bindings, get_slot_binding
+from .database.llm_models import get_model as get_llm_model
+from .database.llm_providers import get_provider as get_llm_provider
+from .database.model_profiles import get_profile as get_model_profile
 from .database.workspaces import (
     list_prototypes,
     create_prototype,
@@ -33,6 +38,10 @@ from .database.workspaces import (
 )
 from .routes.auth import router as auth_router
 from .routes.llm_configs import router as llm_configs_router
+from .routes.llm_providers import router as llm_providers_router
+from .routes.llm_models import router as llm_models_router
+from .routes.model_profiles import router as model_profiles_router
+from .routes.llm_slots import router as llm_slots_router
 from .routes.workspaces import router as workspaces_router
 from .routes.session import router as session_router
 from .state import state
@@ -58,6 +67,7 @@ async def lifespan(app: FastAPI):
     # 4. Init crypto / JWT
     configure_jwt(cfg.jwt_secret)
     configure_crypto(cfg.master_key or cfg.jwt_secret)
+    configure_provider_crypto(cfg.master_key or cfg.jwt_secret)
 
     # 4. Init LLM client — no global instance; resolved per-request from DB
 
@@ -94,7 +104,11 @@ app.add_middleware(
 
 # Register routers
 app.include_router(auth_router)
-app.include_router(llm_configs_router)
+app.include_router(llm_configs_router)  # deprecated — kept for backward compat
+app.include_router(llm_providers_router)
+app.include_router(llm_models_router)
+app.include_router(model_profiles_router)
+app.include_router(llm_slots_router)
 app.include_router(workspaces_router)
 app.include_router(session_router)
 
@@ -132,14 +146,45 @@ async def sse_events(request: Request) -> EventSourceResponse:
 class ChatRequest(BaseModel):
     messages: list[dict]
     system: str | None = None
-    llm_config_id: str | None = None  # which LLM config to use; None = default
+    slot_id: str | None = None  # 'mainstream' or 'top_tier'; None = legacy path
     stream: bool = True
     tools: bool = False  # Enable tool use (Director tools)
     instance_id: str | None = None  # Required when tools=True
 
 
+async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
+    """Resolve an LLM client from a user's slot binding (provider→model→profile chain)."""
+    binding = await get_slot_binding(user_id, slot_id)
+    if not binding or not binding.get("model_id"):
+        raise HTTPException(status_code=404, detail=f"Slot '{slot_id}' is not bound to a model")
+
+    model = await get_llm_model(binding["model_id"])
+    if not model:
+        raise HTTPException(status_code=404, detail="Bound model not found")
+
+    provider = await get_llm_provider(model["provider_id"])
+    if not provider:
+        raise HTTPException(status_code=404, detail="Model's provider not found")
+
+    profile = None
+    if model.get("profile_id"):
+        profile = await get_model_profile(model["profile_id"])
+
+    return LLMClient(ConfigLLMConfig(
+        url=provider["api_url"],
+        key=provider["api_key"],
+        model=model["model_name"],
+        api_style=provider["api_format"],
+        max_tokens=profile["max_tokens"] if profile else 8192,
+        temperature=profile["temperature"] if profile else 0.7,
+        top_p=profile.get("top_p") if profile else None,
+        frequency_penalty=profile.get("frequency_penalty") if profile else None,
+        presence_penalty=profile.get("presence_penalty") if profile else None,
+    ))
+
+
 async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) -> LLMClient:
-    """Resolve an LLM config from DB and return a configured LLMClient."""
+    """Resolve an LLM config from DB and return a configured LLMClient. Legacy path."""
     if llm_config_id:
         cfg = await get_llm_config(llm_config_id)
         if not cfg or (user_id and cfg["user_id"] != user_id):
@@ -161,8 +206,8 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
     ))
 
 
-async def _chat_common(body: ChatRequest, request: Request):
-    """Shared logic: resolve user + LLM client. Called by both streaming and non-streaming paths."""
+async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:
+    """Resolve user + LLM client. Prefers slot-based resolution, falls back to legacy."""
     user_id: str | None = None
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
@@ -172,8 +217,13 @@ async def _chat_common(body: ChatRequest, request: Request):
             user_id = user_info.user_id
         except Exception:
             pass
-    client = await _resolve_llm_config(body.llm_config_id, user_id)
-    return client
+
+    # Slot-based resolution (new path)
+    if body.slot_id and user_id:
+        return await _resolve_slot_client(user_id, body.slot_id)
+
+    # Legacy path
+    return await _resolve_llm_config(None, user_id)
 
 
 MAX_TOOL_ROUNDS = 15  # Safety limit for tool use iterations

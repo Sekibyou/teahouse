@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -162,7 +162,7 @@ export const sessionApi = {
   },
 }
 
-// LLM Configs API
+// LLM Configs API (deprecated — use the new llmProvidersApi / llmModelsApi / modelProfilesApi / llmSlotsApi instead)
 export const llmConfigsApi = {
   list: async () => {
     return get<{ configs: LLMConfig[] }>("/api/llm-configs/")
@@ -195,8 +195,9 @@ export const chatApi = {
 
   /** Streaming chat: returns a ReadableStream of SSE events.
    *  Each chunk has the shape { type: "reasoning" | "text", text: string }.
-   *  The stream ends with event: done. */
-  sendStream: async (messages: { role: string; content: string }[], signal?: AbortSignal) => {
+   *  The stream ends with event: done.
+   *  slot_id: "director" | "writer" — which model slot to use. */
+  sendStream: async (messages: { role: string; content: string }[], signal?: AbortSignal, slotId?: string) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -205,7 +206,7 @@ export const chatApi = {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       signal,
-      body: JSON.stringify({ messages, stream: true }),
+      body: JSON.stringify({ messages, stream: true, ...(slotId ? { slot_id: slotId } : {}) }),
     })
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: "请求失败" }))
@@ -292,4 +293,70 @@ export const gitApi = {
       `/api/instances/${instanceId}/git/show-file?path=${encodeURIComponent(filePath)}`
     )
   },
+}
+
+// LLM Providers API
+export const llmProvidersApi = {
+  list: () => get<{ providers: LLMProvider[] }>("/api/llm/providers/"),
+  create: (data: { name: string; api_url: string; api_key: string; api_format?: string }) =>
+    post<{ provider: LLMProvider }>("/api/llm/providers/", data),
+  update: (id: string, data: Record<string, unknown>) =>
+    put<{ provider: LLMProvider }>(`/api/llm/providers/${id}`, data),
+  delete: (id: string) => del<{ status: string }>(`/api/llm/providers/${id}`),
+  availableModels: (id: string) =>
+    get<{ models: AvailableModel[] }>(`/api/llm/providers/${id}/available-models`),
+  importModels: (providerId: string, modelProfiles: Record<string, string>) =>
+    post<{ created: LLMModel[]; skipped: string[] }>(`/api/llm/providers/${providerId}/import-models`, {
+      model_profiles: modelProfiles,
+    }),
+}
+
+// LLM Models API
+export const llmModelsApi = {
+  list: () => get<{ models: LLMModel[] }>("/api/llm/models/"),
+  listEnabled: () => get<{ models: LLMModel[] }>("/api/llm/models/enabled"),
+  create: (data: { name: string; provider_id: string; model_name: string; profile_id?: string }) =>
+    post<{ model: LLMModel }>("/api/llm/models/", data),
+  update: (id: string, data: Record<string, unknown>) =>
+    put<{ model: LLMModel }>(`/api/llm/models/${id}`, data),
+  delete: (id: string) => del<{ status: string }>(`/api/llm/models/${id}`),
+  deleteBatch: (modelIds: string[]) =>
+    request<{ deleted: string[]; not_found: string[] }>("/api/llm/models/", {
+      method: "DELETE",
+      body: JSON.stringify({ model_ids: modelIds }),
+    }),
+  batchBind: (bindings: Record<string, string>) =>
+    request<{ updated: string[]; models: LLMModel[] }>("/api/llm/models/batch-bind-profile", {
+      method: "PATCH",
+      body: JSON.stringify({ bindings }),
+    }),
+  batchToggle: (modelIds: string[], isEnabled: boolean) =>
+    request<{ updated: string[] }>("/api/llm/models/batch-toggle", {
+      method: "PATCH",
+      body: JSON.stringify({ model_ids: modelIds, is_enabled: isEnabled }),
+    }),
+  ping: (id: string) =>
+    post<{ success: boolean; latency?: number; error?: string }>(`/api/llm/models/${id}/ping`),
+}
+
+// Model Profiles API
+export const modelProfilesApi = {
+  list: () => get<{ profiles: ModelProfile[] }>("/api/llm/profiles/"),
+  create: (data: Partial<ModelProfile> & { name: string }) =>
+    post<{ profile: ModelProfile }>("/api/llm/profiles/", data),
+  update: (id: string, data: Record<string, unknown>) =>
+    put<{ profile: ModelProfile }>(`/api/llm/profiles/${id}`, data),
+  delete: (id: string) => del<{ status: string }>(`/api/llm/profiles/${id}`),
+  match: (modelName: string) =>
+    get<{ matches: ModelProfile[] }>(`/api/llm/profiles/match?model_name=${encodeURIComponent(modelName)}`),
+}
+
+// LLM Slots API
+export const llmSlotsApi = {
+  getAll: () => get<{ slots: SlotBindings }>("/api/llm/slots/"),
+  setAll: (bindings: SlotBindings) =>
+    put<{ slots: SlotBindings }>("/api/llm/slots/", bindings),
+  setSlot: (slotId: string, modelId: string | null) =>
+    put<{ slot_id: string; model_id: string | null }>(`/api/llm/slots/${slotId}`, { model_id: modelId }),
+  clearSlot: (slotId: string) => del<{ status: string }>(`/api/llm/slots/${slotId}`),
 }

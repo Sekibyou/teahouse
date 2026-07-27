@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { chatApi } from "@/lib/api"
+import { chatApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
 import { getActiveInstance } from "@/stores/sessionStore"
-import type { ChatMessage } from "@/lib/types"
+import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
@@ -33,6 +33,30 @@ function nextId() {
 
 export function ChatPanel() {
   const [messages, setMessages] = useState<RichMessage[]>([])
+
+  // Slot state — lightweight model info display
+  const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
+
+  useEffect(() => {
+    llmSlotsApi.getAll().then(res => {
+      if (res.ok) {
+        const slots = res.data!.slots
+        // For each bound model, fetch its display name
+        const modelIds = [slots.director, slots.writer].filter(Boolean) as string[]
+        if (modelIds.length > 0) {
+          llmModelsApi.list().then(mRes => {
+            if (mRes.ok) {
+              const modelMap = new Map(mRes.data!.models.map(m => [m.id, m.name]))
+              setSlotModels({
+                director: slots.director ? modelMap.get(slots.director) || slots.director : null,
+                writer: slots.writer ? modelMap.get(slots.writer) || slots.writer : null,
+              })
+            }
+          })
+        }
+      }
+    })
+  }, [messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
 
   // Restore messages from localStorage on mount
   useEffect(() => {
@@ -141,6 +165,7 @@ export function ChatPanel() {
         stream = await chatApi.sendStream(
           newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
           abortController.signal,
+          "writer",  // Default non-tool chat to writer model
         )
       }
 
@@ -304,7 +329,13 @@ export function ChatPanel() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="p-3 border-b border-border shrink-0">
-        <h3 className="text-sm font-semibold">AI 助手</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">AI 助手</h3>
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1" title="导演/编排">导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span></span>
+            <span className="flex items-center gap-1" title="正文写作">正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span></span>
+          </div>
+        </div>
       </div>
 
       {/* Messages */}
