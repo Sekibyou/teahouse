@@ -14,11 +14,12 @@ usage guide injected into the director's system prompt.
 from __future__ import annotations
 
 import json
-import secrets
 from pathlib import Path
 from typing import Any
 
 from .placeholder import resolve_messages_placeholders
+from .config import LLMConfig
+from .llm import LLMClient, LLMError
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup
 from .state import state
 
@@ -267,30 +268,111 @@ async def execute_glob(instance_dir: Path, args: dict[str, Any]) -> str:
     return f"{info}\n{result}"
 
 
-async def execute_generate(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Generate tool — debug version.
+async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: str | None = None) -> str:
+    """Generate tool — resolves placeholders, calls writer LLM, writes result to file.
 
     1. Resolve {{path}} placeholders in messages
-    2. Write the resolved messages to current/generate-output.json
-    3. Return a random verification string
+    2. Write resolved messages to current/generate-output.json for debugging
+    3. Call the writer slot LLM (non-streaming)
+    4. Write generated text to the specified output path
+    5. Return summary with file path, word count, and first 50 chars preview
     """
     messages = args.get("messages", [])
+    output_path_str = args.get("path", "")
 
-    # Resolve placeholders
+    if not output_path_str:
+        return "Error: 'path' is required — specify the output file path (e.g. floors/floor-003.md)"
+
+    # Validate output path
+    try:
+        output_full = _validate_path(instance_dir, output_path_str)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    output_full.parent.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: Resolve placeholders
     resolved = resolve_messages_placeholders(messages, instance_dir)
 
-    # Write output to current/generate-output.json
-    output_path = instance_dir / "current" / "generate-output.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Step 2: Write resolved messages for debugging
+    debug_path = instance_dir / "current" / "generate-output.json"
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+    debug_path.write_text(json.dumps(resolved, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Generate random verification string
-    token = secrets.token_hex(4)  # 8 hex chars
+    # Step 3: Resolve writer slot LLM client
+    if not user_id:
+        return (
+            "Error: 无法获取用户身份，无法调用正文模型。\n"
+            "请确保已登录后再试。"
+        )
+
+    try:
+        from .database.llm_slots import get_slot_binding
+        from .database.llm_models import get_model as get_llm_model
+        from .database.llm_providers import get_provider as get_llm_provider
+        from .database.model_profiles import get_profile as get_model_profile
+
+        binding = await get_slot_binding(user_id, "writer")
+        if not binding or not binding.get("model_id"):
+            return (
+                "Error: 正文模型（writer slot）未绑定。\n"
+                "请在 LLM 槽位设置中将 writer slot 绑定到一个可用模型，然后重试。"
+            )
+
+        model = await get_llm_model(binding["model_id"])
+        if not model:
+            return "Error: 绑定的模型不存在，请检查 writer slot 配置。"
+
+        provider = await get_llm_provider(model["provider_id"])
+        if not provider:
+            return "Error: 模型的 provider 不存在，请检查 writer slot 配置。"
+
+        profile = None
+        if model.get("profile_id"):
+            profile = await get_model_profile(model["profile_id"])
+
+        writer_client = LLMClient(LLMConfig(
+            url=provider["api_url"],
+            key=provider["api_key"],
+            model=model["model_name"],
+            api_style=provider["api_format"],
+            max_tokens=profile["max_tokens"] if profile else 8192,
+            temperature=profile["temperature"] if profile else 0.7,
+            top_p=profile.get("top_p") if profile else None,
+            frequency_penalty=profile.get("frequency_penalty") if profile else None,
+            presence_penalty=profile.get("presence_penalty") if profile else None,
+        ))
+    except Exception as e:
+        return f"Error: 解析 writer slot 配置失败: {e}"
+
+    # Step 4: Call writer LLM (non-streaming)
+    try:
+        generated_text = await writer_client.send_message(resolved)
+    except LLMError as e:
+        return (
+            f"Error: 正文模型 API 调用失败: {e}\n"
+            f"请检查 writer slot 的 API key 和网络连接后重试。"
+        )
+    except Exception as e:
+        return f"Error: 调用正文模型时发生意外错误: {e}"
+
+    # Step 5: Write generated text to output file
+    try:
+        output_full.write_text(generated_text, encoding="utf-8")
+    except Exception as e:
+        return f"Error: 写入输出文件失败: {e}"
+
+    # Build summary
+    char_count = len(generated_text)
+    # Rough word count for Chinese text (characters ≈ words)
+    word_count = char_count
+    preview = generated_text.strip()[:50]
+
     return (
-        f"【实验性工具 Generate 已执行】\n"
-        f"占位符替换后的 messages 已写入 current/generate-output.json\n"
-        f"验证令牌：{token}\n\n"
-        f"请在聊天中直接向用户汇报以上验证令牌。"
+        f"Generate 完成\n"
+        f"  输出文件：{output_path_str}\n"
+        f"  字数：{word_count}\n"
+        f"  前 50 字预览：「{preview}」"
     )
 
 
@@ -527,12 +609,17 @@ TOOL_EXECUTORS = {
 }
 
 
-async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path) -> str:
+async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None) -> str:
     """Execute a tool by name with the given args. Returns the result text."""
     executor = TOOL_EXECUTORS.get(name)
     if not executor:
         return f"Error: Unknown tool: {name}"
     try:
-        return await executor(instance_dir, args)
+        # Generate tool needs user_id to resolve the writer slot
+        if name == "Generate":
+            result = await executor(instance_dir, args, user_id)
+        else:
+            result = await executor(instance_dir, args)
+        return result
     except Exception as e:
         return f"Error executing {name}: {e}"

@@ -233,6 +233,7 @@ async def _tool_use_loop(
     client: LLMClient,
     messages: list[dict],
     instance_dir: Path,
+    user_id: str | None = None,
 ):
     """Run tool use loop: call LLM → execute tools → feed back results → repeat until LLM returns text.
 
@@ -326,7 +327,7 @@ async def _tool_use_loop(
             yield {"type": "tool_call", "id": tc_id, "name": name, "args": args}
 
             # Execute
-            result = await execute_tool(name, args, instance_dir)
+            result = await execute_tool(name, args, instance_dir, user_id)
 
             # Yield tool_result event
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
@@ -391,7 +392,7 @@ async def chat(body: ChatRequest, request: Request):
         instance_dir = Path(inst["dir_path"])
 
         async def sse_tool_stream():
-            async for event in _tool_use_loop(client, body.messages, instance_dir):
+            async for event in _tool_use_loop(client, body.messages, instance_dir, user_id):
                 event_type = event.get("type", "tool_call")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
             yield "event: done\ndata: {}\n\n"
