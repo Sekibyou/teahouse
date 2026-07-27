@@ -482,10 +482,11 @@ def _save_output_blocks(instance_dir: Path, blocks: list[dict]) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-async def execute_output(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Manage output blocks: append, replace, or delete.
 
     content supports {{path}} placeholder syntax for referencing file content.
+    instance_id is the DB UUID for SSE broadcast filtering.
     """
     mode = args["mode"]
     content_template = args["content"]
@@ -517,7 +518,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any]) -> str:
             "label": label,
             "note": note,
             "rendered": rendered,
-            "instance_id": instance_dir.name,
+            "instance_id": instance_id or instance_dir.name,
         })
 
         return (
@@ -558,7 +559,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any]) -> str:
             "label": label,
             "note": note,
             "rendered": rendered,
-            "instance_id": instance_dir.name,
+            "instance_id": instance_id or instance_dir.name,
         })
 
         return (
@@ -590,7 +591,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any]) -> str:
             "uuid": target_uuid,
             "label": removed["label"],
             "note": removed["note"],
-            "instance_id": instance_dir.name,
+            "instance_id": instance_id or instance_dir.name,
         })
 
         return f"输出块已删除\n  uuid: {target_uuid}\n  label: {removed['label']}\n  note: {removed['note']}"
@@ -801,8 +802,11 @@ TOOL_EXECUTORS = {
 }
 
 
-async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None) -> str:
-    """Execute a tool by name with the given args. Returns the result text."""
+async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None, instance_id: str | None = None) -> str:
+    """Execute a tool by name with the given args. Returns the result text.
+
+    instance_id is the DB UUID — used for SSE broadcast filtering on the frontend.
+    """
     executor = TOOL_EXECUTORS.get(name)
     if not executor:
         return f"Error: Unknown tool: {name}"
@@ -810,6 +814,9 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
         # Generate tool needs user_id to resolve the writer slot
         if name == "Generate":
             result = await executor(instance_dir, args, user_id)
+        # Output needs instance_id for SSE broadcast
+        elif name == "Output":
+            result = await executor(instance_dir, args, instance_id)
         else:
             result = await executor(instance_dir, args)
         return result

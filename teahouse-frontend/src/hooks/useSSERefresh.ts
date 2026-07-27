@@ -6,14 +6,20 @@ interface SSERefreshOptions {
   onFileChanged: (path: string) => void
   /** Called when workspace state changed (git operations, branch switch, etc.). */
   onWorkspaceChanged: () => void
-  /** The instance ID to scope events to. Events for other instances are ignored. */
+  /** The instance ID (UUID) to scope events to. */
   instanceId: string | undefined
+  /** The instance name (directory name) as fallback match for tool-executor broadcasts. */
+  instanceName: string | undefined
 }
 
 /**
  * Connects to GET /events SSE stream and triggers refresh callbacks
  * when the backend broadcasts file_changed or workspace_changed events
  * for the current instance.
+ *
+ * Filtering: events carry an instance_id field which may be the DB UUID
+ * (from routes layer) or the directory name (from tool executors).
+ * We accept the event if it matches either.
  *
  * Automatically reconnects on disconnect. Cleans up on unmount or
  * instance change.
@@ -22,6 +28,7 @@ export function useSSERefresh({
   onFileChanged,
   onWorkspaceChanged,
   instanceId,
+  instanceName,
 }: SSERefreshOptions) {
   const esRef = useRef<EventSource | null>(null)
 
@@ -39,8 +46,8 @@ export function useSSERefresh({
       es.addEventListener("file_changed", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
-          // Filter by instance — only react to events for the current instance
-          if (data.instance_id && data.instance_id !== instanceId) return
+          const id = data.instance_id
+          if (id && id !== instanceId && id !== instanceName) return
           onFileChanged(data.path || "")
         } catch {
           // ignore malformed events
@@ -50,7 +57,8 @@ export function useSSERefresh({
       es.addEventListener("workspace_changed", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
-          if (data.instance_id && data.instance_id !== instanceId) return
+          const id = data.instance_id
+          if (id && id !== instanceId && id !== instanceName) return
           onWorkspaceChanged()
         } catch {
           onWorkspaceChanged()
@@ -76,5 +84,5 @@ export function useSSERefresh({
         esRef.current = null
       }
     }
-  }, [instanceId])
+  }, [instanceId, instanceName])
 }

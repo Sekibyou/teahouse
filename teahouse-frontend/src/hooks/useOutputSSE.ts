@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef } from "react"
 import { API_BASE_URL } from "@/lib/api"
 
 export interface OutputBlock {
@@ -10,6 +10,7 @@ export interface OutputBlock {
 
 interface UseOutputSSEOptions {
   instanceId: string | undefined
+  instanceName: string | undefined
   onAppend: (block: OutputBlock) => void
   onReplace: (block: OutputBlock) => void
   onDelete: (uuid: string) => void
@@ -18,9 +19,14 @@ interface UseOutputSSEOptions {
 /**
  * Connects to GET /events SSE stream and listens for output.append,
  * output.replace, and output.delete events for the current instance.
+ *
+ * Filtering: events carry an instance_id field which may be the DB UUID
+ * (from routes layer) or the directory name (from tool executors).
+ * We accept the event if it matches either.
  */
 export function useOutputSSE({
   instanceId,
+  instanceName,
   onAppend,
   onReplace,
   onDelete,
@@ -40,7 +46,9 @@ export function useOutputSSE({
       const handler = (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
-          if (data.instance_id && data.instance_id !== instanceId) return
+          // Accept event if instance_id matches UUID OR directory name
+          const id = data.instance_id
+          if (id && id !== instanceId && id !== instanceName) return
 
           const cb = callbacksRef.current
           if (e.type === "output.append") {
@@ -82,5 +90,5 @@ export function useOutputSSE({
     return () => {
       stopped = true
     }
-  }, [instanceId])
+  }, [instanceId, instanceName])
 }

@@ -255,6 +255,7 @@ export function WorkspacePage() {
   // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
   useSSERefresh({
     instanceId: instId,
+    instanceName: activeInstance?.name,
     onFileChanged: (path: string) => {
       if (!path) {
         // empty path means the changed file is the currently open one
@@ -341,9 +342,12 @@ export function WorkspacePage() {
 
   return (
     <div className="h-full flex overflow-hidden">
-      {mode === "backstage" ? (
-        <>
-          {/* Left panel — File tree */}
+      {/* Left/center area — file tree + editor (backstage) OR output panel (play).
+          Both are always mounted to keep SSE connections alive; hidden via CSS. */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Backstage — file tree + editor */}
+        <div className={`flex-1 flex overflow-hidden ${mode === "backstage" ? "" : "hidden"}`}>
+          {/* File tree sidebar */}
           <aside className="w-64 border-r border-border shrink-0 flex flex-col bg-muted/20">
             <div className="p-3 border-b border-border flex items-center justify-between">
               <span className="text-sm font-semibold truncate" title={activeInstance.name}>
@@ -491,13 +495,13 @@ export function WorkspacePage() {
               </div>
             )}
           </div>
-        </>
-      ) : (
-        /* Play mode — Output panel fills the left side */
-        <div className="flex-1 flex flex-col min-w-0">
-          <OutputPanel instanceId={instId} />
         </div>
-      )}
+
+        {/* Play mode — Output panel (always mounted, hidden when backstage) */}
+        <div className={`flex-1 flex-col min-w-0 ${mode === "play" ? "flex" : "hidden"}`}>
+          <OutputPanel instanceId={instId} instanceName={activeInstance?.name} />
+        </div>
+      </div>
 
       {/* Right panel — Chat (always visible, 45% width) */}
       <aside className="w-[45%] border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0">

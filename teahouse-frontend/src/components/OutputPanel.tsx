@@ -7,6 +7,7 @@ import { outputBlocksApi } from "@/lib/api"
 
 interface OutputPanelProps {
   instanceId: string | undefined
+  instanceName: string | undefined
 }
 
 /**
@@ -23,7 +24,7 @@ interface OutputPanelProps {
  *   - GET /api/instances/{id}/output-blocks/{uuid} → 获取全文
  *   - SSE /events → 实时更新
  */
-export function OutputPanel({ instanceId }: OutputPanelProps) {
+export function OutputPanel({ instanceId, instanceName }: OutputPanelProps) {
   const [blocks, setBlocks] = useState<OutputBlock[]>([])
   const [initialLoading, setInitialLoading] = useState(true)
 
@@ -44,6 +45,7 @@ export function OutputPanel({ instanceId }: OutputPanelProps) {
 
   useOutputSSE({
     instanceId,
+    instanceName,
     onAppend: handleAppend,
     onReplace: handleReplace,
     onDelete: handleDelete,
