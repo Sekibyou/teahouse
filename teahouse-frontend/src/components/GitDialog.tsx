@@ -32,18 +32,16 @@ interface GitDialogProps {
 type TabKey = "graph" | "commit"
 
 const COMMIT_PREFIXES = [
-  { value: "楼层", label: "楼层" },
-  { value: "总结", label: "总结" },
-  { value: "暂存", label: "暂存" },
+  { value: "floor", label: "楼层" },
+  { value: "summary", label: "总结" },
 ] as const
 
-type CommitType = (typeof COMMIT_PREFIXES)[number]["value"]
+type CommitType = (typeof COMMIT_PREFIXES)[number]["value"] | "other"
 
-function commitTypeLabel(msg: string): { type: CommitType | "其他"; display: string } {
-  for (const p of COMMIT_PREFIXES) {
-    if (msg.startsWith(p.value)) return { type: p.value, display: msg }
-  }
-  return { type: "其他", display: msg }
+function commitTypeLabel(msg: string): { type: CommitType; display: string } {
+  if (msg.startsWith("floor-") || msg.startsWith("floor:")) return { type: "floor", display: msg }
+  if (msg.startsWith("summary-") || msg.startsWith("summary:")) return { type: "summary", display: msg }
+  return { type: "other", display: msg }
 }
 
 const STATUS_MAP: Record<string, { label: string; icon: typeof FileText; color: string }> = {
@@ -66,7 +64,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   const [filesLoading, setFilesLoading] = useState(false)
 
   // Commit form
-  const [commitPrefix, setCommitPrefix] = useState<CommitType>("楼层")
+  const [commitPrefix, setCommitPrefix] = useState<CommitType>("floor")
   const [commitMessage, setCommitMessage] = useState("")
   const [committing, setCommitting] = useState(false)
   const [commitBranchName, setCommitBranchName] = useState("")
@@ -248,7 +246,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   const commits = gitStatus?.recent_commits || []
   const hasUncommitted = gitStatus?.has_uncommitted
 
-  const fullCommitMsg = `${commitPrefix}: ${commitMessage}`
+  const fullCommitMsg = commitPrefix === "other" ? commitMessage : `${commitPrefix}: ${commitMessage}`
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
@@ -583,13 +581,14 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                       <div className="p-4 border-b border-border space-y-3 shrink-0">
                         <div className="flex gap-2">
                           <select
-                            className="w-16 shrink-0 rounded-md border border-input bg-background px-1 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                            className="w-20 shrink-0 rounded-md border border-input bg-background px-1 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
                             value={commitPrefix}
                             onChange={e => setCommitPrefix(e.target.value as CommitType)}
                           >
                             {COMMIT_PREFIXES.map(p => (
-                              <option key={p.value} value={p.value}>{p.value}</option>
+                              <option key={p.value} value={p.value}>{p.label}</option>
                             ))}
+                            <option value="other">其他</option>
                           </select>
                           <Input
                             value={commitMessage}
@@ -688,12 +687,11 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   )
 }
 
-function CommitTypeIcon({ type }: { type: CommitType | "其他" }) {
+function CommitTypeIcon({ type }: { type: CommitType }) {
   const cls = "h-3 w-3 shrink-0"
-  if (type === "楼层") return <GitCommitHorizontal className={`${cls} text-indigo-500`} />
-  if (type === "总结") return <CheckCircle2 className={`${cls} text-emerald-500`} />
-  if (type === "暂存") return <Save className={`${cls} text-amber-500`} />
-  return <GitCommitHorizontal className={`${cls} text-muted-foreground`} />
+  if (type === "floor") return <GitCommitHorizontal className={`${cls} text-purple-500`} />
+  if (type === "summary") return <CheckCircle2 className={`${cls} text-emerald-500`} />
+  return <GitCommitHorizontal className={`${cls} text-amber-500`} />
 }
 
 // ─── ReactFlow Git Graph ───
@@ -817,9 +815,9 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
       const isOnCurrentBranch = currentBranchCommits.has(c.hash)
       const { type } = commitTypeLabel(c.message)
       // Color by commit type (when on current branch), otherwise gray
-      const activeColor = type === "总结" ? "#22c55e" : type === "暂存" ? "#f59e0b" : "#a855f7"
+      const activeColor = type === "floor" ? "#a855f7" : type === "summary" ? "#22c55e" : "#f59e0b"
       const bgColor = isOnCurrentBranch ? activeColor : "#9ca3af"
-      const nodeW = type === "总结" ? 110 : 180
+      const nodeW = type === "summary" ? 110 : 180
       const isBranchHead = refs.length > 0
       const isHead = isBranchHead && refs.includes(currentBranch)
       const isHeadOfAny = refs.length > 0
@@ -856,17 +854,16 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
       })
     }
 
-    // Edges: color follows the child commit's branch status
+    // Edges: always gray
     for (const c of uniqueCommits) {
-      const isOnCurrentBranch = currentBranchCommits.has(c.hash)
-      const edgeColor = isOnCurrentBranch ? "#a855f7" : "#9ca3af"
+      const edgeColor = "#9ca3af"
       for (const parent of c.parents) {
         edgeList.push({
           id: `${c.hash}->${parent}`,
           source: parent,
           target: c.hash,
           type: "smoothstep",
-          style: { stroke: edgeColor, strokeWidth: 2, opacity: isOnCurrentBranch ? 0.7 : 0.25 },
+          style: { stroke: edgeColor, strokeWidth: 2, opacity: 0.35 },
         })
       }
     }
@@ -910,7 +907,7 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
 interface CommitNodeData {
   hash: string
   message: string
-  commitType: CommitType | "其他"
+  commitType: CommitType
   date: string
   isLatest: boolean
   isBranchHead: boolean
@@ -948,25 +945,17 @@ function CommitNode({ data }: NodeProps<CommitNodeData>) {
           )}
           <span className="text-[8px] text-muted-foreground ml-auto">{data.date.slice(5)}</span>
         </div>
-        {/* Line 2: type + HEAD */}
+        {/* Line 2: type label + message + HEAD */}
         <div className="flex items-center gap-1 min-h-[18px]">
-          {data.commitType === "楼层" && (
-            <span className="text-[11px] leading-tight truncate">{data.message}</span>
+          {data.commitType === "floor" && (
+            <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 rounded shrink-0">楼层</span>
           )}
-          {data.commitType === "总结" && (
-            <div className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="h-2.5 w-2.5" />
-              <span>总结</span>
-            </div>
+          {data.commitType === "summary" && (
+            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1 rounded shrink-0">总结</span>
           )}
-          {data.commitType === "暂存" && (
-            <span className="text-[11px] leading-tight truncate text-amber-600 dark:text-amber-400">{data.message}</span>
-          )}
-          {data.commitType === "其他" && (
-            <span className="text-[10px] text-muted-foreground truncate">{data.message}</span>
-          )}
+          <span className="text-[11px] leading-tight truncate">{data.message}</span>
           {data.isCurrentBranchHead && (
-            <span className="text-[8px] bg-primary/10 text-primary font-medium px-1 rounded ml-auto">HEAD</span>
+            <span className="text-[8px] bg-primary/10 text-primary font-medium px-1 rounded ml-auto shrink-0">HEAD</span>
           )}
         </div>
       </div>
