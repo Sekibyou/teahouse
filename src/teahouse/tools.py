@@ -313,6 +313,63 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Todo tool executor
+# ---------------------------------------------------------------------------
+
+
+async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Write the full todo list (overwrite). Persists to current/todo.json."""
+    todos = args["todos"]
+
+    # Validate
+    if not isinstance(todos, list):
+        return "Error: todos must be an array"
+
+    valid_statuses = {"pending", "in_progress", "completed"}
+    in_progress_count = 0
+    for i, item in enumerate(todos):
+        if not isinstance(item, dict):
+            return f"Error: todos[{i}] must be an object"
+        if "content" not in item:
+            return f"Error: todos[{i}] missing required field 'content'"
+        if "status" not in item:
+            return f"Error: todos[{i}] missing required field 'status'"
+        if "activeForm" not in item:
+            return f"Error: todos[{i}] missing required field 'activeForm'"
+        if item["status"] not in valid_statuses:
+            return f"Error: todos[{i}].status must be one of {valid_statuses}, got '{item['status']}'"
+        if item["status"] == "in_progress":
+            in_progress_count += 1
+
+    if in_progress_count > 1:
+        return (
+            f"Error: 同时只能有一个任务为 in_progress，当前有 {in_progress_count} 个。\n"
+            f"请将多余的任务改为 pending 后再提交。"
+        )
+
+    # Persist
+    output_path = instance_dir / "current" / "todo.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(todos, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # Build summary
+    counts = {"pending": 0, "in_progress": 0, "completed": 0}
+    for item in todos:
+        counts[item["status"]] += 1
+
+    return (
+        f"任务清单已更新。\n"
+        f"  pending: {counts['pending']}\n"
+        f"  in_progress: {counts['in_progress']}\n"
+        f"  completed: {counts['completed']}\n"
+        f"  (已保存至 current/todo.json)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Git tool executors
 # ---------------------------------------------------------------------------
 
@@ -462,6 +519,7 @@ TOOL_EXECUTORS = {
     "Glob": execute_glob,
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
+    "TodoWrite": execute_todo_write,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,
