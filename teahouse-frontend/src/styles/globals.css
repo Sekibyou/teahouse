@@ -148,6 +148,43 @@
     scrollbar-color: var(--muted-foreground) transparent;
   }
 
+  /* ---- Compact prose for chat markdown ---- */
+  .prose-chat > :first-child {
+    margin-top: 0 !important;
+  }
+  .prose-chat > :last-child {
+    margin-bottom: 0 !important;
+  }
+  .prose-chat h1, .prose-chat h2, .prose-chat h3, .prose-chat h4, .prose-chat h5, .prose-chat h6 {
+    margin-top: 0.6em !important;
+    margin-bottom: 0.15em !important;
+    line-height: 1.25;
+  }
+  .prose-chat p {
+    margin-top: 0.2em !important;
+    margin-bottom: 0.2em !important;
+  }
+  .prose-chat ul, .prose-chat ol {
+    margin-top: 0.2em !important;
+    margin-bottom: 0.2em !important;
+  }
+  .prose-chat li {
+    margin-top: 0.05em !important;
+    margin-bottom: 0.05em !important;
+  }
+  .prose-chat pre {
+    margin-top: 0.25em !important;
+    margin-bottom: 0.25em !important;
+  }
+  .prose-chat blockquote {
+    margin-top: 0.25em !important;
+    margin-bottom: 0.25em !important;
+  }
+  .prose-chat hr {
+    margin-top: 0.4em !important;
+    margin-bottom: 0.4em !important;
+  }
+
   /* ---- Monaco Editor inline diff decorations ---- */
 
   /* Remove default focus outline (blue border) */

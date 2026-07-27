@@ -522,7 +522,7 @@ function AssistantBubble({ message }: { message: RichMessage }) {
 
       {/* Text content */}
       {(status === "streaming" || status === "done") && content && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert max-w-none break-words">
+        <div className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert prose-chat max-w-none break-words">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {content}
           </ReactMarkdown>
