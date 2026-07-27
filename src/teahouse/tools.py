@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .placeholder import resolve_messages_placeholders
-from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_branch_switch as _git_branch_switch, git_rev_parse as _git_rev_parse
+from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup
 
 import time
 
@@ -576,9 +576,9 @@ async def execute_git_checkout(instance_dir: Path, args: dict[str, Any]) -> str:
     except Exception as e:
         return f"错误：无法在 {target_hash[:7]} 处创建临时分支：{e}"
 
-    # Step 2: Switch to the temp branch
+    # Step 2: Switch to the temp branch (with cleanup of orphaned temp branches)
     try:
-        _git_branch_switch(instance_dir, temp_name)
+        _git_branch_switch_with_cleanup(instance_dir, temp_name)
     except Exception as e:
         return f"错误：无法切换到临时分支 '{temp_name}'：{e}"
 

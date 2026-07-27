@@ -105,7 +105,7 @@ content 中可使用以下占位符引用文件内容：
 - `create`：基于当前 HEAD 创建新分支
 - `switch`：切换到已有分支（会改变 `floors/`、`variables/`、`settings/` 等的文件内容）
 - `delete`：删除分支（安全模式，未合并时拒绝）
-- `rename`：将分支 `name` 重命名为 `new_name`
+- `rename`：将分支 `name` 重命名为 `new_name`（常用于将 `temp-*` 临时分支改名为正式剧情分支名）
 
 ## GitCheckout
 
@@ -124,7 +124,8 @@ content 中可使用以下占位符引用文件内容：
 - 工作区内容会随之变为历史 commit 的状态（`floors/`、`settings/`、`variables/` 等）
 - 所有修改都在临时分支上，不影响原分支
 - 回到原分支：使用 `GitBranch switch`
-- 保留实验结果：在临时分支上正常提交即可
+- **如果在此临时分支上做了修改并提交（开始真正的剧情分支），请务必使用 `GitBranch rename` 将其改名为有意义的名称**（不要以 `temp-` 开头）。否则切换分支时临时分支会被自动清理。
+- 如果只是查看历史、没有做任何修改就切走了，临时分支会在下次切换分支时被自动删除。
 
 ## GitLog
 

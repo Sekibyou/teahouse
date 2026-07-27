@@ -117,6 +117,54 @@ def git_branch_switch(instance_dir: Path, name: str) -> str:
     return _git_run(["checkout", name], instance_dir)
 
 
+def git_branch_switch_with_cleanup(instance_dir: Path, name: str) -> str:
+    """Switch to a branch and clean up orphaned temp-* branches after."""
+    result = git_branch_switch(instance_dir, name)
+    cleanup_temp_branches(instance_dir)
+    return result
+
+
+def cleanup_temp_branches(instance_dir: Path) -> list[str]:
+    """Delete temp-* branches that have no unique commits (HEAD is reachable from other refs).
+
+    A temp branch is considered "orphaned" if its tip commit is contained in
+    at least one other branch — meaning switching away without adding new
+    commits left it pointing at a commit that already exists elsewhere.
+
+    Returns list of deleted branch names.
+    """
+    all_branches = git_branch_list(instance_dir)
+    all_names = [b["name"] for b in all_branches]
+    temp_branches = [b for b in all_branches if b["name"].startswith("temp-")]
+
+    deleted = []
+    for tb in temp_branches:
+        # Find all branches (other than this one) that contain this commit
+        containing = _git_run(
+            ["branch", "--contains", tb["commit_hash"], "--format=%(refname:short)"],
+            instance_dir,
+        ).split("\n")
+        containing = [c.strip().lstrip("* ") for c in containing if c.strip()]
+        containing = [c for c in containing if c != tb["name"]]
+
+        # If at least one other branch contains this commit, the temp branch
+        # has no unique content and can be safely deleted.
+        if containing:
+            try:
+                git_branch_delete(instance_dir, tb["name"])
+                deleted.append(tb["name"])
+            except GitError:
+                # Safe delete may fail if branch not merged into current branch;
+                # force delete as it's a temp branch with no unique content
+                try:
+                    git_delete_branch(instance_dir, tb["name"])
+                    deleted.append(tb["name"])
+                except GitError:
+                    pass
+
+    return deleted
+
+
 def git_branch_delete(instance_dir: Path, name: str) -> str:
     """Delete a branch (safe: refuses if not fully merged)."""
     return _git_run(["branch", "-d", name], instance_dir)
@@ -165,7 +213,7 @@ def git_branch(instance_dir: Path, action: str, name: Optional[str] = None, star
         return {"action": "create", "name": name, "message": out}
 
     if action == "switch":
-        out = git_branch_switch(instance_dir, name)
+        out = git_branch_switch_with_cleanup(instance_dir, name)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
         return {"action": "switch", "name": name, "current_branch": branch, "message": out}
 
