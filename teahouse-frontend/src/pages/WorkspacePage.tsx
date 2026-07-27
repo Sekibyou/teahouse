@@ -3,14 +3,16 @@ import { useNavigate } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
-  ChevronRight, ChevronDown, Save, ArrowLeft, FileText,
+  ChevronRight, ChevronDown, Save, FileText,
   GitBranch as GitBranchIcon, Edit3,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { instancesApi, gitApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
+import { useViewModeStore } from "@/stores/viewModeStore"
 import { ChatPanel } from "@/components/ChatPanel"
+import { OutputPanel } from "@/components/OutputPanel"
 import { GitDialog } from "@/components/GitDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
@@ -23,6 +25,7 @@ export function WorkspacePage() {
   const navigate = useNavigate()
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
+  const mode = useViewModeStore((s) => s.mode)
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -225,11 +228,6 @@ export function WorkspacePage() {
     await refresh({ editor: false, clearDirty: false })
   }
 
-  const handleLeaveSession = () => {
-    setActiveInstance(null)
-    navigate("/", { replace: true })
-  }
-
   // Keep a ref for latest selectedFile so callbacks always have current value
   const selectedFileRef = useRef(selectedFile)
   selectedFileRef.current = selectedFile
@@ -343,168 +341,166 @@ export function WorkspacePage() {
 
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Left panel — File tree */}
-      <aside className="w-64 border-r border-border shrink-0 flex flex-col bg-muted/20">
-        <div className="p-3 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              className="p-0.5 rounded hover:bg-muted shrink-0"
-              onClick={handleLeaveSession}
-              title="返回会话选择"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm font-semibold truncate" title={activeInstance.name}>
-              {activeInstance.name}
-            </span>
-          </div>
-          <div className="flex items-center gap-0.5 shrink-0">
-            <button
-              className="p-0.5 rounded hover:bg-muted"
-              onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
-              title="新建文件"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="p-0.5 rounded hover:bg-muted"
-              onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
-              title="新建文件夹"
-            >
-              <Folder className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Git status bar — click to open git dialog */}
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border cursor-pointer hover:bg-muted/30 transition-colors" onClick={() => setShowGitDialog(true)}>
-          {gitLoading ? (
-            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-          ) : gitStatus ? (
-            <>
-              <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-xs font-mono flex-1 truncate" title={gitStatus.current_branch}>
-                {gitStatus.current_branch || "main"}
+      {mode === "backstage" ? (
+        <>
+          {/* Left panel — File tree */}
+          <aside className="w-64 border-r border-border shrink-0 flex flex-col bg-muted/20">
+            <div className="p-3 border-b border-border flex items-center justify-between">
+              <span className="text-sm font-semibold truncate" title={activeInstance.name}>
+                {activeInstance.name}
               </span>
-              {(() => {
-                const counts = { added: 0, modified: 0, deleted: 0, untracked: 0 }
-                for (const st of fileStatuses.values()) {
-                  if (st === "A" || st === "?") counts.added++
-                  else if (st === "M") counts.modified++
-                  else if (st === "D") counts.deleted++
-                  else if (st === "R") counts.modified++
-                }
-                const total = counts.added + counts.modified + counts.deleted
-                return total > 0 ? (
-                  <div className="flex items-center gap-1 shrink-0">
-                    {counts.added > 0 && (
-                      <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none">
-                        +{counts.added}
-                      </span>
-                    )}
-                    {counts.modified > 0 && (
-                      <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none">
-                        ~{counts.modified}
-                      </span>
-                    )}
-                    {counts.deleted > 0 && (
-                      <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none">
-                        -{counts.deleted}
-                      </span>
-                    )}
-                  </div>
-                ) : null
-              })()}
-              <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
-            </>
-          ) : (
-            <span className="text-[10px] text-muted-foreground">Git 不可用</span>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-auto py-1">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <FileTreeView
-              nodes={fileTree}
-              expanded={expanded}
-              selectedFile={selectedFile}
-              onToggle={toggleExpand}
-              onSelect={(path) => {
-                // Force MonacoEditor to fully remount by clearing then re-setting
-                setSelectedFile(null)
-                setFileContent("")
-                setEditedContent("")
-                setIsDirty(false)
-                // Use setTimeout to let React flush the unmount before setting new file
-                setTimeout(() => {
-                  setEditorKey(k => k + 1)
-                  setSelectedFile(path)
-                }, 0)
-              }}
-              onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
-              onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
-              onDelete={handleDeleteEntry}
-              fileStatuses={fileStatuses}
-              dirtyFile={isDirty ? selectedFile : null}
-            />
-          )}
-        </div>
-      </aside>
-
-      {/* Middle panel — Editor */}
-      <div className="flex-[2] flex flex-col bg-background min-w-0">
-        {selectedFile && contentReady ? (
-          <>
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-              <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
-              <div className="flex items-center gap-2 shrink-0">
-                {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
-                {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
-                <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
-                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                  保存
-                </Button>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  className="p-0.5 rounded hover:bg-muted"
+                  onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
+                  title="新建文件"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-muted"
+                  onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
+                  title="新建文件夹"
+                >
+                  <Folder className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
-            <div className="flex-1 w-full overflow-hidden">
-              <MonacoEditor
-                key={editorKey}
-                value={editedContent}
-                original={gitHeadContent ?? ""}
-                onSave={handleSave}
-                onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
-                language={
-                  selectedFile?.endsWith(".md") ? "markdown" :
-                  selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
-                  selectedFile?.endsWith(".js") ? "javascript" :
-                  selectedFile?.endsWith(".py") ? "python" :
-                  selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
-                  selectedFile?.endsWith(".json") ? "json" :
-                  selectedFile?.endsWith(".css") ? "css" :
-                  selectedFile?.endsWith(".html") ? "html" :
-                  selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
-                  "plaintext"
-                }
-              />
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">从左侧选择文件进行编辑</p>
-              <p className="text-xs mt-1 opacity-60">Ctrl+S 保存</p>
-            </div>
-          </div>
-        )}
-      </div>
 
-      {/* Right panel — Chat */}
-      <aside className="flex-[3] border-l border-border flex flex-col bg-muted/10 min-w-0">
+            <div className="flex-1 overflow-auto py-1">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <FileTreeView
+                  nodes={fileTree}
+                  expanded={expanded}
+                  selectedFile={selectedFile}
+                  onToggle={toggleExpand}
+                  onSelect={(path) => {
+                    setSelectedFile(null)
+                    setFileContent("")
+                    setEditedContent("")
+                    setIsDirty(false)
+                    setTimeout(() => {
+                      setEditorKey(k => k + 1)
+                      setSelectedFile(path)
+                    }, 0)
+                  }}
+                  onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
+                  onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
+                  onDelete={handleDeleteEntry}
+                  fileStatuses={fileStatuses}
+                  dirtyFile={isDirty ? selectedFile : null}
+                />
+              )}
+            </div>
+
+            {/* Git status bar — at bottom */}
+            <div className="flex items-center gap-2 px-3 py-2 border-t border-border cursor-pointer hover:bg-muted/30 transition-colors shrink-0" onClick={() => setShowGitDialog(true)}>
+              {gitLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+              ) : gitStatus ? (
+                <>
+                  <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-xs font-mono flex-1 truncate" title={gitStatus.current_branch}>
+                    {gitStatus.current_branch || "main"}
+                  </span>
+                  {(() => {
+                    const counts = { added: 0, modified: 0, deleted: 0, untracked: 0 }
+                    for (const st of fileStatuses.values()) {
+                      if (st === "A" || st === "?") counts.added++
+                      else if (st === "M") counts.modified++
+                      else if (st === "D") counts.deleted++
+                      else if (st === "R") counts.modified++
+                    }
+                    const total = counts.added + counts.modified + counts.deleted
+                    return total > 0 ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {counts.added > 0 && (
+                          <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none">
+                            +{counts.added}
+                          </span>
+                        )}
+                        {counts.modified > 0 && (
+                          <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none">
+                            ~{counts.modified}
+                          </span>
+                        )}
+                        {counts.deleted > 0 && (
+                          <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none">
+                            -{counts.deleted}
+                          </span>
+                        )}
+                      </div>
+                    ) : null
+                  })()}
+                  <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
+                </>
+              ) : (
+                <span className="text-[10px] text-muted-foreground">Git 不可用</span>
+              )}
+            </div>
+          </aside>
+
+          {/* Middle panel — Editor */}
+          <div className="flex-1 flex flex-col bg-background min-w-0">
+            {selectedFile && contentReady ? (
+              <>
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+                  <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
+                    {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
+                    <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
+                      {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                      保存
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex-1 w-full overflow-hidden">
+                  <MonacoEditor
+                    key={editorKey}
+                    value={editedContent}
+                    original={gitHeadContent ?? ""}
+                    onSave={handleSave}
+                    onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
+                    language={
+                      selectedFile?.endsWith(".md") ? "markdown" :
+                      selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
+                      selectedFile?.endsWith(".js") ? "javascript" :
+                      selectedFile?.endsWith(".py") ? "python" :
+                      selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
+                      selectedFile?.endsWith(".json") ? "json" :
+                      selectedFile?.endsWith(".css") ? "css" :
+                      selectedFile?.endsWith(".html") ? "html" :
+                      selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
+                      "plaintext"
+                    }
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                <div className="text-center">
+                  <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm">从左侧选择文件进行编辑</p>
+                  <p className="text-xs mt-1 opacity-60">Ctrl+S 保存</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* Play mode — Output panel fills the left side */
+        <div className="flex-1 flex flex-col min-w-0">
+          <OutputPanel instanceId={instId} />
+        </div>
+      )}
+
+      {/* Right panel — Chat (always visible, 45% width) */}
+      <aside className="w-[45%] border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0">
         <ChatPanel />
       </aside>
 

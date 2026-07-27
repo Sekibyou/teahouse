@@ -98,7 +98,7 @@ export function SessionSelectPage() {
   return (
     <div className="h-full flex flex-col items-center justify-center gap-8">
       <div className="text-center">
-        <h1 className="text-3xl font-bold mb-2">Teahouse</h1>
+        <h1 className="text-3xl font-bold mb-2">LowStar's Teahouse</h1>
         <p className="text-muted-foreground text-sm">基于 Harness Engineering 的小说创作引擎</p>
       </div>
 
