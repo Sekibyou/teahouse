@@ -518,7 +518,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
     content_template = args["content"]
     label = args["label"]
     note = args["note"]
-    content_type = args.get("content_type", "text/markdown")
+    content_type = args.get("content_type", "rich_text")
 
     blocks = _load_output_blocks(instance_dir)
 

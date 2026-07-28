@@ -37,7 +37,7 @@ TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions"}
 # Directories whose contents are summarized rather than expanded
 FOLD_DIRS = {"floors", "skills"}
 # Directories shown as name only (no file listing, no subdirectory expansion)
-COMPACT_DIRS = {"current"}
+COMPACT_DIRS = {"temp"}
 
 
 def _summarize_dir(dir_path: Path, name: str) -> str:
@@ -71,7 +71,7 @@ def _scan_tree(instance_dir: Path) -> str:
     Rules:
     - All root-level entries are shown (nothing hidden at root).
     - floors/ is folded into a one-line summary.
-    - skills/ and current/ are shown as directory name only (compact).
+    - skills/ and temp/ are shown as directory name only (compact).
     - Other directories (settings/, variables/, etc.) are fully expanded.
     """
     lines: list[str] = []

@@ -54,14 +54,14 @@ Read floors/floor-NNN.md      → 阅读最近几层
 ### 步骤 5：检查是否有未完成的草稿
 
 ```
-Read current/draft.md
+Read temp/draft.md
 ```
 
 如果有未完成的草稿（非空），说明当前正在续写某层，应在此基础上继续。
 
 ### 步骤 6：构造 Generate 请求
 
-使用 Generate 工具发送正文写作请求，生成位置为 `current/draft-{{当前楼层+1}}-1.md`。
+使用 Generate 工具发送正文写作请求，生成位置为 `temp/draft-{{当前楼层+1}}-1.md`。
 
 messages 结构示例：
 
@@ -69,7 +69,7 @@ messages 结构示例：
 [
   {
     "role": "system",
-    "content": "你是一位小说创作AI。\n字数要求：约3000字。\n风格要求：保持与前文一致的叙事风格。\n请将正文写入 current/draft-{{N}}-1.md"
+    "content": "你是一位小说创作AI。\n字数要求：约3000字。\n风格要求：保持与前文一致的叙事风格。\n请将正文写入 temp/draft-{{N}}-1.md"
   },
   {
     "role": "user",
@@ -86,7 +86,7 @@ messages 结构示例：
 
 ```
 Output(
-  content: "{{current/draft-{{N}}-1.md}}",
+  content: "{{temp/draft-{{N}}-1.md}}",
   label: "ep{{N}}",
   note: "第{{N}}章正文第一版",
   mode: "append"
@@ -99,10 +99,10 @@ label 必须遵循 `teahouse.md` 中约定的命名规则：以 `ep` 开头接�
 
 通知用户查看产物。等待用户进一步指示。
 
-- 如果用户要求返工：生成 `current/draft-{{N}}-2.md`（编号递增），然后使用 Output replace 更新：
+- 如果用户要求返工：生成 `temp/draft-{{N}}-2.md`（编号递增），然后使用 Output replace 更新：
   ```
   Output(
-    content: "{{current/draft-{{N}}-2.md}}",
+    content: "{{temp/draft-{{N}}-2.md}}",
     label: "ep{{N}}",
     note: "第{{N}}章正文第二版",
     mode: "replace",

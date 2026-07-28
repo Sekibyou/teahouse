@@ -167,4 +167,17 @@ export interface GitFileStatus {
   staged: boolean
 }
 
+// Text style rules for symbol-based coloring
+export interface TextStyleRule {
+  start_symbol: string
+  end_symbol: string
+  start_html: string
+  end_html: string
+  enabled: boolean
+  order: number
+}
+
+// Output block content types
+export type ContentType = "bootstrap_js" | "scene_js" | "ui_js" | "css" | "rich_text" | "text"
+
 export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel }

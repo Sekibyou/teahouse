@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react"
 import { API_BASE_URL } from "@/lib/api"
+import type { ContentType } from "@/lib/types"
 
 export interface OutputBlock {
   uuid: string
   label: string
   note: string
   rendered: string
-  content_type?: string
+  content_type?: ContentType
 }
 
 interface UseOutputSSEOptions {

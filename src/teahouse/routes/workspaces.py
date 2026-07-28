@@ -417,7 +417,7 @@ async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_
     blocks = _load_output_blocks(instance_dir)
     return {
         "blocks": [
-            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content_type": b.get("content_type", "text/markdown")}
+            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content_type": b.get("content_type", "rich_text")}
             for b in blocks
         ]
     }

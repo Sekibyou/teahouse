@@ -151,6 +151,24 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
     elif source_path.is_dir():
         _copy_dir(source_path, target_dir)
 
+    # Resolve {{path}} placeholders in .teahouse/output-blocks.yaml
+    teahouse_yaml = target_dir / ".teahouse" / "output-blocks.yaml"
+    if teahouse_yaml.exists():
+        from ..placeholder import resolve_placeholders
+        import yaml as _yaml
+        data = _yaml.safe_load(teahouse_yaml.read_text(encoding="utf-8"))
+        blocks = data.get("blocks", []) if data else []
+        for b in blocks:
+            if "content" in b:
+                try:
+                    b["rendered"] = resolve_placeholders(b["content"], target_dir)
+                except Exception:
+                    b["rendered"] = b["content"]
+        teahouse_yaml.write_text(
+            _yaml.dump({"blocks": blocks}, allow_unicode=True, default_flow_style=False),
+            encoding="utf-8",
+        )
+
     # Initialize git repository for the instance
     try:
         git_init(target_dir)
