@@ -433,9 +433,14 @@ async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends
     instance_dir = _resolve_instance_dir(inst)
 
     from ..tools import _load_output_blocks
+    from ..placeholder import resolve_placeholders
     blocks = _load_output_blocks(instance_dir)
     for b in blocks:
         if b["uuid"] == uuid:
+            if "rendered" not in b:
+                b["rendered"] = resolve_placeholders(b["content"], instance_dir)
+                from ..tools import _save_output_blocks
+                _save_output_blocks(instance_dir, blocks)
             return {
                 "uuid": b["uuid"],
                 "label": b["label"],
