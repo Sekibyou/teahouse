@@ -157,7 +157,11 @@ export function renderText(text: string, textStyleRules?: TextStyleRule[]): stri
   //    需要列表时请自行使用缩进或 HTML。
   const text0 = text
     .replace(/^(\d+)\.(\s)/gm, '$1.​$2')
-    .replace(/^([-*])(\s)/gm, '$1​$2');
+    .replace(/^([-*])(\s)/gm, '$1​$2')
+    // 去掉行首的 4 空格 / tab 缩进，防止 marked 将其识别为代码块 (<pre><code>)。
+    // BBCode 内容通常会带缩进（导演输出），但 marked 的 4 空格规则会导致
+    // BBCode 生成的 HTML 被转义为实体。
+    .replace(/^( {4}|\t)/gm, '');
 
   // 1. 解析 BBCode（在 Markdown 之前，避免冲突）
   const bbcodeHtml = parseBBCode(text0);
