@@ -152,8 +152,15 @@ export function renderText(text: string, textStyleRules?: TextStyleRule[]): stri
   const cached = _renderTextCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
+  // 0. 预处理：禁用 Markdown 列表语法。在列表标记符（数字. / - / *）后插入
+  //    零宽空格，视觉无差异但 marked 不会将其识别为 <ol>/<ul>，避免缩进。
+  //    需要列表时请自行使用缩进或 HTML。
+  const text0 = text
+    .replace(/^(\d+)\.(\s)/gm, '$1.​$2')
+    .replace(/^([-*])(\s)/gm, '$1​$2');
+
   // 1. 解析 BBCode（在 Markdown 之前，避免冲突）
-  const bbcodeHtml = parseBBCode(text);
+  const bbcodeHtml = parseBBCode(text0);
 
   // 2. 应用文本样式规则（在 Markdown 之前，避免 marked 将符号转义为 HTML 实体）
   //    例如 marked 会将 " 转义为 &quot;，导致规则匹配失败
