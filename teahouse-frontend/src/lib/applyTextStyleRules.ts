@@ -129,11 +129,11 @@ function splitHtmlSegments(html: string): HtmlSegment[] {
  * 应用文本样式规则到 HTML 内容
  *
  * 新策略：跨 HTML 标签匹配符号对
- * 1. 先提取所有纯文本内容（去除 HTML 标签）
+ * 1. 先提取所有纯文本内容（去除 HTML 标签，并跳过代码块/行内代码）
  * 2. 在纯文本中查找符号对的位置
  * 3. 在原 HTML 中对应的文本位置插入样式标签
  *
- * @param html 已经过 Markdown 解析和 HTML 清洗的 HTML 字符串
+ * @param html 已经过 BBCode 解析但尚未经过 Markdown 解析的 HTML 字符串
  * @param rules 文本样式规则列表（已按 order 排序，只包含启用的规则）
  * @returns 处理后的 HTML
  */
@@ -148,19 +148,76 @@ export function applyTextStyleRules(html: string, rules: TextStyleRule[]): strin
     return html;
   }
 
+  // 找出代码块和行内代码区域，这些区域不应该参与样式规则匹配
+  const codeRegions = findCodeRegions(html);
+
   // 按 order 顺序依次应用规则
   let result = html;
   for (const rule of enabledRules) {
-    result = applyRuleToHtml(result, rule);
+    result = applyRuleToHtml(result, rule, codeRegions);
   }
 
   return result;
 }
 
 /**
+ * 代码区域（不应参与样式规则匹配）
+ */
+interface CodeRegion {
+  start: number;  // 在原 HTML 中的起始位置（包含）
+  end: number;    // 在原 HTML 中的结束位置（不包含）
+}
+
+/**
+ * 查找代码块（```...```）和行内代码（`...`）区域
+ * 此时输入尚未经过 marked 解析，代码是 Markdown 原始语法
+ */
+function findCodeRegions(html: string): CodeRegion[] {
+  const regions: CodeRegion[] = [];
+
+  // 1. 查找代码块 ``` ... ```
+  const codeBlockRegex = /```[\s\S]*?```/g;
+  let match: RegExpExecArray | null;
+  while ((match = codeBlockRegex.exec(html)) !== null) {
+    regions.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  // 2. 查找行内代码 `...`
+  // 使用非反引号字符匹配，避免把代码块的反引号也匹配进来
+  // 先找出所有不在代码块内的行内代码
+  const inlineCodeRegex = /`([^`]+)`/g;
+  while ((match = inlineCodeRegex.exec(html)) !== null) {
+    const mStart = match.index;
+    const mEnd = match.index + match[0].length;
+    // 检查是否在已有的代码块区域内
+    const isInRegion = regions.some(r => r.start <= mStart && mEnd <= r.end);
+    if (!isInRegion) {
+      regions.push({ start: mStart, end: mEnd });
+    }
+  }
+
+  // 按起始位置排序
+  regions.sort((a, b) => a.start - b.start);
+
+  return regions;
+}
+
+/**
+ * 检查指定位置是否在代码区域内
+ */
+function isInCodeRegion(position: number, codeRegions: CodeRegion[]): boolean {
+  for (const region of codeRegions) {
+    if (position >= region.start && position < region.end) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 应用单个规则到 HTML（跨标签匹配）
  */
-function applyRuleToHtml(html: string, rule: TextStyleRule): string {
+function applyRuleToHtml(html: string, rule: TextStyleRule, codeRegions: CodeRegion[]): string {
   const { start_symbol, end_symbol, start_html, end_html } = rule;
 
   // 1. 分割 HTML 为文本和标签片段
@@ -193,9 +250,24 @@ function applyRuleToHtml(html: string, rule: TextStyleRule): string {
   }
 
   // 5. 为每个匹配插入样式标签
+  // 先过滤掉落在代码区域内的匹配
+  const validMatches = matches.filter(m => {
+    const startMap = textIndexMap[m.start];
+    const endMap = textIndexMap[m.end - 1];
+    if (!startMap || !endMap) return false;
+
+    // 将 pure text 位置转换回原 HTML 位置
+    const startSegment = segments[startMap.segmentIndex];
+    const endSegment = segments[endMap.segmentIndex];
+    const startHtmlPos = startSegment.index + startMap.offset;
+    const endHtmlPos = endSegment.index + endMap.offset;
+
+    return !isInCodeRegion(startHtmlPos, codeRegions) && !isInCodeRegion(endHtmlPos, codeRegions);
+  });
+
   // 从后向前处理，避免索引偏移问题
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const match = matches[i];
+  for (let i = validMatches.length - 1; i >= 0; i--) {
+    const match = validMatches[i];
 
     // 获取开始和结束位置在原 HTML 中的 segment 位置
     const startPos = textIndexMap[match.start];

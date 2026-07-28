@@ -51,6 +51,33 @@ marked.setOptions({
 });
 
 /**
+ * BBCode 生成的是内联 <span>，marked 不会处理内部的换行。
+ * 此函数对多行 BBCode span 内部递归将 \n 替换为 <br>\n，
+ * 使内部内容在 marked 渲染时正常换行。
+ *
+ * 单行 span（如 [b]/[i]）不受影响。
+ * 代码块内容（包含 ```）跳过，由 preprocessHtmlBlocks 处理。
+ */
+function highlightMultilineSpans(html: string): string {
+  const SPAN_RE = /(<span\b[^>]*>)([\s\S]*?)(<\/span>)/gi;
+
+  return html.replace(SPAN_RE, (full, openTag, inner, closeTag) => {
+    if (!inner.includes('\n')) return full;
+
+    // 递归处理嵌套 span
+    const processedInner = highlightMultilineSpans(inner);
+
+    // 跳过代码块——让 marked 单独处理
+    if (processedInner.includes('```')) return `${openTag}${processedInner}${closeTag}`;
+
+    // 将 \n 替换为 <br>\n，marked 会保留 <br>
+    const withBreaks = processedInner.replace(/\n/g, '<br>\n');
+
+    return `${openTag}${withBreaks}${closeTag}`;
+  });
+}
+
+/**
  * 预处理 HTML 块元素内部的 Markdown
  *
  * marked.js 默认不会解析 HTML 块元素（如 <details>）内部的 Markdown 语法
@@ -164,32 +191,30 @@ export function renderText(text: string, textStyleRules?: TextStyleRule[]): stri
     .replace(/^( {4}|\t)/gm, '');
 
   // 1. 解析 BBCode（在 Markdown 之前，避免冲突）
-  const bbcodeHtml = parseBBCode(text0);
+  let html = parseBBCode(text0);
 
-  // 2. 应用文本样式规则（在 Markdown 之前，避免 marked 将符号转义为 HTML 实体）
-  //    例如 marked 会将 " 转义为 &quot;，导致规则匹配失败
-  //    此时 BBCode 已转为 HTML 标签，splitHtmlSegments 会正确跳过它们
-  let styledHtml = bbcodeHtml;
+  // 1.5 对多行 BBCode span 内部做 \n → <br> 转换，使内部内容在 marked
+  //    渲染时正常换行。单行 span 不受影响。
+  html = highlightMultilineSpans(html);
+
+  // 2. 应用文本样式规则（在 Markdown 之前，避免 marked 将 " 转义为 &quot;
+  //    导致规则匹配失败。此时 BBCode 已转为 HTML 标签。）
+  let styledHtml = html;
   if (textStyleRules && textStyleRules.length > 0) {
     const enabledRules = textStyleRules
       .filter(rule => rule.enabled)
       .sort((a, b) => a.order - b.order);
 
     if (enabledRules.length > 0) {
-      styledHtml = applyTextStyleRules(bbcodeHtml, enabledRules);
+      styledHtml = applyTextStyleRules(html, enabledRules);
     }
   }
 
   // 3. 预处理 HTML 块元素（如 <details>）内部的 Markdown
   const preprocessedHtml = preprocessHtmlBlocks(styledHtml);
 
-  // 4. 使用 marked 解析 Markdown（marked 会自动保留 HTML 标签）
+  // 4. 使用 marked 解析 Markdown（marked 自动保留 HTML 标签）
   const result = marked.parse(preprocessedHtml, { async: false }) as string;
-
-  // 5. 跳过 DOMPurify 清洗：内容运行在统一 iframe 的 sandbox="allow-scripts" 环境中，
-  //    沙盒本身已提供安全边界（无法访问主页面 DOM、localStorage、发起网络请求）。
-  //    允许 <script>/<button>/<style> 等标签，支持消息气泡内嵌交互元素。
-  //    编辑器侧（editor/src/lib/bbcodeParser.ts）的渲染保留 DOMPurify 清洗。
 
   // 写入缓存（LRU：超出上限时删除最旧条目）
   if (_renderTextCache.size >= _RENDER_TEXT_CACHE_MAX) {

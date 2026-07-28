@@ -76,14 +76,16 @@ rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
 
 正文内容，支持 **Markdown 加粗** 和 *斜体*。
 
-[glow color=#f59e0b level=20]
-> 引用块也可以被特效包裹。
+[glow color=#f59e0b level=20]这句话带有发光特效 —— 适合强调关键台词[/glow]
+
+> 引用块应独立使用，不要包裹在 BBCode 特效中。
 > —— 某位角色
-[/glow]
 
 - 列表项 1
 - 列表项 2
 ```
+
+> **注意**：引用块（`>`）和代码块（`` ``` ``）是 Markdown 块级元素，不能包裹在 BBCode 特效中。因为 BBCode 生成的是内联 `<span>`，marked 不会解析 `<span>` 内部的 Markdown 块级语法。
 
 ### BBCode + HTML
 
@@ -111,9 +113,13 @@ rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
 
 ## 注意事项
 
+- **BBCode 不能包裹 Markdown 块级元素**。引用块（`>`）和代码块（`` ``` ``）是 Markdown 块级语法，不能放在 BBCode 特效标签内部。因为 BBCode 先生成内联 `<span>`，marked 不会解析 `<span>` 内部的 Markdown 块级语法（引用块、代码块、标题、列表等）。引用块和代码块应独立使用，不要包裹在任何 BBCode 标签中。如果需要对引用块添加视觉效果，考虑使用 HTML + CSS 代替。
+- **BBCode 不能整块包裹列表**。`[bounce]01. 第一项\n02. 第二项[/bounce]` 这种写法会让整个列表变成一个内联 `<span>`，破坏排版。如果需要给列表项加特效，请**逐项包裹**：`[bounce]01. 第一项[/bounce]` `[bounce]02. 第二项[/bounce]`。
+- **不建议 BBCode 与 Markdown 内联混用**。`[rainbow]**文字**[/rainbow]` 中的 `**` 不会被解析为加粗，原因同上——marked 不处理 `<span>` 内部的 Markdown。BBCode 内需要加粗时请使用 `[b]`，需要斜体用 `[i]`。
 - **默认字号是 16px**。`[size]` 的单位是 px，`[size=20]` = 20px，不要用 5、6 这种小数值，会导致文字不可读。建议取值范围：14~32。
 - **Markdown 表格内部不支持 BBCode**。表格由 marked 解析，单元格内容不会递归解析 BBCode。如需表格内着色，使用 HTML `<span style="...">` 代替。
 - **有序列表和无序列表（`1. `、`- `、`* `）已被禁用**。渲染器会自动插入零宽空格使其不被 marked 解析为 `<ol>` / `<ul>`。需要列表效果时，请手动写序号并用缩进排版。
+- **BBCode 和 HTML 标签不能混用**。`[color]` 只能用 `[/color]` 闭合，不能用 `</span>`；同理 `<span>` 只能用 `</span>` 闭合，不能用 `[/span]`。两种标记体系完全独立。
 - **不要过度使用特效**——一句对白用一个特效就够了，整段彩虹色会让读者头晕。
 - 特效适合用于：关键台词强调、情绪爆发点、超自然/科幻场景的视觉效果。
 - 普通叙事段落用 Markdown 即可，不要加 BBCode。
