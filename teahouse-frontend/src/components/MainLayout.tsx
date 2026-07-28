@@ -1,4 +1,4 @@
-import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench } from "lucide-react"
+import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Outlet, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,8 @@ export function MainLayout() {
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const { mode } = useViewModeStore()
+  const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
+  const toggleChatCollapsed = useViewModeStore((s) => s.toggleChatCollapsed)
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     const shouldBeDark = saved ? saved === "dark" : true
@@ -75,10 +77,8 @@ export function MainLayout() {
             </Button>
           )}
           <span className="font-semibold">LowStar's Teahouse</span>
-        </div>
-        <div className="flex items-center gap-1">
           {activeInstance && (
-            <div className="flex items-center mr-3 rounded-md border border-border overflow-hidden">
+            <div className="flex items-center rounded-md border border-border overflow-hidden">
               <button
                 className={`px-3 py-1 text-xs font-medium transition-colors ${
                   mode === "play"
@@ -102,6 +102,24 @@ export function MainLayout() {
                 后台
               </button>
             </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {activeInstance && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={toggleChatCollapsed}
+              title={chatCollapsed ? "展开导演面板" : "折叠导演面板"}
+            >
+              {chatCollapsed ? (
+                <PanelLeftOpen className="h-3.5 w-3.5" />
+              ) : (
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              )}
+              <span>导演</span>
+            </Button>
           )}
           <div className="flex items-center gap-2 mr-2 text-sm text-muted-foreground">
             <User className="h-4 w-4" />

@@ -350,7 +350,7 @@ export function ChatPanel() {
       {/* Header */}
       <div className="p-3 border-b border-border shrink-0">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">AI 助手</h3>
+          <h3 className="text-sm font-semibold">导演</h3>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
             <span className="flex items-center gap-1" title="导演/编排">导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span></span>
             <span className="flex items-center gap-1" title="正文写作">正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span></span>

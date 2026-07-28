@@ -5,6 +5,7 @@ import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
   GitBranch as GitBranchIcon, Edit3, Puzzle,
+  PanelLeftOpen, GripVertical,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,6 +29,9 @@ export function WorkspacePage() {
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const mode = useViewModeStore((s) => s.mode)
+  const chatWidth = useViewModeStore((s) => s.chatWidth)
+  const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
+  const setChatWidth = useViewModeStore((s) => s.setChatWidth)
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -354,10 +358,37 @@ export function WorkspacePage() {
     })
   }
 
+  // Chat panel resize via drag
+  const [isDragging, setIsDragging] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isDragging) return
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const newWidthPx = rect.right - e.clientX
+      const newWidthPct = (newWidthPx / rect.width) * 100
+      setChatWidth(Math.min(Math.max(newWidthPct, 20), 60))
+    }
+    const handleMouseUp = () => setIsDragging(false)
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+  }, [isDragging, setChatWidth])
+
   if (!activeInstance) return null
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div ref={containerRef} className="h-full flex overflow-hidden">
       {/* Left/center area — file tree + editor (backstage) OR output panel (play).
           Both are always mounted to keep SSE connections alive; hidden via CSS. */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -519,36 +550,66 @@ export function WorkspacePage() {
         </div>
       </div>
 
-      {/* Right panel — Chat (always visible, 45% width) */}
-      <aside className="w-[45%] border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0">
-        {/* Plugin panel tabs */}
-        {enabledPlugins.length > 0 && (
-          <div className="flex items-center gap-0 border-b border-border shrink-0 overflow-x-auto">
-            {enabledPlugins.map((p) => (
-              <button
-                key={p.id}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors shrink-0 border-r border-border ${
-                  pluginPanel === p.id
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-muted text-muted-foreground"
-                }`}
-                onClick={() => setPluginPanel(pluginPanel === p.id ? null : p.id)}
-                title={p.description}
-              >
-                <Puzzle className="h-3 w-3 inline mr-1" />
-                {p.name}
-              </button>
-            ))}
+      {/* Drag handle + Chat panel (resizable, collapsible) */}
+      {!chatCollapsed && (
+        <>
+          {/* Drag handle */}
+          <div
+            className={`w-1.5 border-l border-border shrink-0 cursor-col-resize hover:bg-primary/30 transition-colors relative group ${
+              isDragging ? "bg-primary/50" : ""
+            }`}
+            onMouseDown={handleDragStart}
+          >
+            <GripVertical className="h-4 w-4 absolute top-1/2 -translate-y-1/2 -left-[7px] text-muted-foreground/40 group-hover:text-muted-foreground pointer-events-none" />
           </div>
-        )}
-        <div className="flex-1 flex flex-col min-h-0">
-          {pluginPanel ? (
-            <PluginPanel pluginId={pluginPanel} />
-          ) : (
-            <ChatPanel />
-          )}
+          {/* Chat panel */}
+          <aside
+            className="border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0"
+            style={{ width: `${chatWidth}%` }}
+          >
+            {/* Plugin panel tabs */}
+            {enabledPlugins.length > 0 && (
+              <div className="flex items-center gap-0 border-b border-border shrink-0 overflow-x-auto">
+                {enabledPlugins.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors shrink-0 border-r border-border ${
+                      pluginPanel === p.id
+                        ? "bg-primary text-primary-foreground"
+                        : "hover:bg-muted text-muted-foreground"
+                    }`}
+                    onClick={() => setPluginPanel(pluginPanel === p.id ? null : p.id)}
+                    title={p.description}
+                  >
+                    <Puzzle className="h-3 w-3 inline mr-1" />
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex-1 flex flex-col min-h-0">
+              {pluginPanel ? (
+                <PluginPanel pluginId={pluginPanel} />
+              ) : (
+                <ChatPanel />
+              )}
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* Expand button when collapsed */}
+      {chatCollapsed && (
+        <div className="border-l border-border shrink-0 flex flex-col items-center pt-2 bg-muted/5">
+          <button
+            className="p-1 rounded hover:bg-muted text-muted-foreground"
+            onClick={() => setChatCollapsed(false)}
+            title="展开导演面板"
+          >
+            <PanelLeftOpen className="h-3.5 w-3.5" />
+          </button>
         </div>
-      </aside>
+      )}
 
       {/* Create Dialog */}
       {showCreate && (
@@ -593,6 +654,14 @@ export function WorkspacePage() {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
+      {isDragging && (
+        <div
+          className="fixed inset-0 z-50 cursor-col-resize"
+          style={{ userSelect: "none" } as React.CSSProperties}
+        />
+      )}
     </div>
   )
 }
