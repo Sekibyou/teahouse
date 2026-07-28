@@ -4,20 +4,22 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
-  GitBranch as GitBranchIcon, Edit3,
+  GitBranch as GitBranchIcon, Edit3, Puzzle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { instancesApi, gitApi } from "@/lib/api"
+import { instancesApi, gitApi, pluginsApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
 import { GitDialog } from "@/components/GitDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { PluginPanel } from "@/components/PluginPanel"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
+import type { Plugin } from "@/lib/pluginTypes"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
@@ -59,7 +61,16 @@ export function WorkspacePage() {
   // only mounts with a fully-populated model (no undo-"back-to-empty" artifact).
   const [contentReady, setContentReady] = useState(false)
 
-  // Create dialog state
+  // Plugin panels state
+  const [enabledPlugins, setEnabledPlugins] = useState<Plugin[]>([])
+  const [pluginPanel, setPluginPanel] = useState<string | null>(null)
+
+  const loadPlugins = useCallback(async () => {
+    const res = await pluginsApi.list()
+    if (res.ok) {
+      setEnabledPlugins(res.data!.plugins.filter(p => p.enabled && p.has_frontend))
+    }
+  }, [])
   const [showCreate, setShowCreate] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [createName, setCreateName] = useState("")
 
@@ -109,6 +120,11 @@ export function WorkspacePage() {
     const interval = setInterval(loadFileStatuses, 5000)
     return () => clearInterval(interval)
   }, [loadFileStatuses])
+
+  // Load plugin panels
+  useEffect(() => {
+    loadPlugins()
+  }, [loadPlugins])
 
   // Redirect if no active instance
   useEffect(() => {
@@ -505,7 +521,33 @@ export function WorkspacePage() {
 
       {/* Right panel — Chat (always visible, 45% width) */}
       <aside className="w-[45%] border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0">
-        <ChatPanel />
+        {/* Plugin panel tabs */}
+        {enabledPlugins.length > 0 && (
+          <div className="flex items-center gap-0 border-b border-border shrink-0 overflow-x-auto">
+            {enabledPlugins.map((p) => (
+              <button
+                key={p.id}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors shrink-0 border-r border-border ${
+                  pluginPanel === p.id
+                    ? "bg-primary text-primary-foreground"
+                    : "hover:bg-muted text-muted-foreground"
+                }`}
+                onClick={() => setPluginPanel(pluginPanel === p.id ? null : p.id)}
+                title={p.description}
+              >
+                <Puzzle className="h-3 w-3 inline mr-1" />
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex-1 flex flex-col min-h-0">
+          {pluginPanel ? (
+            <PluginPanel pluginId={pluginPanel} />
+          ) : (
+            <ChatPanel />
+          )}
+        </div>
       </aside>
 
       {/* Create Dialog */}

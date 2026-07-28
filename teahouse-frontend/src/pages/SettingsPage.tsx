@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ArrowLeft, Loader2, Settings2, Server, Star, Cpu } from "lucide-react"
+import { ArrowLeft, Loader2, Settings2, Server, Star, Cpu, Puzzle } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { LLMManagementDialog } from "@/components/LLMManagementDialog"
@@ -118,14 +118,24 @@ export function SettingsPage() {
           </div>
 
           {/* Manage button */}
-          <Button
-            onClick={() => setDialogOpen(true)}
-            className="w-full"
-            variant="outline"
-          >
-            <Settings2 className="h-4 w-4 mr-2" />
-            打开模型管理
-          </Button>
+          <div className="space-y-2">
+            <Button
+              onClick={() => setDialogOpen(true)}
+              className="w-full"
+              variant="outline"
+            >
+              <Settings2 className="h-4 w-4 mr-2" />
+              打开模型管理
+            </Button>
+            <Button
+              onClick={() => navigate("/settings/plugins")}
+              className="w-full"
+              variant="outline"
+            >
+              <Puzzle className="h-4 w-4 mr-2" />
+              管理插件
+            </Button>
+          </div>
 
           {/* Hint */}
           <div className="text-xs text-muted-foreground space-y-1 bg-muted/20 rounded-lg p-3">

@@ -3,6 +3,7 @@ import { MainLayout } from "@/components/MainLayout"
 import { SessionSelectPage } from "@/pages/SessionSelectPage"
 import { WorkspacePage } from "@/pages/WorkspacePage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { PluginsSettingsPage } from "@/pages/PluginsSettingsPage"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 const router = createBrowserRouter([
@@ -18,6 +19,7 @@ const router = createBrowserRouter([
       { index: true, element: <SessionSelectPage /> },
       { path: "workspace", element: <WorkspacePage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "settings/plugins", element: <PluginsSettingsPage /> },
     ],
   },
 ])

@@ -1,5 +1,6 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
 import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
+import type { Plugin, PluginData } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -374,4 +375,15 @@ export const llmSlotsApi = {
   setSlot: (slotId: string, modelId: string | null) =>
     put<{ slot_id: string; model_id: string | null }>(`/api/llm/slots/${slotId}`, { model_id: modelId }),
   clearSlot: (slotId: string) => del<{ status: string }>(`/api/llm/slots/${slotId}`),
+}
+
+// Plugins API
+export const pluginsApi = {
+  list: () => get<{ plugins: Plugin[] }>("/api/plugins"),
+  get: (id: string) => get<Plugin>(`/api/plugins/${id}`),
+  enable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/enable`),
+  disable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/disable`),
+  getData: (id: string) => get<{ plugin_id: string; data: PluginData }>(`/api/plugins/${id}/data`),
+  setData: (id: string, data: PluginData) => put<{ status: string; plugin_id: string }>(`/api/plugins/${id}/data`, { data }),
+  deleteData: (id: string, key: string) => del<{ status: string }>(`/api/plugins/${id}/data/${key}`),
 }

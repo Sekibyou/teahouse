@@ -68,11 +68,22 @@ def load_tools(path: Path | None = None) -> list[dict]:
     """Load tool schemas from tools.json, returning OpenAI-compatible function-calling format.
 
     Call this once at startup. The result is also stored in the module-level TOOLS variable.
+    Includes plugin-provided tools if plugins are loaded.
     """
     global TOOLS
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
-    TOOLS = [_raw_tool_to_schema(t) for t in raw]
+    builtin = [_raw_tool_to_schema(t) for t in raw]
+
+    # Merge plugin tools
+    try:
+        from .plugins import get_tool_defs_from_plugins
+        plugin_defs = get_tool_defs_from_plugins()
+        plugin_schemas = [_raw_tool_to_schema(t) for t in plugin_defs]
+        TOOLS = builtin + plugin_schemas
+    except Exception:
+        TOOLS = builtin
+
     return TOOLS
 
 
@@ -81,6 +92,7 @@ def load_tools_usage(path: Path | None = None) -> str:
 
     Each tool's `usage` field is rendered as a markdown section.
     Tools without a `usage` field are skipped.
+    Includes plugin tool usage guides.
     Returns the combined text for injection into the director's system prompt.
     """
     p = path or _TOOLS_JSON_PATH
@@ -95,6 +107,20 @@ def load_tools_usage(path: Path | None = None) -> str:
 
         sections.append(f"## {name}\n")
         sections.append(f"{usage}\n")
+
+    # Append plugin tool usage guides
+    try:
+        from .plugins import get_tool_defs_from_plugins
+        plugin_defs = get_tool_defs_from_plugins()
+        if plugin_defs:
+            sections.append("\n## 插件工具\n")
+            for tool in plugin_defs:
+                name = tool["name"]
+                usage = tool.get("usage", tool["description"])
+                sections.append(f"### {name}\n")
+                sections.append(f"{usage}\n")
+    except Exception:
+        pass
 
     return "\n".join(sections)
 
@@ -811,19 +837,40 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
     """Execute a tool by name with the given args. Returns the result text.
 
     instance_id is the DB UUID — used for SSE broadcast filtering on the frontend.
+    Falls back to plugin tool executors if the tool is not built-in.
     """
     executor = TOOL_EXECUTORS.get(name)
-    if not executor:
-        return f"Error: Unknown tool: {name}"
+    if executor:
+        try:
+            if name == "Generate":
+                result = await executor(instance_dir, args, user_id)
+            elif name == "Output":
+                result = await executor(instance_dir, args, instance_id)
+            else:
+                result = await executor(instance_dir, args)
+            return result
+        except Exception as e:
+            return f"Error executing {name}: {e}"
+
+    # Check plugin tool executors
     try:
-        # Generate tool needs user_id to resolve the writer slot
-        if name == "Generate":
-            result = await executor(instance_dir, args, user_id)
-        # Output needs instance_id for SSE broadcast
-        elif name == "Output":
-            result = await executor(instance_dir, args, instance_id)
-        else:
-            result = await executor(instance_dir, args)
-        return result
-    except Exception as e:
-        return f"Error executing {name}: {e}"
+        from .plugins import get_tool_executors_from_plugins
+        plugin_execs = get_tool_executors_from_plugins()
+        plugin_exec = plugin_execs.get(name)
+        if plugin_exec:
+            from .plugins import loaded_plugins
+            # Find which plugin owns this tool
+            ctx = None
+            for lp in loaded_plugins.values():
+                if name in lp.tool_executors:
+                    ctx = lp.context
+                    break
+            try:
+                result = await plugin_exec(args, ctx, instance_dir, user_id)
+                return result
+            except Exception as e:
+                return f"Error executing plugin tool {name}: {e}"
+    except Exception:
+        pass
+
+    return f"Error: Unknown tool: {name}"

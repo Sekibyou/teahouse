@@ -29,3 +29,8 @@ dist/
 
 # Test
 tests/
+
+# Plugins — user-installed plugins (keep the directory and docs)
+plugins/*
+!plugins/.gitkeep
+!plugins/README.md

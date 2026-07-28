@@ -191,7 +191,6 @@ floors/              正文楼层 + 总结（归档，commit 后不可变）
   floor-001.md        正文楼层，编号递增
   sum-001.md          总结，编号递增（与楼层编号独立）
 current/             临时文件夹，提交时最好为空
-  generate-output.json  Generate 工具占位符替换后的调试产物
   draft.md            未完成草稿（续写用）
 ```
 
