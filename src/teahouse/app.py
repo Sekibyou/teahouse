@@ -45,7 +45,7 @@ from .routes.llm_slots import router as llm_slots_router
 from .routes.workspaces import router as workspaces_router
 from .routes.session import router as session_router
 from .routes.plugins import router as plugins_router
-from .plugins import scan_plugins_dir, register_plugins_in_db, load_enabled_plugins, PLUGINS_DIR
+from .plugins import load_all_enabled_plugins
 from .database.plugins import configure_plugin_crypto
 from .state import state
 
@@ -76,15 +76,12 @@ async def lifespan(app: FastAPI):
 
     # 5. Init LLM client — no global instance; resolved per-request from DB
 
-    # 6. Scan and register plugins
+    # 6. Scan and load enabled plugins for all users
     try:
-        manifests = scan_plugins_dir(PLUGINS_DIR)
-        await register_plugins_in_db(manifests)
-        await load_enabled_plugins()
-        if manifests:
-            print(f"[teahouse] {len(manifests)} plugin(s) discovered")
+        await load_all_enabled_plugins()
+        print("[teahouse] plugin system initialized")
     except Exception as e:
-        print(f"[teahouse] plugin scan failed: {e}")
+        print(f"[teahouse] plugin init failed: {e}")
 
     # 7. Ensure all existing users have the built-in blank prototype registered
     try:
@@ -127,23 +124,6 @@ app.include_router(llm_slots_router)
 app.include_router(workspaces_router)
 app.include_router(session_router)
 app.include_router(plugins_router)
-
-
-# Mount plugin frontend static files
-# Each plugin with frontend files serves from /plugin/{plugin_id}/
-def _mount_plugin_frontends() -> None:
-    from fastapi.staticfiles import StaticFiles
-    if not PLUGINS_DIR.is_dir():
-        return
-    for entry in PLUGINS_DIR.iterdir():
-        if not entry.is_dir():
-            continue
-        frontend = entry / "frontend"
-        if frontend.is_dir() and (frontend / "index.html").exists():
-            mount_path = f"/plugin/{entry.name}"
-            app.mount(mount_path, StaticFiles(directory=str(frontend), html=True), name=f"plugin-{entry.name}")
-
-_mount_plugin_frontends()
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +469,8 @@ def main() -> None:
         host=cfg.server.host,
         port=cfg.server.port,
         reload=reload_flag,
+        reload_dirs=["src"] if reload_flag else None,
+        reload_excludes=["data/**"] if reload_flag else None,
     )
 
 

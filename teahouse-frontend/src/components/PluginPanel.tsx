@@ -1,5 +1,6 @@
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef, useCallback, useState } from "react"
 import { pluginsApi, API_BASE_URL } from "@/lib/api"
+import { Loader2 } from "lucide-react"
 
 interface PluginPanelProps {
   pluginId: string
@@ -9,22 +10,35 @@ interface PluginPanelProps {
 /**
  * PluginPanel — iframe wrapper with postMessage bridge.
  *
- * Loads an enabled plugin's frontend (served from /plugin/{pluginId}/)
- * in a sandboxed iframe and brokers data access through the main app's
- * authenticated API layer. The plugin iframe never sees the JWT token.
- *
- * Bridge protocol:
- *   plugin → bridge: {type: "ready", pluginId}     handshake
- *   plugin → bridge: {type: "getData", key}         request decrypted data
- *   plugin → bridge: {type: "setData", key, value}  write encrypted data
- *   bridge → plugin: {type: "init", pluginId}       handshake response
- *   bridge → plugin: {type: "data", key, value}     return decrypted data
- *   bridge → plugin: {type: "saved", key}           confirm save
- *   bridge → plugin: {type: "error", message}       error feedback
+ * Fetches the plugin's frontend HTML via the authenticated API and renders
+ * it in a sandboxed iframe via srcdoc. Data access is brokered through
+ * postMessage — the plugin iframe never sees the JWT token.
  */
 export function PluginPanel({ pluginId, className }: PluginPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const readyRef = useRef(false)
+  const [html, setHtml] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Fetch the plugin's index.html via authenticated API
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = (await import("@/stores/authStore")).getAuthToken()
+        const res = await fetch(
+          `${API_BASE_URL}/api/plugins/${pluginId}/frontend/index.html`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        )
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const text = await res.text()
+        if (!cancelled) setHtml(text)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "加载失败")
+      }
+    })()
+    return () => { cancelled = true }
+  }, [pluginId])
 
   const handleMessage = useCallback(async (e: MessageEvent) => {
     const iframe = iframeRef.current
@@ -77,10 +91,26 @@ export function PluginPanel({ pluginId, className }: PluginPanelProps) {
     return () => window.removeEventListener("message", handleMessage)
   }, [handleMessage])
 
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+        插件加载失败: {error}
+      </div>
+    )
+  }
+
+  if (html === null) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
   return (
     <iframe
       ref={iframeRef}
-      src={`${API_BASE_URL}/plugin/${pluginId}/`}
+      srcDoc={html}
       className={className}
       sandbox="allow-scripts allow-same-origin"
       title={`Plugin: ${pluginId}`}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
-import { ArrowLeft, Loader2, Puzzle, Shield, Power, PowerOff } from "lucide-react"
+import { useEffect, useState, useRef } from "react"
+import { ArrowLeft, Loader2, Puzzle, Shield, Power, PowerOff, Trash2, Upload } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { pluginsApi } from "@/lib/api"
 import { PluginPanel } from "@/components/PluginPanel"
 import type { Plugin } from "@/lib/pluginTypes"
@@ -12,6 +13,10 @@ export function PluginsSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState<Set<string>>(new Set())
   const [configPlugin, setConfigPlugin] = useState<Plugin | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Plugin | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     setLoading(true)
@@ -37,6 +42,31 @@ export function PluginsSettingsPage() {
     })
   }
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const res = await pluginsApi.uninstall(deleteTarget.id)
+    setDeleting(false)
+    setDeleteTarget(null)
+    if (res.ok) {
+      if (configPlugin?.id === deleteTarget.id) setConfigPlugin(null)
+      await load()
+    }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    const form = new FormData()
+    form.append("file", file)
+    await pluginsApi.importZip(form)
+    setUploading(false)
+    await load()
+    // Reset input so same file can be re-imported
+    if (fileInputRef.current) fileInputRef.current.value = ""
+  }
+
   const permLabels: Record<string, string> = {
     tool: "导演工具",
     frontend: "前端面板",
@@ -54,6 +84,24 @@ export function PluginsSettingsPage() {
           </button>
           <h2 className="text-lg font-semibold">插件管理</h2>
         </div>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".zip"
+            onChange={handleImport}
+            className="hidden"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            {uploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
+            导入插件
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -66,7 +114,7 @@ export function PluginsSettingsPage() {
             <div className="text-center text-muted-foreground py-12">
               <Puzzle className="h-12 w-12 mx-auto mb-3 opacity-20" />
               <p className="text-sm">暂无可用插件</p>
-              <p className="text-xs mt-1 opacity-60">将插件放入 plugins/ 目录后自动发现</p>
+              <p className="text-xs mt-1 opacity-60">将插件放入 {`data/{用户名}/plugins/`} 目录后自动发现，或点击「导入插件」上传 .zip</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -85,22 +133,32 @@ export function PluginsSettingsPage() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
                     </div>
-                    <Button
-                      size="sm"
-                      variant={p.enabled ? "default" : "outline"}
-                      onClick={() => handleToggle(p)}
-                      disabled={toggling.has(p.id)}
-                      className="shrink-0"
-                    >
-                      {toggling.has(p.id) ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      ) : p.enabled ? (
-                        <PowerOff className="h-3 w-3 mr-1" />
-                      ) : (
-                        <Power className="h-3 w-3 mr-1" />
-                      )}
-                      {p.enabled ? "已启用" : "已禁用"}
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant={p.enabled ? "default" : "outline"}
+                        onClick={() => handleToggle(p)}
+                        disabled={toggling.has(p.id)}
+                      >
+                        {toggling.has(p.id) ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : p.enabled ? (
+                          <PowerOff className="h-3 w-3 mr-1" />
+                        ) : (
+                          <Power className="h-3 w-3 mr-1" />
+                        )}
+                        {p.enabled ? "已启用" : "已禁用"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-red-500"
+                        onClick={() => setDeleteTarget(p)}
+                        title="卸载插件"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Permissions */}
@@ -119,7 +177,7 @@ export function PluginsSettingsPage() {
                     </span>
                   </div>
 
-                  {/* Config panel button (only when enabled and has frontend) */}
+                  {/* Config panel button */}
                   {p.enabled && p.has_frontend && (
                     <Button
                       variant="ghost"
@@ -144,6 +202,16 @@ export function PluginsSettingsPage() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="卸载插件"
+        message={`确定卸载「${deleteTarget?.name}」吗？此操作将删除该插件的所有文件和数据。`}
+        variant="destructive"
+        confirmText={deleting ? "卸载中..." : "卸载"}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

@@ -87,6 +87,10 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
     return await fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
 
 
+async def get_user_by_safe_name(safe_name: str) -> Optional[dict]:
+    return await fetch_one("SELECT * FROM users WHERE safe_name = ?", (safe_name,))
+
+
 async def update_user(
     user_id: str,
     display_name: Optional[str] = None,

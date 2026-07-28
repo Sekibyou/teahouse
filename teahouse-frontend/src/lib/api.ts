@@ -383,6 +383,18 @@ export const pluginsApi = {
   get: (id: string) => get<Plugin>(`/api/plugins/${id}`),
   enable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/enable`),
   disable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/disable`),
+  uninstall: (id: string) => del<{ status: string; plugin_id: string; message: string }>(`/api/plugins/${id}`),
+  importZip: (form: FormData) => {
+    const token = getAuthToken()
+    const headers: Record<string, string> = {}
+    // Don't set Content-Type — browser sets it with boundary for multipart
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    return fetch(`${API_BASE_URL}/api/plugins/import`, {
+      method: "POST",
+      headers,
+      body: form,
+    }).then(r => r.ok ? { ok: true as const, data: r.json() } : { ok: false as const, error: "导入失败" })
+  },
   getData: (id: string) => get<{ plugin_id: string; data: PluginData }>(`/api/plugins/${id}/data`),
   setData: (id: string, data: PluginData) => put<{ status: string; plugin_id: string }>(`/api/plugins/${id}/data`, { data }),
   deleteData: (id: string, key: string) => del<{ status: string }>(`/api/plugins/${id}/data/${key}`),

@@ -854,17 +854,11 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
 
     # Check plugin tool executors
     try:
-        from .plugins import get_tool_executors_from_plugins
+        from .plugins import get_tool_executors_from_plugins, find_plugin_context_for_tool
         plugin_execs = get_tool_executors_from_plugins()
         plugin_exec = plugin_execs.get(name)
         if plugin_exec:
-            from .plugins import loaded_plugins
-            # Find which plugin owns this tool
-            ctx = None
-            for lp in loaded_plugins.values():
-                if name in lp.tool_executors:
-                    ctx = lp.context
-                    break
+            ctx = find_plugin_context_for_tool(name, user_id or "")
             try:
                 result = await plugin_exec(args, ctx, instance_dir, user_id)
                 return result
