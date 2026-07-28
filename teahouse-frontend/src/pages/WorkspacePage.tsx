@@ -515,7 +515,7 @@ export function WorkspacePage() {
 
         {/* Play mode — Output panel (always mounted, hidden when backstage) */}
         <div className={`flex-1 flex-col min-w-0 ${mode === "play" ? "flex" : "hidden"}`}>
-          <OutputPanel instanceId={instId} instanceName={activeInstance?.name} />
+          <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} />
         </div>
       </div>
 

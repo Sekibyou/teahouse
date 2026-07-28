@@ -102,6 +102,12 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; }
+    /* 沙盒默认滚动条美化（与主项目一致，硬编码颜色） */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+    *, *::before, *::after { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
   </style>
 </head>
 <body>
@@ -227,15 +233,14 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
   // ---- Forward SSE events to sandbox (initial full sync + incremental deltas) ----
 
   const syncedRef = useRef(false)
+  const prevBlocksRef = useRef<Map<string, OutputBlock>>(new Map())
 
   useEffect(() => {
-    if (!sandboxReady || !iframeRef.current) return
+    if (!sandboxReady || !iframeRef.current || !bootstrapBlock) return
 
     if (!syncedRef.current) {
-      // Initial full sync: push all blocks once, EXCEPT code types already in srcdoc
+      // Initial full sync: push all blocks once (skip code types embedded in srcdoc)
       for (const block of blocks) {
-        // bootstrap_js, scene_js, css, ui_js are already embedded in srcdoc
-        // Only forward rich_text and text so the sandbox can render them
         if (block.content_type === "bootstrap_js" ||
             block.content_type === "scene_js" ||
             block.content_type === "css" ||
@@ -243,11 +248,40 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
           continue
         }
         sendToSandbox("output.append", block)
+        prevBlocksRef.current.set(block.uuid, block)
       }
       syncedRef.current = true
       return
     }
-  }, [sandboxReady])
+
+    // Incremental delta: detect new/changed/deleted blocks
+    const prev = prevBlocksRef.current
+    const current = new Map(blocks
+      .filter(b =>
+        b.content_type !== "bootstrap_js" &&
+        b.content_type !== "scene_js" &&
+        b.content_type !== "css" &&
+        b.content_type !== "ui_js"
+      )
+      .map(b => [b.uuid, b])
+    )
+
+    for (const [uuid, block] of current) {
+      if (!prev.has(uuid)) {
+        sendToSandbox("output.append", block)
+      } else if (prev.get(uuid)!.rendered !== block.rendered || prev.get(uuid)!.note !== block.note) {
+        sendToSandbox("output.replace", block)
+      }
+    }
+
+    for (const uuid of prev.keys()) {
+      if (!current.has(uuid)) {
+        sendToSandbox("output.delete", { uuid })
+      }
+    }
+
+    prevBlocksRef.current = current
+  }, [blocks, sandboxReady, bootstrapBlock])
 
   function sendToSandbox(_event: string, _data: unknown) {
     iframeRef.current?.contentWindow?.postMessage({

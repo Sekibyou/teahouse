@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, ListTodo, Circle, CircleDot, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { chatApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
-import { getActiveInstance } from "@/stores/sessionStore"
+import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -126,6 +126,12 @@ export function ChatPanel() {
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
     if (!text) return
+
+    _doSend(text, useTools)
+  }
+
+  // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
+  const _doSend = async (text: string, useTools: boolean) => {
 
     // /clear 命令：清空当前对话
     if (text === "/clear") {
@@ -298,6 +304,20 @@ export function ChatPanel() {
       aborterRef.current = null
     }
   }
+
+  // 监听沙盒 Teahouse.send() 消息，自动发送到导演
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const msg = useSessionStore.getState().pendingMessage
+      if (msg && !isStreaming) {
+        useSessionStore.getState().setPendingMessage(null)
+        setInput(msg)
+        // 同步触发发送
+        _doSend(msg, true)
+      }
+    }, 300)
+    return () => clearInterval(interval)
+  }, [isStreaming])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (filteredCommands.length > 0) {
