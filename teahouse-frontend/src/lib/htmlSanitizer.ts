@@ -126,13 +126,12 @@ let _lastRulesRef: TextStyleRule[] | undefined;
 
 function getRulesFingerprint(rules?: TextStyleRule[]): string {
   if (!rules || rules.length === 0) return '';
-  // 引用未变时直接返回缓存的指纹
   if (rules === _lastRulesRef) return _rulesFingerprint;
   _lastRulesRef = rules;
   _rulesFingerprint = rules
     .filter(r => r.enabled)
-    .map(r => `${r.start_symbol}${r.end_symbol}${r.order}`)
-    .join('|');
+    .map(r => `${r.start_symbol}|${r.end_symbol}|${r.start_html}|${r.end_html}|${r.order}`)
+    .join('__');
   return _rulesFingerprint;
 }
 

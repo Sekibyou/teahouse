@@ -447,6 +447,23 @@ async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends
     raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")
 
 
+# ===== Text style rules =====
+
+
+@router.get("/instances/{instance_id}/text-style-rules")
+async def get_text_style_rules(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get text style rules for an instance."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..tools import _load_text_style_rules
+    rules = _load_text_style_rules(instance_dir)
+    return {"rules": rules}
+
+
 # ===== Git operations =====
 
 class GitCommitRequest(BaseModel):

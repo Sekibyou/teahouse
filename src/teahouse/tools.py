@@ -481,6 +481,7 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
 
 TEHOUSE_DIR = ".teahouse"
 OUTPUT_BLOCKS_FILE = "output-blocks.yaml"
+TEXT_STYLE_RULES_FILE = "text-style-rules.yaml"
 
 
 def _output_blocks_path(instance_dir: Path) -> Path:
@@ -506,6 +507,29 @@ def _save_output_blocks(instance_dir: Path, blocks: list[dict]) -> None:
     path = _output_blocks_path(instance_dir)
     content = yaml.dump({"blocks": blocks}, allow_unicode=True, default_flow_style=False)
     path.write_text(content, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Text style rules — .teahouse/text-style-rules.yaml
+# ---------------------------------------------------------------------------
+
+
+def _text_style_rules_path(instance_dir: Path) -> Path:
+    """Get the path to text-style-rules.yaml, ensuring .teahouse/ exists."""
+    teahouse_dir = instance_dir / TEHOUSE_DIR
+    teahouse_dir.mkdir(parents=True, exist_ok=True)
+    return teahouse_dir / TEXT_STYLE_RULES_FILE
+
+
+def _load_text_style_rules(instance_dir: Path) -> list[dict]:
+    """Load text style rules from disk. Returns empty list if file doesn't exist."""
+    path = _text_style_rules_path(instance_dir)
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return []
+    return data.get("rules", [])
 
 
 async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:

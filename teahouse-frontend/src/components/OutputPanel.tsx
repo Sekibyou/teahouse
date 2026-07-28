@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { FileText } from "lucide-react"
 import { useOutputSSE, type OutputBlock } from "@/hooks/useOutputSSE"
+import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { outputBlocksApi } from "@/lib/api"
 import { SandboxManager } from "@/components/SandboxManager"
 import type { ContentType } from "@/lib/types"
@@ -21,8 +22,9 @@ interface OutputPanelProps {
 export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelProps) {
   const [blocks, setBlocks] = useState<OutputBlock[]>([])
   const [initialLoading, setInitialLoading] = useState(true)
+  const [rulesVersion, setRulesVersion] = useState(0)
 
-  // ---- SSE 实时更新 ----
+  // ---- SSE 实时更新（输出块） ----
 
   const handleAppend = useCallback((block: OutputBlock) => {
     setBlocks((prev) => [...prev, block])
@@ -44,6 +46,19 @@ export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelPro
     onAppend: handleAppend,
     onReplace: handleReplace,
     onDelete: handleDelete,
+  })
+
+  // ---- SSE 监听文件变更（text-style-rules.yaml 被导演编辑时实时生效） ----
+
+  useSSERefresh({
+    instanceId,
+    instanceName,
+    onFileChanged: useCallback((path: string) => {
+      if (path === ".teahouse/text-style-rules.yaml") {
+        setRulesVersion((v) => v + 1)
+      }
+    }, []),
+    onWorkspaceChanged: useCallback(() => {}, []),
   })
 
   // ---- 首次加载：获取全部输出块摘要 ----
@@ -109,6 +124,7 @@ export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelPro
             blocks={blocks}
             onSend={onSend}
             isEmpty={false}
+            rulesVersion={rulesVersion}
           />
         )}
         {isEmpty && (

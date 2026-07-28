@@ -311,6 +311,15 @@ export const outputBlocksApi = {
   },
 }
 
+// Text style rules API
+export const textStyleRulesApi = {
+  get: async (instanceId: string) => {
+    return get<{ rules: import("@/lib/types").TextStyleRule[] }>(
+      `/api/instances/${instanceId}/text-style-rules`
+    )
+  },
+}
+
 // LLM Providers API
 export const llmProvidersApi = {
   list: () => get<{ providers: LLMProvider[] }>("/api/llm/providers/"),

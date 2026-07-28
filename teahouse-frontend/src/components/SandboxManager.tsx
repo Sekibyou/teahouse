@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback, useState } from "react"
 import type { OutputBlock } from "@/hooks/useOutputSSE"
-import type { ContentType } from "@/lib/types"
+import type { ContentType, TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
 import { renderText } from "@/lib/htmlSanitizer"
-import { outputBlocksApi, instancesApi } from "@/lib/api"
+import { outputBlocksApi, instancesApi, textStyleRulesApi } from "@/lib/api"
 
 // ============================================================
 // SandboxManager — unified sandbox iframe + TeahouseBridge
@@ -15,6 +15,7 @@ interface SandboxManagerProps {
   blocks: OutputBlock[]
   onSend?: (message: string) => void
   isEmpty: boolean
+  rulesVersion?: number
 }
 
 /**
@@ -26,11 +27,27 @@ interface SandboxManagerProps {
  * 5. Host forwards SSE events into sandbox via postMessage
  * 6. Fallback: no bootstrap → host renders rich_text directly via renderText()
  */
-export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmpty }: SandboxManagerProps) {
+export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmpty, rulesVersion }: SandboxManagerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [sandboxReady, setSandboxReady] = useState(false)
   const [fallbackContent, setFallbackContent] = useState<string | null>(null)
   const [srcdoc, setSrcdoc] = useState<string | null>(null)
+  const [textStyleRules, setTextStyleRules] = useState<TextStyleRule[]>([])
+
+  // ---- Load text style rules when instance or rules change ----
+
+  useEffect(() => {
+    if (!instanceId) {
+      setTextStyleRules([])
+      return
+    }
+    ;(async () => {
+      const res = await textStyleRulesApi.get(instanceId)
+      if (res.ok && res.data) {
+        setTextStyleRules(res.data.rules ?? [])
+      }
+    })()
+  }, [instanceId, rulesVersion])
 
   // ---- Determine block types from the list ----
   const bootstrapBlock = blocks.find((b) => b.content_type === "bootstrap_js")
@@ -183,7 +200,7 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
         case "renderRichText": {
           const text = _args[0] as string
           if (text) {
-            result = renderText(text)
+            result = renderText(text, textStyleRules)
           }
           break
         }
@@ -223,7 +240,7 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
         _error: err instanceof Error ? err.message : "Unknown error",
       }, "*")
     }
-  }, [instanceId, instanceName, onSend])
+  }, [instanceId, instanceName, onSend, textStyleRules])
 
   useEffect(() => {
     window.addEventListener("message", handleMessage)
@@ -291,7 +308,37 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     }, "*")
   }
 
-  // ---- Fallback: render rich_text directly when no bootstrap ----
+  // ---- When text style rules change, re-render active ep block in sandbox ----
+  // Skip the initial load (sandbox renders with rules from the start).
+  // Only fire on subsequent updates (e.g. director edited text-style-rules.yaml).
+
+  const rulesSkipInitialRef = useRef(true)
+
+  useEffect(() => {
+    if (!sandboxReady || !bootstrapBlock || blocks.length === 0) return
+
+    if (rulesSkipInitialRef.current) {
+      rulesSkipInitialRef.current = false
+      return
+    }
+
+    // Find the highest ep block and re-forward it so sandbox re-renders with new rules
+    const epBlocks = blocks
+      .filter((b) => /^ep\d+$/i.test(b.label) && b.content_type === "rich_text")
+    if (epBlocks.length === 0) return
+
+    const latest = epBlocks.reduce((a, b) => {
+      const na = parseInt(a.label.replace(/^ep/i, ""), 10)
+      const nb = parseInt(b.label.replace(/^ep/i, ""), 10)
+      return na > nb ? a : b
+    })
+    sendToSandbox("output.replace", latest)
+  }, [textStyleRules, sandboxReady, bootstrapBlock, blocks])
+
+  // Reset skip flag when instance changes (sandbox restarts)
+  useEffect(() => {
+    rulesSkipInitialRef.current = true
+  }, [instanceId])
 
   useEffect(() => {
     if (bootstrapBlock || isEmpty) {
@@ -312,11 +359,11 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
         if (!instanceId) return
         const res = await outputBlocksApi.get(instanceId, epBlocks[0].uuid)
         if (res.ok && res.data) {
-          setFallbackContent(renderText(res.data.rendered))
+          setFallbackContent(renderText(res.data.rendered, textStyleRules))
         }
       })()
     }
-  }, [bootstrapBlock, blocks, isEmpty, instanceId])
+  }, [bootstrapBlock, blocks, isEmpty, instanceId, textStyleRules])
 
   // ---- Render ----
 
