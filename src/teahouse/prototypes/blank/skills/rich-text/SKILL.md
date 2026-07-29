@@ -16,6 +16,48 @@ description: 教导导演如何使用 rich_text 渲染器。如果只使用 Mark
 
 如果输出内容只使用纯 Markdown 或纯 HTML 标签，则无需调用本 skill。
 
+## 🚨 最重要的规则 — BBCode 标签白名单制
+
+**以下列表是渲染器支持的全部 BBCode 标签。禁止使用列表之外的任何标签！**
+
+渲染器只会解析这些标签——任何不在列表中的标签（如 `[center]`、`[quote]`、`[list]`、`[*]`、`[hr]`、`[code]` 等）**都不会被渲染，会原样显示为纯文本**。
+
+### 标准格式化（6 个）
+
+| 标签 | 写法 |
+|------|------|
+| 粗体 | `[b]文字[/b]` |
+| 斜体 | `[i]文字[/i]` |
+| 下划线 | `[u]文字[/u]` |
+| 删除线 | `[s]文字[/s]` |
+| 颜色 | `[color=#ff0000]文字[/color]` |
+| 字号 | `[size=24]文字[/size]` |
+
+### 动画特效（8 个）
+
+| 标签 | 写法 |
+|------|------|
+| 抖动 | `[shake rate=0.5s level=2]文字[/shake]` |
+| 淡入淡出 | `[fade rate=2s min=0.3]文字[/fade]` |
+| 弹跳 | `[bounce rate=0.6s level=10]文字[/bounce]` |
+| 波浪 | `[wave rate=1s level=5]文字[/wave]` |
+| 彩虹 | `[rainbow rate=3s]文字[/rainbow]` |
+| 发光 | `[glow color=#f59e0b level=20]文字[/glow]` |
+| 脉冲 | `[pulse rate=1s level=1.1]文字[/pulse]` |
+| 打字机 | `[typing]文字[/typing]` |
+
+### 视觉标签（3 个）
+
+| 标签 | 写法 | 效果 |
+|------|------|------|
+| 阴影 | `[shadow color=rgba(0,0,0,0.5) level=4]文字[/shadow]` | 朦胧褪色，营造神秘/旧书文字感 |
+| 高亮 | `[highlight color=#f59e0b]文字[/highlight]` | 荧光笔效果，醒目标记关键词 |
+| 剧透 | `[spoiler]文字[/spoiler]` | 黑条遮盖，hover 时显示 |
+
+**总共只有以上 17 个 BBCode 标签可用。没有 `[center]`、没有 `[quote]`、没有 `[list]`、没有 `[*]`、没有 `[hr]`、没有 `[code]`。需要居中/引用/分割线/代码块请使用 Markdown 或 HTML。**
+
+如果你不确定某个标签是否存在，就不要用——用 Markdown 代替。
+
 ## 渲染管线
 
 rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
@@ -34,34 +76,6 @@ rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
 2. **BBCode 标签可以跨行**，`[glow]...[/glow]` 可以包裹多个段落。但 BBCode 生成的是内联 HTML（`<span>`），跨行时内部换行不会自动转为 `<br>`。如果需要段落分隔，请使用两个换行（空行），或在行末手动写 `<br>`。
 3. **不要在 BBCode 标签内部嵌套同类型标签**，但可以嵌套不同类型。
 4. **HTML 块元素（如 `<details><summary>`）内部的 Markdown 会被解析**。
-
-## BBCode 标签参考
-
-### 标准格式化
-
-| 标签 | 写法 | 效果 |
-|------|------|------|
-| 粗体 | `[b]文字[/b]` | **加粗** |
-| 斜体 | `[i]文字[/i]` | *倾斜* |
-| 下划线 | `[u]文字[/u]` | <u>下划线</u> |
-| 删除线 | `[s]文字[/s]` | ~~删除~~ |
-| 颜色 | `[color=#ff0000]文字[/color]` | 指定颜色 |
-| 字号 | `[size=24]文字[/size]` | 指定字号(px) |
-
-### 动画特效
-
-所有特效支持参数化配置，使用 `key=value` 空格分隔：
-
-| 标签 | 写法 | 可配置参数 |
-|------|------|-----------|
-| 抖动 | `[shake rate=0.5s level=2]文字[/shake]` | `rate`(速度) `level`(幅度px) |
-| 淡入淡出 | `[fade rate=2s min=0.3]文字[/fade]` | `rate`(速度) `min`(最小透明度) |
-| 弹跳 | `[bounce rate=0.6s level=10]文字[/bounce]` | `rate`(速度) `level`(高度px) |
-| 波浪 | `[wave rate=1s level=5]文字[/wave]` | `rate`(速度) `level`(幅度px) |
-| 彩虹 | `[rainbow rate=3s]文字[/rainbow]` | `rate`(速度) |
-| 发光 | `[glow color=#f59e0b level=20]文字[/glow]` | `rate`(速度) `color`(颜色) `level`(范围px) |
-| 脉冲 | `[pulse rate=1s level=1.1]文字[/pulse]` | `rate`(速度) `level`(缩放比) |
-| 打字机 | `[typing]文字[/typing]` | 无参数 |
 
 特效参数均可省略，使用默认值。两种参数格式等价：
 - 旧式：`[shake=0.5s]文字[/shake]`（单参数 = rate）

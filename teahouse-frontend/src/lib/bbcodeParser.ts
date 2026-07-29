@@ -11,13 +11,24 @@
  * - [color=#fff]颜色[/color]
  * - [size=20]字号[/size]
  *
- * 动画特效:
+ * 动画特效 / 视觉标签:
  * - [shake]抖动[/shake]
  * - [fade]淡入淡出[/fade]
  * - [bounce]弹跳[/bounce]
  * - [wave]波浪[/wave]
  * - [rainbow]彩虹[/rainbow]
  * - [glow]发光[/glow]
+ * - [pulse]脉冲[/pulse]
+ * - [typing]打字机[/typing]
+ * - [shadow]阴影文字[/shadow]  — 朦胧褪色，营造神秘感
+ * - [highlight]高亮标记[/highlight] — 荧光笔效果
+ * - [spoiler]剧透遮盖[/spoiler]   — 黑条遮盖，hover 显示
+ * - [glow]发光[/glow]
+ * - [pulse]脉冲[/pulse]
+ * - [typing]打字机[/typing]
+ * - [shadow]阴影文字[/shadow]
+ * - [highlight]高亮标记[/highlight]
+ * - [spoiler]剧透遮盖[/spoiler]
  */
 
 /**
@@ -169,6 +180,31 @@ const ANIMATION_TAGS: BBCodeTag[] = [
   {
     name: 'typing',
     toHtml: (content) => `<span class="bbcode-typing">${content}</span>`,
+  },
+  {
+    name: 'shadow',
+    hasParam: true,
+    toHtml: (content, param) => {
+      const style = parseAnimationParams(param, {
+        color: 'rgba(0,0,0,0.5)',
+        level: '4',
+      });
+      return `<span class="bbcode-shadow" style="${style}">${content}</span>`;
+    },
+  },
+  {
+    name: 'highlight',
+    hasParam: true,
+    toHtml: (content, param) => {
+      const style = parseAnimationParams(param, {
+        color: '#f59e0b',
+      });
+      return `<span class="bbcode-highlight" style="${style}">${content}</span>`;
+    },
+  },
+  {
+    name: 'spoiler',
+    toHtml: (content) => `<span class="bbcode-spoiler">${content}</span>`,
   },
 ];
 
@@ -629,6 +665,42 @@ export function getBBCodeAnimationCSS(): string {
 @keyframes bbcode-typing-cursor {
   0%, 100% { border-color: currentColor; }
   50% { border-color: transparent; }
+}
+
+/* 阴影文字 — 朦胧褪色，营造神秘感 */
+.bbcode-shadow {
+  color: var(--bbcode-color, rgba(128, 128, 128, 0.7));
+  text-shadow: 0 0 calc(var(--bbcode-level, 6) * 1px) var(--bbcode-color, rgba(128, 128, 128, 0.5));
+  filter: blur(0.5px);
+}
+
+/* 高亮 — 醒目的文本标记，类似荧光笔效果 */
+.bbcode-highlight {
+  background: linear-gradient(transparent 60%, var(--bbcode-color, #f59e0b) 60%);
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+/* 剧透遮盖 — 用伪元素黑条遮盖，hover 时显示 */
+.bbcode-spoiler {
+  display: inline;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+.bbcode-spoiler::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #333;
+  border-radius: 3px;
+  transition: opacity 0.3s ease;
+}
+.bbcode-spoiler:hover::after,
+.bbcode-spoiler:focus::after {
+  opacity: 0;
+}
+  user-select: auto;
 }
 `;
 }
