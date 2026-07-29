@@ -12,6 +12,7 @@ import os
 import shutil
 import stat
 import zipfile
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -61,12 +62,13 @@ async def create_prototype(
     description: str,
     source_path: str,
     is_builtin: bool = False,
+    content_hash: str = "",
 ) -> dict:
     now = current_timestamp()
     proto_id = generate_uuid()
     await execute(
-        "INSERT INTO prototypes (id, user_id, name, description, source_path, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (proto_id, user_id, name, description, source_path, 1 if is_builtin else 0, now, now),
+        "INSERT INTO prototypes (id, user_id, name, description, source_path, is_builtin, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (proto_id, user_id, name, description, source_path, 1 if is_builtin else 0, content_hash, now, now),
     )
     return await get_prototype(proto_id)
 
@@ -85,19 +87,37 @@ async def delete_prototype(prototype_id: str) -> bool:
     return True
 
 
+async def find_prototype_by_hash(content_hash: str, user_id: str) -> Optional[dict]:
+    """Check if user already has a prototype with the same content hash."""
+    return await fetch_one(
+        "SELECT * FROM prototypes WHERE content_hash = ? AND user_id = ? AND content_hash != ''",
+        (content_hash, user_id),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Instances
 # ---------------------------------------------------------------------------
 
 async def list_instances(user_id: str) -> list[dict]:
     return await fetch_all(
-        "SELECT * FROM instances WHERE user_id = ? ORDER BY created_at DESC",
+        """SELECT i.*, p.name AS prototype_name
+           FROM instances i
+           LEFT JOIN prototypes p ON i.prototype_id = p.id
+           WHERE i.user_id = ?
+           ORDER BY i.created_at DESC""",
         (user_id,),
     )
 
 
 async def get_instance(instance_id: str) -> Optional[dict]:
-    return await fetch_one("SELECT * FROM instances WHERE id = ?", (instance_id,))
+    return await fetch_one(
+        """SELECT i.*, p.name AS prototype_name
+           FROM instances i
+           LEFT JOIN prototypes p ON i.prototype_id = p.id
+           WHERE i.id = ?""",
+        (instance_id,),
+    )
 
 
 async def create_instance(
@@ -145,7 +165,7 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
     if proto["is_builtin"]:
         # Built-in: copy from template directory
         _copy_dir(BLANK_PROTOTYPE_DIR, target_dir)
-    elif source_path.suffix == ".zip" and source_path.exists():
+    elif source_path.suffix in (".zip", ".teabrew") and source_path.exists():
         with zipfile.ZipFile(source_path, "r") as zf:
             zf.extractall(target_dir)
     elif source_path.is_dir():

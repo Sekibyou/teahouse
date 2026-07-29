@@ -195,9 +195,19 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Write content to a file (overwrite). Creates parent directories if needed."""
+    """Write content to a file (overwrite). Creates parent directories if needed.
+
+    Content supports {{path}} placeholder syntax for referencing file content.
+    """
     path = args["path"]
     content = args["content"]
+
+    # Resolve {{path}} placeholders
+    if "{{" in content:
+        try:
+            content = resolve_placeholders(content, instance_dir)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
 
     full = _validate_path(instance_dir, path)
     full.parent.mkdir(parents=True, exist_ok=True)
@@ -211,11 +221,19 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
     - old_string must appear exactly once in the file (unless replace_all=True)
     - Must match whitespace exactly
     - Atomic: on failure, file is unchanged
+    new_string supports {{path}} placeholder syntax for referencing file content.
     """
     path = args["path"]
     old_string = args["old_string"]
     new_string = args["new_string"]
     replace_all = args.get("replace_all", False)
+
+    # Resolve {{path}} placeholders in new_string
+    if "{{" in new_string:
+        try:
+            new_string = resolve_placeholders(new_string, instance_dir)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
 
     full = _validate_path(instance_dir, path)
     if not full.exists():
@@ -242,7 +260,10 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Edit a file by replacing a range of lines. Use after Read to confirm line numbers."""
+    """Edit a file by replacing a range of lines. Use after Read to confirm line numbers.
+
+    new_content supports {{path}} placeholder syntax for referencing file content.
+    """
     path = args["path"]
     start_line = int(args["start_line"])
     end_line = int(args.get("end_line", start_line))
@@ -268,6 +289,13 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     # Decode literal \n and \r\n in JSON string to real newlines.
     # LLMs pass these as literal backslash-n in JSON tool-call args.
     decoded = new_content.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+    # Resolve {{path}} placeholders
+    if "{{" in decoded:
+        try:
+            decoded = resolve_placeholders(decoded, instance_dir)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
 
     # If replacing a single line and the new content doesn't end with a newline,
     # append the original line ending so the next line doesn't merge into this one.

@@ -20,13 +20,14 @@ export interface Prototype {
 export interface Instance {
   id: string
   user_id: string
-  prototype_id: string
+  prototype_id: string | null
   name: string
   dir_path: string
   floor_count: number
   status: string
   created_at: number
   updated_at: number
+  prototype_name?: string | null
 }
 
 export interface FileTreeNode {

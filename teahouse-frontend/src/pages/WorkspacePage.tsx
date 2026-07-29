@@ -82,6 +82,8 @@ export function WorkspacePage() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [exportName, setExportName] = useState("")
   const [exportDescription, setExportDescription] = useState("")
+  const [exportAuthor, setExportAuthor] = useState("")
+  const [exportVersion, setExportVersion] = useState("1.0.0")
   const [exportLoading, setExportLoading] = useState(false)
   const [exportError, setExportError] = useState("")
 
@@ -256,11 +258,16 @@ export function WorkspacePage() {
     if (!instId || !exportName.trim()) return
     setExportLoading(true)
     setExportError("")
-    const res = await prototypesApi.create(instId, "_prototype", exportName.trim(), exportDescription.trim())
+    const res = await prototypesApi.create(
+      instId, "_prototype", exportName.trim(), exportDescription.trim(),
+      exportAuthor.trim(), exportVersion.trim() || "1.0.0",
+    )
     if (res.ok) {
       setShowExportDialog(false)
       setExportName("")
       setExportDescription("")
+      setExportAuthor("")
+      setExportVersion("1.0.0")
       showSaveToast()
     } else {
       setExportError(res.error || "导出失败")
@@ -421,7 +428,7 @@ export function WorkspacePage() {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   className="p-0.5 rounded hover:bg-muted"
-                  onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportError("") }}
+                  onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportAuthor(""); setExportVersion("1.0.0"); setExportError("") }}
                   title="导出为原型"
                 >
                   <Archive className="h-3.5 w-3.5" />
@@ -694,16 +701,34 @@ export function WorkspacePage() {
                 onChange={e => { setExportName(e.target.value); setExportError("") }}
                 placeholder="为原型起个名字"
                 autoFocus
-                onKeyDown={e => { if (e.key === "Enter") handleExport() }}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium">描述 <span className="text-muted-foreground font-normal">(可选)</span></label>
+              <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
               <Input
                 value={exportDescription}
                 onChange={e => setExportDescription(e.target.value)}
-                placeholder="简要描述这个原型"
+                placeholder="简要描述，用于原型列表展示"
+                maxLength={50}
               />
+            </div>
+            <div className="flex gap-3">
+              <div className="space-y-1 flex-1">
+                <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                <Input
+                  value={exportAuthor}
+                  onChange={e => setExportAuthor(e.target.value)}
+                  placeholder="作者名"
+                />
+              </div>
+              <div className="space-y-1 w-24">
+                <label className="text-sm font-medium">版本</label>
+                <Input
+                  value={exportVersion}
+                  onChange={e => setExportVersion(e.target.value)}
+                  placeholder="1.0.0"
+                />
+              </div>
             </div>
             {exportError && <p className="text-sm text-red-500">{exportError}</p>}
             <div className="flex justify-end gap-2">

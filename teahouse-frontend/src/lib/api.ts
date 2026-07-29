@@ -111,8 +111,50 @@ export const prototypesApi = {
     return get<Prototype[]>("/api/prototypes")
   },
 
+  create: async (instanceId: string, sourceSubpath: string, name: string, description: string, author: string, version: string) => {
+    return post<Prototype>("/api/prototypes", {
+      instance_id: instanceId,
+      source_subpath: sourceSubpath,
+      name,
+      description,
+      author,
+      version,
+    })
+  },
+
   delete: async (id: string) => {
     return del<{ status: string }>(`/api/prototypes/${id}`)
+  },
+
+  downloadUrl: (id: string) => {
+    const token = getAuthToken()
+    return `${API_BASE_URL}/api/prototypes/${id}/download?token=${encodeURIComponent(token || "")}`
+  },
+
+  getReadme: async (id: string) => {
+    return get<{ metadata: Record<string, unknown>; readme: string }>(`/api/prototypes/${id}/readme`)
+  },
+
+  import: async (file: File) => {
+    const token = getAuthToken()
+    const form = new FormData()
+    form.append("file", file)
+    const headers: Record<string, string> = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    const res = await fetch(`${API_BASE_URL}/api/prototypes/import`, {
+      method: "POST",
+      headers,
+      body: form,
+    })
+    if (res.status === 401) {
+      clearAuth()
+      return { ok: false as const, error: "认证已过期，请重新登录" }
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "导入失败" }))
+      return { ok: false as const, error: err.detail || `请求失败 (${res.status})` }
+    }
+    return { ok: true as const, data: await res.json() as { duplicate: boolean; prototype: Prototype; detail?: string } }
   },
 }
 

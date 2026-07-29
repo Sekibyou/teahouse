@@ -6,8 +6,10 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..state import state
@@ -19,6 +21,7 @@ from ..database.workspaces import (
     get_prototype,
     create_prototype,
     delete_prototype,
+    find_prototype_by_hash,
     list_instances,
     get_instance,
     create_instance,
@@ -66,8 +69,12 @@ def _get_base_path() -> Path:
 # ---------------------------------------------------------------------------
 
 class CreatePrototypeRequest(BaseModel):
+    instance_id: str
+    source_subpath: str = "_prototype"
     name: str
     description: str = ""
+    author: str = ""
+    version: str = "1.0.0"
 
 
 class StartInstanceRequest(BaseModel):
@@ -99,6 +106,98 @@ async def list_my_prototypes(user: UserInfo = Depends(require_user)):
     return await list_prototypes(u["id"])
 
 
+@router.post("/prototypes")
+async def create_prototype_from_instance(
+    body: CreatePrototypeRequest,
+    user: UserInfo = Depends(require_user)
+):
+    """Create a new prototype from an instance's _prototype/ directory."""
+    u = await require_user_info(user)
+    base = _get_base_path()
+    safe_name = u["safe_name"] or user.username.lower().replace(" ", "_")
+
+    inst = await get_instance(body.instance_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    if inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    instance_dir = Path(inst["dir_path"])
+    source_dir = (instance_dir / body.source_subpath).resolve()
+    if str(source_dir) != str(instance_dir.resolve() / body.source_subpath):
+        raise HTTPException(status_code=400, detail="Invalid source path")
+
+    if not source_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source directory not found: {body.source_subpath}. "
+                   f"Use the export-prototype skill to build it first."
+        )
+
+    # Check directory is not empty
+    contents = list(source_dir.iterdir())
+    if not contents:
+        raise HTTPException(status_code=400, detail="Source directory is empty")
+
+    import uuid as _uuid
+    import zipfile as _zipfile
+    import hashlib
+    import json
+
+    # Compute content hash from all files (before adding metadata)
+    file_list = sorted(
+        str(f.relative_to(source_dir)).replace("\\", "/")
+        for f in source_dir.rglob("*") if f.is_file()
+    )
+    sha = hashlib.sha256()
+    for rel in file_list:
+        sha.update(rel.encode("utf-8"))
+        with open(source_dir / rel, "rb") as fh:
+            while chunk := fh.read(65536):
+                sha.update(chunk)
+    content_hash = sha.hexdigest()
+
+    # Write metadata into the source directory before packing
+    metadata_dir = source_dir / ".teahouse"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "name": body.name,
+        "description": body.description,
+        "author": body.author,
+        "version": body.version,
+        "content_hash": content_hash,
+    }
+    with open(metadata_dir / "prototype.json", "w", encoding="utf-8") as mf:
+        json.dump(metadata, mf, ensure_ascii=False, indent=2)
+
+    # Pack as .teabrew zip
+    _, prototypes_dir = ensure_user_dirs(safe_name, base)
+    safe_proto_name = body.name.lower().replace(" ", "_").replace("/", "_")
+    zip_name = f"{safe_proto_name}_{_uuid.uuid4().hex[:8]}.teabrew"
+    zip_path = prototypes_dir / zip_name
+
+    with _zipfile.ZipFile(zip_path, "w", _zipfile.ZIP_DEFLATED) as zf:
+        for f in source_dir.rglob("*"):
+            if f.is_file():
+                arcname = str(f.relative_to(source_dir)).replace("\\", "/")
+                zf.write(f, arcname)
+
+    # Clean up metadata file from source dir
+    (metadata_dir / "prototype.json").unlink()
+    try:
+        metadata_dir.rmdir()
+    except OSError:
+        pass
+
+    # Create DB record
+    source_path = str(zip_path.resolve())
+    proto = await create_prototype(
+        u["id"], body.name, body.description, source_path,
+        content_hash=content_hash,
+    )
+    return proto
+
+
 @router.delete("/prototypes/{prototype_id}")
 async def delete_my_prototype(prototype_id: str, user: UserInfo = Depends(require_user)):
     u = await require_user_info(user)
@@ -114,6 +213,162 @@ async def delete_my_prototype(prototype_id: str, user: UserInfo = Depends(requir
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to delete prototype")
     return {"status": "ok"}
+
+
+@router.get("/prototypes/{prototype_id}/download")
+async def download_prototype(
+    prototype_id: str,
+    request: Request,
+    token: str = Query(default=""),
+):
+    """Download a prototype .teabrew file. Auth via header or ?token= query param."""
+    # Auth: prefer header, fallback to query param (for browser <a> downloads)
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        user = await validate_token(auth[7:])
+    elif token:
+        user = await validate_token(token)
+    else:
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    u = await require_user_info(user)
+    proto = await get_prototype(prototype_id)
+    if not proto:
+        raise HTTPException(status_code=404, detail="Prototype not found")
+    if proto["is_builtin"]:
+        raise HTTPException(status_code=400, detail="Built-in prototypes cannot be downloaded")
+    if proto["user_id"] != u["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    source = Path(proto["source_path"]).resolve()
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="Prototype file not found on disk")
+
+    filename = f"{proto['name']}.teabrew"
+    # RFC 5987 encoding for non-ASCII filenames
+    encoded_filename = quote(filename, safe="")
+    return FileResponse(
+        path=str(source),
+        filename=filename,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+        },
+    )
+
+
+@router.get("/prototypes/{prototype_id}/readme")
+async def get_prototype_readme(prototype_id: str, user: UserInfo = Depends(require_user)):
+    """Read prototype metadata and README from the zip file."""
+    u = await require_user_info(user)
+    proto = await get_prototype(prototype_id)
+    if not proto:
+        raise HTTPException(status_code=404, detail="Prototype not found")
+
+    source = Path(proto["source_path"]).resolve()
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="Prototype file not found on disk")
+
+    import zipfile as _zipfile
+    import json
+    metadata = {}
+    readme = ""
+    with _zipfile.ZipFile(source, "r") as zf:
+        try:
+            with zf.open(".teahouse/prototype.json") as mf:
+                metadata = json.loads(mf.read().decode("utf-8"))
+        except KeyError:
+            pass
+        try:
+            with zf.open("README.md") as rf:
+                readme = rf.read().decode("utf-8")
+        except KeyError:
+            pass
+
+    return {"metadata": metadata, "readme": readme}
+
+
+@router.post("/prototypes/import")
+async def import_prototype(
+    file: UploadFile = File(...),
+    user: UserInfo = Depends(require_user),
+):
+    """Import a .teabrew prototype file."""
+    u = await require_user_info(user)
+    base = _get_base_path()
+    safe_name = u["safe_name"] or user.username.lower().replace(" ", "_")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    # Accept .teabrew and .zip
+    original = file.filename.lower()
+    if not (original.endswith(".teabrew") or original.endswith(".zip")):
+        raise HTTPException(status_code=400, detail="File must be .teabrew or .zip")
+
+    import uuid as _uuid
+    import zipfile as _zipfile
+    import hashlib
+    import json
+    import io
+    _, prototypes_dir = ensure_user_dirs(safe_name, base)
+
+    content = await file.read()
+    bio = io.BytesIO(content)
+
+    # Try to read metadata and compute content hash (excluding metadata itself)
+    proto_name = None
+    proto_desc = ""
+    content_hash_from_meta = ""
+    with _zipfile.ZipFile(bio, "r") as zf:
+        names = sorted(zf.namelist())
+        # Compute hash from all files except .teahouse/prototype.json
+        sha = hashlib.sha256()
+        for n in names:
+            if n == ".teahouse/prototype.json":
+                continue
+            sha.update(n.encode("utf-8"))
+            sha.update(zf.read(n))
+        computed_hash = sha.hexdigest()
+
+        # Read metadata if present
+        try:
+            with zf.open(".teahouse/prototype.json") as mf:
+                meta = json.loads(mf.read().decode("utf-8"))
+                proto_name = meta.get("name", "").strip()
+                proto_desc = meta.get("description", "")
+                content_hash_from_meta = meta.get("content_hash", "")
+        except KeyError:
+            pass
+
+    # Derive name: metadata first, then filename stem
+    if not proto_name:
+        proto_name = Path(file.filename).stem.replace("_", " ")
+
+    # Check for duplicate by hash
+    effective_hash = content_hash_from_meta or computed_hash
+    if effective_hash:
+        existing = await find_prototype_by_hash(effective_hash, u["id"])
+        if existing:
+            return {
+                "duplicate": True,
+                "prototype": existing,
+                "detail": "此原型已存在（内容 hash 一致）",
+            }
+
+    bio.seek(0)
+    safe_proto_name = proto_name.lower().replace(" ", "_").replace("/", "_")
+    zip_name = f"{safe_proto_name}_{_uuid.uuid4().hex[:8]}.teabrew"
+    zip_path = prototypes_dir / zip_name
+    zip_path.write_bytes(content)
+
+    proto = await create_prototype(
+        u["id"], proto_name, proto_desc, str(zip_path.resolve()),
+        content_hash=effective_hash,
+    )
+    return {"duplicate": False, "prototype": proto}
 
 
 # ===== Instances =====
