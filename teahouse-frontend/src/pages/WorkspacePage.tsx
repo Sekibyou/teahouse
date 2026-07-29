@@ -5,11 +5,11 @@ import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
   GitBranch as GitBranchIcon, Edit3, Puzzle,
-  PanelLeftOpen, GripVertical,
+  PanelLeftOpen, GripVertical, Archive,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { instancesApi, gitApi, pluginsApi } from "@/lib/api"
+import { instancesApi, gitApi, pluginsApi, prototypesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { ChatPanel } from "@/components/ChatPanel"
@@ -36,8 +36,6 @@ export function WorkspacePage() {
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  // Increment on file switch to force MonacoEditor remount
-  const [editorKey, setEditorKey] = useState(0)
   const [fileContent, setFileContent] = useState("")
   const [editedContent, setEditedContent] = useState("")
   const [isDirty, setIsDirty] = useState(false)
@@ -61,8 +59,7 @@ export function WorkspacePage() {
       }
     }, 1500)
   }, [])
-  // Track whether the file content has finished loading, so MonacoEditor
-  // only mounts with a fully-populated model (no undo-"back-to-empty" artifact).
+  // Track whether the file content has finished loading
   const [contentReady, setContentReady] = useState(false)
 
   // Plugin panels state
@@ -80,6 +77,13 @@ export function WorkspacePage() {
 
   // Rename / delete — not yet implemented, but structure ready
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
+  // Export prototype state
+  const [showExportDialog, setShowExportDialog] = useState(false)
+  const [exportName, setExportName] = useState("")
+  const [exportDescription, setExportDescription] = useState("")
+  const [exportLoading, setExportLoading] = useState(false)
+  const [exportError, setExportError] = useState("")
 
   const instId = activeInstance?.id
 
@@ -248,6 +252,22 @@ export function WorkspacePage() {
     await refresh({ editor: false, clearDirty: false })
   }
 
+  const handleExport = async () => {
+    if (!instId || !exportName.trim()) return
+    setExportLoading(true)
+    setExportError("")
+    const res = await prototypesApi.create(instId, "_prototype", exportName.trim(), exportDescription.trim())
+    if (res.ok) {
+      setShowExportDialog(false)
+      setExportName("")
+      setExportDescription("")
+      showSaveToast()
+    } else {
+      setExportError(res.error || "导出失败")
+    }
+    setExportLoading(false)
+  }
+
   // Keep a ref for latest selectedFile so callbacks always have current value
   const selectedFileRef = useRef(selectedFile)
   selectedFileRef.current = selectedFile
@@ -294,8 +314,6 @@ export function WorkspacePage() {
       refresh({ editor: false })
       if (currentFile && path === currentFile) {
         // Update editor content in-place without unmounting Monaco.
-        // Toggling contentReady would destroy/recreate the editor, which
-        // under rapid SSE events can cause "InstantiationService has been disposed".
         instancesApi.readFile(instId!, currentFile).then(fileRes => {
           if (fileRes.ok) {
             setFileContent(fileRes.data!.content)
@@ -403,6 +421,13 @@ export function WorkspacePage() {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   className="p-0.5 rounded hover:bg-muted"
+                  onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportError("") }}
+                  title="导出为原型"
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-muted"
                   onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
                   title="新建文件"
                 >
@@ -430,14 +455,13 @@ export function WorkspacePage() {
                   selectedFile={selectedFile}
                   onToggle={toggleExpand}
                   onSelect={(path) => {
-                    setSelectedFile(null)
-                    setFileContent("")
+                    // Reset content immediately so the editor shows a blank
+                    // slate while the new file loads.
                     setEditedContent("")
+                    setFileContent("")
+                    setGitHeadContent("")
                     setIsDirty(false)
-                    setTimeout(() => {
-                      setEditorKey(k => k + 1)
-                      setSelectedFile(path)
-                    }, 0)
+                    setSelectedFile(path)
                   }}
                   onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                   onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
@@ -497,7 +521,7 @@ export function WorkspacePage() {
 
           {/* Middle panel — Editor */}
           <div className="flex-1 flex flex-col bg-background min-w-0">
-            {selectedFile && contentReady ? (
+            {selectedFile ? (
               <>
                 <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
                   <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
@@ -512,7 +536,7 @@ export function WorkspacePage() {
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
                   <MonacoEditor
-                    key={editorKey}
+                    path={selectedFile}
                     value={editedContent}
                     original={gitHeadContent ?? ""}
                     onSave={handleSave}
@@ -654,6 +678,44 @@ export function WorkspacePage() {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Export prototype dialog */}
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
+          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold">导出为原型</h3>
+            <p className="text-xs text-muted-foreground">
+              将实例的 <code className="bg-muted px-1 rounded">_prototype/</code> 目录打包为可复用的原型。请先使用导演构建该目录。
+            </p>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">原型名称</label>
+              <Input
+                value={exportName}
+                onChange={e => { setExportName(e.target.value); setExportError("") }}
+                placeholder="为原型起个名字"
+                autoFocus
+                onKeyDown={e => { if (e.key === "Enter") handleExport() }}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">描述 <span className="text-muted-foreground font-normal">(可选)</span></label>
+              <Input
+                value={exportDescription}
+                onChange={e => setExportDescription(e.target.value)}
+                placeholder="简要描述这个原型"
+              />
+            </div>
+            {exportError && <p className="text-sm text-red-500">{exportError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+              <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
+                {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                导出
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
       {isDragging && (

@@ -75,16 +75,21 @@ async function computeLineDecorations(
   language: string,
 ): Promise<Monaco.editor.IModelDeltaDecoration[]> {
   const container = document.createElement("div")
-  const diffEditor = monaco.editor.createDiffEditor(container, {
-    diffAlgorithm: "advanced",
-    ignoreTrimWhitespace: false,
-  })
-  const originalModel = monaco.editor.createModel(original, language)
-  const modifiedModel = monaco.editor.createModel(modified, language)
-  const vm = diffEditor.createViewModel({ original: originalModel, modified: modifiedModel })
-  diffEditor.setModel(vm)
+  let diffEditor: Monaco.editor.IStandaloneDiffEditor | null = null
+  let originalModel: Monaco.editor.ITextModel | null = null
+  let modifiedModel: Monaco.editor.ITextModel | null = null
+  let vm: Monaco.editor.IDiffEditorViewModel | null = null
 
   try {
+    diffEditor = monaco.editor.createDiffEditor(container, {
+      diffAlgorithm: "advanced",
+      ignoreTrimWhitespace: false,
+    })
+    originalModel = monaco.editor.createModel(original, language)
+    modifiedModel = monaco.editor.createModel(modified, language)
+    vm = diffEditor.createViewModel({ original: originalModel, modified: modifiedModel })
+    diffEditor.setModel(vm)
+
     await vm.waitForDiff()
     const changes = diffEditor.getLineChanges()
     if (!changes) return []
@@ -125,10 +130,10 @@ async function computeLineDecorations(
       return decs
     })
   } finally {
-    vm.dispose()
-    diffEditor.dispose()
-    originalModel.dispose()
-    modifiedModel.dispose()
+    vm?.dispose()
+    diffEditor?.dispose()
+    originalModel?.dispose()
+    modifiedModel?.dispose()
   }
 }
 
@@ -140,6 +145,8 @@ export interface MonacoEditorProps {
   onChange?: (value: string) => void
   /** Original (saved) value — enables inline diff gutters */
   original?: string
+  /** Unique identifier for the current file — used to track model swap */
+  path?: string
   language?: string
   options?: Monaco.editor.IStandaloneEditorConstructionOptions
   onMount?: (editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => void
@@ -155,6 +162,7 @@ export function MonacoEditor({
   value,
   onChange,
   original,
+  path,
   language = "plaintext",
   options = {},
   onMount,
@@ -166,7 +174,15 @@ export function MonacoEditor({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
+  const disposedRef = useRef(false)
   const [editorReady, setEditorReady] = useState(false)
+  const currentModelRef = useRef<Monaco.editor.ITextModel | null>(null)
+
+  // Reset disposed flag on mount, set on unmount
+  useEffect(() => {
+    disposedRef.current = false
+    return () => { disposedRef.current = true }
+  }, [])
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
@@ -174,24 +190,37 @@ export function MonacoEditor({
     defineThemes(monaco)
     monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
 
-    // The <Editor> component sets an empty model then calls setValue(text).
-    // This means "undo" from the user's first edit goes through
-    //   user edit → setValue → empty → nothing
-    // which makes it look like you can undo back to an empty file.
-    // We work around it by creating the model ourselves populated with the
-    // initial text, so the undo stack starts clean.
-    const existingModel = editor.getModel()
-    if (existingModel) {
-      // Create a fresh model pre-populated with the value,
-      // then swap it in so the undo stack has nothing before the content.
-      const freshModel = monaco.editor.createModel(value, language)
-      editor.setModel(freshModel)
-      existingModel.dispose()
-    }
+    // The library creates a model with the correct URI since we pass
+    // `path` to <Editor>, but the value may still be empty. The
+    // value-push effect below will fill in the content without adding
+    // to the undo stack, so Ctrl+Z doesn't go back to an empty file.
+    currentModelRef.current = editor.getModel()
 
     setEditorReady(true)
     onMount?.(editor, monaco)
-  }, [value, language, onMount])
+  }, [])  // only on initial mount
+
+  // Push value into the model when it changes (e.g. file content loaded async
+  // after the editor has already mounted with the same path but empty value,
+  // or when switching between files where the new file's content hasn't loaded yet).
+  // Use pushEditOperations so the undo stack stays clean — no "undo back to empty".
+  useEffect(() => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco || !editorReady) return
+
+    const model = editor.getModel()
+    if (!model) return
+
+    // Only set if the value actually differs — avoid cursor reset on every render
+    if (model.getValue(monaco.editor.EndOfLinePreference.LF) === value) return
+
+    model.pushEditOperations(
+      [],
+      [{ range: model.getFullModelRange(), text: value }],
+      () => null,
+    )
+  }, [value, editorReady])
 
   // Theme following via MutationObserver
   useEffect(() => {
@@ -244,11 +273,18 @@ export function MonacoEditor({
 
     let cancelled = false
     computeLineDecorations(monaco, normalizedOriginal, normalizedValue, language).then(decs => {
-      if (cancelled) return
+      if (cancelled || disposedRef.current) return
       if (decorationsRef.current) {
         decorationsRef.current.clear()
       }
-      decorationsRef.current = editor.createDecorationsCollection(decs)
+      // Guard: editor may have been disposed between when we started the diff
+      // computation and now (e.g. rapid file switching). createDecorationsCollection
+      // on a disposed editor throws "InstantiationService has been disposed".
+      try {
+        decorationsRef.current = editor.createDecorationsCollection(decs)
+      } catch {
+        // editor disposed — decorations are irrelevant
+      }
     })
 
     return () => { cancelled = true }
@@ -274,6 +310,7 @@ export function MonacoEditor({
     <div className={className} style={{ height, width: "100%" }}>
       <Editor
         height="100%"
+        path={path}
         language={language}
         onChange={(val) => onChange?.(val || "")}
         theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
