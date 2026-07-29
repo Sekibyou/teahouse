@@ -152,22 +152,22 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
         _copy_dir(source_path, target_dir)
 
     # Resolve {{path}} placeholders in .teahouse/output-blocks.yaml
-    teahouse_yaml = target_dir / ".teahouse" / "output-blocks.yaml"
-    if teahouse_yaml.exists():
+    blocks_yaml = target_dir / ".teahouse" / "output-blocks.yaml"
+    if blocks_yaml.exists():
         from ..placeholder import resolve_placeholders
+        from ..tools import _load_output_blocks, _save_output_blocks, _load_rendered, _save_rendered
         import yaml as _yaml
-        data = _yaml.safe_load(teahouse_yaml.read_text(encoding="utf-8"))
-        blocks = data.get("blocks", []) if data else []
+        blocks = _load_output_blocks(target_dir)
+        rendered_map = _load_rendered(target_dir)
         for b in blocks:
-            if "content" in b:
+            content = b.get("content", "")
+            if "{{" in content and "}}" in content:
                 try:
-                    b["rendered"] = resolve_placeholders(b["content"], target_dir)
+                    rendered_map[b["uuid"]] = resolve_placeholders(content, target_dir)
                 except Exception:
-                    b["rendered"] = b["content"]
-        teahouse_yaml.write_text(
-            _yaml.dump({"blocks": blocks}, allow_unicode=True, default_flow_style=False),
-            encoding="utf-8",
-        )
+                    rendered_map[b["uuid"]] = content
+        _save_output_blocks(target_dir, blocks)
+        _save_rendered(target_dir, rendered_map)
 
     # Initialize git repository for the instance
     try:

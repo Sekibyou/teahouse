@@ -259,6 +259,11 @@ async def _tool_use_loop(
     api_style = client.api_style
     msg = list(messages)
 
+    # Ensure rendered file watcher is running for this instance
+    if instance_id:
+        from .tools import start_rendered_watcher
+        start_rendered_watcher(instance_dir, instance_id)
+
     # Load tools from the single source of truth (tools.json)
     tools = load_tools()
     tools_usage = load_tools_usage()
