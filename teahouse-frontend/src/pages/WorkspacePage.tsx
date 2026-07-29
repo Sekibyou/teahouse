@@ -455,6 +455,7 @@ export function WorkspacePage() {
                   selectedFile={selectedFile}
                   onToggle={toggleExpand}
                   onSelect={(path) => {
+                    if (path === selectedFile) return
                     // Reset content immediately so the editor shows a blank
                     // slate while the new file loads.
                     setEditedContent("")
@@ -467,7 +468,6 @@ export function WorkspacePage() {
                   onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
                   onDelete={handleDeleteEntry}
                   fileStatuses={fileStatuses}
-                  dirtyFile={isDirty ? selectedFile : null}
                 />
               )}
             </div>
@@ -733,7 +733,6 @@ export function WorkspacePage() {
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
   onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0,
-  dirtyFile,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -745,7 +744,6 @@ function FileTreeView({
   onDelete: (path: string) => void
   fileStatuses: Map<string, string>
   depth?: number
-  dirtyFile?: string | null
 }) {
   const stColor = (st: string | undefined) => {
     if (!st) return "text-muted-foreground"
@@ -799,9 +797,6 @@ function FileTreeView({
               </>
             )}
             <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
-            {node.type === "file" && dirtyFile === node.path && (
-              <span className="shrink-0 w-2 h-2 rounded-full bg-orange-500" title="未保存到磁盘" />
-            )}
 
             {/* Action buttons — visible on hover */}
             <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
@@ -846,7 +841,6 @@ function FileTreeView({
               onDelete={onDelete}
               fileStatuses={fileStatuses}
               depth={depth + 1}
-              dirtyFile={dirtyFile}
             />
             )}
           </div>

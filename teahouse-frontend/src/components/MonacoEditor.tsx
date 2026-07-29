@@ -175,6 +175,7 @@ export function MonacoEditor({
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
   const disposedRef = useRef(false)
+  const pushingRef = useRef(false)
   const [editorReady, setEditorReady] = useState(false)
   const currentModelRef = useRef<Monaco.editor.ITextModel | null>(null)
 
@@ -203,7 +204,8 @@ export function MonacoEditor({
   // Push value into the model when it changes (e.g. file content loaded async
   // after the editor has already mounted with the same path but empty value,
   // or when switching between files where the new file's content hasn't loaded yet).
-  // Use pushEditOperations so the undo stack stays clean — no "undo back to empty".
+  // Use setValue so the content update doesn't trigger onChange, keeping isDirty
+  // clean — the parent has already called both setFileContent and setEditedContent.
   useEffect(() => {
     const editor = editorRef.current
     const monaco = monacoRef.current
@@ -212,14 +214,17 @@ export function MonacoEditor({
     const model = editor.getModel()
     if (!model) return
 
-    // Only set if the value actually differs — avoid cursor reset on every render
     if (model.getValue(monaco.editor.EndOfLinePreference.LF) === value) return
 
-    model.pushEditOperations(
-      [],
-      [{ range: model.getFullModelRange(), text: value }],
-      () => null,
-    )
+    // Temporarily suspend onChange so this programmatic update doesn't
+    // look like a user edit to the parent.
+    const wasReadOnly = editor.getOption(monaco.editor.EditorOption.readOnly)
+    editor.updateOptions({ readOnly: true })
+    model.setValue(value)
+    // Clear the undo stack — setValue adds an entry but this isn't a user action
+    model.undo = () => { /* no-op */ }
+    model.redo = () => { /* no-op */ }
+    editor.updateOptions({ readOnly: wasReadOnly })
   }, [value, editorReady])
 
   // Theme following via MutationObserver
