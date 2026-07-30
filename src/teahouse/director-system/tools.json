@@ -69,6 +69,18 @@
     }
   },
   {
+    "name": "Grep",
+    "description": "在文件内容中按正则表达式搜索",
+    "usage": "按正则表达式搜索实例中的文件内容，返回匹配的文件路径和行号。\n\n参数：\n- `pattern`（必填）：正则表达式搜索模式。例如 张三 搜索包含\"张三\"的文件，log.*Error 搜索匹配模式的日志行\n\n注意：返回匹配文件列表及各文件中的匹配行数。找到匹配后用 Read 读取对应文件的具体内容。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {"type": "string"}
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
     "name": "Generate",
     "description": "调用正文模型生成内容并写入指定文件",
     "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。content 中可使用 {{path}} 占位符引用文件内容。\n\n参数：\n- `messages`（必填）：消息数组，每项包含 role 和 content\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 floors/floor-003.md\n\n占位符语法：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",

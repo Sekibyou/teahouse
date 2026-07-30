@@ -328,6 +328,46 @@ async def execute_glob(instance_dir: Path, args: dict[str, Any]) -> str:
     return f"{info}\n{result}"
 
 
+async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Search file contents with a regex pattern within the instance directory.
+
+    Only searches text files (extensions: .md, .yaml, .yml, .json, .txt, .py, .js, .ts, .css, .html).
+    Returns matching file paths with line counts, sorted by match count descending.
+    """
+    pattern = args["pattern"]
+    text_extensions = {".md", ".yaml", ".yml", ".json", ".txt", ".py", ".js", ".ts", ".css", ".html"}
+
+    try:
+        regex = _re.compile(pattern)
+    except _re.error as e:
+        return f"Error: invalid regex pattern '{pattern}': {e}"
+
+    results: list[tuple[str, int]] = []
+    for filepath in instance_dir.rglob("*"):
+        if not filepath.is_file():
+            continue
+        if filepath.suffix not in text_extensions:
+            continue
+        rel = str(filepath.relative_to(instance_dir)).replace("\\", "/")
+        try:
+            content = filepath.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        count = len(regex.findall(content))
+        if count > 0:
+            results.append((rel, count))
+
+    if not results:
+        return f"No files matched pattern: {pattern}"
+
+    results.sort(key=lambda x: (-x[1], x[0]))
+    lines = [f"({len(results)} files)"]
+    for path, count in results:
+        suffix = f" ({count} matches)" if count > 1 else ""
+        lines.append(f"{path}{suffix}")
+    return "\n".join(lines)
+
+
 async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: str | None = None) -> str:
     """Generate tool — resolves placeholders, calls writer LLM, writes result to file.
 
@@ -1066,6 +1106,7 @@ TOOL_EXECUTORS = {
     "Edit": execute_edit,
     "WriteLine": execute_edit_line,
     "Glob": execute_glob,
+    "Grep": execute_grep,
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
