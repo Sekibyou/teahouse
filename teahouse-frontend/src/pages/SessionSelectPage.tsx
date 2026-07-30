@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
-import { parseBBCode } from "@/lib/bbcodeParser"
+import { renderText } from "@/lib/htmlSanitizer"
+import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
 import { useSessionStore } from "@/stores/sessionStore"
 import type { Prototype, Instance } from "@/lib/types"
 
@@ -57,15 +58,13 @@ export function SessionSelectPage() {
 
   // When selecting a prototype, load its readme
   useEffect(() => {
-    if (selectedProto && !selectedProto.is_builtin) {
+    if (selectedProto) {
       setReadmeLoading(true)
       setReadmeData(null)
       prototypesApi.getReadme(selectedProto.id).then(res => {
         if (res.ok) setReadmeData(res.data!)
         setReadmeLoading(false)
       })
-    } else if (selectedProto?.is_builtin) {
-      setReadmeData({ metadata: { name: selectedProto.name, description: selectedProto.description }, readme: "" })
     } else {
       setReadmeData(null)
     }
@@ -409,8 +408,22 @@ function ProtoDetail({
 }) {
   const meta = readmeData?.metadata
   const htmlContent = readmeData?.readme
-    ? parseBBCode(readmeData.readme)
+    ? renderText(readmeData.readme, [])
     : ""
+
+  // Inject BBCode animation CSS for the readme panel
+  useEffect(() => {
+    const styleId = "bbcode-animation-css-readme"
+    if (document.getElementById(styleId)) return
+    const style = document.createElement("style")
+    style.id = styleId
+    style.textContent = getBBCodeAnimationCSS()
+    document.head.appendChild(style)
+    return () => {
+      const el = document.getElementById(styleId)
+      if (el) el.remove()
+    }
+  }, [])
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -487,7 +500,7 @@ function ProtoDetail({
         ) : (
           <div className="text-center py-12 text-muted-foreground text-sm">
             {proto.is_builtin
-              ? "内置原型，暂无详细介绍。"
+              ? "暂无详细介绍。"
               : "暂无 README。可在 _prototype/ 目录下创建 README.md 后重新打包。"}
           </div>
         )}
