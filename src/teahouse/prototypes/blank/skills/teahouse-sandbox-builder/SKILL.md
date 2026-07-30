@@ -1,5 +1,5 @@
 ---
-name: sandbox-builder
+name: teahouse-sandbox-builder
 description: 教导导演如何设计和构建前端沙盒代码（bootstrap.js、场景脚本、UI 组件、CSS 主题），包括完整的沙盒 API 参考和最佳实践。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
 ---
 
@@ -87,7 +87,7 @@ const html = await Teahouse.renderRichText(block.rendered)
 container.innerHTML = html
 ```
 
-**注意**：`renderRichText` 在宿主层执行，BBCode 标签白名单由 `rich-text` skill 定义。不要假设沙盒自己能解析 BBCode。
+**注意**：`renderRichText` 在宿主层执行，BBCode 标签白名单由 `teahouse-sandbox-richtext-render` skill 定义。不要假设沙盒自己能解析 BBCode。
 
 ### 文件操作
 

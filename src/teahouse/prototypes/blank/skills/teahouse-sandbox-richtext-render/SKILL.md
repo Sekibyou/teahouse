@@ -1,11 +1,11 @@
 ---
-name: rich-text
-description: 教导导演如何使用 rich_text 渲染器。如果只使用 Markdown 或 HTML 标签则无需调用此 skill；如果使用混合语法（BBCode + Markdown + HTML），或使用 BBCode 特效标签，则必须先调用本 skill 再使用。
+name: teahouse-sandbox-richtext-render
+description: 教导导演如何使用前端沙盒的富文本渲染能力，包括 BBCode 标签白名单和文本样式着色规则管理。当输出需要使用 BBCode 特效、管理符号着色规则、或混合使用 BBCode + Markdown + HTML 时触发。
 ---
 
-# Rich Text 渲染器 Skill
+# 沙盒富文本渲染 Skill
 
-教导导演如何使用 rich_text 内容类型的渲染能力。
+教导导演如何使用 rich_text 内容类型的渲染能力，以及管理符号着色规则。
 
 ## 适用时机
 
@@ -14,7 +14,17 @@ description: 教导导演如何使用 rich_text 渲染器。如果只使用 Mark
 - BBCode + Markdown + HTML 混合语法
 - 需要在文本中嵌入沙盒交互元素（`<script>`、`<button>` 等）
 
+当用户要求：
+- "给《》加个颜色"
+- "把双引号标成金色"
+- "移除某个着色规则"
+- "列出所有样式规则"
+
 如果输出内容只使用纯 Markdown 或纯 HTML 标签，则无需调用本 skill。
+
+---
+
+# 第一部分：BBCode 渲染
 
 ## 🚨 最重要的规则 — BBCode 标签白名单制
 
@@ -126,13 +136,100 @@ rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
 - 列表
 ```
 
-## 注意事项
+## BBCode 使用注意事项
 
-- **BBCode 不能包裹 Markdown 块级元素**。引用块（`>`）和代码块（`` ``` ``）是 Markdown 块级语法，不能放在 BBCode 特效标签内部。因为 BBCode 先生成内联 `<span>`，marked 不会解析 `<span>` 内部的 Markdown 块级语法（引用块、代码块、标题、列表等）。引用块和代码块应独立使用，不要包裹在任何 BBCode 标签中。如果需要对引用块添加视觉效果，考虑使用 HTML + CSS 代替。
-- **BBCode 不能整块包裹列表**。`[bounce]01. 第一项\n02. 第二项[/bounce]` 这种写法会让整个列表变成一个内联 `<span>`，破坏排版。如果需要给列表项加特效，请**逐项包裹**：`[bounce]01. 第一项[/bounce]` `[bounce]02. 第二项[/bounce]`。
-- **不建议 BBCode 与 Markdown 内联混用**。`[rainbow]**文字**[/rainbow]` 中的 `**` 不会被解析为加粗，原因同上——marked 不处理 `<span>` 内部的 Markdown。BBCode 内需要加粗时请使用 `[b]`，需要斜体用 `[i]`。
+- **BBCode 不能包裹 Markdown 块级元素**。引用块（`>`）和代码块（`` ``` ``）是 Markdown 块级语法，不能放在 BBCode 特效标签内部。
+- **BBCode 不能整块包裹列表**。`[bounce]01. 第一项\n02. 第二项[/bounce]` 这种写法会让整个列表变成一个内联 `<span>`，破坏排版。如果需要给列表项加特效，请**逐项包裹**。
+- **不建议 BBCode 与 Markdown 内联混用**。`[rainbow]**文字**[/rainbow]` 中的 `**` 不会被解析为加粗。BBCode 内需要加粗时请使用 `[b]`，需要斜体用 `[i]`。
 - **默认字号是 16px**。`[size]` 的单位是 px，`[size=20]` = 20px，不要用 5、6 这种小数值，会导致文字不可读。建议取值范围：14~32。
-- **Markdown 表格内部不支持 BBCode**。表格由 marked 解析，单元格内容不会递归解析 BBCode。如需表格内着色，使用 HTML `<span style="...">` 代替。
+- **Markdown 表格内部不支持 BBCode**。如需表格内着色，使用 HTML `<span style="...">` 代替。
 - **有序列表和无序列表（`1. `、`- `、`* `）已被禁用**。渲染器会自动插入零宽空格使其不被 marked 解析为 `<ol>` / `<ul>`。需要列表效果时，请手动写序号并用缩进排版。
-- **BBCode 和 HTML 标签不能混用**。`[color]` 只能用 `[/color]` 闭合，不能用 `</span>`；同理 `<span>` 只能用 `</span>` 闭合，不能用 `[/span]`。两种标记体系完全独立。
+- **BBCode 和 HTML 标签不能混用**。`[color]` 只能用 `[/color]` 闭合，不能用 `</span>`；同理 `<span>` 只能用 `</span>` 闭合。
 - **不要过度使用特效**——一句对白用一个特效就够了，整段彩虹色会让读者头晕。
+
+---
+
+# 第二部分：文本样式规则（符号着色）
+
+## 格式说明
+
+文本样式规则定义在 `.teahouse/text-style-rules.yaml`。每条规则定义了一对符号如何被包裹在自定义 HTML 中。规则在 BBCode 解析之后、Markdown 解析之前应用。
+
+```yaml
+rules:
+  - start_symbol: "《"      # 起始符号
+    end_symbol: "》"        # 结束符号（与 start 相同时表示对称型，如引号）
+    start_html: '<span style="color: #e5c07b;">'   # 插入在起始符号前
+    end_html: "</span>"                             # 插入在结束符号后
+    enabled: true           # 是否启用
+    order: 1                # 处理顺序（数字小者优先）
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `start_symbol` | string | 起始符号，支持多字符（如 `"""`） |
+| `end_symbol` | string | 结束符号。与 start 相同时，匹配同一符号的相邻出现（如 `"..."`） |
+| `start_html` | string | 在起始符号前插入的 HTML（通常是开标签） |
+| `end_html` | string | 在结束符号后插入的 HTML（通常是闭标签） |
+| `enabled` | bool | `true` 启用，`false` 禁用（保留配置但不生效） |
+| `order` | int | 处理优先级，数字小者先处理。建议长符号排前面，避免被短符号误匹配 |
+
+### 注意事项
+
+- 可以跨 BBCode 标签匹配（如 `《[b]标题[/b]》` 会被正确匹配）
+- HTML 内容中 `"` 需转义，或使用单引号包裹
+- YAML 中 `>` 等特殊字符需用引号包裹属性值
+
+## SOP
+
+### 查看规则
+
+```
+Read .teahouse/text-style-rules.yaml
+```
+
+若文件不存在，说明该实例尚未配置任何样式规则，可以创建新文件。
+
+### 添加规则
+
+1. 先 Read 当前文件，了解已有规则
+2. 确定新规则的 order 值（建议在最大值基础上 +1，或插入到合适位置）
+3. 使用 Edit 追加新规则到 rules 列表末尾
+4. 告知用户新规则已生效。前端下次刷新内容时会自动应用
+
+### 删除规则
+
+1. Read 当前文件
+2. 使用 Edit 删除整条规则（从 `- start_symbol` 到 `order: N` 的所有行）
+3. 告知用户
+
+### 修改规则
+
+1. Read 当前文件
+2. 使用 Edit 精确替换需要修改的字段值
+3. 告知用户
+
+### 切换启用/禁用
+
+1. Read 当前文件
+2. 将对应规则的 `enabled` 字段改为 `true` 或 `false`
+3. 无需删除配置即可暂时关闭某条规则
+
+## 示例对话
+
+**用户**: 给《》着金色
+
+**导演**:
+1. Read `.teahouse/text-style-rules.yaml`
+2. 如果文件不存在，Write 新文件；否则 Edit 追加规则：
+```yaml
+  - start_symbol: "《"
+    end_symbol: "》"
+    start_html: '<span style="color: #e5c07b;">'
+    end_html: "</span>"
+    enabled: true
+    order: 1
+```
+3. 回复：已将《》配置为金色着色，前端刷新后生效。
