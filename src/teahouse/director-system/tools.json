@@ -99,7 +99,7 @@
   {
     "name": "SkillRead",
     "description": "读取 Skill 的完整教学内容和 SOP",
-    "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 generate-floor、summarize\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。",
+    "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 teahouse-generate-floor、teahouse-summarize\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -198,7 +198,7 @@
   {
     "name": "Output",
     "description": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。",
-    "usage": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid\n- `content_type`（可选）：内容类型，默认 \"rich_text\"\n  - `rich_text` — BBCode 富文本（默认），由宿主层解析为 HTML 后注入沙盒\n  - `text` — 纯文本，保留换行\n  - `bootstrap_js` — 沙盒基础设施脚本（全局唯一），注入沙盒 iframe 并执行\n  - `scene_js` — 场景展示脚本（替换式），由 bootstrap 调用 activateScene 触发\n  - `ui_js` — UI 组件脚本（追加式），悬浮组件如状态栏、背包面板\n  - `css` — 全局样式表（追加式），注入沙盒 iframe <head>\n\n🚨 使用 rich_text 类型前，必须先调用 SkillRead(name=\"rich-text\") 加载 BBCode 标签白名单。BBCode 渲染器只支持 18 个标签（b/i/u/s/color/size/shake/fade/bounce/wave/rainbow/glow/pulse/typing/shadow/highlight/spoiler/tip），使用列表之外的任何标签都不会被渲染，会原样显示为纯文本。\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块\n\n当前活跃的输出块列表已注入系统提示词，可参考其 uuid 和 label 进行操作。",
+    "usage": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid\n- `content_type`（可选）：内容类型，默认 \"rich_text\"\n  - `rich_text` — BBCode 富文本（默认），由宿主层解析为 HTML 后注入沙盒\n  - `text` — 纯文本，保留换行\n  - `bootstrap_js` — 沙盒基础设施脚本（全局唯一），注入沙盒 iframe 并执行\n  - `scene_js` — 场景展示脚本（替换式），由 bootstrap 调用 activateScene 触发\n  - `ui_js` — UI 组件脚本（追加式），悬浮组件如状态栏、背包面板\n  - `css` — 全局样式表（追加式），注入沙盒 iframe <head>\n\n🚨 使用 rich_text 类型前，必须先调用 SkillRead(name=\"teahouse-sandbox-richtext-render\") 加载 BBCode 标签白名单。BBCode 渲染器只支持 18 个标签（b/i/u/s/color/size/shake/fade/bounce/wave/rainbow/glow/pulse/typing/shadow/highlight/spoiler/tip），使用列表之外的任何标签都不会被渲染，会原样显示为纯文本。\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块\n\n当前活跃的输出块列表已注入系统提示词，可参考其 uuid 和 label 进行操作。",
     "parameters": {
       "type": "object",
       "properties": {
