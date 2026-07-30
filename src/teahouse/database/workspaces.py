@@ -25,6 +25,9 @@ from ..git_utils import git_init, git_initial_commit
 
 BLANK_PROTOTYPE_DIR = Path(__file__).parent.parent / "prototypes" / "blank"
 
+# All built-in prototype directories live under prototypes/
+PROTOTYPES_DIR = Path(__file__).parent.parent / "prototypes"
+
 
 def _user_dir(safe_name: str, base_path: Path) -> Path:
     return base_path / safe_name
@@ -171,8 +174,11 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
     source_path = base_path / proto["source_path"] if not Path(proto["source_path"]).is_absolute() else Path(proto["source_path"])
 
     if proto["is_builtin"]:
-        # Built-in: copy from template directory
-        _copy_dir(BLANK_PROTOTYPE_DIR, target_dir)
+        # Built-in: copy from its source template directory
+        source_dir = Path(proto["source_path"])
+        if not source_dir.is_dir():
+            raise FileNotFoundError(f"Built-in prototype directory not found: {source_dir}")
+        _copy_dir(source_dir, target_dir)
     elif source_path.suffix in (".zip", ".teabrew") and source_path.exists():
         with zipfile.ZipFile(source_path, "r") as zf:
             zf.extractall(target_dir)
@@ -205,9 +211,22 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
         pass  # git not available — instance works without version control
 
 
-def register_builtin_prototype_source_path(base_path: Path) -> str:
-    """Return the source_path value for the built-in blank prototype."""
-    return str(BLANK_PROTOTYPE_DIR.resolve())
+def list_builtin_prototype_dirs() -> list[Path]:
+    """Scan prototypes/ directory for all built-in prototype subdirectories."""
+    if not PROTOTYPES_DIR.is_dir():
+        return []
+    return sorted(
+        [p for p in PROTOTYPES_DIR.iterdir() if p.is_dir()],
+        key=lambda p: p.name,
+    )
+
+
+def read_prototype_readme(proto_dir: Path) -> str:
+    """Read README.md from a prototype directory. Returns empty string if not found."""
+    readme_path = proto_dir / "README.md"
+    if readme_path.exists():
+        return readme_path.read_text(encoding="utf-8")
+    return ""
 
 
 # ---------------------------------------------------------------------------

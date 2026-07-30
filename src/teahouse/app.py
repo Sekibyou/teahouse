@@ -33,7 +33,8 @@ from .database.model_profiles import get_profile as get_model_profile
 from .database.workspaces import (
     list_prototypes,
     create_prototype,
-    register_builtin_prototype_source_path,
+    list_builtin_prototype_dirs,
+    read_prototype_readme,
     get_instance,
 )
 from .routes.auth import router as auth_router
@@ -84,16 +85,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[teahouse] plugin init failed: {e}")
 
-    # 7. Ensure all existing users have the built-in blank prototype registered
+    # 7. Register all built-in prototypes from prototypes/ directory
     try:
-        all_users = await list_users()
-        for u in all_users:
-            # Register built-in blank prototype if not already present
-            existing = await list_prototypes(u["id"])
-            if not any(p["is_builtin"] for p in existing):
-                source_path = register_builtin_prototype_source_path(Path(state.workspace_base))
-                await create_prototype(None, "空白模板", "默认空白原型，包含基础目录结构", source_path, is_builtin=True)
-            break  # Built-in prototype is global — only register once
+        from .database.connection import execute
+        builtin_dirs = list_builtin_prototype_dirs()
+
+        # Clean up old built-in records that no longer exist on disk
+        existing_all = await list_prototypes(None)
+        existing_paths = {Path(p["source_path"]).resolve() for p in existing_all if p["is_builtin"]}
+        current_paths = {d.resolve() for d in builtin_dirs}
+        for p in existing_all:
+            if p["is_builtin"] and Path(p["source_path"]).resolve() not in current_paths:
+                await execute("DELETE FROM prototypes WHERE id = ?", (p["id"],))
+
+        # Register or update built-in prototypes
+        for proto_dir in builtin_dirs:
+            name = proto_dir.name
+            readme = read_prototype_readme(proto_dir)
+            description = readme.strip().split("\n")[0].lstrip("#").strip() if readme else name
+            source_path = str(proto_dir.resolve())
+
+            if proto_dir.resolve() in existing_paths:
+                # Update name/description in case it changed
+                await execute(
+                    "UPDATE prototypes SET name = ?, description = ?, source_path = ? WHERE is_builtin = 1 AND source_path = ?",
+                    (name, description, source_path, source_path),
+                )
+            else:
+                await create_prototype(None, name, description, source_path, is_builtin=True)
     except Exception:
         pass  # non-critical
 

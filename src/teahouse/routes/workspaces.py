@@ -27,7 +27,6 @@ from ..database.workspaces import (
     create_instance,
     delete_instance,
     ensure_user_dirs,
-    register_builtin_prototype_source_path,
     instantiate_prototype,
     list_file_tree,
     read_file,
@@ -132,7 +131,7 @@ async def create_prototype_from_instance(
         raise HTTPException(
             status_code=404,
             detail=f"Source directory not found: {body.source_subpath}. "
-                   f"Use the export-prototype skill to build it first."
+                   f"Use the teahouse-export-prototype skill to build it first."
         )
 
     # Check directory is not empty
@@ -262,13 +261,24 @@ async def download_prototype(
 
 @router.get("/prototypes/{prototype_id}/readme")
 async def get_prototype_readme(prototype_id: str, user: UserInfo = Depends(require_user)):
-    """Read prototype metadata and README from the zip file."""
+    """Read prototype metadata and README."""
     u = await require_user_info(user)
     proto = await get_prototype(prototype_id)
     if not proto:
         raise HTTPException(status_code=404, detail="Prototype not found")
 
     source = Path(proto["source_path"]).resolve()
+
+    # Built-in prototypes: read README.md from disk
+    if proto["is_builtin"]:
+        metadata = {"name": proto["name"], "description": proto["description"]}
+        readme = ""
+        readme_path = source / "README.md"
+        if readme_path.exists():
+            readme = readme_path.read_text(encoding="utf-8")
+        return {"metadata": metadata, "readme": readme}
+
+    # User-created prototypes: read from .teabrew zip
     if not source.is_file():
         raise HTTPException(status_code=404, detail="Prototype file not found on disk")
 
@@ -622,12 +632,12 @@ async def update_skill(instance_id: str, skill_name: str, body: CreateSkillReque
 
 @router.delete("/instances/{instance_id}/skills/{skill_name}")
 async def delete_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
-    """Delete a skill. Built-in skills (generate-floor, summarize) are protected."""
+    """Delete a skill. Built-in skills (teahouse-generate-floor, teahouse-summarize) are protected."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
-    if skill_name in ("generate-floor", "summarize"):
+    if skill_name in ("teahouse-generate-floor", "teahouse-summarize"):
         raise HTTPException(status_code=400, detail="Cannot delete built-in skills")
     instance_dir = _resolve_instance_dir(inst)
     skill_dir = _get_skill_dir(instance_dir, skill_name)

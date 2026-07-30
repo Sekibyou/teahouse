@@ -76,14 +76,20 @@ async def api_register(body: RegisterRequest):
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")
 
-    # Auto-create built-in blank prototype (only once globally, but idempotent)
+    # Auto-register all built-in prototypes for the new user
     try:
-        from ..database.workspaces import list_prototypes, create_prototype, register_builtin_prototype_source_path
+        from ..database.workspaces import list_prototypes, create_prototype, list_builtin_prototype_dirs, read_prototype_readme
         from pathlib import Path
-        existing = await list_prototypes(user["id"])
-        if not any(p["is_builtin"] for p in existing):
-            source_path = register_builtin_prototype_source_path(Path("data"))
-            await create_prototype(None, "空白模板", "默认空白原型，包含基础目录结构", source_path, is_builtin=True)
+        builtin_dirs = list_builtin_prototype_dirs()
+        existing = await list_prototypes()
+        for proto_dir in builtin_dirs:
+            name = proto_dir.name
+            readme = read_prototype_readme(proto_dir)
+            description = readme.strip().split("\n")[0].lstrip("#").strip() if readme else name
+            source_path = str(proto_dir.resolve())
+
+            if not any(p["is_builtin"] and Path(p["source_path"]).resolve() == proto_dir.resolve() for p in existing):
+                await create_prototype(None, name, description, source_path, is_builtin=True)
     except Exception:
         pass
 
