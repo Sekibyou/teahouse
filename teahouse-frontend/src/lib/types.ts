@@ -138,6 +138,14 @@ export interface GitCommitResult {
   message?: string
 }
 
+export interface GitCommitRequest {
+  type: "floor" | "summary" | "other"
+  number?: number
+  start?: number
+  end?: number
+  message: string
+}
+
 export interface GitBranchResult {
   action: string
   branches?: GitBranch[]

@@ -249,6 +249,44 @@ async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:
 
 MAX_TOOL_ROUNDS = 15  # Safety limit for tool use iterations
 
+# Tools that require user approval before execution
+APPROVAL_REQUIRED_TOOLS = {"GitCommit"}
+
+
+class ToolApprovalStore:
+    """In-memory store for pending tool approvals."""
+
+    def __init__(self):
+        self._events: dict[str, asyncio.Event] = {}
+        self._results: dict[str, str | None] = {}  # str = approved, None = rejected
+
+    async def wait_for_approval(self, tool_call_id: str, timeout: float = 300) -> str | None:
+        """Wait for user approval. Returns tool result if approved, None if rejected/timed out."""
+        self._events[tool_call_id] = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._events[tool_call_id].wait(), timeout=timeout)
+            return self._results.get(tool_call_id)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._events.pop(tool_call_id, None)
+            self._results.pop(tool_call_id, None)
+
+    def approve(self, tool_call_id: str, result: str):
+        self._results[tool_call_id] = result
+        event = self._events.get(tool_call_id)
+        if event:
+            event.set()
+
+    def reject(self, tool_call_id: str, reason: str):
+        self._results[tool_call_id] = None
+        event = self._events.get(tool_call_id)
+        if event:
+            event.set()
+
+
+approval_store = ToolApprovalStore()
+
 
 async def _tool_use_loop(
     client: LLMClient,
@@ -276,6 +314,16 @@ async def _tool_use_loop(
     tools = load_tools()
     tools_usage = load_tools_usage()
     tool_system = assemble_system_prompt(instance_dir, tools_usage)
+
+    def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str):
+        """Feed tool result back into the message list."""
+        if style == "anthropic":
+            msgs.append({
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": tc_id, "content": result}],
+            })
+        else:
+            msgs.append({"role": "tool", "tool_call_id": tc_id, "content": result})
 
     for _round in range(MAX_TOOL_ROUNDS):
         # Call LLM with tools
@@ -353,30 +401,32 @@ async def _tool_use_loop(
             # Yield tool_call event
             yield {"type": "tool_call", "id": tc_id, "name": name, "args": args}
 
+            # For approval-required tools, pause and wait for user confirmation
+            if name in APPROVAL_REQUIRED_TOOLS:
+                yield {
+                    "type": "approval_required",
+                    "id": tc_id,
+                    "name": name,
+                    "args": args,
+                }
+                approved_result = await approval_store.wait_for_approval(tc_id)
+                if approved_result is None:
+                    reject_reason = "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
+                    yield {"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}
+                    _feed_tool_result(msg, api_style, tc_id, name, reject_reason)
+                    continue
+                yield {"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}
+                _feed_tool_result(msg, api_style, tc_id, name, approved_result)
+                continue
+
             # Execute
             result = await execute_tool(name, args, instance_dir, user_id, instance_id)
 
             # Yield tool_result event
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
 
-            # Feed result back to LLM as a tool_result message
-            if api_style == "anthropic":
-                msg.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tc_id,
-                            "content": result,
-                        }
-                    ],
-                })
-            else:
-                msg.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": result,
-                })
+            # Feed result back to LLM
+            _feed_tool_result(msg, api_style, tc_id, name, result)
 
     # If we exhausted rounds, notify the LLM so it can summarize or retry
     # Use role "user" (not "tool") because OpenAI strictly validates that

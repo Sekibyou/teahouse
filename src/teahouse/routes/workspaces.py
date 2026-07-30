@@ -34,6 +34,7 @@ from ..database.workspaces import (
     write_file,
     delete_file_or_dir,
     create_file_or_dir,
+    update_floor_count,
 )
 from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
 
@@ -728,6 +729,10 @@ async def get_text_style_rules(instance_id: str, user: UserInfo = Depends(requir
 # ===== Git operations =====
 
 class GitCommitRequest(BaseModel):
+    type: str  # floor | summary | other
+    number: int | None = None
+    start: int | None = None
+    end: int | None = None
     message: str
 
 
@@ -773,16 +778,31 @@ async def get_git_status(instance_id: str, user: UserInfo = Depends(require_user
 
 @router.post("/instances/{instance_id}/git/commit")
 async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInfo = Depends(require_user)):
-    """Commit all changes in the instance."""
+    """Commit all changes in the instance with semantic type."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
 
+    # Build git message
+    if body.type == "floor":
+        git_message = f"floor-{body.number}: {body.message}"
+    elif body.type == "summary":
+        if body.start == body.end:
+            git_message = f"summary-{body.start}: {body.message}"
+        else:
+            git_message = f"summary-{body.start}-{body.end}: {body.message}"
+    else:
+        git_message = f"other: {body.message}"
+
     instance_dir = _resolve_instance_dir(inst)
     try:
-        result = git_commit(instance_dir, body.message)
+        result = git_commit(instance_dir, git_message)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
+
+        if body.type == "floor" and body.number is not None:
+            await update_floor_count(instance_id, body.number)
+
         return result
     except Exception as e:
         error_msg = str(e)
@@ -1024,3 +1044,46 @@ async def api_git_discard(instance_id: str, body: GitDiscardRequest, user: UserI
         return {"status": "ok", "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ===== Tool approval =====
+
+class ToolApproveRequest(BaseModel):
+    tool_call_id: str
+    args: dict | None = None
+
+
+class ToolRejectRequest(BaseModel):
+    tool_call_id: str
+    reason: str = ""
+
+
+@router.post("/instances/{instance_id}/tool-approve")
+async def api_tool_approve(instance_id: str, body: ToolApproveRequest, user: UserInfo = Depends(require_user)):
+    """Approve a pending GitCommit. Executes the tool and returns the result."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    from ..app import approval_store
+    from ..tools import execute_tool
+    instance_dir = _resolve_instance_dir(inst)
+    args = body.args or {}
+    result = await execute_tool("GitCommit", args, instance_dir, None, instance_id)
+    approval_store.approve(body.tool_call_id, result)
+    return {"status": "approved"}
+
+
+@router.post("/instances/{instance_id}/tool-reject")
+async def api_tool_reject(instance_id: str, body: ToolRejectRequest, user: UserInfo = Depends(require_user)):
+    """Reject a pending GitCommit."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    from ..app import approval_store
+    reason = body.reason or "用户拒绝了提交请求。"
+    approval_store.reject(body.tool_call_id, reason)
+    return {"status": "rejected"}

@@ -46,10 +46,16 @@ Read variables/active.yaml
 
 ```
 Glob floors/floor-*.md       → 列出所有楼层
-Read floors/floor-NNN.md      → 阅读最近几层
+Glob floors/sum-*.md         → 列出所有总结
 ```
 
-至少阅读最近 2~3 层的内容，以保持风格和剧情连贯。如果用户指定了某一层，也需阅读。
+**阅读策略：**
+
+- **最近 10 层**：必须阅读**原文**。这是保持剧情连贯性的核心。
+- **第 11~50 层**：阅读**总结**（`sum-*.md`），不必逐层读原文。如果某次总结覆盖了这些楼层，阅读对应的 `sum-*.md` 即可。
+- **超过 50 层之前**：通常不需要回顾，除非涉及跨章节的伏笔或角色复出。
+
+使用行号范围或锚点语法截取关键部分，不要一次性塞入全文。如果用户指定了某一层，也需阅读。
 
 ### 步骤 5：检查是否有未完成的草稿
 
@@ -119,7 +125,7 @@ label 必须遵循 `teahouse.md` 中约定的命名规则：以 `ep` 开头接�
     target_uuid: "<之前 append/最后一次 replace 返回的 uuid>"
   )
   ```
-  然后执行 `GitCommit("floor-{{N}}: 简短描述")` 提交。提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
+  然后执行 `GitCommit(type="floor", number={{N}}, message="简短描述")` 提交。提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
 
 ## 注意事项
 

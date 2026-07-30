@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, ListTodo, Circle, CircleDot, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { chatApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
+import { chatApi, gitApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
@@ -89,6 +89,13 @@ export function ChatPanel() {
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
+  const [autoApproveCommit, setAutoApproveCommit] = useState(() => {
+    const saved = localStorage.getItem("teahouse_auto_approve_commit")
+    return saved === "true"
+  })
+  const [pendingApproval, setPendingApproval] = useState<{
+    id: string; name: string; args: Record<string, unknown>
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
   const latestToolCallsRef = useRef<ToolCallEvent[]>([])
@@ -180,7 +187,7 @@ export function ChatPanel() {
       let buffer = ""
       let currentType: string | null = null
 
-      const processLine = (line: string) => {
+      const processLine = async (line: string) => {
         if (line.startsWith("event: ")) {
           currentType = line.slice(7).trim()
           return
@@ -234,6 +241,39 @@ export function ChatPanel() {
               return
             }
 
+            if (currentType === "approval_required") {
+              if (autoApproveCommit) {
+                // Auto-approve: send approve request immediately
+                const inst = getActiveInstance()
+                if (inst) {
+                  try {
+                    await gitApi.approveTool(inst.id, data.id, data.args)
+                  } catch { /* ignore */ }
+                }
+                // Mark the tool call with auto-approved result so it shows in UI
+                latestToolCallsRef.current = latestToolCallsRef.current.map((tc) =>
+                  tc.id === data.id ? { ...tc, result: "（自动批准）" } : tc
+                )
+                setMessages((prev) =>
+                  prev.map((m) => {
+                    if (m.id !== assistantMsg.id) return m
+                    const toolCalls = (m.toolCalls || []).map((tc) =>
+                      tc.id === data.id ? { ...tc, result: "（自动批准）" } : tc
+                    )
+                    return { ...m, toolCalls }
+                  })
+                )
+                scrollToBottom()
+                return
+              }
+              setPendingApproval({
+                id: data.id,
+                name: data.name,
+                args: data.args,
+              })
+              return
+            }
+
             const chunkText = data.text || ""
             if (!chunkText) return
 
@@ -268,13 +308,13 @@ export function ChatPanel() {
         const lines = buffer.split("\n")
         buffer = lines.pop() || ""
         for (const line of lines) {
-          processLine(line)
+          await processLine(line)
         }
       }
       // Process remaining buffer
       if (buffer.trim()) {
         for (const line of buffer.split("\n")) {
-          processLine(line)
+          await processLine(line)
         }
       }
 
@@ -352,6 +392,18 @@ export function ChatPanel() {
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">导演</h3>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <label className="flex items-center gap-1 cursor-pointer" title="开启后 GitCommit 自动批准，不再弹窗确认">
+              <input
+                type="checkbox"
+                checked={autoApproveCommit}
+                onChange={e => {
+                  setAutoApproveCommit(e.target.checked)
+                  localStorage.setItem("teahouse_auto_approve_commit", String(e.target.checked))
+                }}
+                className="rounded border-border"
+              />
+              <span>自动提交</span>
+            </label>
             <span className="flex items-center gap-1" title="导演/编排">导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span></span>
             <span className="flex items-center gap-1" title="正文写作">正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span></span>
           </div>
@@ -381,6 +433,52 @@ export function ChatPanel() {
         {error && (
           <div className="text-center">
             <p className="text-xs text-red-500">{error}</p>
+          </div>
+        )}
+
+        {/* GitCommit approval dialog — inline card in message area */}
+        {pendingApproval && (
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 space-y-3">
+            <h4 className="text-sm font-semibold flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-purple-500" />
+              确认 Git 提交
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              导演请求提交：<br />
+              <span className="font-mono text-foreground text-sm">{formatCommitPreview(pendingApproval.args)}</span>
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const data = pendingApproval
+                  setPendingApproval(null)
+                  const inst = getActiveInstance()
+                  if (!inst) return
+                  const res = await gitApi.rejectTool(inst.id, data.id, "")
+                  if (!res.ok) toast.error("拒绝请求失败")
+                }}
+              >
+                拒绝
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={async () => {
+                  const data = pendingApproval
+                  setPendingApproval(null)
+                  const inst = getActiveInstance()
+                  if (!inst) return
+                  const res = await gitApi.approveTool(inst.id, data.id, data.args)
+                  if (!res.ok) {
+                    toast.error("批准提交失败")
+                  }
+                }}
+              >
+                确认提交
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -417,13 +515,14 @@ export function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入消息... / 查看命令 (Enter 发送)"
+            placeholder={pendingApproval ? "请先确认或拒绝提交请求..." : "输入消息... / 查看命令 (Enter 发送)"}
+            disabled={pendingApproval !== null}
           />
           <Button
             size="icon"
             className="shrink-0"
             onClick={isStreaming ? handleStop : handleSend}
-            disabled={!isStreaming && !input.trim()}
+            disabled={pendingApproval !== null || (!isStreaming && !input.trim())}
             variant={isStreaming ? "destructive" : "default"}
           >
             {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
@@ -563,6 +662,17 @@ function AssistantBubble({ message }: { message: RichMessage }) {
       )}
     </div>
   )
+}
+
+function formatCommitPreview(args: Record<string, unknown>): string {
+  const type = args.type as string
+  const msg = args.message as string
+  if (type === "floor") return `[楼层] 第 ${args.number} 层：${msg}`
+  if (type === "summary") {
+    if (args.start === args.end) return `[总结] 第 ${args.start} 层：${msg}`
+    return `[总结] 第 ${args.start}~${args.end} 层：${msg}`
+  }
+  return `[其他] ${msg}`
 }
 
 /** Format tool call args for compact display */

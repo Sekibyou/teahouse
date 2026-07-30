@@ -15,6 +15,14 @@ description: 教导导演如何执行总结流程，包括上下文重组和变�
 
 总结的核心目标：**压缩旧内容，提取关键信息，更新变量状态**，为导演的下一阶段工作准备好干净、精简的上下文。
 
+## 文件命名规范
+
+总结文件存放于 `floors/` 目录下，命名格式为 `sum-{start}-{end}.md`。
+
+- `sum-1-7.md` — 覆盖第 1 到第 7 层的总结
+- `sum-8.md` — 仅覆盖第 8 层的总结（start == end 时简写为单数字）
+- 变更日志文件存放于 `logs/change-log/`，同样格式：`summary-{start}-{end}.yaml` 或 `summary-{n}.yaml`
+
 ## SOP
 
 ### 步骤 1：了解总结配置
@@ -28,11 +36,11 @@ Read teahouse.md
 ### 步骤 2：确定总结范围
 
 ```
-Glob logs/summaries.yaml      → 查看上次总结的位置
-Glob floors/floor-*.md         → 列出所有楼层
+Glob floors/sum-*.md            → 查看上次总结的位置（文件名中的数字）
+Glob floors/floor-*.md          → 列出所有楼层
 ```
 
-计算自上次总结以来新增的楼层范围。例如：上次总结在 floor-030，当前最新是 floor-037，则需总结 floor-031~037。
+从 `sum-*.md` 文件名解析上次总结的结束楼层，结合最新楼层编号确定本次范围。如果 `sum-*` 无匹配（尚未有过总结），则从第 1 层开始总结。
 
 ### 步骤 3：阅读待总结的楼层
 
@@ -61,20 +69,20 @@ Read floors/floor-032.md
 ### 步骤 6：写入总结文件
 
 ```
-Read logs/summaries.yaml         → 确认现有格式
-Edit/Write logs/summaries.yaml   → 追加本次总结
+Write floors/sum-{start}-{end}.md   → 写入总结内容（如 sum-1-7.md）
+Edit/Write logs/summaries.yaml      → 追加本次总结记录
 ```
 
 ### 步骤 7：写入变更日志
 
 ```
-Write logs/change-log/summary-NNN.yaml   → 写入本次所有关键变量变更
+Write logs/change-log/summary-{start}-{end}.yaml   → 写入本次所有关键变量变更
 ```
 
 ### 步骤 8：Git 提交
 
 ```
-GitCommit("summary-NNN: 覆盖楼层 M~N 的总结")
+GitCommit(type="summary", start=M, end=N, message="简短描述")
 ```
 
 ## 变量变更记录的格式

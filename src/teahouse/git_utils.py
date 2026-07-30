@@ -54,7 +54,7 @@ def git_init(instance_dir: Path) -> str:
 def git_initial_commit(instance_dir: Path) -> str:
     """Stage all files and create the initial commit. Returns commit hash."""
     _git_run(["add", "-A"], instance_dir)
-    return _git_run(["commit", "-m", "初始化实例"], instance_dir)
+    return _git_run(["commit", "-m", "other: 初始化实例"], instance_dir)
 
 
 def git_commit(instance_dir: Path, message: str) -> dict:
@@ -321,3 +321,11 @@ def git_show_file(instance_dir: Path, file_path: str) -> str | None:
         return _git_run(["show", f"HEAD:{file_path}"], instance_dir)
     except GitError:
         return None
+
+
+def git_diff(instance_dir: Path, path: str | None = None) -> str:
+    """Return git diff for uncommitted changes. If path is given, diff only that file."""
+    args = ["diff"]
+    if path:
+        args.extend(["--", path])
+    return _git_run(args, instance_dir)

@@ -34,13 +34,14 @@ type TabKey = "graph" | "commit"
 const COMMIT_PREFIXES = [
   { value: "floor", label: "楼层" },
   { value: "summary", label: "总结" },
+  { value: "other", label: "其他" },
 ] as const
 
-type CommitType = (typeof COMMIT_PREFIXES)[number]["value"] | "other"
+type CommitType = (typeof COMMIT_PREFIXES)[number]["value"]
 
 function commitTypeLabel(msg: string): { type: CommitType; display: string } {
-  if (msg.startsWith("floor-") || msg.startsWith("floor:")) return { type: "floor", display: msg }
-  if (msg.startsWith("summary-") || msg.startsWith("summary:")) return { type: "summary", display: msg }
+  if (/^floor-\d+:/.test(msg)) return { type: "floor", display: msg }
+  if (msg.startsWith("summary-")) return { type: "summary", display: msg }
   return { type: "other", display: msg }
 }
 
@@ -66,6 +67,9 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   // Commit form
   const [commitPrefix, setCommitPrefix] = useState<CommitType>("floor")
   const [commitMessage, setCommitMessage] = useState("")
+  const [floorNumber, setFloorNumber] = useState<number>(1)
+  const [summaryStart, setSummaryStart] = useState<number>(1)
+  const [summaryEnd, setSummaryEnd] = useState<number>(1)
   const [committing, setCommitting] = useState(false)
   const [commitBranchName, setCommitBranchName] = useState("")
   const [commitAndBranch, setCommitAndBranch] = useState(false)
@@ -121,8 +125,20 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   }, [open])
 
   const handleCommit = async () => {
-    const fullMsg = `${commitPrefix}: ${commitMessage.trim()}`
-    if (fullMsg.length <= 2) return
+    const message = commitMessage.trim()
+    if (message.length === 0) return
+
+    const params: { type: string; number?: number; start?: number; end?: number; message: string } = {
+      type: commitPrefix,
+      message,
+    }
+    if (commitPrefix === "floor") {
+      params.number = floorNumber
+    } else if (commitPrefix === "summary") {
+      params.start = summaryStart
+      params.end = summaryEnd
+    }
+
     setCommitting(true)
     setError("")
 
@@ -135,7 +151,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       }
     }
 
-    const res = await gitApi.commit(instanceId, fullMsg)
+    const res = await gitApi.commit(instanceId, params)
     if (res.ok) {
       setCommitMessage("")
       setCommitBranchName("")
@@ -246,7 +262,16 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   const commits = gitStatus?.recent_commits || []
   const hasUncommitted = gitStatus?.has_uncommitted
 
-  const fullCommitMsg = commitPrefix === "other" ? commitMessage : `${commitPrefix}: ${commitMessage}`
+  const fullCommitMsg = (() => {
+    const msg = commitMessage.trim()
+    if (!msg) return ""
+    if (commitPrefix === "floor") return `floor-${floorNumber}: ${msg}`
+    if (commitPrefix === "summary") {
+      if (summaryStart === summaryEnd) return `summary-${summaryStart}: ${msg}`
+      return `summary-${summaryStart}-${summaryEnd}: ${msg}`
+    }
+    return `other: ${msg}`
+  })()
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
@@ -588,7 +613,6 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                             {COMMIT_PREFIXES.map(p => (
                               <option key={p.value} value={p.value}>{p.label}</option>
                             ))}
-                            <option value="other">其他</option>
                           </select>
                           <Input
                             value={commitMessage}
@@ -598,6 +622,38 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                             onKeyDown={e => { if (e.key === "Enter" && !committing && fullCommitMsg.length > 2) handleCommit() }}
                           />
                         </div>
+                        {commitPrefix === "floor" && (
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground shrink-0">楼层编号：</label>
+                            <Input
+                              type="number"
+                              value={floorNumber}
+                              onChange={e => setFloorNumber(Number(e.target.value))}
+                              className="w-24 text-sm"
+                              min={1}
+                            />
+                          </div>
+                        )}
+                        {commitPrefix === "summary" && (
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground shrink-0">起始楼层：</label>
+                            <Input
+                              type="number"
+                              value={summaryStart}
+                              onChange={e => setSummaryStart(Number(e.target.value))}
+                              className="w-24 text-sm"
+                              min={1}
+                            />
+                            <label className="text-xs text-muted-foreground shrink-0">结束楼层：</label>
+                            <Input
+                              type="number"
+                              value={summaryEnd}
+                              onChange={e => setSummaryEnd(Number(e.target.value))}
+                              className="w-24 text-sm"
+                              min={1}
+                            />
+                          </div>
+                        )}
                         <p className="text-[10px] text-muted-foreground font-mono">
                           完整消息：{fullCommitMsg || <span className="text-muted-foreground/50">（输入内容后自动拼接）</span>}
                         </p>

@@ -285,8 +285,8 @@ export const gitApi = {
     return get<GitStatus>(`/api/instances/${instanceId}/git/status`)
   },
 
-  commit: async (instanceId: string, message: string) => {
-    return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, { message })
+  commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string }) => {
+    return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, params)
   },
 
   branch: async (instanceId: string, action: string, name?: string, startPoint?: string) => {
@@ -335,6 +335,13 @@ export const gitApi = {
     return get<{ content: string | null }>(
       `/api/instances/${instanceId}/git/show-file?path=${encodeURIComponent(filePath)}`
     )
+  },
+
+  approveTool: async (instanceId: string, toolCallId: string, args: Record<string, unknown>) => {
+    return post<{ status: string }>(`/api/instances/${instanceId}/tool-approve`, { tool_call_id: toolCallId, args })
+  },
+  rejectTool: async (instanceId: string, toolCallId: string, reason?: string) => {
+    return post<{ status: string }>(`/api/instances/${instanceId}/tool-reject`, { tool_call_id: toolCallId, reason })
   },
 }
 

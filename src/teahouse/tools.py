@@ -25,7 +25,7 @@ from typing import Any
 from .placeholder import resolve_placeholders, resolve_messages_placeholders
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
-from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup
+from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
 import yaml
@@ -840,13 +840,63 @@ async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def execute_git_commit(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Execute git add -A + git commit."""
-    message = args["message"]
+async def execute_git_status(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Execute git status --porcelain."""
     try:
-        result = _git_commit(instance_dir, message)
+        entries = git_status_porcelain(instance_dir)
+        if not entries:
+            return "工作区干净，没有未提交的变更。"
+        lines = [f"  {e['status']}  {'(staged)' if e['staged'] else '(unstaged)'}  {e['path']}" for e in entries]
+        return "工作区变更：\n" + "\n".join(lines)
+    except Exception as e:
+        return f"Git status 失败: {e}"
+
+
+async def execute_git_diff(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Execute git diff."""
+    path = args.get("path")
+    try:
+        diff_output = git_diff(instance_dir, path)
+        if not diff_output.strip():
+            return "没有差异（工作区与 HEAD 相同）。"
+        return diff_output
+    except Exception as e:
+        return f"Git diff 失败: {e}"
+
+
+async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
+    """Execute git add -A + git commit with semantic type."""
+    commit_type = args["type"]
+    message = args["message"]
+
+    # Build git message
+    if commit_type == "floor":
+        number = args.get("number")
+        if number is None:
+            return "Error: floor 类型需要 number 参数"
+        git_message = f"floor-{number}: {message}"
+    elif commit_type == "summary":
+        start = args.get("start")
+        end = args.get("end")
+        if start is None or end is None:
+            return "Error: summary 类型需要 start 和 end 参数"
+        if start == end:
+            git_message = f"summary-{start}: {message}"
+        else:
+            git_message = f"summary-{start}-{end}: {message}"
+    else:
+        git_message = f"other: {message}"
+
+    try:
+        result = _git_commit(instance_dir, git_message)
         files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_dir.name})
+
+        # Update floor_count in DB for floor commits
+        if commit_type == "floor" and instance_id:
+            from .database.workspaces import update_floor_count
+            await update_floor_count(instance_id, number)
+
         return (
             f"提交成功\n"
             f"  Commit: {result['commit_hash']}\n"
@@ -1116,6 +1166,8 @@ TOOL_EXECUTORS = {
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,
     "GitLog": execute_git_log,
+    "GitStatus": execute_git_status,
+    "GitDiff": execute_git_diff,
 }
 
 
@@ -1131,6 +1183,8 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
             if name == "Generate":
                 result = await executor(instance_dir, args, user_id)
             elif name == "Output":
+                result = await executor(instance_dir, args, instance_id)
+            elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
             else:
                 result = await executor(instance_dir, args)

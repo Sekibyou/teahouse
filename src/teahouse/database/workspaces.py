@@ -152,6 +152,14 @@ async def delete_instance(instance_id: str) -> bool:
     return True
 
 
+async def update_floor_count(instance_id: str, count: int) -> None:
+    """Update the floor_count for an instance."""
+    await execute(
+        "UPDATE instances SET floor_count = ?, updated_at = ? WHERE id = ?",
+        (count, current_timestamp(), instance_id),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Instance creation from prototype
 # ---------------------------------------------------------------------------

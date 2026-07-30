@@ -110,14 +110,18 @@
   },
   {
     "name": "GitCommit",
-    "description": "执行 git 提交，锁定实例文件状态",
-    "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `message`（必填）：提交信息。建议格式：floor-NNN: 简短描述 或 summary-NNN: 简短描述\n\n调用时机：楼层完成或总结完成时。如果没有需要提交的变更，会返回相应提示。",
+    "description": "执行 git 提交，锁定实例文件状态。必须指定提交类型（楼层/总结/其他）。",
+    "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `type`（必填）：提交类型 — \"floor\"（楼层）、\"summary\"（总结）、\"other\"（其他）\n- `number`（floor 时必填）：楼层编号，如 5\n- `start`（summary 时必填）：总结覆盖的起始楼层编号\n- `end`（summary 时必填）：总结覆盖的结束楼层编号（与 start 相同时表示单层总结）\n- `message`（必填）：提交描述（不含前缀，工具会自动拼接）\n\n调用时机：\n- 楼层完成时：type=\"floor\"，number=楼层号\n- 总结完成时：type=\"summary\"，start/end=总结范围\n- 其他变更（配置修改、资源更新等）：type=\"other\"\n\n生成的 git 消息格式：\n- floor: \"floor-5: 抵达王都\"\n- summary: \"summary-15-20: 总结十五楼到二十楼\"（start==end 时退化为 \"summary-5: 第五楼总结\"）\n- other: \"other: 初始化实例\"\n\n⚠️ 重要：调用此工具前，必须先向用户确认是否满意当前内容（如\"已完成楼层创作，请确认后提交\"）。不要自行决定提交时机。此工具调用时会触发前端确认弹窗，用户可拒绝。",
     "parameters": {
       "type": "object",
       "properties": {
+        "type": {"type": "string", "enum": ["floor", "summary", "other"]},
+        "number": {"type": "integer"},
+        "start": {"type": "integer"},
+        "end": {"type": "integer"},
         "message": {"type": "string"}
       },
-      "required": ["message"]
+      "required": ["type", "message"]
     }
   },
   {
@@ -155,6 +159,26 @@
       "properties": {
         "limit": {"type": "integer"}
       }
+    }
+  },
+  {
+    "name": "GitDiff",
+    "description": "查看当前工作区与最后一次提交之间的差异",
+    "usage": "执行 git diff 查看未提交的变更。返回 unified diff 格式的输出。\n\n参数：\n- `path`（可选）：指定要查看的文件路径，相对于实例根目录。不传则查看所有文件的差异\n\n使用场景：提交前确认改了什么；了解当前工作区状态。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"}
+      }
+    }
+  },
+  {
+    "name": "GitStatus",
+    "description": "查看当前工作区文件变更状态",
+    "usage": "执行 git status --porcelain 查看工作区状态。返回每个文件的变更状态（M=修改、A=新增、D=删除、?=未跟踪）和是否已暂存。\n\n无参数。\n\n使用场景：快速了解有哪些文件被修改/新增/删除，无需查看具体 diff 内容。",
+    "parameters": {
+      "type": "object",
+      "properties": {}
     }
   },
   {

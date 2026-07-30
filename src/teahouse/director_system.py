@@ -42,19 +42,47 @@ COMPACT_DIRS = {"temp"}
 
 def _summarize_dir(dir_path: Path, name: str) -> str:
     """Build a one-line summary for a folded or compact directory."""
-    files = sorted([f for f in dir_path.iterdir() if f.is_file()])
+    files = sorted([f for f in dir_path.iterdir() if f.is_file() and not f.name.startswith(".")])
     total = len(files)
 
     if name == "floors":
-        floors = [f for f in files if re.match(r"^floor-\d+\.md$", f.name)]
-        sums = [f for f in files if re.match(r"^sum-\d+\.md$", f.name)]
-        newest_floor = floors[-1].name if floors else None
-        newest_sum = sums[-1].name if sums else None
+        floors = sorted([f for f in files if re.match(r"^floor-\d+\.md$", f.name)])
+        sums = sorted([f for f in files if re.match(r"^sum-\d+(-\d+)?\.md$", f.name)])
+
+        # Floor stats
+        newest_floor_num = int(floors[-1].stem.split("-")[1]) if floors else None
+        total_floors = len(floors)
+
+        # Summary stats — parse number(s) from filename
+        last_sum_start = None
+        last_sum_end = None
+        if sums:
+            newest_sum = sums[-1]
+            stem = newest_sum.stem  # e.g. "sum-015-020" or "sum-005"
+            sum_parts = stem.split("-")[1:]  # ["015", "020"] or ["005"]
+            if len(sum_parts) == 2:
+                last_sum_start = int(sum_parts[0])
+                last_sum_end = int(sum_parts[1])
+            elif len(sum_parts) == 1:
+                last_sum_start = last_sum_end = int(sum_parts[0])
+
+        # Unsummarized floors count
+        unsummarized = 0
+        if newest_floor_num and last_sum_end is not None:
+            unsummarized = max(0, newest_floor_num - last_sum_end)
+        elif newest_floor_num and last_sum_end is None:
+            unsummarized = newest_floor_num
+
         parts = []
-        if newest_floor:
-            parts.append(f"Newest floor: {newest_floor}")
-        if newest_sum:
-            parts.append(f"Newest sum: {newest_sum}")
+        if newest_floor_num:
+            parts.append(f"Latest floor: {newest_floor_num:03d} ({total_floors} floors)")
+        if last_sum_start is not None:
+            if last_sum_start == last_sum_end:
+                parts.append(f"Last summary covered floor {last_sum_start}")
+            else:
+                parts.append(f"Last summary covered floors {last_sum_start}~{last_sum_end}")
+        if unsummarized > 0:
+            parts.append(f"{unsummarized} floors unsummarized")
         parts.append(f"Total: {total} files")
         return f"floors/  ({'; '.join(parts)})"
 
