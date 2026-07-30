@@ -109,7 +109,17 @@ label 必须遵循 `teahouse.md` 中约定的命名规则：以 `ep` 开头接�
     target_uuid: "<之前 append 返回的 uuid>"
   )
   ```
-- 如果用户确认提交：将 draft 文件移动到 `floors/` 文件夹，按楼层编号重命名为 `floor-{{N}}.md`，执行 `GitCommit("floor-{{N}}: 简短描述")` 提交。提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
+- 如果用户确认提交：将 draft 文件移动到 `floors/` 文件夹，按楼层编号重命名为 `floor-{{N}}.md`。移动后使用 Output replace 将内容路径更新为新路径：
+  ```
+  Output(
+    content: "{{floors/floor-{{N}}.md}}",
+    label: "ep{{N}}",
+    note: "第{{N}}章正文（已提交）",
+    mode: "replace",
+    target_uuid: "<之前 append/最后一次 replace 返回的 uuid>"
+  )
+  ```
+  然后执行 `GitCommit("floor-{{N}}: 简短描述")` 提交。提交后实例内的 `floors/`、`variables/` 等所有变更将被锁定。如需创建剧情分支，使用 `GitBranch("create", "branch-name")`。
 
 ## 注意事项
 

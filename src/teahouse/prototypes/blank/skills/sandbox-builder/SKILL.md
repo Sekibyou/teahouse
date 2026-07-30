@@ -217,7 +217,7 @@ Read .teahouse/output-blocks.yaml         → 查看活跃输出块
 
 ### 步骤 2（仅全新沙盒）：创建 bootstrap.js
 
-如果实例 `sandbox/` 目录下没有 `bootstrap.js`，需要先创建。参考空白原型中的实现（约 260 行），核心职责：
+如果实例 `sandbox/` 目录下没有 `bootstrap.js`，需要先创建。核心职责：
 
 1. 实现 `callHost()` — postMessage 通信层
 2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本
