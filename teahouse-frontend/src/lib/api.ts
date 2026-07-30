@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
 import type { Plugin, PluginData } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
@@ -426,6 +426,12 @@ export const llmSlotsApi = {
   setSlot: (slotId: string, modelId: string | null) =>
     put<{ slot_id: string; model_id: string | null }>(`/api/llm/slots/${slotId}`, { model_id: modelId }),
   clearSlot: (slotId: string) => del<{ status: string }>(`/api/llm/slots/${slotId}`),
+}
+
+// App Settings API
+export const appSettingsApi = {
+  get: () => get<AppSettings>("/api/settings"),
+  update: (data: Partial<AppSettings>) => put<AppSettings>("/api/settings", data),
 }
 
 // Plugins API

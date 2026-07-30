@@ -45,6 +45,7 @@ from .routes.llm_slots import router as llm_slots_router
 from .routes.workspaces import router as workspaces_router
 from .routes.session import router as session_router
 from .routes.plugins import router as plugins_router
+from .routes.settings import router as settings_router
 from .plugins import load_all_enabled_plugins
 from .database.plugins import configure_plugin_crypto
 from .state import state
@@ -124,6 +125,7 @@ app.include_router(llm_slots_router)
 app.include_router(workspaces_router)
 app.include_router(session_router)
 app.include_router(plugins_router)
+app.include_router(settings_router)
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +157,12 @@ async def sse_events(request: Request) -> EventSourceResponse:
 # ---------------------------------------------------------------------------
 # Chat endpoint — per-request LLM config from database
 # ---------------------------------------------------------------------------
+
+def _global_max_retries() -> int:
+    cfg = state.config
+    if cfg and cfg.llm:
+        return cfg.llm.max_retries
+    return 3
 
 class ChatRequest(BaseModel):
     messages: list[dict]
@@ -193,7 +201,7 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         top_p=profile.get("top_p") if profile else None,
         frequency_penalty=profile.get("frequency_penalty") if profile else None,
         presence_penalty=profile.get("presence_penalty") if profile else None,
-    ))
+    ), max_retries=_global_max_retries())
 
 
 async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) -> LLMClient:
@@ -216,7 +224,7 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
         api_style=cfg["api_format"],
         max_tokens=cfg["max_tokens"],
         temperature=cfg["temperature"],
-    ))
+    ), max_retries=_global_max_retries())
 
 
 async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:

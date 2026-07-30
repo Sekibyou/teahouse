@@ -5,12 +5,28 @@ Teahouse — LLM 请求封装
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any, AsyncGenerator
 
 import httpx
 
 from .config import LLMConfig
+
+logger = logging.getLogger("teahouse.llm")
+
+# Network errors worth retrying — transient failures, not logic errors
+RETRYABLE_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.WriteError,
+    httpx.WriteTimeout,
+    httpx.RemoteProtocolError,
+    httpx.PoolTimeout,
+)
 
 
 class LLMError(Exception):
@@ -83,9 +99,10 @@ def preprocess_messages(messages: list[dict], api_format: str) -> list[dict]:
 class LLMClient:
     """LLM API client — api_style ("openai" / "anthropic") must be set in teahouse.yaml."""
 
-    def __init__(self, config: LLMConfig) -> None:
+    def __init__(self, config: LLMConfig, max_retries: int = 3) -> None:
         self.config = config
         self.api_style = config.api_style
+        self.max_retries = max_retries
 
     def _headers(self) -> dict[str, str]:
         if self.api_style == "anthropic":
@@ -135,6 +152,27 @@ class LLMClient:
     def _api_url(self) -> str:
         return normalize_api_url(self.config.url, self.api_style)
 
+    async def _retry_request(self, body: dict) -> httpx.Response:
+        """Post with exponential backoff on transient network errors.
+
+        Does NOT retry on HTTP errors (4xx/5xx) — those are logic/config errors.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    return await client.post(self._api_url, headers=self._headers(), json=body)
+            except RETRYABLE_EXCEPTIONS as exc:
+                last_exc = exc
+                if attempt < self.max_retries:
+                    delay = 2 ** attempt  # 1s, 2s, 4s, ...
+                    logger.warning(
+                        "LLM request failed (attempt %s/%s): %s — retrying in %ss",
+                        attempt + 1, self.max_retries + 1, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
     async def send_message(
         self,
         messages: list[dict],
@@ -143,8 +181,7 @@ class LLMClient:
     ) -> str:
         """Non-streaming call, returns the full response text."""
         body = self._request_body(messages, system, stream=False, **kwargs)
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(self._api_url, headers=self._headers(), json=body)
+        resp = await self._retry_request(body)
         if resp.status_code >= 400:
             raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
         data = resp.json()
@@ -182,8 +219,7 @@ class LLMClient:
         else:
             body = self._request_body(messages, system, stream=False, **kwargs)
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(self._api_url, headers=self._headers(), json=body)
+        resp = await self._retry_request(body)
         if resp.status_code >= 400:
             raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
         return resp.json()

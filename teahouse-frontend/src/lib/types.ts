@@ -109,6 +109,10 @@ export interface SlotBindings {
   writer: string | null
 }
 
+export interface AppSettings {
+  max_retries: number
+}
+
 export interface AvailableModel {
   id: string
   name: string
@@ -181,4 +185,4 @@ export interface TextStyleRule {
 // Output block content types
 export type ContentType = "bootstrap_js" | "scene_js" | "ui_js" | "css" | "rich_text" | "text"
 
-export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel }
+export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, AppSettings }
