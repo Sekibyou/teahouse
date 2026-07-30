@@ -4,7 +4,7 @@
 
 ## 什么是 Teahouse？
 
-Teahouse 是一个基于 AI 导演的小说创作和即时文字冒险引擎。你可以在[TIP]这里体验[/TIP]由 AI 驱动的互动叙事。
+Teahouse 是一个基于 AI 导演的小说创作和即时文字冒险引擎。你可以在[tip=TIP内容]这里体验[/tip]由 AI 驱动的互动叙事。
 
 ## BBCode 特效
 

@@ -23,12 +23,7 @@
  * - [shadow]阴影文字[/shadow]  — 朦胧褪色，营造神秘感
  * - [highlight]高亮标记[/highlight] — 荧光笔效果
  * - [spoiler]剧透遮盖[/spoiler]   — 黑条遮盖，hover 显示
- * - [glow]发光[/glow]
- * - [pulse]脉冲[/pulse]
- * - [typing]打字机[/typing]
- * - [shadow]阴影文字[/shadow]
- * - [highlight]高亮标记[/highlight]
- * - [spoiler]剧透遮盖[/spoiler]
+ * - [tip=提示内容]文字[/tip]      — 虚线下划线，hover 弹出气泡提示
  */
 
 /**
@@ -205,6 +200,14 @@ const ANIMATION_TAGS: BBCodeTag[] = [
   {
     name: 'spoiler',
     toHtml: (content) => `<span class="bbcode-spoiler">${content}</span>`,
+  },
+  {
+    name: 'tip',
+    hasParam: true,
+    toHtml: (content, param) => {
+      const tipText = param || '';
+      return `<span class="bbcode-tip-wrapper" data-tip-text="${escapeHtml(tipText)}"><span class="bbcode-tip">${content}</span></span>`;
+    },
   },
 ];
 
@@ -700,7 +703,60 @@ export function getBBCodeAnimationCSS(): string {
 .bbcode-spoiler:focus::after {
   opacity: 0;
 }
-  user-select: auto;
+
+/* tip 提示 — 灯泡 icon + 虚线下划线 + hover 弹出提示气泡 */
+.bbcode-tip {
+  cursor: help;
+  position: relative;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+.bbcode-tip::after {
+  content: '💡';
+  vertical-align: super;
+  font-size: 0.7em;
+  margin-left: 1px;
+}
+/* 气泡提示框 — 用第二个伪元素实现，通过 wrapper 的 title 属性承载 */
+.bbcode-tip-wrapper {
+  position: relative;
+  display: inline;
+}
+.bbcode-tip-wrapper::after {
+  content: attr(data-tip-text);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e2e;
+  color: #e0e0e0;
+  font-size: 0.8em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.bbcode-tip-wrapper::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1e1e2e;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+.bbcode-tip-wrapper:hover::after,
+.bbcode-tip-wrapper:hover::before {
+  opacity: 1;
 }
 `;
 }

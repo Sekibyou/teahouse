@@ -46,15 +46,16 @@ description: 教导导演如何使用 rich_text 渲染器。如果只使用 Mark
 | 脉冲 | `[pulse rate=1s level=1.1]文字[/pulse]` |
 | 打字机 | `[typing]文字[/typing]` |
 
-### 视觉标签（3 个）
+### 视觉标签（4 个）
 
 | 标签 | 写法 | 效果 |
 |------|------|------|
 | 阴影 | `[shadow color=rgba(0,0,0,0.5) level=4]文字[/shadow]` | 朦胧褪色，营造神秘/旧书文字感 |
 | 高亮 | `[highlight color=#f59e0b]文字[/highlight]` | 荧光笔效果，醒目标记关键词 |
 | 剧透 | `[spoiler]文字[/spoiler]` | 黑条遮盖，hover 时显示 |
+| 提示 | `[tip=提示内容]文字[/tip]` | 虚线下划线+💡角标，hover 弹出气泡提示 |
 
-**总共只有以上 17 个 BBCode 标签可用。没有 `[center]`、没有 `[quote]`、没有 `[list]`、没有 `[*]`、没有 `[hr]`、没有 `[code]`。需要居中/引用/分割线/代码块请使用 Markdown 或 HTML。**
+**总共只有以上 18 个 BBCode 标签可用。没有 `[center]`、没有 `[quote]`、没有 `[list]`、没有 `[*]`、没有 `[hr]`、没有 `[code]`。需要居中/引用/分割线/代码块请使用 Markdown 或 HTML。**
 
 如果你不确定某个标签是否存在，就不要用——用 Markdown 代替。
 
