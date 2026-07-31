@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, ListTodo, Circle, CircleDot, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { chatApi, gitApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
+import { chatApi, gitApi, llmSlotsApi, llmModelsApi, instancesApi } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
@@ -38,6 +38,32 @@ function nextId() {
 export function ChatPanel() {
   const [messages, setMessages] = useState<RichMessage[]>([])
 
+  // 每个实例独立的 localStorage key
+  const activeInst = useSessionStore((s) => s.activeInstance)
+  const instId = activeInst?.id
+  const chatKey = instId ? `chat-messages-${instId}` : null
+
+  // 启动时清理已删除实例的会话缓存
+  useEffect(() => {
+    instancesApi.list().then(res => {
+      if (!res.ok || !res.data) return
+      const validIds = new Set(res.data.map((inst: { id: string }) => inst.id))
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith("chat-messages-")) {
+          const id = key.slice("chat-messages-".length)
+          if (!validIds.has(id)) {
+            keysToRemove.push(key)
+          }
+        }
+      }
+      for (const key of keysToRemove) {
+        localStorage.removeItem(key)
+      }
+    }).catch(() => {})
+  }, [])
+
   // Slot state — lightweight model info display
   const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
 
@@ -62,10 +88,14 @@ export function ChatPanel() {
     })
   }, [messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
 
-  // Restore messages from localStorage on mount
+  // Restore messages from localStorage on mount / instance change
   useEffect(() => {
+    if (!chatKey) {
+      setMessages([])
+      return
+    }
     try {
-      const saved = localStorage.getItem("chat-messages")
+      const saved = localStorage.getItem(chatKey)
       if (saved) {
         const parsed = JSON.parse(saved) as RichMessage[]
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -76,20 +106,23 @@ export function ChatPanel() {
           }, 0)
           if (maxId > 0) msgIdCounter = maxId
         }
+      } else {
+        setMessages([])
       }
     } catch {
       // localStorage 数据损坏则忽略
     }
-  }, [])
+  }, [chatKey])
 
   // Persist messages to localStorage on change
   useEffect(() => {
+    if (!chatKey) return
     try {
-      localStorage.setItem("chat-messages", JSON.stringify(messages))
+      localStorage.setItem(chatKey, JSON.stringify(messages))
     } catch {
       // 序列化失败或存储满时忽略
     }
-  }, [messages])
+  }, [messages, chatKey])
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
   const [autoApproveCommit, setAutoApproveCommit] = useState(() => {
@@ -193,7 +226,9 @@ export function ChatPanel() {
     if (text === "/clear") {
       setMessages([])
       setInput("")
-      try { localStorage.setItem("chat-messages", "[]") } catch {}
+      if (chatKey) {
+        try { localStorage.setItem(chatKey, "[]") } catch {}
+      }
       toast.success("会话已清空")
       scrollToBottom()
       return
