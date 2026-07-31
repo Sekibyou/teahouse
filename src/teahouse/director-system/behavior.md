@@ -47,6 +47,16 @@
 - label 命名规则由 `teahouse.md` 约定
 - 使用 `rich_text` 类型前，先加载对应的 skill 了解 BBCode 标签白名单
 
+### 🚨 代码文件：先 Write 文件，再 Output 引用
+
+对于 `bootstrap_js`、`scene_js`、`ui_js`、`css` 类型，**禁止将代码直接内联到 content 字段**。必须遵循以下流程：
+
+1. **Write** 将代码写入 `sandbox/` 目录下的 `.js` 或 `.css` 文件
+2. **Output append** 使用 `{{path}}` 占位符引用该文件，如 `content: "{{sandbox/statusbar.js}}"`
+3. 后续修改代码时，**直接 Edit 对应的 `.js`/`.css` 文件即可**，无需再次调用 Output。系统每 3 秒自动检测引用文件变化、重新渲染并通过 SSE 推送到前端
+
+**为什么禁止内联**：内联代码会破坏 output-blocks.yaml 的 YAML 结构（多行字符串中的引号导致解析崩溃），且无法通过 Edit 工具对代码做增量修改。
+
 ## 实例目录结构
 
 每个实例的目录结构如下。使用 Glob 工具探索目录内部文件。

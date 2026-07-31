@@ -571,11 +571,14 @@ def _output_rendered_path(instance_dir: Path) -> Path:
 
 
 def _load_output_blocks(instance_dir: Path) -> list[dict]:
-    """Load the output blocks list from disk. Returns empty list if file doesn't exist."""
+    """Load the output blocks list from disk. Returns empty list if file doesn't exist or is malformed."""
     path = _output_blocks_path(instance_dir)
     if not path.exists():
         return []
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return []
     if data is None:
         return []
     return data.get("blocks", [])

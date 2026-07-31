@@ -173,7 +173,10 @@ def _scan_output_blocks(instance_dir: Path) -> str:
         return "当前活跃输出块：无"
 
     import yaml
-    data = yaml.safe_load(blocks_file.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(blocks_file.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return "当前活跃输出块：无（YAML 解析错误）"
     if data is None:
         return "当前活跃输出块：无"
 
