@@ -51,6 +51,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [floorsStats, setFloorsStats] = useState<FloorsStats | null>(null)
 
   // 初始加载 + SSE 监听楼层变化
+  const floorsESRef = useRef<EventSource | null>(null)
   useEffect(() => {
     if (!instId) return
     let stopped = false
@@ -65,6 +66,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const connect = () => {
       if (stopped) return
       const es = new EventSource(`${API_BASE_URL}/events`)
+      floorsESRef.current = es
 
       es.addEventListener("floors_changed", (e: MessageEvent) => {
         try {
@@ -78,12 +80,19 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
       es.onerror = () => {
         es.close()
+        floorsESRef.current = null
         if (!stopped) setTimeout(connect, 3000)
       }
     }
 
     connect()
-    return () => { stopped = true }
+    return () => {
+      stopped = true
+      if (floorsESRef.current) {
+        floorsESRef.current.close()
+        floorsESRef.current = null
+      }
+    }
   }, [instId, instName])
 
   // 启动时清理已删除实例的会话缓存

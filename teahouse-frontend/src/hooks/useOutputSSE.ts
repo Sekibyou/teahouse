@@ -36,6 +36,8 @@ export function useOutputSSE({
   const callbacksRef = useRef({ onAppend, onReplace, onDelete })
   callbacksRef.current = { onAppend, onReplace, onDelete }
 
+  const esRef = useRef<EventSource | null>(null)
+
   useEffect(() => {
     if (!instanceId) return
 
@@ -45,6 +47,7 @@ export function useOutputSSE({
       if (stopped) return
 
       const es = new EventSource(`${API_BASE_URL}/events`)
+      esRef.current = es
       const handler = (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
@@ -83,6 +86,7 @@ export function useOutputSSE({
 
       es.onerror = () => {
         es.close()
+        esRef.current = null
         if (!stopped) {
           setTimeout(connect, 3000)
         }
@@ -93,6 +97,10 @@ export function useOutputSSE({
 
     return () => {
       stopped = true
+      if (esRef.current) {
+        esRef.current.close()
+        esRef.current = null
+      }
     }
   }, [instanceId, instanceName])
 }
