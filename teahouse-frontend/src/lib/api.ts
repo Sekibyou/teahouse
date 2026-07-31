@@ -348,13 +348,13 @@ export const gitApi = {
 // Output blocks API
 export const outputBlocksApi = {
   list: async (instanceId: string) => {
-    return get<{ blocks: { uuid: string; label: string; note: string }[] }>(
+    return get<{ blocks: { uuid: string; label: string; note: string; content: string; content_type: string }[] }>(
       `/api/instances/${instanceId}/output-blocks`
     )
   },
 
   get: async (instanceId: string, uuid: string) => {
-    return get<{ uuid: string; label: string; note: string; content: string; rendered: string }>(
+    return get<{ uuid: string; label: string; note: string; content: string; content_type: string }>(
       `/api/instances/${instanceId}/output-blocks/${uuid}`
     )
   },

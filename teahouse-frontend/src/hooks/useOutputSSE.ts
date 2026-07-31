@@ -6,7 +6,7 @@ export interface OutputBlock {
   uuid: string
   label: string
   note: string
-  rendered: string
+  content?: string
   content_type?: ContentType
 }
 
@@ -58,7 +58,7 @@ export function useOutputSSE({
               uuid: data.uuid,
               label: data.label,
               note: data.note,
-              rendered: data.rendered,
+              content: data.content,
               content_type: data.content_type,
             })
           } else if (e.type === "output.replace") {
@@ -66,7 +66,7 @@ export function useOutputSSE({
               uuid: data.uuid,
               label: data.label,
               note: data.note,
-              rendered: data.rendered,
+              content: data.content,
               content_type: data.content_type,
             })
           } else if (e.type === "output.delete") {

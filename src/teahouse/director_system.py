@@ -142,63 +142,6 @@ def _scan_skills(instance_dir: Path) -> str:
     return "可用 Skill：\n" + "\n".join(entries)
 
 
-def _get_rendered_line_spans(instance_dir: Path) -> dict[str, tuple[int, int]]:
-    """Get line number spans for each block in output-rendered.txt.
-    Returns {uuid: (start_line, end_line)} (1-indexed, inclusive).
-    """
-    rendered_file = instance_dir / ".teahouse" / "output-rendered.txt"
-    if not rendered_file.exists():
-        return {}
-    spans = {}
-    for i, line in enumerate(rendered_file.read_text(encoding="utf-8").splitlines(), 1):
-        if line.startswith("<") and not line.startswith("</") and line.endswith(">"):
-            uuid = line[1:-1]
-            spans[uuid] = [i, None]
-        elif line.startswith("</") and line.endswith(">"):
-            uuid = line[2:-1]
-            if uuid in spans:
-                spans[uuid][1] = i
-    return {k: (v[0], v[1]) for k, v in spans.items() if v[1] is not None}
-
-
-def _scan_output_blocks(instance_dir: Path) -> str:
-    """Read .teahouse/output-blocks.yaml and build a summary for the system prompt.
-
-    Includes uuid, label, note, content_type, and (if present) rendered line spans
-    from output-rendered.txt so the director can Read specific sections.
-    """
-    teahouse_dir = instance_dir / ".teahouse"
-    blocks_file = teahouse_dir / "output-blocks.yaml"
-    if not blocks_file.exists():
-        return "当前活跃输出块：无"
-
-    import yaml
-    try:
-        data = yaml.safe_load(blocks_file.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return "当前活跃输出块：无（YAML 解析错误）"
-    if data is None:
-        return "当前活跃输出块：无"
-
-    blocks = data.get("blocks", [])
-    if not blocks:
-        return "当前活跃输出块：无"
-
-    # Load rendered line spans for blocks with placeholders
-    spans = _get_rendered_line_spans(instance_dir)
-
-    lines = ["当前活跃输出块（详情见 output-blocks.yaml / output-rendered.txt）："]
-    for b in blocks:
-        uuid = b["uuid"]
-        ct = b.get("content_type", "rich_text")
-        base = f"  - uuid: {uuid} | label: {b['label']} | type: {ct} | note: {b['note']}"
-        if uuid in spans:
-            s, e = spans[uuid]
-            base += f" | rendered: L{s}-L{e}"
-        lines.append(base)
-    return "\n".join(lines)
-
-
 def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> str:
     """Assemble the full system prompt for the Director.
 
@@ -206,7 +149,7 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     and skill routing. It is the author's primary customization point.
 
     Then behavior.md, tools usage guide, instance directory listing,
-    skills catalogue, and output blocks list.
+    and skills catalogue.
     """
     parts: list[str] = []
 
@@ -233,9 +176,5 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     # 5. Skills catalogue (name + description from SKILL.md)
     skills = _scan_skills(instance_dir)
     parts.append(f"————可用 Skill 列表开始————\n\n{skills}\n\n————可用 Skill 列表结束————")
-
-    # 6. Output blocks list
-    blocks = _scan_output_blocks(instance_dir)
-    parts.append(f"————活跃输出块列表开始————\n\n{blocks}\n\n————活跃输出块列表结束————")
 
     return "\n\n".join(parts)

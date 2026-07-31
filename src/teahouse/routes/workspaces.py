@@ -683,7 +683,7 @@ async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_
     blocks = _load_output_blocks(instance_dir)
     return {
         "blocks": [
-            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content_type": b.get("content_type", "rich_text")}
+            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content": b.get("content", ""), "content_type": b.get("content_type", "rich_text")}
             for b in blocks
         ]
     }
@@ -691,29 +691,28 @@ async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_
 
 @router.get("/instances/{instance_id}/output-blocks/{uuid}")
 async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends(require_user)):
-    """Get a single output block's full data (content, rendered, label, note)."""
+    """Get a single output block with resolved content."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    from ..tools import _load_output_blocks, _load_rendered
+    from ..tools import _load_output_blocks
     from ..placeholder import resolve_placeholders
     blocks = _load_output_blocks(instance_dir)
-    rendered_map = _load_rendered(instance_dir)
     for b in blocks:
         if b["uuid"] == uuid:
-            if uuid in rendered_map:
-                rendered = rendered_map[uuid]
-            else:
-                rendered = resolve_placeholders(b["content"], instance_dir)
+            content_template = b["content"]
+            try:
+                resolved = resolve_placeholders(content_template, instance_dir)
+            except Exception:
+                resolved = content_template
             return {
                 "uuid": b["uuid"],
                 "label": b["label"],
                 "note": b["note"],
-                "content": b["content"],
-                "rendered": rendered,
+                "content": resolved,
                 "content_type": b.get("content_type", "rich_text"),
             }
     raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")

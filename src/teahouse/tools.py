@@ -547,98 +547,62 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Output tool executor — manages .teahouse/output-blocks.yaml
+# Output tool executor — manages .teahouse/output-blocks.jsonl
 # ---------------------------------------------------------------------------
 
 TEHOUSE_DIR = ".teahouse"
-OUTPUT_BLOCKS_FILE = "output-blocks.yaml"
-OUTPUT_RENDERED_FILE = "output-rendered.txt"
+OUTPUT_BLOCKS_FILE = "output-blocks.jsonl"
 TEXT_STYLE_RULES_FILE = "text-style-rules.yaml"
 
 
 def _output_blocks_path(instance_dir: Path) -> Path:
-    """Get the path to output-blocks.yaml, ensuring .teahouse/ exists."""
+    """Get the path to output-blocks.jsonl, ensuring .teahouse/ exists."""
     teahouse_dir = instance_dir / TEHOUSE_DIR
     teahouse_dir.mkdir(parents=True, exist_ok=True)
     return teahouse_dir / OUTPUT_BLOCKS_FILE
 
 
-def _output_rendered_path(instance_dir: Path) -> Path:
-    """Get the path to output-rendered.txt, ensuring .teahouse/ exists."""
-    teahouse_dir = instance_dir / TEHOUSE_DIR
-    teahouse_dir.mkdir(parents=True, exist_ok=True)
-    return teahouse_dir / OUTPUT_RENDERED_FILE
-
-
 def _load_output_blocks(instance_dir: Path) -> list[dict]:
-    """Load the output blocks list from disk. Returns empty list if file doesn't exist or is malformed."""
-    path = _output_blocks_path(instance_dir)
-    if not path.exists():
-        return []
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return []
-    if data is None:
-        return []
-    return data.get("blocks", [])
+    """Load output blocks from JSONL. Falls back to legacy YAML, auto-migrating."""
+    jsonl_path = _output_blocks_path(instance_dir)
+    yaml_path = instance_dir / TEHOUSE_DIR / "output-blocks.yaml"
+
+    # 1. Try JSONL first (new format)
+    if jsonl_path.exists():
+        blocks = []
+        for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                blocks.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return blocks
+
+    # 2. Fall back to YAML (legacy), auto-migrate
+    if yaml_path.exists():
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError:
+            return []
+        if data is None:
+            return []
+        blocks = data.get("blocks", [])
+        _save_output_blocks(instance_dir, blocks)
+        return blocks
+
+    return []
 
 
 def _save_output_blocks(instance_dir: Path, blocks: list[dict]) -> None:
-    """Save the output blocks list to disk (metadata only, no rendered)."""
+    """Save output blocks to JSONL (one JSON record per line)."""
     path = _output_blocks_path(instance_dir)
-    clean = []
+    lines = []
     for b in blocks:
         entry = {k: v for k, v in b.items() if k != "rendered"}
-        clean.append(entry)
-    content = yaml.dump({"blocks": clean}, allow_unicode=True, default_flow_style=False)
-    path.write_text(content, encoding="utf-8")
-
-
-def _load_rendered(instance_dir: Path) -> dict[str, str]:
-    """Load rendered content from output-rendered.txt. Returns {uuid: rendered_text, ...}."""
-    path = _output_rendered_path(instance_dir)
-    if not path.exists():
-        return {}
-    result = {}
-    text = path.read_text(encoding="utf-8")
-    for m in _re.finditer(r'<([a-f0-9]+)>\n(.*?)\n</\1>', text, _re.DOTALL):
-        result[m.group(1)] = m.group(2)
-    return result
-
-
-def _save_rendered(instance_dir: Path, rendered: dict[str, str]) -> None:
-    """Save rendered content to output-rendered.txt in <uuid>...</uuid> format."""
-    path = _output_rendered_path(instance_dir)
-    if not rendered:
-        if path.exists():
-            path.unlink()
-        return
-    parts = []
-    for uuid in sorted(rendered.keys()):
-        parts.append(f"<{uuid}>\n{rendered[uuid]}\n</{uuid}>")
-    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
-
-
-
-
-
-
-def _has_placeholder(content: str) -> bool:
-    """Check if content string contains {{...}} placeholder syntax."""
-    return "{{" in content and "}}" in content
-
-
-def _update_rendered_for_block(instance_dir: Path, uuid: str, content_template: str, rendered: str) -> None:
-    """Update or remove a single block's rendered entry.
-    Only persists if content has placeholders; otherwise removes the entry.
-    """
-    all_rendered = _load_rendered(instance_dir)
-    if _has_placeholder(content_template):
-        all_rendered[uuid] = rendered
-    else:
-        all_rendered.pop(uuid, None)
-    _save_rendered(instance_dir, all_rendered)
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +632,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
     """Manage output blocks: append, replace, or delete.
 
     content supports {{path}} placeholder syntax for referencing file content.
+    Placeholders are resolved at persist time for SSE/API; the template is stored in JSONL.
     instance_id is the DB UUID for SSE broadcast filtering.
     """
     mode = args["mode"]
@@ -679,9 +644,9 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
     blocks = _load_output_blocks(instance_dir)
 
     if mode == "append":
-        # Resolve placeholders to produce rendered text
+        # Resolve placeholders for SSE/frontend consumption
         try:
-            rendered = resolve_placeholders(content_template, instance_dir)
+            resolved = resolve_placeholders(content_template, instance_dir)
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
@@ -696,14 +661,11 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         blocks.append(block)
         _save_output_blocks(instance_dir, blocks)
 
-        # Only persist rendered if content has placeholders
-        _update_rendered_for_block(instance_dir, block_uuid, content_template, rendered)
-
         state.broadcast("output.append", {
             "uuid": block_uuid,
             "label": label,
             "note": note,
-            "rendered": rendered,
+            "content": resolved,
             "content_type": content_type,
             "instance_id": instance_id or instance_dir.name,
         })
@@ -713,7 +675,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
             f"  uuid: {block_uuid}\n"
             f"  label: {label}\n"
             f"  note: {note}\n"
-            f"  rendered 长度: {len(rendered)} 字符"
+            f"  content_type: {content_type}"
         )
 
     elif mode == "replace":
@@ -721,17 +683,16 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         if not target_uuid:
             return "Error: replace 模式需要 target_uuid 参数"
 
-        # Find the block
         idx = None
         for i, b in enumerate(blocks):
             if b["uuid"] == target_uuid:
                 idx = i
                 break
         if idx is None:
-            return f"Error: 未找到 uuid={target_uuid} 的输出块。可用 uuid 请参考系统提示词中的输出块列表。"
+            return f"Error: 未找到 uuid={target_uuid} 的输出块。可用 Grep 工具查询 .teahouse/output-blocks.jsonl。"
 
         try:
-            rendered = resolve_placeholders(content_template, instance_dir)
+            resolved = resolve_placeholders(content_template, instance_dir)
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
@@ -741,13 +702,11 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         blocks[idx]["content_type"] = content_type
         _save_output_blocks(instance_dir, blocks)
 
-        _update_rendered_for_block(instance_dir, target_uuid, content_template, rendered)
-
         state.broadcast("output.replace", {
             "uuid": target_uuid,
             "label": label,
             "note": note,
-            "rendered": rendered,
+            "content": resolved,
             "content_type": content_type,
             "instance_id": instance_id or instance_dir.name,
         })
@@ -757,7 +716,7 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
             f"  uuid: {target_uuid}\n"
             f"  label: {label}\n"
             f"  note: {note}\n"
-            f"  rendered 长度: {len(rendered)} 字符"
+            f"  content_type: {content_type}"
         )
 
     elif mode == "delete":
@@ -776,12 +735,6 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         removed = blocks[idx]
         del blocks[idx]
         _save_output_blocks(instance_dir, blocks)
-
-        # Remove rendered entry if present
-        all_rendered = _load_rendered(instance_dir)
-        if target_uuid in all_rendered:
-            del all_rendered[target_uuid]
-            _save_rendered(instance_dir, all_rendered)
 
         state.broadcast("output.delete", {
             "uuid": target_uuid,
@@ -1024,129 +977,6 @@ async def execute_git_log(instance_dir: Path, args: dict[str, Any]) -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"查看提交历史失败: {e}"
-
-
-# ---------------------------------------------------------------------------
-# Output-rendered file watcher — auto-refresh when referenced files change
-# ---------------------------------------------------------------------------
-
-# Track watchers per instance to avoid duplicates
-_watchers: dict[str, dict[str, object]] = {}  # instance_dir_name -> {task, mtimes}
-_WATCHER_INTERVAL = 3  # seconds between polls
-
-
-def _parse_file_refs(content_template: str) -> list[str]:
-    """Extract file paths referenced by {{path}} placeholders (not glob: patterns)."""
-    refs = []
-    for m in _re.finditer(r'\{\{(.+?)\}\}', content_template):
-        raw = m.group(1).strip()
-        if raw.startswith("glob:"):
-            continue
-        # Extract file path before any : or |
-        colon_pos = raw.find(":")
-        if colon_pos != -1:
-            file_path = raw[:colon_pos].strip()
-        else:
-            pipe_pos = raw.find("|")
-            if pipe_pos != -1:
-                file_path = raw[:pipe_pos].strip()
-            else:
-                file_path = raw.strip()
-        if file_path:
-            refs.append(file_path)
-    return refs
-
-
-async def _watch_rendered(instance_dir: Path, instance_id: str) -> None:
-    """Background task: poll referenced files for changes and refresh rendered + SSE."""
-    teahouse_dir_name = str(instance_dir.resolve())
-
-    while True:
-        await asyncio.sleep(_WATCHER_INTERVAL)
-
-        blocks = _load_output_blocks(instance_dir)
-        if not blocks:
-            continue
-
-        rendered_map = _load_rendered(instance_dir)
-        changed = False
-
-        for b in blocks:
-            content = b.get("content", "")
-            if not _has_placeholder(content):
-                continue
-
-            refs = _parse_file_refs(content)
-            if not refs:
-                continue
-
-            # Check if any referenced file has changed
-            newest_mtime = 0
-            for ref in refs:
-                ref_path = instance_dir / ref
-                try:
-                    if ref_path.exists():
-                        mtime = ref_path.stat().st_mtime
-                        if mtime > newest_mtime:
-                            newest_mtime = mtime
-                except OSError:
-                    pass
-
-            if newest_mtime == 0:
-                continue
-
-            # Check stored mtime
-            watcher_key = b["uuid"]
-            prev_mtime = _watchers.get(teahouse_dir_name, {}).get("mtimes", {}).get(watcher_key, 0)  # type: ignore
-
-            if newest_mtime > prev_mtime:
-                # Re-render
-                try:
-                    new_rendered = resolve_placeholders(content, instance_dir)
-                except Exception:
-                    continue
-
-                rendered_map[b["uuid"]] = new_rendered
-                _save_rendered(instance_dir, rendered_map)
-
-                # Store new mtime
-                _watchers.setdefault(teahouse_dir_name, {}).setdefault("mtimes", {})[watcher_key] = newest_mtime  # type: ignore
-
-                # Broadcast SSE
-                state.broadcast("output.replace", {
-                    "uuid": b["uuid"],
-                    "label": b["label"],
-                    "note": b["note"],
-                    "rendered": new_rendered,
-                    "content_type": b.get("content_type", "rich_text"),
-                    "instance_id": instance_id,
-                })
-                changed = True
-
-        if changed:
-            # Update all mtimes
-            pass
-
-
-def start_rendered_watcher(instance_dir: Path, instance_id: str) -> None:
-    """Start a background watcher for an instance's output-rendered file.
-    Safe to call multiple times — only one watcher per instance.
-    """
-    teahouse_dir_name = str(instance_dir.resolve())
-    if teahouse_dir_name in _watchers and "task" in _watchers[teahouse_dir_name]:
-        return  # Already watching
-
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(_watch_rendered(instance_dir, instance_id))
-    _watchers.setdefault(teahouse_dir_name, {})["task"] = task
-
-
-def stop_rendered_watcher(instance_dir: Path) -> None:
-    """Stop the background watcher for an instance."""
-    teahouse_dir_name = str(instance_dir.resolve())
-    info = _watchers.pop(teahouse_dir_name, None)
-    if info and "task" in info:
-        info["task"].cancel()
 
 
 # ---------------------------------------------------------------------------

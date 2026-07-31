@@ -21,7 +21,7 @@ interface SandboxManagerProps {
 /**
  * Lifecycle:
  * 1. On mount / blocks change: detect bootstrap_js block
- * 2. Fetch full rendered content for bootstrap + css + ui_js + scene_js blocks
+ * 2. Fetch file content for bootstrap + css + ui_js blocks via readFile
  * 3. Build srcdoc with ALL code injected, set on iframe
  * 4. Sandbox boots → sends {_type: "ready"} → host marks ready
  * 5. Host forwards SSE events into sandbox via postMessage
@@ -53,9 +53,20 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
   const bootstrapBlock = blocks.find((b) => b.content_type === "bootstrap_js")
   const cssBlocks = blocks.filter((b) => b.content_type === "css")
   const uiBlocks = blocks.filter((b) => b.content_type === "ui_js")
-  const sceneBlock = blocks.find((b) => b.content_type === "scene_js")
 
-  // ---- Phase 1: Fetch full rendered content for code blocks, build srcdoc ----
+  // ---- Fetch resolved content for a block (code or rich_text) ----
+  const fetchContent = useCallback(async (block: OutputBlock): Promise<string> => {
+    // SSE delivers resolved content directly
+    if (block.content && !block.content.startsWith("{{")) return block.content
+    // Fallback: fetch from API (which resolves on the server)
+    if (instanceId) {
+      const res = await outputBlocksApi.get(instanceId, block.uuid)
+      if (res.ok && res.data) return res.data.content
+    }
+    return ""
+  }, [instanceId])
+
+  // ---- Phase 1: Fetch code file content for blocks, build srcdoc ----
 
   useEffect(() => {
     if (!instanceId || !bootstrapBlock) {
@@ -66,45 +77,32 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     let cancelled = false
 
     async function build() {
-      // Fetch full data for each code block (list API only gives summary, no rendered)
-      const fetchRendered = async (block: OutputBlock): Promise<string> => {
-        if (block.rendered) return block.rendered
-        const res = await outputBlocksApi.get(instanceId!, block.uuid)
-        if (res.ok && res.data) return res.data.rendered
-        return block.rendered || ""
-      }
-
-      const bootstrapRendered = await fetchRendered(bootstrapBlock!)
+      // Fetch code content for each code block via readFile
+      const bootstrapCode = await fetchContent(bootstrapBlock!)
       if (cancelled) return
 
       // Fetch CSS blocks
-      const cssRendered = await Promise.all(
-        cssBlocks.map((b) => fetchRendered(b))
+      const cssCode = await Promise.all(
+        cssBlocks.map((b) => fetchContent(b))
       )
       if (cancelled) return
 
       // Fetch UI JS blocks
-      const uiRendered = await Promise.all(
-        uiBlocks.map((b) => fetchRendered(b))
+      const uiCode = await Promise.all(
+        uiBlocks.map((b) => fetchContent(b))
       )
       if (cancelled) return
 
-      // Fetch scene JS block (injected into srcdoc so it's immediately available)
-      const sceneRendered = sceneBlock ? await fetchRendered(sceneBlock) : null
-      if (cancelled) return
-
       // Gather all styles: theme CSS + BBCode animation CSS
-      const allStyles = [...cssRendered, getBBCodeAnimationCSS()]
+      const allStyles = [...cssCode, getBBCodeAnimationCSS()]
 
       // Gather all scripts:
       // 1. postMessage bridge (inline)
       // 2. bootstrap.js
-      // 3. scene.js (if present)
-      // 4. ui_js blocks
+      // 3. ui_js blocks
       const scriptTags = [
-        bootstrapRendered,
-        sceneRendered,
-        ...uiRendered,
+        bootstrapCode,
+        ...uiCode,
       ].filter(Boolean).map((s) => `<script>${s}</script>`).join("\n")
 
       const styleTags = allStyles
@@ -151,7 +149,7 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
 
     build()
     return () => { cancelled = true }
-  }, [instanceId, bootstrapBlock?.uuid, sceneBlock?.uuid, cssBlocks.length, uiBlocks.length])
+  }, [instanceId, bootstrapBlock?.uuid, cssBlocks.length, uiBlocks.length, fetchContent])
 
   // ---- Phase 2: Set srcdoc on iframe ----
 
@@ -225,12 +223,6 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
           }
           break
         }
-        case "activateScene": {
-          // scene_js is already embedded in srcdoc and self-executes.
-          // This is a no-op on the host; just acknowledge.
-          result = true
-          break
-        }
       }
 
       iframe.contentWindow?.postMessage({ _callId, _result: result }, "*")
@@ -259,7 +251,6 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
       // Initial full sync: push all blocks once (skip code types embedded in srcdoc)
       for (const block of blocks) {
         if (block.content_type === "bootstrap_js" ||
-            block.content_type === "scene_js" ||
             block.content_type === "css" ||
             block.content_type === "ui_js") {
           continue
@@ -276,7 +267,6 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     const current = new Map(blocks
       .filter(b =>
         b.content_type !== "bootstrap_js" &&
-        b.content_type !== "scene_js" &&
         b.content_type !== "css" &&
         b.content_type !== "ui_js"
       )
@@ -286,7 +276,7 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     for (const [uuid, block] of current) {
       if (!prev.has(uuid)) {
         sendToSandbox("output.append", block)
-      } else if (prev.get(uuid)!.rendered !== block.rendered || prev.get(uuid)!.note !== block.note) {
+      } else if (prev.get(uuid)!.content !== block.content || prev.get(uuid)!.note !== block.note) {
         sendToSandbox("output.replace", block)
       }
     }
@@ -357,13 +347,13 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     if (epBlocks.length > 0) {
       ;(async () => {
         if (!instanceId) return
-        const res = await outputBlocksApi.get(instanceId, epBlocks[0].uuid)
-        if (res.ok && res.data) {
-          setFallbackContent(renderText(res.data.rendered, textStyleRules))
+        const content = await fetchContent(epBlocks[0])
+        if (content) {
+          setFallbackContent(renderText(content, textStyleRules))
         }
       })()
     }
-  }, [bootstrapBlock, blocks, isEmpty, instanceId, textStyleRules])
+  }, [bootstrapBlock, blocks, isEmpty, instanceId, textStyleRules, fetchContent])
 
   // ---- Render ----
 

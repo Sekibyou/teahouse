@@ -185,24 +185,6 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
     elif source_path.is_dir():
         _copy_dir(source_path, target_dir)
 
-    # Resolve {{path}} placeholders in .teahouse/output-blocks.yaml
-    blocks_yaml = target_dir / ".teahouse" / "output-blocks.yaml"
-    if blocks_yaml.exists():
-        from ..placeholder import resolve_placeholders
-        from ..tools import _load_output_blocks, _save_output_blocks, _load_rendered, _save_rendered
-        import yaml as _yaml
-        blocks = _load_output_blocks(target_dir)
-        rendered_map = _load_rendered(target_dir)
-        for b in blocks:
-            content = b.get("content", "")
-            if "{{" in content and "}}" in content:
-                try:
-                    rendered_map[b["uuid"]] = resolve_placeholders(content, target_dir)
-                except Exception:
-                    rendered_map[b["uuid"]] = content
-        _save_output_blocks(target_dir, blocks)
-        _save_rendered(target_dir, rendered_map)
-
     # Initialize git repository for the instance
     try:
         git_init(target_dir)

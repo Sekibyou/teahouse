@@ -73,7 +73,7 @@ export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelPro
           uuid: b.uuid,
           label: b.label,
           note: b.note,
-          rendered: "",
+          content: b.content,
           content_type: (b.content_type ?? "rich_text") as ContentType,
         }))
         setBlocks(initial)
@@ -168,7 +168,6 @@ export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelPro
 function contentTypeLabel(ct: string): string {
   switch (ct) {
     case "bootstrap_js": return "BS"
-    case "scene_js": return "SCN"
     case "ui_js": return "UI"
     case "css": return "CSS"
     case "rich_text": return "RT"
@@ -208,7 +207,7 @@ function OutputBlockRow({
       <span className="truncate opacity-60">{block.note}</span>
       <span className="ml-auto text-[10px] opacity-40 shrink-0 flex items-center gap-1">
         <span>{ctLabel}</span>
-        <span>{block.rendered ? `${block.rendered.length}c` : "..."}</span>
+        <span>{block.content ? `${block.content.length}c` : "..."}</span>
       </span>
     </div>
   )
