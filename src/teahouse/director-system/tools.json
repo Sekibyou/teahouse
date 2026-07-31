@@ -211,5 +211,17 @@
       },
       "required": ["content", "label", "note", "mode"]
     }
+  },
+  {
+    "name": "SlowTest",
+    "description": "测试工具：等待 2 秒后返回 OK。用于验证前端的工具调用渲染效果。",
+    "usage": "等待 2 秒后返回 OK。\n\n参数：\n- `description`（必填）：简单描述本次测试场景。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "description": {"type": "string", "description": "简单描述本次测试场景"}
+      },
+      "required": ["description"]
+    }
   }
 ]

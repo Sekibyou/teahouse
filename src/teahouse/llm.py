@@ -307,6 +307,168 @@ class LLMClient:
                     elif current_event == "message_stop":
                         break
 
+    async def send_message_stream_tools(
+        self,
+        messages: list[dict],
+        system: str | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[dict, None]:
+        """Streaming call that yields tool_call events as they arrive.
+
+        Yields:
+          {"type": "text", "text": str}      — text chunks (also sends empty text on first chunk for heartbeat)
+          {"type": "tool_calls", "calls": [...]}  — once all tool call fragments are assembled (end of stream)
+        """
+        body = self._request_body(messages, system, stream=True, **kwargs)
+
+        if self.api_style == "anthropic":
+            async for event in self._stream_anthropic_tools(body):
+                yield event
+        else:
+            async for event in self._stream_openai_tools(body):
+                yield event
+
+    async def _stream_openai_tools(self, body: dict) -> AsyncGenerator[dict, None]:
+        """Stream OpenAI response, accumulating tool_call fragments. Yields text chunks and final tool_calls."""
+        tool_call_acc: dict[int, dict] = {}
+        first_chunk = True
+
+        async with httpx.AsyncClient(timeout=300) as client:
+            async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
+                if resp.status_code >= 400:
+                    text = await resp.aread()
+                    raise LLMError(f"API error ({resp.status_code}): {text[:200]}")
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices", [])
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta", {})
+
+                    # Send empty heartbeat on first chunk so frontend switches from waiting to generating
+                    if first_chunk:
+                        first_chunk = False
+                        yield {"type": "text", "text": ""}
+
+                    # Text content
+                    text = delta.get("content", "")
+                    if text:
+                        yield {"type": "text", "text": text}
+
+                    # Reasoning
+                    reasoning = delta.get("reasoning_content", "")
+                    if reasoning:
+                        yield {"type": "reasoning", "text": reasoning}
+
+                    # Tool call fragments
+                    tc_deltas = delta.get("tool_calls", [])
+                    for tc_delta in tc_deltas:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in tool_call_acc:
+                            tool_call_acc[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
+                        tc = tool_call_acc[idx]
+                        if tc_delta.get("id"):
+                            tc["id"] = tc_delta["id"]
+                        if tc_delta.get("function", {}).get("name"):
+                            tc["function"]["name"] += tc_delta["function"]["name"]
+                        if tc_delta.get("function", {}).get("arguments"):
+                            frag = tc_delta["function"]["arguments"]
+                            tc["function"]["arguments"] += frag
+                            # Yield as hidden text for frontend token counting only
+                            yield {"type": "text", "text": frag, "tool_args": True}
+
+                # Stream done — yield assembled tool calls if any
+                if tool_call_acc:
+                    calls = [
+                        {"id": tc["id"], "type": "function", "function": tc["function"]}
+                        for tc in sorted(tool_call_acc.values(), key=lambda t: t.get("index", 0))
+                    ]
+                    yield {"type": "tool_calls", "calls": calls}
+
+    async def _stream_anthropic_tools(self, body: dict) -> AsyncGenerator[dict, None]:
+        """Stream Anthropic response, accumulating tool_use blocks. Yields text chunks and final tool_calls."""
+        tool_blocks: dict[int, dict] = {}
+        first_chunk = True
+
+        async with httpx.AsyncClient(timeout=300) as client:
+            async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
+                if resp.status_code >= 400:
+                    text = await resp.aread()
+                    raise LLMError(f"Anthropic API error ({resp.status_code}): {text[:200]}")
+                current_event = None
+                block_types: dict[int, str] = {}
+                block_index = -1
+                async for line in resp.aiter_lines():
+                    if line.startswith("event: "):
+                        current_event = line[7:].strip()
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    data = json.loads(line[6:])
+
+                    if first_chunk:
+                        first_chunk = False
+                        yield {"type": "text", "text": ""}
+
+                    if current_event == "content_block_start":
+                        block_index = data.get("index", block_index + 1)
+                        block_type = data.get("content_block", {}).get("type", "text")
+                        block_types[block_index] = block_type
+                        if block_type == "tool_use":
+                            block = data.get("content_block", {})
+                            tool_blocks[block_index] = {
+                                "id": block.get("id", ""),
+                                "name": block.get("name", ""),
+                                "input": {},
+                            }
+
+                    elif current_event == "content_block_delta":
+                        idx = data.get("index", 0)
+                        delta = data.get("delta", {})
+                        delta_type = delta.get("type", "")
+                        if delta_type == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                block_type = block_types.get(idx, "text")
+                                yield {"type": "reasoning" if block_type == "thinking" else "text", "text": text}
+                        elif delta_type == "thinking_delta":
+                            text = delta.get("thinking", "")
+                            if text:
+                                yield {"type": "reasoning", "text": text}
+                        elif delta_type == "input_json_delta":
+                            partial = delta.get("partial_json", "")
+                            if idx in tool_blocks:
+                                tool_blocks[idx]["input_json"] = (tool_blocks[idx].get("input_json", "") + partial)
+
+                    elif current_event == "message_stop":
+                        break
+
+                if tool_blocks:
+                    calls = []
+                    for idx in sorted(tool_blocks.keys()):
+                        tb = tool_blocks[idx]
+                        args = {}
+                        if tb.get("input_json"):
+                            try:
+                                args = json.loads(tb["input_json"])
+                            except json.JSONDecodeError:
+                                pass
+                        calls.append({
+                            "id": tb["id"],
+                            "type": "function",
+                            "function": {"name": tb["name"], "arguments": json.dumps(args)},
+                        })
+                    yield {"type": "tool_calls", "calls": calls}
+
 
 # ===== Text extraction helpers =====
 

@@ -1,17 +1,5 @@
 import { create } from "zustand"
 
-/**
- * 全局生成状态存储（不持久化）。
- *
- * 为什么需要全局级别：
- * - 刷新页面后 phase 自动回到 "idle"，避免 localStorage 中残留的
- *   pending/streaming 消息显示虚假的"等待中..."等指示器。
- * - 所有指示器基于同一个 store 判断，不会出现不一致。
- *
- * abortReason 用于停止后在下一次 AI 请求时注入中断上下文。
- * 读取后自动清除（消费一次）。
- */
-
 export type GenerationPhase = "idle" | "generating" | "waiting_approval"
 export type AbortReason = "user_interrupted"
 
@@ -24,9 +12,14 @@ export interface ApprovalData {
 export interface GenerationState {
   phase: GenerationPhase
   approvalData: ApprovalData | null
-
-  /** 中断原因（消费后清除） */
   abortReason: AbortReason | null
+
+  /** 生成开始时间戳（ms），用于计算 elapsed */
+  startedAt: number
+  /** 已生成 token 估算数 */
+  tokenCount: number
+  /** 已运行秒数（由外部定时器更新） */
+  elapsed: number
 
   startGenerating: () => void
   waitForApproval: (data: ApprovalData) => void
@@ -34,14 +27,27 @@ export interface GenerationState {
   finishGenerating: () => void
   abort: (reason?: AbortReason) => void
   consumeAbortReason: () => AbortReason | null
+  addTokens: (n: number) => void
+  tickElapsed: () => void
 }
 
 export const useGenerationStore = create<GenerationState>()((set) => ({
   phase: "idle",
   approvalData: null,
   abortReason: null,
+  startedAt: 0,
+  tokenCount: 0,
+  elapsed: 0,
 
-  startGenerating: () => set({ phase: "generating", approvalData: null, abortReason: null }),
+  startGenerating: () =>
+    set({
+      phase: "generating",
+      approvalData: null,
+      abortReason: null,
+      startedAt: Date.now(),
+      tokenCount: 0,
+      elapsed: 0,
+    }),
 
   waitForApproval: (data) => set({ phase: "waiting_approval", approvalData: data }),
 
@@ -61,6 +67,12 @@ export const useGenerationStore = create<GenerationState>()((set) => ({
     if (reason) set({ abortReason: null })
     return reason
   },
+
+  addTokens: (n) =>
+    set((s) => ({ tokenCount: s.tokenCount + n })),
+
+  tickElapsed: () =>
+    set((s) => ({ elapsed: Math.floor((Date.now() - s.startedAt) / 1000) })),
 }))
 
 export function getGenerationPhase(): GenerationPhase {

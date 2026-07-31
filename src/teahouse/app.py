@@ -314,28 +314,22 @@ async def _tool_use_loop(
     user_id: str | None = None,
     instance_id: str | None = None,
 ):
-    """Run tool use loop: call LLM → execute tools → feed back results → repeat until LLM returns text.
+    """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
-    The system prompt is assembled automatically from director-system/ templates,
-    tools.json usage guide, and the instance's teahouse.md.
-
-    Yields SSE-compatible dict events: tool_call, tool_result, then text chunks.
+    Yields SSE-compatible dict events: text, tool_call, tool_result, approval_required.
     """
     api_style = client.api_style
     msg = list(messages)
 
-    # Ensure rendered file watcher is running for this instance
     if instance_id:
         from .tools import start_rendered_watcher
         start_rendered_watcher(instance_dir, instance_id)
 
-    # Load tools from the single source of truth (tools.json)
     tools = load_tools()
     tools_usage = load_tools_usage()
     tool_system = assemble_system_prompt(instance_dir, tools_usage)
 
     def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str):
-        """Feed tool result back into the message list."""
         if style == "anthropic":
             msgs.append({
                 "role": "user",
@@ -345,82 +339,71 @@ async def _tool_use_loop(
             msgs.append({"role": "tool", "tool_call_id": tc_id, "content": result})
 
     for _round in range(MAX_TOOL_ROUNDS):
-        # Call LLM with tools
-        resp = await client.send_message_full(msg, system=tool_system, tools=tools)
+        # ── Phase 1: Streaming LLM call ──
+        collected_text = ""
+        all_tool_calls = None  # stores {"type": "tool_calls", "calls": [...]} when received
 
-        # Check for errors
-        if "error" in resp:
-            yield {"type": "text", "text": f"LLM API error: {resp['error']}"}
+        async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
+            if event["type"] == "text":
+                collected_text += event["text"]
+                yield event  # stream text chunks to frontend
+            elif event["type"] == "reasoning":
+                yield event
+            elif event["type"] == "tool_calls":
+                all_tool_calls = event["calls"]
+            elif "error" in event:
+                yield {"type": "text", "text": f"LLM API error: {event['error']}"}
+                return
+
+        # ── Phase 2: If no tool calls, done ──
+        if not all_tool_calls:
+            # If there was text but no separate text event yielded, yield it now
             return
 
-        # Extract tool calls
-        tool_calls = _extract_tool_calls(resp, api_style)
-
-        # If no tool calls, extract text and yield it
-        if not tool_calls:
-            text = _extract_text(resp, api_style)
-            if text:
-                yield {"type": "text", "text": text}
-            return
-
-        # Add assistant message with tool_calls to the conversation
+        # ── Phase 3: Add assistant message with tool_calls ──
         if api_style == "anthropic":
-            assistant_msg = {"role": "assistant"}
-            # Anthropic: content is list of blocks
-            content_blocks = resp.get("content", [])
-            text_blocks = [b for b in content_blocks if b.get("type") == "text"]
-            text_content = text_blocks[0]["text"] if text_blocks else None
-            # Build content array: text blocks + tool_use blocks
             content_array = []
-            if text_content:
-                content_array.append({"type": "text", "text": text_content})
-            for tc in tool_calls:
+            if collected_text:
+                content_array.append({"type": "text", "text": collected_text})
+            for tc in all_tool_calls:
+                try:
+                    input_json = json.loads(tc["function"]["arguments"])
+                except (json.JSONDecodeError, KeyError):
+                    input_json = {}
                 content_array.append({
                     "type": "tool_use",
                     "id": tc["id"],
                     "name": tc["function"]["name"],
-                    "input": json.loads(tc["function"]["arguments"]),
+                    "input": input_json,
                 })
-            assistant_msg["content"] = content_array
-            msg.append(assistant_msg)
+            msg.append({"role": "assistant", "content": content_array})
         else:
-            # OpenAI format: content must be null when tool_calls present
-            choices = resp.get("choices", [])
-            ai_content = None
-            if choices:
-                msg_data = choices[0].get("message", {})
-                ai_content = msg_data.get("content") or None
-
-            assistant_msg = {
+            ai_content = collected_text if collected_text else None
+            msg.append({
                 "role": "assistant",
                 "content": ai_content,
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": tc["type"],
-                        "function": {
-                            "name": tc["function"]["name"],
-                            "arguments": tc["function"]["arguments"],
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            }
-            msg.append(assistant_msg)
+                "tool_calls": all_tool_calls,
+            })
 
-        # Process each tool call
-        for tc in tool_calls:
+        # ── Phase 4: Yield all tool_call events FIRST, then execute sequentially ──
+        for tc in all_tool_calls:
             tc_id = tc["id"]
             name = tc["function"]["name"]
             try:
                 args = json.loads(tc["function"]["arguments"])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, KeyError):
                 args = {}
-
-            # Yield tool_call event
             yield {"type": "tool_call", "id": tc_id, "name": name, "args": args}
 
-            # For approval-required tools, pause and wait for user confirmation
+        for tc in all_tool_calls:
+            tc_id = tc["id"]
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError):
+                args = {}
+
+            # Approval-required tools
             if name in APPROVAL_REQUIRED_TOOLS:
                 yield {
                     "type": "approval_required",
@@ -440,26 +423,23 @@ async def _tool_use_loop(
 
             # Execute
             result = await execute_tool(name, args, instance_dir, user_id, instance_id)
-
-            # Yield tool_result event
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
-
-            # Feed result back to LLM
             _feed_tool_result(msg, api_style, tc_id, name, result)
 
-    # If we exhausted rounds, notify the LLM so it can summarize or retry
-    # Use role "user" (not "tool") because OpenAI strictly validates that
-    # role "tool" messages MUST be responses to a preceding tool_calls message.
-    # A fake tool_call_id like "__limit__" will cause a 400 error.
+    # Max rounds exhausted
     msg.append({
         "role": "user",
         "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
     })
 
-    resp = await client.send_message_full(msg, system=tool_system, tools=tools)
-    text = _extract_text(resp, api_style)
-    if text:
-        yield {"type": "text", "text": text}
+    async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
+        if event["type"] == "text":
+            yield event
+        elif event["type"] == "reasoning":
+            yield event
+        elif event["type"] == "tool_calls":
+            # If LLM returns tool calls even at max, execute them inline
+            pass
 
 
 @app.post("/v1/chat")

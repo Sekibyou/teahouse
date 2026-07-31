@@ -11,20 +11,23 @@ import { toast } from "sonner"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
 
-interface ToolCallEvent {
-  id: string
-  name: string
-  args: Record<string, unknown>
+interface ContentBlock {
+  type: "text" | "tool_call"
+  text?: string                // type=text 时的文字片段
+  id?: string                  // type=tool_call 时的 call id
+  name?: string                // type=tool_call 时的工具名
+  args?: Record<string, unknown>
   result?: string
 }
 
 interface RichMessage {
   id: string
   role: "user" | "assistant"
-  content: string
+  content: string              // 完整文字内容（向后兼容）
   reasoning: string
   status: MsgStatus
-  toolCalls?: ToolCallEvent[]
+  /** 交错的内容块：text + tool_call 按生成顺序排列 */
+  blocks?: ContentBlock[]
 }
 
 let msgIdCounter = 0
@@ -95,7 +98,6 @@ export function ChatPanel() {
   })
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
-  const latestToolCallsRef = useRef<ToolCallEvent[]>([])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
 
@@ -129,27 +131,35 @@ export function ChatPanel() {
   // Auto-scroll when messages change
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
+  // 生成计时器：每秒 tick
+  useEffect(() => {
+    if (!isStreaming) return
+    const timer = setInterval(() => {
+      useGenerationStore.getState().tickElapsed()
+    }, 250)
+    return () => clearInterval(timer)
+  }, [isStreaming])
+
   const handleStop = useCallback(() => {
     aborterRef.current?.abort()
     useGenerationStore.getState().abort("user_interrupted")
   }, [])
 
-  // 当 phase 变为 idle 时，将所有未收到结果的 tool call 标记为"(interrupted)"
-  // 单向：只从"执行中"→"已中断"，不会因后续 phase 变化而恢复
+  // 当 phase 变为 idle 时，将所有未收到结果的 tool_call block 标记为"(interrupted)"
   useEffect(() => {
     if (genPhase === "idle") {
       setMessages(prev => {
         let changed = false
         const next = prev.map(m => {
-          if (m.role !== "assistant" || !m.toolCalls) return m
-          const updatedCalls = m.toolCalls.map(tc => {
-            if (tc.result === undefined) {
+          if (m.role !== "assistant" || !m.blocks) return m
+          const updatedBlocks = m.blocks.map(b => {
+            if (b.type === "tool_call" && b.result === undefined) {
               changed = true
-              return { ...tc, result: "(interrupted)" }
+              return { ...b, result: "(interrupted)" }
             }
-            return tc
+            return b
           })
-          return changed ? { ...m, toolCalls: updatedCalls } : m
+          return changed ? { ...m, blocks: updatedBlocks } : m
         })
         return changed ? next : prev
       })
@@ -190,7 +200,7 @@ export function ChatPanel() {
     }
 
     const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-    const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", toolCalls: [] }
+    const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
 
     // 中断上下文注入：如果上一条 assistant 未完成，插入 [system] 消息
     const lastMsg = messages[messages.length - 1]
@@ -208,7 +218,6 @@ export function ChatPanel() {
     setInput("")
     setError("")
     useGenerationStore.getState().startGenerating()
-    latestToolCallsRef.current = []
     scrollToBottom()
 
     const abortController = new AbortController()
@@ -260,13 +269,29 @@ export function ChatPanel() {
             const data = JSON.parse(dataStr)
 
             if (currentType === "tool_call") {
-              const tc: ToolCallEvent = { id: data.id, name: data.name, args: data.args }
-              latestToolCallsRef.current = [...latestToolCallsRef.current, tc]
+              // 首次事件：从"等待中"切换到活跃
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsg.id && m.status === "pending"
+                    ? { ...m, status: "streaming" as MsgStatus }
+                    : m
+                )
+              )
+              // 估算 token 数
+              useGenerationStore.getState().addTokens(
+                Math.ceil((data.name + JSON.stringify(data.args || {})).length / 4)
+              )
+              // 追加 tool_call block
               setMessages((prev) =>
                 prev.map((m) => {
                   if (m.id !== assistantMsg.id) return m
-                  const toolCalls = [...(m.toolCalls || []), tc]
-                  return { ...m, toolCalls }
+                  const blocks = [...(m.blocks || []), {
+                    type: "tool_call" as const,
+                    id: data.id,
+                    name: data.name,
+                    args: data.args,
+                  }]
+                  return { ...m, blocks }
                 })
               )
               scrollToBottom()
@@ -274,44 +299,44 @@ export function ChatPanel() {
             }
 
             if (currentType === "tool_result") {
-              // Update tool call with result
-              latestToolCallsRef.current = latestToolCallsRef.current.map((tc) =>
-                tc.id === data.id ? { ...tc, result: data.result } : tc
+              // 估算 tool result 的 token 数
+              useGenerationStore.getState().addTokens(
+                Math.ceil((data.result || "").length / 4)
               )
+              // 更新对应 tool_call block 的 result
               setMessages((prev) =>
                 prev.map((m) => {
                   if (m.id !== assistantMsg.id) return m
-                  const toolCalls = (m.toolCalls || []).map((tc) =>
-                    tc.id === data.id ? { ...tc, result: data.result } : tc
+                  const blocks = (m.blocks || []).map((b) =>
+                    b.type === "tool_call" && b.id === data.id
+                      ? { ...b, result: data.result }
+                      : b
                   )
-                  return { ...m, toolCalls }
+                  return { ...m, blocks }
                 })
               )
-
               scrollToBottom()
               return
             }
 
             if (currentType === "approval_required") {
               if (autoApproveCommit) {
-                // Auto-approve: send approve request immediately
                 const inst = getActiveInstance()
                 if (inst) {
                   try {
                     await gitApi.approveTool(inst.id, data.id, data.args)
                   } catch { /* ignore */ }
                 }
-                // Mark the tool call with auto-approved result so it shows in UI
-                latestToolCallsRef.current = latestToolCallsRef.current.map((tc) =>
-                  tc.id === data.id ? { ...tc, result: "（自动批准）" } : tc
-                )
+                // 标记对应 block result
                 setMessages((prev) =>
                   prev.map((m) => {
                     if (m.id !== assistantMsg.id) return m
-                    const toolCalls = (m.toolCalls || []).map((tc) =>
-                      tc.id === data.id ? { ...tc, result: "（自动批准）" } : tc
+                    const blocks = (m.blocks || []).map((b) =>
+                      b.type === "tool_call" && b.id === data.id
+                        ? { ...b, result: "（自动批准）" }
+                        : b
                     )
-                    return { ...m, toolCalls }
+                    return { ...m, blocks }
                   })
                 )
                 scrollToBottom()
@@ -326,7 +351,21 @@ export function ChatPanel() {
             }
 
             const chunkText = data.text || ""
-            if (!chunkText) return
+            // Empty chunk or tool_args (hidden): transition off "pending" + count tokens
+            if (!chunkText || data.tool_args) {
+              if (chunkText) {
+                useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
+              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsg.id && m.status === "pending"
+                    ? { ...m, status: "streaming" as MsgStatus }
+                    : m
+                )
+              )
+              if (data.tool_args) return
+              if (!chunkText) return
+            }
 
             if (data.type === "reasoning") {
               setMessages((prev) =>
@@ -337,12 +376,20 @@ export function ChatPanel() {
                 )
               )
             } else {
+              useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? { ...m, status: "streaming" as MsgStatus, content: m.content + chunkText }
-                    : m
-                )
+                prev.map((m) => {
+                  if (m.id !== assistantMsg.id) return m
+                  const blocks = [...(m.blocks || [])]
+                  // 如果最后一块是 text，追加到它；否则新建 text block
+                  const last = blocks[blocks.length - 1]
+                  if (last && last.type === "text") {
+                    blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
+                  } else {
+                    blocks.push({ type: "text", text: chunkText })
+                  }
+                  return { ...m, blocks, content: m.content + chunkText, status: "streaming" as MsgStatus }
+                })
               )
             }
             scrollToBottom()
@@ -494,16 +541,41 @@ export function ChatPanel() {
             <p className="text-xs text-red-500">{error}</p>
           </div>
         )}
+      </div>
 
-        {/* GitCommit approval dialog — inline card in message area */}
-        {pendingApproval && (
-          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 space-y-3">
-            <h4 className="text-sm font-semibold flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-purple-500" />
-              确认 Git 提交
-            </h4>
+      {/* Input */}
+      <div className="p-3 border-t border-border shrink-0 relative">
+        {filteredCommands.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
+            {filteredCommands.map((cmd, i) => (
+              <button
+                key={cmd.name}
+                className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors ${
+                  i === commandIndex ? "bg-accent text-accent-foreground" : "text-popover-foreground"
+                }`}
+                onMouseEnter={() => setCommandIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setInput(cmd.name + " ")
+                  setCommandIndex(0)
+                  inputRef.current?.focus()
+                }}
+              >
+                <span className="font-mono text-primary">{cmd.name}</span>
+                <span className="text-xs text-muted-foreground">{cmd.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {pendingApproval ? (
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-purple-500" />
+                确认 Git 提交
+              </h4>
+            </div>
             <p className="text-xs text-muted-foreground">
-              导演请求提交：<br />
               <span className="font-mono text-foreground text-sm">{formatCommitPreview(pendingApproval.args)}</span>
             </p>
             <div className="flex justify-end gap-2">
@@ -539,55 +611,29 @@ export function ChatPanel() {
               </Button>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Input */}
-      <div className="p-3 border-t border-border shrink-0 relative">
-        {filteredCommands.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
-            {filteredCommands.map((cmd, i) => (
-              <button
-                key={cmd.name}
-                className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors ${
-                  i === commandIndex ? "bg-accent text-accent-foreground" : "text-popover-foreground"
-                }`}
-                onMouseEnter={() => setCommandIndex(i)}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  setInput(cmd.name + " ")
-                  setCommandIndex(0)
-                  inputRef.current?.focus()
-                }}
-              >
-                <span className="font-mono text-primary">{cmd.name}</span>
-                <span className="text-xs text-muted-foreground">{cmd.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2">
-          <textarea
-            ref={inputRef}
-            className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring min-h-[40px] max-h-[120px]"
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={pendingApproval ? "请先确认或拒绝提交请求..." : isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
-            disabled={pendingApproval !== null}
-          />
-          <Button
-            size="icon"
-            className="shrink-0"
-            onClick={isStreaming ? handleStop : handleSend}
-            disabled={pendingApproval !== null || (!isStreaming && !input.trim())}
-            variant={isStreaming ? "destructive" : "default"}
-            title={isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
-          >
+        ) : (
+          <div className="flex gap-2">
+            <textarea
+              ref={inputRef}
+              className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring min-h-[40px] max-h-[120px]"
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
+            />
+            <Button
+              size="icon"
+              className="shrink-0"
+              onClick={isStreaming ? handleStop : handleSend}
+              disabled={!isStreaming && !input.trim()}
+              variant={isStreaming ? "destructive" : "default"}
+              title={isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
+            >
             {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
+        )}
       </div>
     </div>
   )
@@ -597,118 +643,26 @@ export function ChatPanel() {
 
 function AssistantBubble({ message }: { message: RichMessage }) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
-  const [toolCallsOpen, setToolCallsOpen] = useState(true)
 
-  const { status, reasoning, content, toolCalls } = message
-  const hasToolCalls = toolCalls && toolCalls.length > 0
-  const allToolCallsDone = hasToolCalls && toolCalls!.every(tc => tc.result !== undefined)
-  const isGenerating = status !== "done" && hasToolCalls && allToolCallsDone && !content
+  const { status, reasoning, content, blocks } = message
+  const hasBlocks = blocks && blocks.length > 0
 
-  // 如果全局状态为 idle，说明生成已结束（正常完成 / 页面刷新 / 用户停止）
-  // 此时未收到结果的 tool call 应标记为"已中断"而非"执行中..."
   const globalPhase = useGenerationStore((s) => s.phase)
   const isIdle = globalPhase === "idle"
+  const isGlobalGenerating = globalPhase === "generating"
+  const elapsed = useGenerationStore((s) => s.elapsed)
+  const tokenCount = useGenerationStore((s) => s.tokenCount)
+
+  // 此消息是当前正在生成的 assistant（非 done 非 pending，全局 streaming）
+  const isActiveMessage = status !== "done" && status !== "pending" && isGlobalGenerating
 
   return (
     <div className="max-w-[85%] space-y-1">
-      {/* Pending: waiting */}
-      {status === "pending" && !hasToolCalls && (
+      {/* Pending: waiting — no events received yet */}
+      {status === "pending" && isGlobalGenerating && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          {isIdle ? (
-            <>
-              <XCircle className="h-3 w-3 text-muted-foreground/50" />
-              已中断
-            </>
-          ) : (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              等待中...
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Tool calls */}
-      {hasToolCalls && (
-        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-          <button
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
-            onClick={() => setToolCallsOpen(!toolCallsOpen)}
-          >
-            {toolCallsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Terminal className="h-3 w-3" />
-            <span>工具调用</span>
-            <span className="text-[10px] ml-auto">{toolCalls.length} 次</span>
-          </button>
-          {toolCallsOpen && (
-            <div className="border-t border-border divide-y divide-border">
-              {toolCalls.map((tc, i) => (
-                <div key={tc.id} className="px-3 py-2 text-xs space-y-1">
-                  <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <Terminal className="h-3 w-3 shrink-0" />
-                    <span className="font-mono font-medium text-foreground">{tc.name}</span>
-                    <span className="font-mono opacity-60 truncate">
-                      {formatToolArgs(tc)}
-                    </span>
-                  </div>
-                  {tc.result === "(interrupted)" ? (
-                    <div className="flex items-start gap-1.5 text-muted-foreground/50">
-                      <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                      <span>已中断</span>
-                    </div>
-                  ) : tc.result !== undefined ? (
-                    <div className="mt-1">
-                      {tc.name === "TodoWrite" ? (
-                        <TodoWriteResult args={tc.args} result={tc.result} />
-                      ) : tc.result.startsWith("Error") ? (
-                        <div className="flex items-start gap-1.5 text-red-500">
-                          <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                          <span className="font-mono whitespace-pre-wrap">{tc.result}</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-start gap-1.5 text-muted-foreground">
-                          <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
-                          <span className="font-mono whitespace-pre-wrap line-clamp-3">{tc.result}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      {isIdle ? (
-                        <>
-                          <XCircle className="h-3 w-3 text-muted-foreground/50" />
-                          <span>已中断</span>
-                        </>
-                      ) : (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          <span>执行中...</span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Generating: tool calls done, text not yet started */}
-      {isGenerating && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          {isIdle ? (
-            <>
-              <XCircle className="h-3 w-3 text-muted-foreground/50" />
-              <span>已中断</span>
-            </>
-          ) : (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>生成中...</span>
-              <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
-            </>
-          )}
+          <Loader2 className="h-3 w-3 animate-spin" />
+          等待中...
         </div>
       )}
 
@@ -741,32 +695,83 @@ function AssistantBubble({ message }: { message: RichMessage }) {
         </div>
       )}
 
-      {/* Text content */}
-      {(status === "streaming" || status === "done") && content && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert prose-chat max-w-none break-words">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {content}
-          </ReactMarkdown>
-          {status === "streaming" && !isIdle && (
-            <span className="inline-block w-2 h-4 bg-foreground/50 ml-0.5 animate-pulse" />
-          )}
-        </div>
+      {/* Blocks: text + tool_call interleaved in generation order */}
+      {hasBlocks && (
+        <>
+          {blocks!.map((block, i) => {
+            if (block.type === "text" && block.text) {
+              return (
+                <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert prose-chat max-w-none break-words">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {block.text!}
+                  </ReactMarkdown>
+                </div>
+              )
+            }
+            if (block.type === "tool_call") {
+              return (
+                <div key={`tc-${i}`} className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+                  <div className="px-3 py-2 text-xs space-y-1">
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Terminal className="h-3 w-3 shrink-0" />
+                      <span className="font-mono font-medium text-foreground">{block.name}</span>
+                      <span className="font-mono opacity-60 truncate">{formatBlockArgs(block)}</span>
+                    </div>
+                    {block.result === "(interrupted)" ? (
+                      <div className="flex items-start gap-1.5 text-muted-foreground/50">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>已中断</span>
+                      </div>
+                    ) : block.result !== undefined ? (
+                      <div className="mt-1">
+                        {block.name === "TodoWrite" ? (
+                          <TodoWriteResult args={block.args || {}} result={block.result} />
+                        ) : block.result.startsWith("Error") ? (
+                          <div className="flex items-start gap-1.5 text-red-500">
+                            <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <span className="font-mono whitespace-pre-wrap">{block.result}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-1.5 text-muted-foreground">
+                            <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
+                            <span className="font-mono whitespace-pre-wrap line-clamp-3">{block.result}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        {isIdle ? (
+                          <>
+                            <XCircle className="h-3 w-3 text-muted-foreground/50" />
+                            <span>已中断</span>
+                          </>
+                        ) : (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>等待中...</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })}
+        </>
       )}
 
-      {/* Streaming no content yet but past pending (shouldn't happen often) */}
-      {status === "streaming" && !content && !reasoning && !hasToolCalls && (
+      {/* Active generating indicator — at end of current assistant bubble */}
+      {isActiveMessage && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          {isIdle ? (
-            <>
-              <XCircle className="h-3 w-3 text-muted-foreground/50" />
-              已中断
-            </>
-          ) : (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              等待中...
-            </>
-          )}
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>生成中...</span>
+          <span className="text-[10px] text-muted-foreground/60">
+            {elapsed > 0 && `${elapsed}s`}
+            {tokenCount > 0 && `, ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + "k" : tokenCount} tokens`}
+          </span>
+          <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
         </div>
       )}
     </div>
@@ -785,14 +790,15 @@ function formatCommitPreview(args: Record<string, unknown>): string {
 }
 
 /** Format tool call args for compact display */
-function formatToolArgs(tc: ToolCallEvent): string {
-  const args = tc.args
-  if (tc.name === "Read") return args.path as string
-  if (tc.name === "Write") return args.path as string
-  if (tc.name === "Edit") return args.path as string
-  if (tc.name === "WriteLine") return args.path as string
-  if (tc.name === "Glob") return args.pattern as string
-  if (tc.name === "TodoWrite") {
+function formatBlockArgs(block: { args?: Record<string, unknown>; name?: string }): string {
+  const args = block.args || {}
+  const name = block.name || ""
+  if (name === "Read") return args.path as string
+  if (name === "Write") return args.path as string
+  if (name === "Edit") return args.path as string
+  if (name === "WriteLine") return args.path as string
+  if (name === "Glob") return args.pattern as string
+  if (name === "TodoWrite") {
     const todos = (args.todos as Array<{ status: string }>) || []
     if (todos.length === 0) return "（空清单）"
     const done = todos.filter((t) => t.status === "completed").length

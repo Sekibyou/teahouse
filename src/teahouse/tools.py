@@ -1174,6 +1174,16 @@ TOOL_EXECUTORS = {
 }
 
 
+async def execute_slow_test(args: dict[str, Any], instance_dir: Path) -> str:
+    """Wait 2 seconds, then return OK. For testing tool call rendering on the frontend."""
+    import asyncio
+    await asyncio.sleep(2)
+    return "OK"
+
+
+TOOL_EXECUTORS["SlowTest"] = execute_slow_test
+
+
 async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None, instance_id: str | None = None) -> str:
     """Execute a tool by name with the given args. Returns the result text.
 
