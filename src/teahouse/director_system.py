@@ -33,8 +33,17 @@ SKILLS_DIR = "skills"
 TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions"}
 
 
-def _floors_summary(dir_path: Path) -> str:
-    """Build a one-line summary for the floors directory with stats."""
+def get_floors_stats(dir_path: Path) -> dict | None:
+    """Return structured floors statistics, or None if no floors exist.
+
+    dir_path may be either the instance root or the floors/ subdirectory.
+    """
+    # Allow caller to pass either instance root or floors/ directly
+    if dir_path.name != "floors":
+        dir_path = dir_path / "floors"
+    if not dir_path.is_dir():
+        return None
+
     files = sorted([f for f in dir_path.iterdir() if f.is_file() and not f.name.startswith(".")])
     floors = sorted([f for f in files if re.match(r"^floor-\d+\.md$", f.name)])
     sums = sorted([f for f in files if re.match(r"^sum-\d+(-\d+)?\.md$", f.name)])
@@ -46,7 +55,7 @@ def _floors_summary(dir_path: Path) -> str:
     last_sum_end = None
     if sums:
         newest_sum = sums[-1]
-        sum_parts = newest_sum.stem.split("-")[1:]  # ["015", "020"] or ["005"]
+        sum_parts = newest_sum.stem.split("-")[1:]
         if len(sum_parts) == 2:
             last_sum_start = int(sum_parts[0])
             last_sum_end = int(sum_parts[1])
@@ -59,18 +68,35 @@ def _floors_summary(dir_path: Path) -> str:
     elif newest_floor_num and last_sum_end is None:
         unsummarized = newest_floor_num
 
-    parts = []
-    if newest_floor_num:
-        parts.append(f"Latest floor: {newest_floor_num:03d} ({total_floors} floors)")
-    if last_sum_start is not None:
-        if last_sum_start == last_sum_end:
-            parts.append(f"Last summary covered floor {last_sum_start}")
-        else:
-            parts.append(f"Last summary covered floors {last_sum_start}~{last_sum_end}")
-    if unsummarized > 0:
-        parts.append(f"{unsummarized} floors unsummarized")
+    if newest_floor_num is None:
+        return None
 
-    return f"floors/  ({'; '.join(parts)})" if parts else "floors/"
+    return {
+        "latest_floor": newest_floor_num,
+        "total_floors": total_floors,
+        "last_summary_start": last_sum_start,
+        "last_summary_end": last_sum_end,
+        "unsummarized": unsummarized,
+    }
+
+
+def _floors_summary(dir_path: Path) -> str:
+    """Build a one-line summary for the floors directory with stats."""
+    stats = get_floors_stats(dir_path)
+    if stats is None:
+        return "floors/"
+
+    parts = []
+    parts.append(f"Latest floor: {stats['latest_floor']:03d} ({stats['total_floors']} floors)")
+    if stats["last_summary_start"] is not None:
+        if stats["last_summary_start"] == stats["last_summary_end"]:
+            parts.append(f"Last summary covered floor {stats['last_summary_start']}")
+        else:
+            parts.append(f"Last summary covered floors {stats['last_summary_start']}~{stats['last_summary_end']}")
+    if stats["unsummarized"] > 0:
+        parts.append(f"{stats['unsummarized']} floors unsummarized")
+
+    return f"floors/  ({'; '.join(parts)})"
 
 
 def _scan_tree(instance_dir: Path) -> str:

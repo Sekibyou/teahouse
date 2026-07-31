@@ -2,10 +2,11 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import { chatApi, llmSlotsApi, llmModelsApi, instancesApi } from "@/lib/api"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, API_BASE_URL } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
+import type { FloorsStats } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
@@ -43,7 +44,47 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   // 每个实例独立的 localStorage key
   const activeInst = useSessionStore((s) => s.activeInstance)
   const instId = activeInst?.id
+  const instName = activeInst?.name
   const chatKey = instId ? `chat-messages-${instId}` : null
+
+  // 楼层元数据
+  const [floorsStats, setFloorsStats] = useState<FloorsStats | null>(null)
+
+  // 初始加载 + SSE 监听楼层变化
+  useEffect(() => {
+    if (!instId) return
+    let stopped = false
+
+    // 首次通过 refresh API 获取楼层数据
+    gitApi.refresh(instId).then(res => {
+      if (!stopped && res.ok && res.data?.floors) {
+        setFloorsStats({ ...res.data.floors, instance_id: instId })
+      }
+    }).catch(() => {})
+
+    const connect = () => {
+      if (stopped) return
+      const es = new EventSource(`${API_BASE_URL}/events`)
+
+      es.addEventListener("floors_changed", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.instance_id && data.instance_id !== instId && data.instance_id !== instName) return
+          setFloorsStats(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.onerror = () => {
+        es.close()
+        if (!stopped) setTimeout(connect, 3000)
+      }
+    }
+
+    connect()
+    return () => { stopped = true }
+  }, [instId, instName])
 
   // 启动时清理已删除实例的会话缓存
   useEffect(() => {
@@ -131,6 +172,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const saved = localStorage.getItem("teahouse_auto_approve_commit")
     return saved === "true"
   })
+  // Ref to always read the latest autoApproveCommit inside streaming closures
+  const autoApproveCommitRef = useRef(autoApproveCommit)
+  autoApproveCommitRef.current = autoApproveCommit
+  const [approving, setApproving] = useState(false)
 
   // Git state from unified store
   const gitStatus = useGitStore((s) => s.gitStatus)
@@ -200,6 +245,17 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
   // Auto-scroll when messages change
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
+
+  // 布局变化时（tab 栏出现、footer 变化等）滚到底部
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   // 生成计时器：每秒 tick
   useEffect(() => {
@@ -392,27 +448,31 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             }
 
             if (currentType === "approval_required") {
-              if (autoApproveCommit) {
+              if (autoApproveCommitRef.current) {
                 const inst = getActiveInstance()
                 if (inst) {
                   try {
-                    await gitApi.approveTool(inst.id, data.id, data.args)
-                  } catch { /* ignore */ }
+                    const res = await gitApi.approveTool(inst.id, data.id, data.args)
+                    if (res.ok) {
+                      // 标记对应 block result
+                      setMessages((prev) =>
+                        prev.map((m) => {
+                          if (m.id !== assistantMsg.id) return m
+                          const blocks = (m.blocks || []).map((b) =>
+                            b.type === "tool_call" && b.id === data.id
+                              ? { ...b, result: "（自动批准）" }
+                              : b
+                          )
+                          return { ...m, blocks }
+                        })
+                      )
+                      scrollToBottom()
+                      return
+                    }
+                  } catch { /* network error — fall through to manual approval */ }
                 }
-                // 标记对应 block result
-                setMessages((prev) =>
-                  prev.map((m) => {
-                    if (m.id !== assistantMsg.id) return m
-                    const blocks = (m.blocks || []).map((b) =>
-                      b.type === "tool_call" && b.id === data.id
-                        ? { ...b, result: "（自动批准）" }
-                        : b
-                    )
-                    return { ...m, blocks }
-                  })
-                )
-                scrollToBottom()
-                return
+                // Auto-approve failed — fall through to manual approval
+                toast.error("自动提交失败，请手动确认")
               }
               useGenerationStore.getState().waitForApproval({
                 id: data.id,
@@ -690,13 +750,19 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               <Button
                 variant="outline"
                 size="sm"
+                disabled={approving}
                 onClick={async () => {
                   const data = pendingApproval
-                  useGenerationStore.getState().resolveApproval(false)
+                  setApproving(true)
                   const inst = getActiveInstance()
-                  if (!inst) return
+                  if (!inst) { setApproving(false); return }
                   const res = await gitApi.rejectTool(inst.id, data.id, "")
-                  if (!res.ok) toast.error("拒绝请求失败")
+                  setApproving(false)
+                  if (!res.ok) {
+                    toast.error("拒绝请求失败")
+                    return
+                  }
+                  useGenerationStore.getState().resolveApproval(false)
                 }}
               >
                 拒绝
@@ -704,18 +770,22 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               <Button
                 variant="default"
                 size="sm"
+                disabled={approving}
                 onClick={async () => {
                   const data = pendingApproval
-                  useGenerationStore.getState().resolveApproval(true)
+                  setApproving(true)
                   const inst = getActiveInstance()
-                  if (!inst) return
+                  if (!inst) { setApproving(false); return }
                   const res = await gitApi.approveTool(inst.id, data.id, data.args)
+                  setApproving(false)
                   if (!res.ok) {
                     toast.error("批准提交失败")
+                    return
                   }
+                  useGenerationStore.getState().resolveApproval(true)
                 }}
               >
-                确认提交
+                {approving ? "提交中..." : "确认提交"}
               </Button>
             </div>
           </div>
@@ -743,6 +813,29 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         </div>
         )}
       </div>
+
+      {/* Floor stats footer */}
+      {floorsStats && floorsStats.latest_floor != null && (
+        <div className="px-3 pb-2 shrink-0">
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>
+              最新楼层: <span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
+              （共 {floorsStats.total_floors} 层{floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
+            </span>
+            {floorsStats.last_summary_start != null ? (
+              <span>
+                | 上次总结: <span className="text-foreground font-mono">
+                  {floorsStats.last_summary_start === floorsStats.last_summary_end
+                    ? `第 ${floorsStats.last_summary_start} 层`
+                    : `第 ${floorsStats.last_summary_start}~${floorsStats.last_summary_end} 层`}
+                </span>
+              </span>
+            ) : (
+              <span>| 当前尚无总结</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Git Dialog */}
       <GitDialog

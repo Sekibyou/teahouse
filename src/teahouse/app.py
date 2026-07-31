@@ -422,6 +422,13 @@ async def _tool_use_loop(
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
             _feed_tool_result(msg, api_style, tc_id, name, result)
 
+        # Broadcast floors stats after each tool round
+        from .director_system import get_floors_stats
+        stats = get_floors_stats(instance_dir)
+        if stats:
+            stats["instance_id"] = instance_dir.name
+            state.broadcast("floors_changed", stats)
+
     # Max rounds exhausted
     msg.append({
         "role": "user",

@@ -193,4 +193,14 @@ export interface TextStyleRule {
 // Output block content types
 export type ContentType = "bootstrap_js" | "ui_js" | "css" | "rich_text" | "text"
 
+// Floors stats from SSE floors_changed event
+export interface FloorsStats {
+  latest_floor: number | null
+  total_floors: number
+  last_summary_start: number | null
+  last_summary_end: number | null
+  unsummarized: number
+  instance_id: string
+}
+
 export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, AppSettings }

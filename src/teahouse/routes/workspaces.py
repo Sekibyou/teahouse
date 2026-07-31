@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..state import state
+from ..director_system import get_floors_stats
 from ..database.auth import UserInfo, validate_token
 from ..database.users import get_user_by_username
 from ..database.connection import fetch_one
@@ -96,6 +97,14 @@ class FileWriteRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 router = APIRouter(prefix="/api", tags=["workspace"])
+
+
+def _broadcast_floors(instance_dir: Path) -> None:
+    """Broadcast floors_changed SSE event with stats from the instance directory."""
+    stats = get_floors_stats(instance_dir)
+    if stats:
+        stats["instance_id"] = instance_dir.name
+        state.broadcast("floors_changed", stats)
 
 
 # ===== Prototypes =====
@@ -808,6 +817,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
     try:
         result = git_commit(instance_dir, git_message)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
+        _broadcast_floors(instance_dir)
 
         if body.type == "floor" and body.number is not None:
             await update_floor_count(instance_id, body.number)
@@ -834,6 +844,8 @@ async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInf
         action = body.action
         if action in ("switch", "create", "delete"):
             state.broadcast("workspace_changed", {"tool": "GitBranch", "action": action, "instance_id": instance_id})
+        if action == "switch":
+            _broadcast_floors(instance_dir)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -906,7 +918,10 @@ async def api_refresh(instance_id: str, user: UserInfo = Depends(require_user)):
     except Exception:
         files = []
 
-    return {"git": git_data, "file_statuses": files}
+    # Floors stats
+    floors_data = get_floors_stats(instance_dir)
+
+    return {"git": git_data, "file_statuses": files, "floors": floors_data}
 
 
 @router.get("/instances/{instance_id}/git/show-file")
@@ -952,6 +967,7 @@ async def api_git_reset(instance_id: str, body: GitResetRequest, user: UserInfo 
         out = git_reset_hard(instance_dir, body.target_hash)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
         state.broadcast("workspace_changed", {"tool": "GitReset", "branch": branch, "instance_id": instance_id})
+        _broadcast_floors(instance_dir)
         return {"status": "ok", "branch": branch, "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1058,12 +1074,14 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
                 _git_run(["checkout", main_branch], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
+            _broadcast_floors(instance_dir)
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交，分支 {body.branch_name} 已清理"}
         else:
             # Rename temp to original branch name
             _git_run(["branch", "-m", body.branch_name], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
+            _broadcast_floors(instance_dir)
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
