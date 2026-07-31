@@ -13,6 +13,8 @@ interface SSERefreshOptions {
   instanceName: string | undefined
 }
 
+const DEBOUNCE_MS = 200
+
 /**
  * Connects to GET /events SSE stream and triggers refresh callbacks
  * when the backend broadcasts file_changed or workspace_changed events
@@ -21,6 +23,10 @@ interface SSERefreshOptions {
  * Filtering: events carry an instance_id field which may be the DB UUID
  * (from routes layer) or the directory name (from tool executors).
  * We accept the event if it matches either.
+ *
+ * Debouncing: rapid successive events (e.g. multiple Write tool calls in
+ * one LLM round) are coalesced — only the last path in the burst is
+ * delivered, and git status is fetched once after the burst settles.
  *
  * Automatically reconnects on disconnect. Cleans up on unmount or
  * instance change.
@@ -32,11 +38,37 @@ export function useSSERefresh({
   instanceName,
 }: SSERefreshOptions) {
   const esRef = useRef<EventSource | null>(null)
+  const fileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFilePathRef = useRef<string>("")
 
   useEffect(() => {
     if (!instanceId) return
 
     let stopped = false
+
+    const debouncedFileChange = (path: string) => {
+      lastFilePathRef.current = path
+      if (fileTimerRef.current) return
+      fileTimerRef.current = setTimeout(() => {
+        fileTimerRef.current = null
+        if (instanceId) {
+          useGitStore.getState().fetchGitStatus(instanceId)
+        }
+        onFileChanged(lastFilePathRef.current)
+      }, DEBOUNCE_MS)
+    }
+
+    const debouncedWorkspaceChange = () => {
+      if (wsTimerRef.current) return
+      wsTimerRef.current = setTimeout(() => {
+        wsTimerRef.current = null
+        if (instanceId) {
+          useGitStore.getState().fetchGitStatus(instanceId)
+        }
+        onWorkspaceChanged()
+      }, DEBOUNCE_MS)
+    }
 
     const connect = () => {
       if (stopped) return
@@ -49,11 +81,7 @@ export function useSSERefresh({
           const data = JSON.parse(e.data)
           const id = data.instance_id
           if (id && id !== instanceId && id !== instanceName) return
-          // Update git store on file changes
-          if (instanceId) {
-            useGitStore.getState().fetchGitStatus(instanceId)
-          }
-          onFileChanged(data.path || "")
+          debouncedFileChange(data.path || "")
         } catch {
           // ignore malformed events
         }
@@ -64,13 +92,9 @@ export function useSSERefresh({
           const data = JSON.parse(e.data)
           const id = data.instance_id
           if (id && id !== instanceId && id !== instanceName) return
-          // Update git store on workspace changes
-          if (instanceId) {
-            useGitStore.getState().fetchGitStatus(instanceId)
-          }
-          onWorkspaceChanged()
+          debouncedWorkspaceChange()
         } catch {
-          onWorkspaceChanged()
+          debouncedWorkspaceChange()
         }
       })
 
@@ -91,6 +115,14 @@ export function useSSERefresh({
       if (esRef.current) {
         esRef.current.close()
         esRef.current = null
+      }
+      if (fileTimerRef.current) {
+        clearTimeout(fileTimerRef.current)
+        fileTimerRef.current = null
+      }
+      if (wsTimerRef.current) {
+        clearTimeout(wsTimerRef.current)
+        wsTimerRef.current = null
       }
     }
   }, [instanceId, instanceName])

@@ -39,6 +39,7 @@ export function WorkspacePage() {
   const [editedContent, setEditedContent] = useState("")
   const [isDirty, setIsDirty] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const initialLoadRef = useRef(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveToast, setSaveToast] = useState<boolean>(false)
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -104,18 +105,19 @@ export function WorkspacePage() {
   }, [activeInstance, navigate])
 
   // Load file tree
-  const loadFileTree = useCallback(async () => {
+  const loadFileTree = useCallback(async (showSpinner = false) => {
     if (!instId) return
-    setIsLoading(true)
+    if (showSpinner) setIsLoading(true)
     const res = await instancesApi.listFiles(instId)
     if (res.ok) {
       setFileTree(res.data || [])
     }
-    setIsLoading(false)
+    if (showSpinner) setIsLoading(false)
   }, [instId])
 
   useEffect(() => {
-    loadFileTree()
+    loadFileTree(initialLoadRef.current)
+    if (initialLoadRef.current) initialLoadRef.current = false
     if (instId) {
       useGitStore.getState().fetchGitStatus(instId)
     }
