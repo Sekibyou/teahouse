@@ -285,6 +285,10 @@ export const gitApi = {
     return get<GitStatus>(`/api/instances/${instanceId}/git/status`)
   },
 
+  refresh: async (instanceId: string) => {
+    return get<{ git: GitStatus; file_statuses: GitFileStatus[] }>(`/api/instances/${instanceId}/refresh`)
+  },
+
   commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string }) => {
     return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, params)
   },

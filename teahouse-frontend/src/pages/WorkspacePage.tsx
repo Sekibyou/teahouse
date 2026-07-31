@@ -4,22 +4,21 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
-  GitBranch as GitBranchIcon, Edit3, Puzzle,
-  PanelLeftOpen, GripVertical, Archive,
+  Puzzle, PanelLeftOpen, GripVertical, Archive, RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { instancesApi, gitApi, pluginsApi, prototypesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
+import { useGitStore } from "@/stores/gitStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
-import { GitDialog } from "@/components/GitDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginPanel } from "@/components/PluginPanel"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
-import type { FileTreeNode, GitStatus, GitFileStatus } from "@/lib/types"
+import type { FileTreeNode } from "@/lib/types"
 import type { Plugin } from "@/lib/pluginTypes"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
@@ -89,47 +88,8 @@ export function WorkspacePage() {
 
   const instId = activeInstance?.id
 
-  // Git state
-  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  const [gitLoading, setGitLoading] = useState(false)
-  const [showGitDialog, setShowGitDialog] = useState(false)
-  const [fileStatuses, setFileStatuses] = useState<Map<string, string>>(new Map())
-  const [fileStatusLoading, setFileStatusLoading] = useState(false)
-
-  const loadGitStatus = useCallback(async () => {
-    if (!instId) return
-    setGitLoading(true)
-    const res = await gitApi.getStatus(instId)
-    if (res.ok) {
-      setGitStatus(res.data!)
-    }
-    setGitLoading(false)
-  }, [instId])
-
-  const loadFileStatuses = useCallback(async () => {
-    if (!instId) return
-    setFileStatusLoading(true)
-    const res = await gitApi.fileStatus(instId)
-    if (res.ok && res.data?.files) {
-      const m = new Map<string, string>()
-      for (const f of res.data.files) {
-        m.set(f.path, f.status)
-      }
-      setFileStatuses(m)
-    }
-    setFileStatusLoading(false)
-  }, [instId])
-
-  useEffect(() => {
-    loadGitStatus()
-  }, [loadGitStatus])
-
-  useEffect(() => {
-    loadFileStatuses()
-    // Poll file statuses every 5s for real-time updates
-    const interval = setInterval(loadFileStatuses, 5000)
-    return () => clearInterval(interval)
-  }, [loadFileStatuses])
+  // Git state — file statuses for tree coloring from unified store
+  const fileStatuses = useGitStore((s) => s.fileStatuses)
 
   // Load plugin panels
   useEffect(() => {
@@ -156,6 +116,9 @@ export function WorkspacePage() {
 
   useEffect(() => {
     loadFileTree()
+    if (instId) {
+      useGitStore.getState().fetchGitStatus(instId)
+    }
   }, [loadFileTree])
 
   // Diff content from git HEAD (null = new file → treat as empty for diff)
@@ -283,14 +246,11 @@ export function WorkspacePage() {
   const isDirtyRef = useRef(isDirty)
   isDirtyRef.current = isDirty
 
-  // Unified refresh hook — used by GitDialog (after user git operations),
-  // save handlers, and SSE-driven events from the backend.
+  // Unified refresh hook
   const refresh = useWorkspaceRefresh({
     instId,
     selectedFileRef,
     loadFileTree,
-    loadGitStatus,
-    loadFileStatuses,
     setFileContent,
     setEditedContent,
     setGitHeadContent,
@@ -428,6 +388,13 @@ export function WorkspacePage() {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   className="p-0.5 rounded hover:bg-muted"
+                  onClick={() => { if (instId) useGitStore.getState().fetchGitStatus(instId) }}
+                  title="刷新文件状态"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-muted"
                   onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportAuthor(""); setExportVersion("1.0.0"); setExportError("") }}
                   title="导出为原型"
                 >
@@ -479,51 +446,6 @@ export function WorkspacePage() {
               )}
             </div>
 
-            {/* Git status bar — at bottom */}
-            <div className="flex items-center gap-2 px-3 py-2 border-t border-border cursor-pointer hover:bg-muted/30 transition-colors shrink-0" onClick={() => setShowGitDialog(true)}>
-              {gitLoading ? (
-                <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-              ) : gitStatus ? (
-                <>
-                  <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="text-xs font-mono flex-1 truncate" title={gitStatus.current_branch}>
-                    {gitStatus.current_branch || "main"}
-                  </span>
-                  {(() => {
-                    const counts = { added: 0, modified: 0, deleted: 0, untracked: 0 }
-                    for (const st of fileStatuses.values()) {
-                      if (st === "A" || st === "?") counts.added++
-                      else if (st === "M") counts.modified++
-                      else if (st === "D") counts.deleted++
-                      else if (st === "R") counts.modified++
-                    }
-                    const total = counts.added + counts.modified + counts.deleted
-                    return total > 0 ? (
-                      <div className="flex items-center gap-1 shrink-0">
-                        {counts.added > 0 && (
-                          <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none">
-                            +{counts.added}
-                          </span>
-                        )}
-                        {counts.modified > 0 && (
-                          <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none">
-                            ~{counts.modified}
-                          </span>
-                        )}
-                        {counts.deleted > 0 && (
-                          <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none">
-                            -{counts.deleted}
-                          </span>
-                        )}
-                      </div>
-                    ) : null
-                  })()}
-                  <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
-                </>
-              ) : (
-                <span className="text-[10px] text-muted-foreground">Git 不可用</span>
-              )}
-            </div>
           </aside>
 
           {/* Middle panel — Editor */}
@@ -622,7 +544,7 @@ export function WorkspacePage() {
               {pluginPanel ? (
                 <PluginPanel pluginId={pluginPanel} />
               ) : (
-                <ChatPanel />
+                <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
               )}
             </div>
           </aside>
@@ -666,14 +588,6 @@ export function WorkspacePage() {
           </div>
         </div>
       )}
-
-      {/* Git Dialog — single unified dialog */}
-      <GitDialog
-        instanceId={instId || ""}
-        open={showGitDialog}
-        onClose={() => setShowGitDialog(false)}
-        onRefresh={() => refresh({ editor: false })}
-      />
 
       {/* Confirm delete dialog */}
       <ConfirmDialog

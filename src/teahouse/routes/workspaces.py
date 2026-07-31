@@ -869,6 +869,46 @@ async def api_git_file_status(instance_id: str, user: UserInfo = Depends(require
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/instances/{instance_id}/refresh")
+async def api_refresh(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Refresh and return git status + file statuses in a single call."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+
+    # Git status
+    try:
+        if not (instance_dir / ".git").is_dir():
+            git_data = {"git_initialized": False}
+        else:
+            from ..git_utils import GitError
+            branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            commits = git_log(instance_dir, limit=50, all_branches=True)
+            branches = git_branch(instance_dir, "list", None)["branches"]
+            status_out = _git_run(["status", "--porcelain"], instance_dir)
+            has_uncommitted = bool(status_out.strip())
+            git_data = {
+                "git_initialized": True,
+                "current_branch": branch,
+                "branches": branches,
+                "recent_commits": commits,
+                "has_uncommitted": has_uncommitted,
+            }
+    except Exception as e:
+        git_data = {"git_initialized": True, "error": str(e)}
+
+    # File statuses
+    try:
+        files = git_status_porcelain(instance_dir)
+    except Exception:
+        files = []
+
+    return {"git": git_data, "file_statuses": files}
+
+
 @router.get("/instances/{instance_id}/git/show-file")
 async def api_git_show_file(instance_id: str, path: str = Query(...), user: UserInfo = Depends(require_user)):
     """Return the content of a file at HEAD, or None for new/untracked files."""

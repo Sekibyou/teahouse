@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { API_BASE_URL } from "@/lib/api"
+import { useGitStore } from "@/stores/gitStore"
 
 interface SSERefreshOptions {
   /** Called when a single file was modified (Write, Edit, WriteLine, GitDiscard single file). */
@@ -48,6 +49,10 @@ export function useSSERefresh({
           const data = JSON.parse(e.data)
           const id = data.instance_id
           if (id && id !== instanceId && id !== instanceName) return
+          // Update git store on file changes
+          if (instanceId) {
+            useGitStore.getState().fetchGitStatus(instanceId)
+          }
           onFileChanged(data.path || "")
         } catch {
           // ignore malformed events
@@ -59,6 +64,10 @@ export function useSSERefresh({
           const data = JSON.parse(e.data)
           const id = data.instance_id
           if (id && id !== instanceId && id !== instanceName) return
+          // Update git store on workspace changes
+          if (instanceId) {
+            useGitStore.getState().fetchGitStatus(instanceId)
+          }
           onWorkspaceChanged()
         } catch {
           onWorkspaceChanged()

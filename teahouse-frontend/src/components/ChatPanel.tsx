@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, ListTodo, Circle, CircleDot, CheckCheck } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { chatApi, gitApi, llmSlotsApi, llmModelsApi, instancesApi } from "@/lib/api"
+import { Switch } from "@/components/ui/switch"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
-import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
+import { useGitStore } from "@/stores/gitStore"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
+import { GitDialog } from "@/components/GitDialog"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
 
@@ -35,7 +37,7 @@ function nextId() {
   return `msg-${++msgIdCounter}`
 }
 
-export function ChatPanel() {
+export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
 
   // 每个实例独立的 localStorage key
@@ -129,6 +131,29 @@ export function ChatPanel() {
     const saved = localStorage.getItem("teahouse_auto_approve_commit")
     return saved === "true"
   })
+
+  // Git state from unified store
+  const gitStatus = useGitStore((s) => s.gitStatus)
+  const fileStatuses = useGitStore((s) => s.fileStatuses)
+  const [showGitDialog, setShowGitDialog] = useState(false)
+
+  // Refresh git on instance change
+  useEffect(() => {
+    if (instId) {
+      useGitStore.getState().fetchGitStatus(instId)
+    }
+  }, [instId])
+
+  const latestCommitMsg = gitStatus?.recent_commits?.[0]?.message
+  const currentBranch = gitStatus?.current_branch || "main"
+
+  // Compute file change counts
+  const changeCounts = { added: 0, modified: 0, deleted: 0 }
+  for (const st of fileStatuses.values()) {
+    if (st === "A" || st === "?") changeCounts.added++
+    else if (st === "M" || st === "R") changeCounts.modified++
+    else if (st === "D") changeCounts.deleted++
+  }
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -139,6 +164,18 @@ export function ChatPanel() {
   const genApprovalData = useGenerationStore((s) => s.approvalData)
   const isStreaming = genPhase === "generating"
   const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
+
+  // Refresh git when generation ends
+  const prevGenPhaseRef = useRef(genPhase)
+  useEffect(() => {
+    const prev = prevGenPhaseRef.current
+    prevGenPhaseRef.current = genPhase
+    if ((prev === "generating" || prev === "waiting_approval") && genPhase === "idle") {
+      if (instId) {
+        useGitStore.getState().fetchGitStatus(instId)
+      }
+    }
+  }, [genPhase, instId])
 
   // Available commands for autocomplete
   const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
@@ -529,24 +566,60 @@ export function ChatPanel() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="p-3 border-b border-border shrink-0">
+      <div className="p-3 border-b border-border shrink-0 space-y-2">
+        {/* Row 1: 导演 + model names */}
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">导演</h3>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-            <label className="flex items-center gap-1 cursor-pointer" title="开启后 GitCommit 自动批准，不再弹窗确认">
-              <input
-                type="checkbox"
-                checked={autoApproveCommit}
-                onChange={e => {
-                  setAutoApproveCommit(e.target.checked)
-                  localStorage.setItem("teahouse_auto_approve_commit", String(e.target.checked))
-                }}
-                className="rounded border-border"
-              />
-              <span>自动提交</span>
-            </label>
             <span className="flex items-center gap-1" title="导演/编排">导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span></span>
             <span className="flex items-center gap-1" title="正文写作">正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span></span>
+          </div>
+        </div>
+        {/* Row 2: git info + auto-commit switch */}
+        <div className="flex items-center justify-between">
+          <div
+            className="flex items-center gap-1.5 cursor-pointer hover:bg-muted/50 rounded px-1.5 py-0.5 -ml-1.5 transition-colors flex-1 min-w-0 mr-4"
+            onClick={() => setShowGitDialog(true)}
+            title="打开版本控制"
+          >
+            <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
+              {currentBranch}
+            </span>
+            {latestCommitMsg && (
+              <span className="text-[10px] text-muted-foreground truncate">
+                {latestCommitMsg.length > 30 ? latestCommitMsg.slice(0, 30) + "…" : latestCommitMsg}
+              </span>
+            )}
+            {changeCounts.deleted > 0 && (
+              <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
+                -{changeCounts.deleted}
+              </span>
+            )}
+            {changeCounts.modified > 0 && (
+              <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
+                ~{changeCounts.modified}
+              </span>
+            )}
+            {changeCounts.added > 0 && (
+              <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
+                +{changeCounts.added}
+              </span>
+            )}
+            <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground">自动提交</span>
+            <Switch
+              checked={autoApproveCommit}
+              onCheckedChange={(checked) => {
+                setAutoApproveCommit(checked)
+                localStorage.setItem("teahouse_auto_approve_commit", String(checked))
+              }}
+            />
+            <span className="text-[10px] text-muted-foreground w-5 text-right">
+              {autoApproveCommit ? "ON" : "OFF"}
+            </span>
           </div>
         </div>
       </div>
@@ -670,6 +743,20 @@ export function ChatPanel() {
         </div>
         )}
       </div>
+
+      {/* Git Dialog */}
+      <GitDialog
+        instanceId={getActiveInstance()?.id || ""}
+        open={showGitDialog}
+        onClose={() => {
+          setShowGitDialog(false)
+          if (instId) useGitStore.getState().fetchGitStatus(instId)
+        }}
+        onRefresh={() => {
+          if (instId) useGitStore.getState().fetchGitStatus(instId)
+          onGitRefresh?.()
+        }}
+      />
     </div>
   )
 }
