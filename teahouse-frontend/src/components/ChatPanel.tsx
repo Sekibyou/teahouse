@@ -3,6 +3,7 @@ import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, Chec
 import { Button } from "@/components/ui/button"
 import { chatApi, gitApi, llmSlotsApi, llmModelsApi } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
+import { useGenerationStore } from "@/stores/generationStore"
 import type { ChatMessage, SlotBindings, LLMModel } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -88,19 +89,21 @@ export function ChatPanel() {
   }, [messages])
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
-  const [isStreaming, setIsStreaming] = useState(false)
   const [autoApproveCommit, setAutoApproveCommit] = useState(() => {
     const saved = localStorage.getItem("teahouse_auto_approve_commit")
     return saved === "true"
   })
-  const [pendingApproval, setPendingApproval] = useState<{
-    id: string; name: string; args: Record<string, unknown>
-  } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const aborterRef = useRef<AbortController | null>(null)
   const latestToolCallsRef = useRef<ToolCallEvent[]>([])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
+
+  // 全局生成状态（单数据源）
+  const genPhase = useGenerationStore((s) => s.phase)
+  const genApprovalData = useGenerationStore((s) => s.approvalData)
+  const isStreaming = genPhase === "generating"
+  const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
 
   // Available commands for autocomplete
   const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
@@ -128,7 +131,43 @@ export function ChatPanel() {
 
   const handleStop = useCallback(() => {
     aborterRef.current?.abort()
+    useGenerationStore.getState().abort("user_interrupted")
   }, [])
+
+  // 当 phase 变为 idle 时，将所有未收到结果的 tool call 标记为"(interrupted)"
+  // 单向：只从"执行中"→"已中断"，不会因后续 phase 变化而恢复
+  useEffect(() => {
+    if (genPhase === "idle") {
+      setMessages(prev => {
+        let changed = false
+        const next = prev.map(m => {
+          if (m.role !== "assistant" || !m.toolCalls) return m
+          const updatedCalls = m.toolCalls.map(tc => {
+            if (tc.result === undefined) {
+              changed = true
+              return { ...tc, result: "(interrupted)" }
+            }
+            return tc
+          })
+          return changed ? { ...m, toolCalls: updatedCalls } : m
+        })
+        return changed ? next : prev
+      })
+    }
+  }, [genPhase])
+
+  // ESC 快捷键：停止生成
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return
+      const phase = useGenerationStore.getState().phase
+      if (phase !== "generating") return
+      e.preventDefault()
+      handleStop()
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [handleStop])
 
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
@@ -152,11 +191,23 @@ export function ChatPanel() {
 
     const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
     const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", toolCalls: [] }
-    const newMessages = [...messages, userMsg, assistantMsg]
+
+    // 中断上下文注入：如果上一条 assistant 未完成，插入 [system] 消息
+    const lastMsg = messages[messages.length - 1]
+    const sendMessages = [...messages]
+    if (lastMsg && lastMsg.role === "assistant" && lastMsg.status !== "done") {
+      const reason = useGenerationStore.getState().consumeAbortReason()
+      if (reason === "user_interrupted") {
+        sendMessages.push({ id: nextId(), role: "user", content: "[system] user interrupted", reasoning: "", status: "done" } as RichMessage)
+      }
+    }
+    sendMessages.push(userMsg, assistantMsg)
+
+    const newMessages = sendMessages
     setMessages(newMessages)
     setInput("")
     setError("")
-    setIsStreaming(true)
+    useGenerationStore.getState().startGenerating()
     latestToolCallsRef.current = []
     scrollToBottom()
 
@@ -266,7 +317,7 @@ export function ChatPanel() {
                 scrollToBottom()
                 return
               }
-              setPendingApproval({
+              useGenerationStore.getState().waitForApproval({
                 id: data.id,
                 name: data.name,
                 args: data.args,
@@ -340,7 +391,7 @@ export function ChatPanel() {
       )
       setError(err instanceof Error ? err.message : "请求失败")
     } finally {
-      setIsStreaming(false)
+      useGenerationStore.getState().finishGenerating()
       aborterRef.current = null
     }
   }
@@ -381,7 +432,15 @@ export function ChatPanel() {
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      if (isStreaming && input.trim()) {
+        // 生成期间：直接插入用户消息，不中断当前执行
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: input.trim(), reasoning: "", status: "done" }
+        setMessages(prev => [...prev, userMsg])
+        setInput("")
+        scrollToBottom()
+      } else {
+        handleSend()
+      }
     }
   }
 
@@ -453,7 +512,7 @@ export function ChatPanel() {
                 size="sm"
                 onClick={async () => {
                   const data = pendingApproval
-                  setPendingApproval(null)
+                  useGenerationStore.getState().resolveApproval(false)
                   const inst = getActiveInstance()
                   if (!inst) return
                   const res = await gitApi.rejectTool(inst.id, data.id, "")
@@ -467,7 +526,7 @@ export function ChatPanel() {
                 size="sm"
                 onClick={async () => {
                   const data = pendingApproval
-                  setPendingApproval(null)
+                  useGenerationStore.getState().resolveApproval(true)
                   const inst = getActiveInstance()
                   if (!inst) return
                   const res = await gitApi.approveTool(inst.id, data.id, data.args)
@@ -515,7 +574,7 @@ export function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={pendingApproval ? "请先确认或拒绝提交请求..." : "输入消息... / 查看命令 (Enter 发送)"}
+            placeholder={pendingApproval ? "请先确认或拒绝提交请求..." : isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
             disabled={pendingApproval !== null}
           />
           <Button
@@ -524,6 +583,7 @@ export function ChatPanel() {
             onClick={isStreaming ? handleStop : handleSend}
             disabled={pendingApproval !== null || (!isStreaming && !input.trim())}
             variant={isStreaming ? "destructive" : "default"}
+            title={isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
           >
             {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
@@ -544,13 +604,27 @@ function AssistantBubble({ message }: { message: RichMessage }) {
   const allToolCallsDone = hasToolCalls && toolCalls!.every(tc => tc.result !== undefined)
   const isGenerating = status !== "done" && hasToolCalls && allToolCallsDone && !content
 
+  // 如果全局状态为 idle，说明生成已结束（正常完成 / 页面刷新 / 用户停止）
+  // 此时未收到结果的 tool call 应标记为"已中断"而非"执行中..."
+  const globalPhase = useGenerationStore((s) => s.phase)
+  const isIdle = globalPhase === "idle"
+
   return (
     <div className="max-w-[85%] space-y-1">
       {/* Pending: waiting */}
       {status === "pending" && !hasToolCalls && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          等待中...
+          {isIdle ? (
+            <>
+              <XCircle className="h-3 w-3 text-muted-foreground/50" />
+              已中断
+            </>
+          ) : (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              等待中...
+            </>
+          )}
         </div>
       )}
 
@@ -577,7 +651,12 @@ function AssistantBubble({ message }: { message: RichMessage }) {
                       {formatToolArgs(tc)}
                     </span>
                   </div>
-                  {tc.result !== undefined && (
+                  {tc.result === "(interrupted)" ? (
+                    <div className="flex items-start gap-1.5 text-muted-foreground/50">
+                      <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                      <span>已中断</span>
+                    </div>
+                  ) : tc.result !== undefined ? (
                     <div className="mt-1">
                       {tc.name === "TodoWrite" ? (
                         <TodoWriteResult args={tc.args} result={tc.result} />
@@ -593,11 +672,19 @@ function AssistantBubble({ message }: { message: RichMessage }) {
                         </div>
                       )}
                     </div>
-                  )}
-                  {tc.result === undefined && (
+                  ) : (
                     <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      <span>执行中...</span>
+                      {isIdle ? (
+                        <>
+                          <XCircle className="h-3 w-3 text-muted-foreground/50" />
+                          <span>已中断</span>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>执行中...</span>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -610,9 +697,18 @@ function AssistantBubble({ message }: { message: RichMessage }) {
       {/* Generating: tool calls done, text not yet started */}
       {isGenerating && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>生成中...</span>
-          <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
+          {isIdle ? (
+            <>
+              <XCircle className="h-3 w-3 text-muted-foreground/50" />
+              <span>已中断</span>
+            </>
+          ) : (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>生成中...</span>
+              <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
+            </>
+          )}
         </div>
       )}
 
@@ -628,8 +724,12 @@ function AssistantBubble({ message }: { message: RichMessage }) {
             <span>思维链</span>
             {status === "reasoning" && (
               <span className="flex items-center gap-1 ml-auto">
-                <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                思考中...
+                {isIdle ? (
+                  <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" />
+                ) : (
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                )}
+                {isIdle ? "已中断" : "思考中..."}
               </span>
             )}
           </button>
@@ -647,7 +747,7 @@ function AssistantBubble({ message }: { message: RichMessage }) {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {content}
           </ReactMarkdown>
-          {status === "streaming" && (
+          {status === "streaming" && !isIdle && (
             <span className="inline-block w-2 h-4 bg-foreground/50 ml-0.5 animate-pulse" />
           )}
         </div>
@@ -656,8 +756,17 @@ function AssistantBubble({ message }: { message: RichMessage }) {
       {/* Streaming no content yet but past pending (shouldn't happen often) */}
       {status === "streaming" && !content && !reasoning && !hasToolCalls && (
         <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          等待中...
+          {isIdle ? (
+            <>
+              <XCircle className="h-3 w-3 text-muted-foreground/50" />
+              已中断
+            </>
+          ) : (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              等待中...
+            </>
+          )}
         </div>
       )}
     </div>
