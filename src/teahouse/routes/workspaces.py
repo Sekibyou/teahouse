@@ -546,11 +546,31 @@ async def delete_instance_entry(
 
 # ===== Skills =====
 
-SKILLS_DIR = "skills"
+SKILLS_DIR = ".teahouse/skills"
 
 
 def _get_skill_dir(instance_dir: Path, skill_name: str) -> Path:
     return instance_dir / SKILLS_DIR / skill_name
+
+
+def _get_system_skills_dir() -> Path:
+    """Path to the system teahouse_skills directory."""
+    from ..director_system import TEMPLATE_DIR
+    return TEMPLATE_DIR / "teahouse_skills"
+
+
+def _resolve_skill_dir(instance_dir: Path, skill_name: str) -> Path | None:
+    """Resolve a skill directory. Instance skills take priority over system skills.
+
+    Returns None if the skill doesn't exist in either location.
+    """
+    instance_skill = _get_skill_dir(instance_dir, skill_name)
+    if instance_skill.is_dir():
+        return instance_skill
+    system_skill = _get_system_skills_dir() / skill_name
+    if system_skill.is_dir():
+        return system_skill
+    return None
 
 
 def _read_file_text(path: Path) -> str | None:
@@ -559,37 +579,61 @@ def _read_file_text(path: Path) -> str | None:
 
 @router.get("/instances/{instance_id}/skills")
 async def list_skills(instance_id: str, user: UserInfo = Depends(require_user)):
-    """List all skills in an instance."""
+    """List all skills available to this instance (system + instance)."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
-    skills_dir = instance_dir / SKILLS_DIR
-    if not skills_dir.is_dir():
-        return []
-    result = []
-    for entry in sorted(skills_dir.iterdir()):
-        if entry.is_dir():
-            result.append({
-                "name": entry.name,
-                "path": f"{SKILLS_DIR}/{entry.name}",
-                "has_skill": (entry / "SKILL.md").exists(),
-                "has_examples": (entry / "examples").is_dir(),
-            })
+
+    seen: set[str] = set()
+    result: list[dict[str, object]] = []
+
+    # System skills first
+    system_dir = _get_system_skills_dir()
+    if system_dir.is_dir():
+        for entry in sorted(system_dir.iterdir()):
+            if entry.is_dir():
+                seen.add(entry.name)
+                result.append({
+                    "name": entry.name,
+                    "source": "system",
+                    "has_skill": (entry / "SKILL.md").exists(),
+                    "has_examples": (entry / "examples").is_dir(),
+                })
+
+    # Instance skills (override annotation if name duplicates)
+    inst_skills_dir = instance_dir / SKILLS_DIR
+    if inst_skills_dir.is_dir():
+        for entry in sorted(inst_skills_dir.iterdir()):
+            if entry.is_dir():
+                item = {
+                    "name": entry.name,
+                    "source": "instance",
+                    "has_skill": (entry / "SKILL.md").exists(),
+                    "has_examples": (entry / "examples").is_dir(),
+                }
+                if entry.name in seen:
+                    # Replace the system entry with the instance override
+                    for i, r in enumerate(result):
+                        if r["name"] == entry.name:
+                            result[i] = item
+                            break
+                else:
+                    result.append(item)
     return result
 
 
 @router.get("/instances/{instance_id}/skills/{skill_name}")
 async def get_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
-    """Read a skill's full content (SKILL.md + examples)."""
+    """Read a skill's full content (SKILL.md + examples). System + instance."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
-    skill_dir = _get_skill_dir(instance_dir, skill_name)
-    if not skill_dir.is_dir():
+    skill_dir = _resolve_skill_dir(instance_dir, skill_name)
+    if not skill_dir:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     skill_content = _read_file_text(skill_dir / "SKILL.md")
     examples_dir = skill_dir / "examples"
@@ -641,13 +685,11 @@ async def update_skill(instance_id: str, skill_name: str, body: CreateSkillReque
 
 @router.delete("/instances/{instance_id}/skills/{skill_name}")
 async def delete_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
-    """Delete a skill. Built-in skills (teahouse-generate-floor, teahouse-summarize) are protected."""
+    """Delete an instance skill."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
-    if skill_name in ("teahouse-generate-floor", "teahouse-summarize"):
-        raise HTTPException(status_code=400, detail="Cannot delete built-in skills")
     instance_dir = _resolve_instance_dir(inst)
     skill_dir = _get_skill_dir(instance_dir, skill_name)
     if not skill_dir.is_dir():
@@ -658,15 +700,15 @@ async def delete_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
 
 @router.post("/instances/{instance_id}/skills/{skill_name}/export")
 async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
-    """Export a skill as a reusable zip package."""
+    """Export a skill as a reusable zip package (system or instance)."""
     import zipfile, tempfile
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
-    skill_dir = _get_skill_dir(instance_dir, skill_name)
-    if not skill_dir.is_dir():
+    skill_dir = _resolve_skill_dir(instance_dir, skill_name)
+    if not skill_dir:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     export_path = Path(tempfile.gettempdir()) / f"skill-{skill_name}.zip"
     with zipfile.ZipFile(export_path, "w", zipfile.ZIP_DEFLATED) as zf:

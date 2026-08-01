@@ -470,17 +470,24 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     )
 
 
-SKILLS_DIR = "skills"
-
-
 async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Read a skill's SKILL.md content."""
+    """Read a skill's SKILL.md content. Looks in instance .teahouse/skills/ first,
+    then falls back to the system teahouse_skills/ directory."""
     name = args["name"]
-    skill_dir = instance_dir / SKILLS_DIR / name
-    skill_path = skill_dir / "SKILL.md"
+
+    # Instance skills take priority
+    instance_skill_dir = instance_dir / ".teahouse" / "skills" / name
+    skill_dir = instance_skill_dir
+
+    if not skill_dir.is_dir():
+        # Fall back to system skills
+        from .director_system import TEMPLATE_DIR
+        system_skill_dir = TEMPLATE_DIR / "teahouse_skills" / name
+        skill_dir = system_skill_dir
 
     if not skill_dir.is_dir():
         return f"Error: Skill '{name}' 不存在"
+    skill_path = skill_dir / "SKILL.md"
     if not skill_path.exists():
         return f"Error: Skill '{name}' 缺少 SKILL.md"
 

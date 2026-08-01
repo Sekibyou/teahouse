@@ -27,7 +27,7 @@ TEMPLATE_FILES = [
 ]
 
 INSTANCE_TEAHOUSE = "teahouse.md"
-SKILLS_DIR = "skills"
+INSTANCE_SKILLS_DIR = ".teahouse/skills"
 
 # Directories excluded entirely from tree display
 TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions"}
@@ -130,21 +130,37 @@ def _scan_tree(instance_dir: Path) -> str:
 
 
 def _scan_skills(instance_dir: Path) -> str:
-    """Scan skills directory and extract name + description from SKILL.md frontmatter.
+    """Scan system skills and instance skills, extract name + description from SKILL.md frontmatter.
 
-    Returns a formatted markdown block listing available skills.
+    System skills (teahouse_skills/) are always loaded.
+    Instance skills (.teahouse/skills/) are loaded on top — if a skill with the same
+    name exists in both, the instance version overrides the system version.
     """
-    skills_dir = instance_dir / SKILLS_DIR
-    if not skills_dir.is_dir():
-        return "（实例中没有任何 Skill）"
+    system_skills_dir = TEMPLATE_DIR / "teahouse_skills"
+    instance_skills_dir = instance_dir / INSTANCE_SKILLS_DIR
+
+    # Collect skill dirs: system first, then instance (instance overrides)
+    skill_dirs: dict[str, Path] = {}
+
+    if system_skills_dir.is_dir():
+        for entry in system_skills_dir.iterdir():
+            if entry.is_dir():
+                skill_dirs[entry.name] = entry
+
+    if instance_skills_dir.is_dir():
+        for entry in instance_skills_dir.iterdir():
+            if entry.is_dir():
+                skill_dirs[entry.name] = entry  # instance overrides
+
+    if not skill_dirs:
+        return "（没有任何 Skill）"
 
     entries = []
-    for entry in sorted(skills_dir.iterdir()):
-        if not entry.is_dir():
-            continue
+    for name in sorted(skill_dirs):
+        entry = skill_dirs[name]
         skill_md = entry / "SKILL.md"
         if not skill_md.exists():
-            entries.append(f"- **{entry.name}**：缺少 SKILL.md")
+            entries.append(f"- **{name}**：缺少 SKILL.md")
             continue
 
         content = skill_md.read_text(encoding="utf-8")
@@ -163,7 +179,7 @@ def _scan_skills(instance_dir: Path) -> str:
         entries.append(f"- **{name}**：{desc}")
 
     if not entries:
-        return "（实例中没有任何 Skill）"
+        return "（没有任何 Skill）"
 
     return "可用 Skill：\n" + "\n".join(entries)
 
