@@ -181,7 +181,7 @@ const ANIMATION_TAGS: BBCodeTag[] = [
     hasParam: true,
     toHtml: (content, param) => {
       const style = parseAnimationParams(param, {
-        color: 'rgba(0,0,0,0.5)',
+        color: 'currentColor',
         level: '4',
       });
       return `<span class="bbcode-shadow" style="${style}">${content}</span>`;
@@ -672,8 +672,8 @@ export function getBBCodeAnimationCSS(): string {
 
 /* 阴影文字 — 朦胧褪色，营造神秘感 */
 .bbcode-shadow {
-  color: var(--bbcode-color, rgba(128, 128, 128, 0.7));
-  text-shadow: 0 0 calc(var(--bbcode-level, 6) * 1px) var(--bbcode-color, rgba(128, 128, 128, 0.5));
+  color: var(--bbcode-color, currentColor);
+  text-shadow: 0 0 calc(var(--bbcode-level, 4) * 1px) var(--bbcode-color, currentColor);
   filter: blur(0.5px);
 }
 
