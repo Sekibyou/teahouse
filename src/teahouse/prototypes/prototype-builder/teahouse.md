@@ -156,6 +156,14 @@ _prototype/
 
 ## 重要规则
 
+### Git 版本管理
+
+合理使用 git 进行版本管理：
+- **沙盒代码迭代前先 commit**，验证通过后再 commit 锁定，改坏可回退
+- **设定文件大规模调整前先 commit**
+- **每完成一个阶段 commit 一次**，在 milestones tasks 中记录 commit hash
+- commit 前缀建议：`style:` / `feat:` / `fix:`（沙盒代码）、`content:`（设定）、`vars:`（变量）
+
 ### 目录访问权限
 
 | 目录 | 权限 | 说明 |
