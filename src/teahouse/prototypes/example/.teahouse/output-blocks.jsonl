@@ -1,2 +1,0 @@
-{"uuid": "000000000001", "label": "ui_bootstrap", "note": "沙盒基础设施", "content": "{{sandbox/bootstrap.js}}", "content_type": "bootstrap_js"}
-{"uuid": "000000000002", "label": "ep0", "note": "序章", "content": "{{sandbox/intro.md}}", "content_type": "rich_text"}
