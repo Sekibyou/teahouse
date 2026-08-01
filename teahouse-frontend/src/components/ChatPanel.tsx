@@ -279,19 +279,19 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     })
   }, [])
 
-  // Auto-scroll when messages change
-  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
+  // Auto-scroll when messages change — DISABLED: 生成过程中不强制吸附底部
+  // useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
-  // 布局变化时（tab 栏出现、footer 变化等）滚到底部
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const observer = new ResizeObserver(() => {
-      el.scrollTop = el.scrollHeight
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
+  // 布局变化时（tab 栏出现、footer 变化等）滚到底部 — DISABLED
+  // useEffect(() => {
+  //   const el = scrollRef.current
+  //   if (!el) return
+  //   const observer = new ResizeObserver(() => {
+  //     el.scrollTop = el.scrollHeight
+  //   })
+  //   observer.observe(el)
+  //   return () => observer.disconnect()
+  // }, [])
 
   // 生成计时器：每秒 tick
   useEffect(() => {
@@ -495,7 +495,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                   return { ...m, blocks }
                 })
               )
-              scrollToBottom()
               return
             }
 
@@ -516,7 +515,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                   return { ...m, blocks }
                 })
               )
-              scrollToBottom()
               return
             }
 
@@ -539,7 +537,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                           return { ...m, blocks }
                         })
                       )
-                      scrollToBottom()
                       return
                     }
                   } catch { /* network error — fall through to manual approval */ }
@@ -597,7 +594,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 })
               )
             }
-            scrollToBottom()
           } catch {
             // skip malformed JSON
           }
