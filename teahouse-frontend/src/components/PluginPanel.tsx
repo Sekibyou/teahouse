@@ -13,12 +13,55 @@ interface PluginPanelProps {
  * Fetches the plugin's frontend HTML via the authenticated API and renders
  * it in a sandboxed iframe via srcdoc. Data access is brokered through
  * postMessage — the plugin iframe never sees the JWT token.
+ *
+ * Theme is bridged into the iframe via an injected <style> block that sets
+ * color-scheme and basic dark/light variables, so plugin authors get
+ * readable defaults without extra work. The current theme is also sent via
+ * the `init` postMessage as `theme: "dark" | "light"`.
  */
 export function PluginPanel({ pluginId, className }: PluginPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const readyRef = useRef(false)
   const [html, setHtml] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const isDark = useCallback(() => {
+    return document.documentElement.classList.contains("dark")
+  }, [])
+
+  // Inject base theme styles into the plugin HTML so plugin authors get
+  // readable defaults in both light and dark modes.
+  const injectThemeStyles = useCallback((rawHtml: string): string => {
+    const dark = isDark()
+    const themeStyles = `
+/* Injected by PluginPanel — base theme bridge */
+:root {
+  color-scheme: ${dark ? "dark" : "light"};
+  background-color: ${dark ? "#171717" : "#ffffff"};
+  color: ${dark ? "#e5e5e5" : "#171717"};
+  font-family: system-ui, -apple-system, sans-serif;
+}
+input, textarea, select {
+  background-color: ${dark ? "#262626" : "#ffffff"};
+  color: ${dark ? "#e5e5e5" : "#171717"};
+  border-color: ${dark ? "#404040" : "rgba(128,128,128,0.3)"};
+}
+input:focus, textarea:focus, select:focus {
+  border-color: #6366f1;
+}
+/* Helpers for plugin authors who want to react to theme */
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+`
+    // Inject after <head> or at the start if no <head>
+    if (rawHtml.includes("<head>")) {
+      return rawHtml.replace("<head>", `<head><style>${themeStyles}</style>`)
+    }
+    if (rawHtml.includes("<html>")) {
+      return rawHtml.replace("<html>", `<html><head><style>${themeStyles}</style></head>`)
+    }
+    return `<style>${themeStyles}</style>${rawHtml}`
+  }, [isDark])
 
   // Fetch the plugin's index.html via authenticated API
   useEffect(() => {
@@ -51,7 +94,10 @@ export function PluginPanel({ pluginId, className }: PluginPanelProps) {
     switch (d.type) {
       case "ready": {
         readyRef.current = true
-        iframe.contentWindow?.postMessage({ type: "init", pluginId }, "*")
+        iframe.contentWindow?.postMessage(
+          { type: "init", pluginId, theme: isDark() ? "dark" : "light" },
+          "*"
+        )
         break
       }
       case "getData": {
@@ -110,7 +156,7 @@ export function PluginPanel({ pluginId, className }: PluginPanelProps) {
   return (
     <iframe
       ref={iframeRef}
-      srcDoc={html}
+      srcDoc={injectThemeStyles(html)}
       className={className}
       sandbox="allow-scripts allow-same-origin"
       title={`Plugin: ${pluginId}`}
