@@ -746,10 +746,13 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           </div>
         )}
 
-        {messages.map((msg) => (
+        {(() => {
+          // 找到当前最新的 assistant 消息（只有它应显示"生成中"指示器）
+          const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id
+          return messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" ? (
-              <AssistantBubble message={msg} />
+              <AssistantBubble message={msg} isLatest={msg.id === lastAssistantId} />
             ) : msg.status === "queued" ? (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted/50 text-muted-foreground border border-dashed border-border">
                 {msg.content}
@@ -760,7 +763,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               </div>
             )}
           </div>
-        ))}
+        ))
+        })()}
 
         {error && (
           <div className="text-center">
@@ -914,7 +918,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
 // ---- Assistant message bubble with thinking block ----
 
-function AssistantBubble({ message }: { message: RichMessage }) {
+function AssistantBubble({ message, isLatest }: { message: RichMessage; isLatest: boolean }) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
 
   const { status, reasoning, content, blocks } = message
@@ -926,8 +930,8 @@ function AssistantBubble({ message }: { message: RichMessage }) {
   const elapsed = useGenerationStore((s) => s.elapsed)
   const tokenCount = useGenerationStore((s) => s.tokenCount)
 
-  // 此消息是当前正在生成的 assistant（非 done 非 pending，全局 streaming）
-  const isActiveMessage = status !== "done" && status !== "pending" && isGlobalGenerating
+  // 此消息是当前正在生成的最新 assistant（非 done 非 pending，全局 streaming，且是最后一个 assistant）
+  const isActiveMessage = isLatest && status !== "done" && status !== "pending" && isGlobalGenerating
 
   return (
     <div className="max-w-[85%] space-y-1">
@@ -951,12 +955,12 @@ function AssistantBubble({ message }: { message: RichMessage }) {
             <span>思维链</span>
             {status === "reasoning" && (
               <span className="flex items-center gap-1 ml-auto">
-                {isIdle ? (
+                {isIdle || !isLatest ? (
                   <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" />
                 ) : (
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 )}
-                {isIdle ? "已中断" : "思考中..."}
+                {isIdle || !isLatest ? "已中断" : "思考中..."}
               </span>
             )}
           </button>
@@ -1013,7 +1017,7 @@ function AssistantBubble({ message }: { message: RichMessage }) {
                       </div>
                     ) : (
                       <div className="flex items-center gap-1.5 text-muted-foreground">
-                        {isIdle ? (
+                        {isIdle || !isLatest ? (
                           <>
                             <XCircle className="h-3 w-3 text-muted-foreground/50" />
                             <span>已中断</span>
