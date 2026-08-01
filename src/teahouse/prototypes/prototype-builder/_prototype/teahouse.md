@@ -21,6 +21,27 @@
 - 当前使用的 sandbox 里会基于正文块的 note 进行渲染标题，因此 content 里不应该包含标题，标题应该放入 note 字段，并且 note 字段不应该包含其他无关内容。建议 note 格式为 `第X章 · 标题内容`。
 - `.teahouse\output-blocks.jsonl` 文件应该保持只读，善用 `grep` 工具针对label、note或者引用文件进行检索，在楼层较高时此文件会很长。针对输出块的修改请使用 `output` 工具进行，切勿直接修改此文件。此文件中的引用路径以实例根目录为基准（如 `{{sandbox/bootstrap.js}}`、`{{floors/floor-001.md}}`、`{{temp/draft-002.md}}`）。
 
+## Generate Payload 配置文件
+
+每次调用 Generate 都需要一个 YAML 配置文件（`source_file` 参数），用于组织发送给正文模型的消息结构。配置文件支持 `{{path}}` 占位符引用文件内容，占位符在 Generate 执行时自动展开。
+
+### 工作流
+
+1. **首次创作**：从 `settings/generate-config-default.yaml` 复制到 `temp/generate-config-{N}-1.yaml`
+2. **续写**：复制上一楼层的 config 到新文件名，修改引用范围和变量状态描述
+3. **返工**：同一楼层版本号递增，如 `generate-config-{N}-2.yaml` → `generate-config-{N}-3.yaml`
+4. **Generate 调用**：`Generate(source_file="temp/generate-config-{N}-{V}.yaml", path="temp/draft-{N}-{V}.md")`
+
+### 文件清理
+
+楼层确认提交后：
+- 删除旧版本 config 文件，仅保留最新版本
+- 将最新 config 改名为 `generate-config-{N+1}-1.yaml`（下一楼层的起点）
+
+### dump_payload 参数
+
+`dump_payload` 是可选调试参数，展开占位符后的完整 Payload JSON 写入指定路径。**不建议主动使用**，除非用户明确要求调试。
+
 ## 用户意图 → Skill 路由
 
 当识别到用户以下意图时，使用 SkillRead 加载对应 skill 获取完整 SOP：

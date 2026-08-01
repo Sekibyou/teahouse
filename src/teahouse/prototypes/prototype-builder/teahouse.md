@@ -115,8 +115,10 @@ _prototype/
    - 填写楼层配置（字数目标等）
    - 填写总结规则
    - 填写输出块 label 命名规则
+   - 填写 Generate Payload 配置文件的用法说明和工作流约定
    - 确认 skill 路由完整
-2. 在 `temp/milestones.yaml` 的 tasks 区域记录完成状态
+2. 确保 `_prototype/settings/generate-config-default.yaml` 存在并根据故事类型调整模板内容
+3. 在 `temp/milestones.yaml` 的 tasks 区域记录完成状态
 
 ### 阶段 5：前端自定义（可选）
 

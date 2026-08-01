@@ -97,35 +97,32 @@ Read temp/draft.md
 - **已有完整草稿但未 Output**：先 Output 给用户查看，再询问用户意图。
 - **已有完整草稿且已 Output**：询问用户是想修改还是重写。如果用户要求续写，检查草稿是否已完成——如果草稿看起来完整，可能是用户想修改而非续写，确认用户意图。
 
-### 步骤 7：构造 Generate 请求
+### 步骤 7：准备 Generate 配置文件
 
-使用 Generate 工具发送正文写作请求。
+使用 Generate 工具发送正文写作请求。Generate 需要通过 YAML 配置文件（`source_file`）组织消息结构，配置文件支持 `{{path}}` 占位符引用文件内容。
 
-**系统提示词结构**（用户提供的或 `teahouse.md` 中的提示词结构优先，否则使用以下默认结构）：
+**工作流**：
 
-```
-你是一位资深小说家，需要参考用户提供的设定，按照以下要求进行创作。
-字数要求：{{从 teahouse.md 楼层配置获取}}。
-风格要求：保持与前文一致的叙事风格。
+1. **复制配置模板**：
+   - 如果是首次创作：复制 `settings/generate-config-default.yaml` → `temp/generate-config-{{N}}-1.yaml`
+   - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}-1.yaml`）→ `temp/generate-config-{{N}}-1.yaml`
 
-————历史记录开始————
-更早章节的总结：
-{{生成一段总结，或直接引用相关 sum-A-B.md 的内容}}
+2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
+   - 更新 `{{glob:floors/floor-*.md}}` 引用——如果楼层很多，改为只引用最近 10 层正文 + 相关总结
+   - 更新设定引用范围（基于当前变量值调整锚点/行号）
+   - 在 user 消息中填入当前的变量状态描述（基于 `variables/active-vars.yaml`）
+   - 在最后一条 user 消息中填入用户的实际写作要求
+   - 必要时添加伪造的 user/assistant 对话来破限或引导文风
 
-————————
-最近 10 个章节的正文：
-{{最近十个章节的原文，完整塞入}}
+3. **调用 Generate**：
+   ```
+   Generate(
+     source_file: "temp/generate-config-{{N}}-1.yaml",
+     path: "temp/draft-{{N}}-1.md"
+   )
+   ```
 
-————历史记录结束————
-
-————设定开始————
-{{基于最近剧情和变量筛选后的设定摘抄，以及从关键变量变更历史中提炼的可能对本次生成有用的细节}}
-————设定结束————
-```
-
-**user 消息**：用户的实际请求。
-
-Generate 输出路径：`temp/draft-{{N}}.md`（N 为当前楼层编号 + 1）。
+4. **返工时**：版本号递增，如 `temp/generate-config-{{N}}-2.yaml` → Generate → `temp/draft-{{N}}-2.md`
 
 ### 步骤 8：输出到前端
 
@@ -133,7 +130,7 @@ Generate 输出路径：`temp/draft-{{N}}.md`（N 为当前楼层编号 + 1）�
 
 ```
 Output(
-  content: "{{temp/draft-{{N}}.md}}",
+  content: "{{temp/draft-{{N}}-1.md}}",
   label: "ep{{N}}",
   note: "第{{N}}章正文第一版",
   mode: "append"
@@ -146,10 +143,10 @@ label 必须遵循 `teahouse.md` 中约定的命名规则。前端会自动提�
 
 通知用户查看产物。等待用户进一步指示。
 
-- **如果用户要求返工**：生成 `temp/draft-{{N}}-v2.md`（版本号递增），然后使用 Output replace 更新：
+- **如果用户要求返工**：版本号递增（draft-{{N}}-2.md），修改对应版本的 config 文件（generate-config-{{N}}-2.yaml），重新 Generate，然后使用 Output replace 更新：
   ```
   Output(
-    content: "{{temp/draft-{{N}}-v2.md}}",
+    content: "{{temp/draft-{{N}}-2.md}}",
     label: "ep{{N}}",
     note: "第{{N}}章正文第二版",
     mode: "replace",
@@ -164,7 +161,7 @@ label 必须遵循 `teahouse.md` 中约定的命名规则。前端会自动提�
 
 1. 将 draft 文件移动到 `floors/` 文件夹，按楼层编号重命名为 `floor-{{N}}.md`：
    ```
-   FileOps move temp/draft-{{N}}.md floors/floor-{{N}}.md
+   FileOps move temp/draft-{{N}}-{{V}}.md floors/floor-{{N}}.md
    ```
 
 2. 使用 Output replace 将内容路径更新为新路径：

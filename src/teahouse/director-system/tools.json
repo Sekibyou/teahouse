@@ -16,12 +16,13 @@
   {
     "name": "Write",
     "description": "写入文件内容（覆盖式），自动创建父目录",
-    "usage": "写入文件内容（覆盖式）。如果文件已存在则完全覆盖，不存在则创建。会自动创建必要的父目录。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 floors/floor-003.md\n- `content`（必填）：写入的文件内容\n\n注意：仅在需要完全重写文件时使用。增量修改请优先使用 Edit 或 WriteLine。",
+    "usage": "写入文件内容（覆盖式）。如果文件已存在则完全覆盖，不存在则创建。会自动创建必要的父目录。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 floors/floor-003.md\n- `content`（必填）：写入的文件内容\n- `resolve_placeholders`（可选）：是否解析 content 中的 {{path}} 占位符。默认 false。设为 true 时可用于复制/拼接文件：Write(path=\"copy.md\", content=\"{{source.md:1-50}}\", resolve_placeholders=true)\n\n注意：仅在需要完全重写文件时使用。增量修改请优先使用 Edit 或 WriteLine。",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {"type": "string"},
-        "content": {"type": "string"}
+        "content": {"type": "string"},
+        "resolve_placeholders": {"type": "boolean"}
       },
       "required": ["path", "content"]
     }
@@ -29,14 +30,15 @@
   {
     "name": "Edit",
     "description": "精确字符串替换，支持全局替换",
-    "usage": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `replace_all`（可选）：是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，增加更多上下文行使其唯一",
+    "usage": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `replace_all`（可选）：是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置\n- `resolve_placeholders`（可选）：是否解析 new_string 中的 {{path}} 占位符。默认 false。设为 true 时可将占位符引用展开为文件内容后替换\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，增加更多上下文行使其唯一",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {"type": "string"},
         "old_string": {"type": "string"},
         "new_string": {"type": "string"},
-        "replace_all": {"type": "boolean"}
+        "replace_all": {"type": "boolean"},
+        "resolve_placeholders": {"type": "boolean"}
       },
       "required": ["path", "old_string", "new_string"]
     }
@@ -44,14 +46,15 @@
   {
     "name": "WriteLine",
     "description": "替换文件中的指定行",
-    "usage": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `start_line`（必填）：起始行号，从 1 开始\n- `end_line`（可选）：结束行号（包含）。不指定则仅替换 start_line 这一行\n- `new_content`（必填）：替换后的新行内容，\\n 会被自动处理为真实换行\n\n注意：使用前先用 Read 确认目标行号。每次只替换一行，多行修改请多次调用。",
+    "usage": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `start_line`（必填）：起始行号，从 1 开始\n- `end_line`（可选）：结束行号（包含）。不指定则仅替换 start_line 这一行\n- `new_content`（必填）：替换后的新行内容，\\n 会被自动处理为真实换行\n- `resolve_placeholders`（可选）：是否解析 new_content 中的 {{path}} 占位符。默认 false\n\n注意：使用前先用 Read 确认目标行号。每次只替换一行，多行修改请多次调用。",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {"type": "string"},
         "start_line": {"type": "integer"},
         "end_line": {"type": "integer"},
-        "new_content": {"type": "string"}
+        "new_content": {"type": "string"},
+        "resolve_placeholders": {"type": "boolean"}
       },
       "required": ["path", "start_line", "new_content"]
     }
@@ -82,18 +85,16 @@
   },
   {
     "name": "Generate",
-    "description": "调用正文模型生成内容并写入指定文件",
-    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。content 中可使用 {{path}} 占位符引用文件内容。\n\n参数：\n- `messages`（必填）：消息数组，每项包含 role 和 content\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 floors/floor-003.md\n\n占位符语法：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
+    "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",
+    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `dump_payload`（可选）：展开占位符后的实际 Payload JSON 输出路径（调试用）。不建议主动调用此参数，除非用户明确要求调试\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      {{settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
     "parameters": {
       "type": "object",
       "properties": {
-        "messages": {
-          "type": "array",
-          "items": {"type": "object"}
-        },
-        "path": {"type": "string"}
+        "source_file": {"type": "string"},
+        "path": {"type": "string"},
+        "dump_payload": {"type": "string"}
       },
-      "required": ["messages", "path"]
+      "required": ["source_file", "path"]
     }
   },
   {

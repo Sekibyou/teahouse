@@ -66,8 +66,8 @@
 | `.teahouse/` | 必需 | 系统数据（输出块、样式规则等） |
 | `floors/` | 必需 | 正文楼层与总结，命名**必须遵循规范** |
 | `skills/` | 必需 | Skill 包，每个子目录一个 Skill |
-| `settings/` | 推荐 | 故事设定（角色、世界观等） |
+| `settings/` | 推荐 | 故事设定（角色、世界观等）及 Generate Payload 配置模板 |
 | `variables/` | 推荐 | 故事变量（状态跟踪） |
 | `assets/` | 推荐 | 静态资源（图片、字体、音频等） |
 | `sandbox/` | 推荐 | 官方前端的沙盒渲染代码 |
-| `temp/` | 推荐 | 临时文件、未完成草稿 |
+| `temp/` | 推荐 | 临时文件：未完成草稿（draft-{N}-{V}.md）、Generate Payload 配置（generate-config-{N}-{V}.yaml） |

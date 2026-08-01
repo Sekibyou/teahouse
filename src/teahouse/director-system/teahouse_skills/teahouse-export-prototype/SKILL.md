@@ -126,6 +126,9 @@ Write _prototype/settings/world.yaml
 - **实例特有 skills**（如果有用户为特定故事开发的 skill）也应当复制——这是原型的核心价值
 - 如果某个 skill 的 SKILL.md 包含过于具体的故事信息，用 Edit 做泛化
 
+同时复制 settings 目录下的配置文件：
+- `settings/generate-config-default.yaml`：Generate Payload 配置模板，如果实例有自定义版本则复制实例的
+
 ```
 Write _prototype/skills/teahouse-generate-floor/SKILL.md
 ---

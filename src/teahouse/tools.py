@@ -197,13 +197,14 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
 async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     """Write content to a file (overwrite). Creates parent directories if needed.
 
-    Content supports {{path}} placeholder syntax for referencing file content.
+    Set resolve_placeholders=true to resolve {{path}} placeholders in content.
+    Default is false — placeholders are written literally.
     """
     path = args["path"]
     content = args["content"]
 
-    # Resolve {{path}} placeholders
-    if "{{" in content:
+    # Resolve {{path}} placeholders (only when explicitly requested)
+    if args.get("resolve_placeholders", False) and "{{" in content:
         try:
             content = resolve_placeholders(content, instance_dir)
         except Exception as e:
@@ -221,15 +222,16 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
     - old_string must appear exactly once in the file (unless replace_all=True)
     - Must match whitespace exactly
     - Atomic: on failure, file is unchanged
-    new_string supports {{path}} placeholder syntax for referencing file content.
+    Set resolve_placeholders=true to resolve {{path}} placeholders in new_string.
+    Default is false.
     """
     path = args["path"]
     old_string = args["old_string"]
     new_string = args["new_string"]
     replace_all = args.get("replace_all", False)
 
-    # Resolve {{path}} placeholders in new_string
-    if "{{" in new_string:
+    # Resolve {{path}} placeholders in new_string (only when explicitly requested)
+    if args.get("resolve_placeholders", False) and "{{" in new_string:
         try:
             new_string = resolve_placeholders(new_string, instance_dir)
         except Exception as e:
@@ -262,7 +264,8 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     """Edit a file by replacing a range of lines. Use after Read to confirm line numbers.
 
-    new_content supports {{path}} placeholder syntax for referencing file content.
+    Set resolve_placeholders=true to resolve {{path}} placeholders in new_content.
+    Default is false.
     """
     path = args["path"]
     start_line = int(args["start_line"])
@@ -290,8 +293,8 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     # LLMs pass these as literal backslash-n in JSON tool-call args.
     decoded = new_content.replace("\\r\\n", "\n").replace("\\n", "\n")
 
-    # Resolve {{path}} placeholders
-    if "{{" in decoded:
+    # Resolve {{path}} placeholders (only when explicitly requested)
+    if args.get("resolve_placeholders", False) and "{{" in decoded:
         try:
             decoded = resolve_placeholders(decoded, instance_dir)
         except Exception as e:
@@ -369,18 +372,50 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: str | None = None) -> str:
-    """Generate tool — resolves placeholders, calls writer LLM, writes result to file.
+    """Generate tool — reads YAML config, resolves placeholders, calls writer LLM, writes result to file.
 
-    1. Resolve {{path}} placeholders in messages
-    2. Call the writer slot LLM (non-streaming)
-    3. Write generated text to the specified output path
-    4. Return summary with file path, word count, and first 50 chars preview
+    1. Read and parse YAML source_file into messages array
+    2. Resolve {{path}} placeholders in messages
+    3. Optionally dump resolved payload to JSON (debug only)
+    4. Call the writer slot LLM (non-streaming)
+    5. Write generated text to the specified output path
+    6. Return summary with file path, word count, and first 50 chars preview
     """
-    messages = args.get("messages", [])
-    output_path_str = args.get("path", "")
+    import json
 
+    source_file_str = args.get("source_file", "")
+    output_path_str = args.get("path", "")
+    dump_payload_str = args.get("dump_payload", "")
+
+    if not source_file_str:
+        return "Error: 'source_file' is required — specify the YAML config file path (e.g. temp/generate-config-12-1.yaml)"
     if not output_path_str:
-        return "Error: 'path' is required — specify the output file path (e.g. floors/floor-003.md)"
+        return "Error: 'path' is required — specify the output file path (e.g. temp/draft-12-1.md)"
+
+    # Step 1: Read and parse YAML source_file
+    try:
+        source_full = _validate_path(instance_dir, source_file_str)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    if not source_full.exists():
+        return f"Error: source_file not found: {source_file_str}"
+
+    try:
+        raw_yaml = source_full.read_text(encoding="utf-8")
+        messages = yaml.safe_load(raw_yaml)
+    except yaml.YAMLError as e:
+        return f"Error: YAML 解析失败: {e}"
+    except Exception as e:
+        return f"Error: 读取 source_file 失败: {e}"
+
+    if not isinstance(messages, list):
+        return "Error: YAML 配置文件必须是列表格式，每项包含 role 和 content"
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            return f"Error: 配置第 {i+1} 项必须是字典，包含 role 和 content"
+        if "role" not in msg or "content" not in msg:
+            return f"Error: 配置第 {i+1} 项缺少 role 或 content 字段"
 
     # Validate output path
     try:
@@ -390,10 +425,22 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
 
     output_full.parent.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Resolve placeholders
+    # Step 2: Resolve placeholders
     resolved = resolve_messages_placeholders(messages, instance_dir)
 
-    # Step 2: Resolve writer slot LLM client
+    # Step 3: Optionally dump resolved payload (debug only)
+    if dump_payload_str:
+        try:
+            payload_full = _validate_path(instance_dir, dump_payload_str)
+            payload_full.parent.mkdir(parents=True, exist_ok=True)
+            payload_json = json.dumps(resolved, ensure_ascii=False, indent=2)
+            payload_full.write_text(payload_json, encoding="utf-8")
+        except ValueError as e:
+            return f"Error: dump_payload 路径无效: {e}"
+        except Exception as e:
+            return f"Error: 写入 dump_payload 失败: {e}"
+
+    # Step 4: Resolve writer slot LLM client
     if not user_id:
         return (
             "Error: 无法获取用户身份，无法调用正文模型。\n"
@@ -439,7 +486,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
 
-    # Step 4: Call writer LLM (non-streaming)
+    # Step 5: Call writer LLM (non-streaming)
     try:
         generated_text = await writer_client.send_message(resolved)
     except LLMError as e:
@@ -450,11 +497,13 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     except Exception as e:
         return f"Error: 调用正文模型时发生意外错误: {e}"
 
-    # Step 5: Write generated text to output file
+    # Step 6: Write generated text to output file
     try:
         output_full.write_text(generated_text, encoding="utf-8")
     except Exception as e:
         return f"Error: 写入输出文件失败: {e}"
+
+    state.broadcast("file_changed", {"path": output_path_str, "tool": "Generate", "instance_id": instance_dir.name})
 
     # Build summary
     char_count = len(generated_text)
