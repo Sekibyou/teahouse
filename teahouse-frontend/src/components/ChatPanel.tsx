@@ -3,6 +3,7 @@ import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, Chec
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, API_BASE_URL } from "@/lib/api"
+import { LLMManagementDialog } from "@/components/LLMManagementDialog"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -138,20 +139,20 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
   // Slot state — lightweight model info display
   const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
+  const [llmDialogOpen, setLlmDialogOpen] = useState(false)
 
   useEffect(() => {
     llmSlotsApi.getAll().then(res => {
       if (res.ok) {
         const slots = res.data!.slots
-        // For each bound model, fetch its display name
-        const modelIds = [slots.director, slots.writer].filter(Boolean) as string[]
+        const modelIds = [slots.director.model_id, slots.writer.model_id].filter(Boolean) as string[]
         if (modelIds.length > 0) {
           llmModelsApi.list().then(mRes => {
             if (mRes.ok) {
               const modelMap = new Map(mRes.data!.models.map(m => [m.id, m.name]))
               setSlotModels({
-                director: slots.director ? modelMap.get(slots.director) || slots.director : null,
-                writer: slots.writer ? modelMap.get(slots.writer) || slots.writer : null,
+                director: slots.director.model_id ? modelMap.get(slots.director.model_id) || slots.director.model_id : null,
+                writer: slots.writer.model_id ? modelMap.get(slots.writer.model_id) || slots.writer.model_id : null,
               })
             }
           })
@@ -706,8 +707,20 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">导演</h3>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-            <span className="flex items-center gap-1" title="导演/编排">导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span></span>
-            <span className="flex items-center gap-1" title="正文写作">正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span></span>
+            <button
+              className="flex items-center gap-1 hover:text-foreground transition-colors"
+              onClick={() => setLlmDialogOpen(true)}
+              title="打开模型管理"
+            >
+              导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span>
+            </button>
+            <button
+              className="flex items-center gap-1 hover:text-foreground transition-colors"
+              onClick={() => setLlmDialogOpen(true)}
+              title="打开模型管理"
+            >
+              正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span>
+            </button>
           </div>
         </div>
         {/* Row 2: git info + auto-commit switch */}
@@ -932,6 +945,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (instId) useGitStore.getState().fetchGitStatus(instId)
           onGitRefresh?.()
         }}
+      />
+      <LLMManagementDialog
+        open={llmDialogOpen}
+        onClose={() => setLlmDialogOpen(false)}
+        defaultTab="slots"
       />
     </div>
   )

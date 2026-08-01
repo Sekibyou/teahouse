@@ -17,6 +17,7 @@ async def create_profile(
     top_p: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     presence_penalty: Optional[float] = None,
+    is_builtin: bool = False,
 ) -> dict:
     profile_id = generate_uuid()
     now = current_timestamp()
@@ -24,10 +25,10 @@ async def create_profile(
     await execute(
         """INSERT INTO model_profiles
            (id, user_id, name, match_pattern, temperature, max_tokens,
-            top_p, frequency_penalty, presence_penalty, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            top_p, frequency_penalty, presence_penalty, is_builtin, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (profile_id, user_id, name, match_pattern, temperature, max_tokens,
-         top_p, frequency_penalty, presence_penalty, now, now),
+         top_p, frequency_penalty, presence_penalty, int(is_builtin), now, now),
     )
     return await get_profile(profile_id)
 
@@ -102,6 +103,30 @@ async def match_profiles(model_name: str, user_id: str) -> list[dict]:
     """Return profiles whose match_pattern regex matches the given model_name."""
     import re
     profiles = await list_profiles(user_id)
+
+
+async def ensure_builtin_profile(user_id: str) -> dict:
+    """Ensure a built-in default profile exists. Returns it."""
+    row = await fetch_one(
+        "SELECT * FROM model_profiles WHERE user_id = ? AND is_builtin = 1 LIMIT 1",
+        (user_id,),
+    )
+    if row:
+        return dict(row)
+    return await create_profile(
+        user_id=user_id,
+        name="默认",
+        temperature=0.7,
+        max_tokens=8192,
+    )
+
+
+async def get_builtin_profile(user_id: str) -> Optional[dict]:
+    row = await fetch_one(
+        "SELECT * FROM model_profiles WHERE user_id = ? AND is_builtin = 1 LIMIT 1",
+        (user_id,),
+    )
+    return dict(row) if row else None
     matches = []
     for p in profiles:
         if not p.get("match_pattern"):

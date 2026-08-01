@@ -69,6 +69,7 @@ export interface LLMProvider {
   api_url: string
   api_key: string
   api_format: "openai" | "openai_strict" | "anthropic"
+  model_fetch_url: string
   is_enabled: number
   created_at: number
   updated_at: number
@@ -105,8 +106,25 @@ export interface ModelProfile {
 }
 
 export interface SlotBindings {
-  director: string | null
-  writer: string | null
+  director: SlotBinding
+  writer: SlotBinding
+}
+
+export interface SlotBinding {
+  model_id: string | null
+  profile_id: string | null
+  prompt_preset_id: string | null  // director slot only
+}
+
+export interface DirectorPromptPreset {
+  id: string
+  user_id: string
+  name: string
+  is_builtin: number
+  match_pattern: string | null
+  template_yaml: string
+  created_at: number
+  updated_at: number
 }
 
 export interface AppSettings {
@@ -203,4 +221,4 @@ export interface FloorsStats {
   instance_id: string
 }
 
-export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, AppSettings }
+export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings }

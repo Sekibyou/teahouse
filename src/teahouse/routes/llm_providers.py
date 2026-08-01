@@ -7,7 +7,7 @@ import json
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..database.llm_providers import (
@@ -30,6 +30,7 @@ class CreateProviderRequest(BaseModel):
     api_url: str
     api_key: str
     api_format: str = "openai"
+    model_fetch_url: str = ""
 
 
 class UpdateProviderRequest(BaseModel):
@@ -38,6 +39,7 @@ class UpdateProviderRequest(BaseModel):
     api_key: Optional[str] = None
     api_format: Optional[str] = None
     is_enabled: Optional[bool] = None
+    model_fetch_url: Optional[str] = None
 
 
 class ImportModelsRequest(BaseModel):
@@ -91,6 +93,7 @@ async def api_create_provider(body: CreateProviderRequest, user: UserInfo = Depe
         api_url=api_url,
         api_key=body.api_key,
         api_format=body.api_format,
+        model_fetch_url=body.model_fetch_url,
     )
     return {"provider": provider}
 
@@ -131,15 +134,19 @@ async def api_delete_provider(provider_id: str, user: UserInfo = Depends(require
 
 
 @router.get("/{provider_id}/available-models")
-async def api_available_models(provider_id: str, user: UserInfo = Depends(require_user)):
+async def api_available_models(
+    provider_id: str,
+    user: UserInfo = Depends(require_user),
+    url: Optional[str] = Query(None, description="Override the model fetch URL"),
+):
     provider = await get_provider(provider_id)
     _provider_ownership_check(provider, user.user_id)
 
-    api_url = provider["api_url"]
+    api_url = url or provider["api_url"]
     api_key = provider["api_key"]
     api_format = provider["api_format"]
 
-    return {"models": _fetch_available_models(api_url, api_key, api_format)}
+    return {"models": _fetch_available_models(api_url, api_key, api_format, is_custom_url=bool(url))}
 
 
 @router.post("/{provider_id}/import-models")
@@ -187,7 +194,7 @@ async def api_import_models(provider_id: str, body: ImportModelsRequest, user: U
 
 # ===== Provider model fetching =====
 
-def _fetch_available_models(api_url: str, api_key: str, api_format: str) -> list[dict]:
+def _fetch_available_models(api_url: str, api_key: str, api_format: str, is_custom_url: bool = False) -> list[dict]:
     """Fetch available models from a provider's API."""
     # Only hardcode for Anthropic's official API — it has no /v1/models endpoint
     if "api.anthropic.com" in api_url:
@@ -211,18 +218,17 @@ def _fetch_available_models(api_url: str, api_key: str, api_format: str) -> list
         ]
 
     # For all other providers (OpenAI-compatible + third-party Anthropic-compatible):
-    # Try /v1/models first. The API URL has been normalized (e.g., ends with
-    # /v1/chat/completions or /v1/messages). Strip the endpoint suffix to get
-    # the base URL, then query /v1/models.
     try:
-        for suffix in ["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages"]:
-            if api_url.endswith(suffix):
-                base_url = api_url[:-len(suffix)].rstrip("/")
-                break
+        if is_custom_url:
+            models_url = api_url
         else:
-            base_url = api_url.rstrip("/")
-
-        models_url = base_url + "/v1/models"
+            for suffix in ["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages"]:
+                if api_url.endswith(suffix):
+                    base_url = api_url[:-len(suffix)].rstrip("/")
+                    break
+            else:
+                base_url = api_url.rstrip("/")
+            models_url = base_url + "/v1/models"
 
         headers = {
             "Authorization": f"Bearer {api_key}",

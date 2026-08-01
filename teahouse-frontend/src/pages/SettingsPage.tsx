@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { LLMManagementDialog } from "@/components/LLMManagementDialog"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginPanel } from "@/components/PluginPanel"
-import { llmSlotsApi, llmModelsApi, llmProvidersApi, appSettingsApi, pluginsApi } from "@/lib/api"
-import type { SlotBindings, LLMModel, LLMProvider, AppSettings } from "@/lib/types"
+import { SlotCard } from "@/components/SlotCard"
+import { llmSlotsApi, llmModelsApi, llmProvidersApi, modelProfilesApi, directorPromptPresetsApi, appSettingsApi, pluginsApi } from "@/lib/api"
+import type { SlotBindings, SlotBinding, LLMModel, LLMProvider, ModelProfile, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import type { Plugin } from "@/lib/pluginTypes"
 
 type TabId = "llm" | "general" | "plugins"
@@ -21,9 +22,14 @@ export function SettingsPage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<TabId>("llm")
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [slots, setSlots] = useState<SlotBindings>({ director: null, writer: null })
+  const [slots, setSlots] = useState<SlotBindings>({
+    director: { model_id: null, profile_id: null, prompt_preset_id: null },
+    writer: { model_id: null, profile_id: null, prompt_preset_id: null },
+  })
   const [models, setModels] = useState<LLMModel[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
+  const [profiles, setProfiles] = useState<ModelProfile[]>([])
+  const [presets, setPresets] = useState<DirectorPromptPreset[]>([])
   const [loading, setLoading] = useState(true)
 
   // General settings
@@ -45,14 +51,18 @@ export function SettingsPage() {
   // -- LLM state --
   const loadLLMState = async () => {
     setLoading(true)
-    const [sRes, mRes, pRes] = await Promise.all([
+    const [sRes, mRes, pRes, pfRes, prRes] = await Promise.all([
       llmSlotsApi.getAll(),
       llmModelsApi.listEnabled ? llmModelsApi.listEnabled() : llmModelsApi.list(),
       llmProvidersApi.list(),
+      modelProfilesApi.list(),
+      directorPromptPresetsApi.list(),
     ])
     if (sRes.ok) setSlots(sRes.data!.slots)
     if (mRes.ok) setModels(mRes.data!.models)
     if (pRes.ok) setProviders(pRes.data!.providers)
+    if (pfRes.ok) setProfiles(pfRes.data!.profiles)
+    if (prRes.ok) setPresets(prRes.data!.presets)
     setLoading(false)
   }
 
@@ -134,37 +144,15 @@ export function SettingsPage() {
   }
 
   // -- Helpers --
-  const getModelInfo = (modelId: string | null): LLMModel | null =>
+  const getModelInfo = (modelId: string | null | undefined): LLMModel | null =>
     modelId ? models.find(m => m.id === modelId) || null : null
+
+  const handleSlotChange = (slotId: "director" | "writer") => (binding: SlotBinding) => {
+    setSlots(prev => ({ ...prev, [slotId]: binding }))
+  }
 
   const getProviderInfo = (providerId: string | undefined): LLMProvider | null =>
     providerId ? providers.find(p => p.id === providerId) || null : null
-
-  const SlotCard = ({ slotId, label, desc }: { slotId: "director" | "writer"; label: string; desc: string }) => {
-    const model = getModelInfo(slots[slotId])
-    const provider = getProviderInfo(model?.provider_id)
-
-    return (
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <Star className="h-4 w-4 text-primary" />
-          <span className="font-medium">{label}</span>
-        </div>
-        <p className="text-xs text-muted-foreground">{desc}</p>
-        {model ? (
-          <div className="text-xs space-y-1 bg-muted/30 rounded p-2.5">
-            <div className="font-medium">{model.name}</div>
-            <div className="text-muted-foreground font-mono">{model.model_name}</div>
-            {provider && <div className="text-muted-foreground">{provider.name} · {provider.api_format}</div>}
-          </div>
-        ) : (
-          <div className="text-xs text-yellow-500 bg-yellow-500/5 rounded p-2.5 border border-yellow-500/20">
-            未绑定模型
-          </div>
-        )}
-      </div>
-    )
-  }
 
   const permLabels: Record<string, string> = {
     tool: "导演工具",
@@ -230,12 +218,19 @@ export function SettingsPage() {
                 <SlotCard
                   slotId="director"
                   label="导演模型"
-                  desc="导演编排 / 总结 / 设定探索。建议选用主流且实惠的模型，需要好的指令遵循能力。"
+                  binding={slots.director}
+                  models={models}
+                  profiles={profiles}
+                  presets={presets}
+                  onChange={handleSlotChange("director")}
                 />
                 <SlotCard
                   slotId="writer"
                   label="正文模型"
-                  desc="正文写作 / 修改。建议使用最好的模型，需要最佳创意品质。"
+                  binding={slots.writer}
+                  models={models}
+                  profiles={profiles}
+                  onChange={handleSlotChange("writer")}
                 />
               </div>
 

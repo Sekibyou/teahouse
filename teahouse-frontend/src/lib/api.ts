@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
 import type { Plugin, PluginData } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
@@ -381,8 +381,8 @@ export const llmProvidersApi = {
   update: (id: string, data: Record<string, unknown>) =>
     put<{ provider: LLMProvider }>(`/api/llm/providers/${id}`, data),
   delete: (id: string) => del<{ status: string }>(`/api/llm/providers/${id}`),
-  availableModels: (id: string) =>
-    get<{ models: AvailableModel[] }>(`/api/llm/providers/${id}/available-models`),
+  availableModels: (id: string, fetchUrl?: string) =>
+    get<{ models: AvailableModel[] }>(`/api/llm/providers/${id}/available-models${fetchUrl ? `?url=${encodeURIComponent(fetchUrl)}` : ""}`),
   importModels: (providerId: string, modelProfiles: Record<string, string>) =>
     post<{ created: LLMModel[]; skipped: string[] }>(`/api/llm/providers/${providerId}/import-models`, {
       model_profiles: modelProfiles,
@@ -434,9 +434,19 @@ export const llmSlotsApi = {
   getAll: () => get<{ slots: SlotBindings }>("/api/llm/slots/"),
   setAll: (bindings: SlotBindings) =>
     put<{ slots: SlotBindings }>("/api/llm/slots/", bindings),
-  setSlot: (slotId: string, modelId: string | null) =>
-    put<{ slot_id: string; model_id: string | null }>(`/api/llm/slots/${slotId}`, { model_id: modelId }),
+  setSlot: (slotId: string, data: { model_id?: string | null; profile_id?: string | null; prompt_preset_id?: string | null }) =>
+    put<{ slot_id: string; model_id: string | null; profile_id: string | null; prompt_preset_id: string | null }>(`/api/llm/slots/${slotId}`, data),
   clearSlot: (slotId: string) => del<{ status: string }>(`/api/llm/slots/${slotId}`),
+}
+
+// Director Prompt Presets API
+export const directorPromptPresetsApi = {
+  list: () => get<{ presets: DirectorPromptPreset[] }>("/api/llm/prompt-presets/"),
+  create: (data: { name: string; template_yaml: string }) =>
+    post<{ preset: DirectorPromptPreset }>("/api/llm/prompt-presets/", data),
+  update: (id: string, data: { name?: string; template_yaml?: string }) =>
+    put<{ preset: DirectorPromptPreset }>(`/api/llm/prompt-presets/${id}`, data),
+  delete: (id: string) => del<{ status: string }>(`/api/llm/prompt-presets/${id}`),
 }
 
 // App Settings API

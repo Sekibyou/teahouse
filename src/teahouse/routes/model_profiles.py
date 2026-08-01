@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from ..database.model_profiles import (
     create_profile, get_profile, list_profiles,
-    update_profile, delete_profile, match_profiles,
+    update_profile, delete_profile, match_profiles, ensure_builtin_profile,
 )
 from ..routes.auth import require_user, UserInfo
 
@@ -58,6 +58,7 @@ def _validate_regex(pattern: str):
 
 @router.get("/")
 async def api_list_profiles(user: UserInfo = Depends(require_user)):
+    await ensure_builtin_profile(user.user_id)
     profiles = await list_profiles(user.user_id)
     return {"profiles": profiles}
 
@@ -79,6 +80,15 @@ async def api_create_profile(body: CreateProfileRequest, user: UserInfo = Depend
     return {"profile": profile}
 
 
+@router.get("/match")
+async def api_match_profiles(
+    model_name: str = Query(..., description="Model name to match against profile patterns"),
+    user: UserInfo = Depends(require_user),
+):
+    matches = await match_profiles(model_name, user.user_id)
+    return {"matches": matches}
+
+
 @router.get("/{profile_id}")
 async def api_get_profile(profile_id: str, user: UserInfo = Depends(require_user)):
     profile = await get_profile(profile_id)
@@ -90,12 +100,13 @@ async def api_get_profile(profile_id: str, user: UserInfo = Depends(require_user
 async def api_update_profile(profile_id: str, body: UpdateProfileRequest, user: UserInfo = Depends(require_user)):
     profile = await get_profile(profile_id)
     _profile_ownership_check(profile, user.user_id)
+    if profile.get("is_builtin"):
+        raise HTTPException(status_code=403, detail="Cannot edit built-in profile")
 
     if body.match_pattern is not None and body.match_pattern:
         _validate_regex(body.match_pattern)
 
     kwargs = body.model_dump(exclude_none=True)
-    # Handle match_pattern: None = no change, "" = clear
     if "match_pattern" in kwargs and kwargs["match_pattern"] is not None:
         kwargs["match_pattern"] = kwargs["match_pattern"].strip() or None
 
@@ -109,14 +120,7 @@ async def api_update_profile(profile_id: str, body: UpdateProfileRequest, user: 
 async def api_delete_profile(profile_id: str, user: UserInfo = Depends(require_user)):
     profile = await get_profile(profile_id)
     _profile_ownership_check(profile, user.user_id)
+    if profile.get("is_builtin"):
+        raise HTTPException(status_code=403, detail="Cannot delete built-in profile")
     await delete_profile(profile_id)
     return {"status": "ok"}
-
-
-@router.get("/match")
-async def api_match_profiles(
-    model_name: str = Query(..., description="Model name to match against profile patterns"),
-    user: UserInfo = Depends(require_user),
-):
-    matches = await match_profiles(model_name, user.user_id)
-    return {"matches": matches}

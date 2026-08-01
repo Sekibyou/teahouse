@@ -19,14 +19,14 @@ from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
 from .tools import execute_tool, load_tools, load_tools_usage
-from .director_system import assemble_system_prompt
+from .director_system import assemble_system_prompt, build_template_variables, resolve_preset_template
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
 from .database.users import ensure_default_admin, list_users
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
 from .database.llm_providers import configure_crypto as configure_provider_crypto
-from .database.llm_slots import get_all_slot_bindings, get_slot_binding
+from .database.llm_slots import get_all_slot_bindings, get_slot_binding, get_slot_binding_resolved
 from .database.llm_models import get_model as get_llm_model
 from .database.llm_providers import get_provider as get_llm_provider
 from .database.model_profiles import get_profile as get_model_profile
@@ -43,6 +43,7 @@ from .routes.llm_providers import router as llm_providers_router
 from .routes.llm_models import router as llm_models_router
 from .routes.model_profiles import router as model_profiles_router
 from .routes.llm_slots import router as llm_slots_router
+from .routes.director_prompt_presets import router as prompt_presets_router
 from .routes.workspaces import router as workspaces_router
 from .routes.session import router as session_router
 from .routes.plugins import router as plugins_router
@@ -141,6 +142,7 @@ app.include_router(llm_providers_router)
 app.include_router(llm_models_router)
 app.include_router(model_profiles_router)
 app.include_router(llm_slots_router)
+app.include_router(prompt_presets_router)
 app.include_router(workspaces_router)
 app.include_router(session_router)
 app.include_router(plugins_router)
@@ -193,7 +195,12 @@ class ChatRequest(BaseModel):
 
 
 async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
-    """Resolve an LLM client from a user's slot binding (provider→model→profile chain)."""
+    """Resolve an LLM client from a user's slot binding (provider→model→[slot-profile | model-profile] chain).
+
+    Profile resolution order:
+    1. Slot-level profile_id (from llm_slot_bindings)
+    2. Model-level profile_id is NOT used anymore — profiles are slot-level only
+    """
     binding = await get_slot_binding(user_id, slot_id)
     if not binding or not binding.get("model_id"):
         raise HTTPException(status_code=404, detail=f"Slot '{slot_id}' is not bound to a model")
@@ -207,8 +214,10 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         raise HTTPException(status_code=404, detail="Model's provider not found")
 
     profile = None
-    if model.get("profile_id"):
-        profile = await get_model_profile(model["profile_id"])
+    # Slot-level profile override takes priority
+    slot_profile_id = binding.get("profile_id")
+    if slot_profile_id:
+        profile = await get_model_profile(slot_profile_id)
 
     return LLMClient(ConfigLLMConfig(
         url=provider["api_url"],
@@ -437,7 +446,20 @@ async def _tool_use_loop(
 
     tools = load_tools()
     tools_usage = load_tools_usage()
-    tool_system = assemble_system_prompt(instance_dir, tools_usage)
+
+    # Resolve prompt preset from director slot binding
+    tool_system = None
+    if user_id:
+        binding_full = await get_slot_binding_resolved(user_id, "director")
+        if binding_full and binding_full.get("preset_template_yaml"):
+            variables = build_template_variables(instance_dir, tools_usage)
+            tool_system, fake_msgs = resolve_preset_template(
+                binding_full["preset_template_yaml"], variables
+            )
+            if fake_msgs:
+                msg = fake_msgs + msg
+    if tool_system is None:
+        tool_system = assemble_system_prompt(instance_dir, tools_usage)
 
     def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str):
         if style == "anthropic":

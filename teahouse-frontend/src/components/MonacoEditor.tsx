@@ -264,7 +264,7 @@ export function MonacoEditor({
 
     // Normalize trailing newlines for comparison — Monaco models always end with \n,
     // which can cause a spurious empty-line diff when original lacks a trailing newline.
-    const norm = (s: string) => s.replace(/\r\n/g, "\n").trimEnd()
+    const norm = (s: string | undefined) => (s || "").replace(/\r\n/g, "\n").trimEnd()
     const normalizedValue = norm(value)
     const normalizedOriginal = norm(original)
 

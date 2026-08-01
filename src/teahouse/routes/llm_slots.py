@@ -18,11 +18,16 @@ router = APIRouter(prefix="/api/llm/slots", tags=["llm-slots"])
 
 class SetSlotRequest(BaseModel):
     model_id: Optional[str] = None
+    profile_id: Optional[str] = None
+    prompt_preset_id: Optional[str] = None
 
 
 class SetAllSlotsRequest(BaseModel):
     director: Optional[str] = None
     writer: Optional[str] = None
+    director_profile_id: Optional[str] = None
+    writer_profile_id: Optional[str] = None
+    director_prompt_preset_id: Optional[str] = None
 
 
 @router.get("/")
@@ -34,8 +39,16 @@ async def api_get_slots(user: UserInfo = Depends(require_user)):
 @router.put("/")
 async def api_set_all_slots(body: SetAllSlotsRequest, user: UserInfo = Depends(require_user)):
     bindings = {
-        "director": body.director,
-        "writer": body.writer,
+        "director": {
+            "model_id": body.director,
+            "profile_id": getattr(body, "director_profile_id", None),
+            "prompt_preset_id": getattr(body, "director_prompt_preset_id", None),
+        },
+        "writer": {
+            "model_id": body.writer,
+            "profile_id": getattr(body, "writer_profile_id", None),
+            "prompt_preset_id": None,
+        },
     }
     result = await set_all_slot_bindings(user.user_id, bindings)
     return {"slots": result}
@@ -44,10 +57,20 @@ async def api_set_all_slots(body: SetAllSlotsRequest, user: UserInfo = Depends(r
 @router.put("/{slot_id}")
 async def api_set_slot(slot_id: str, body: SetSlotRequest, user: UserInfo = Depends(require_user)):
     try:
-        await set_slot_binding(user.user_id, slot_id, body.model_id)
+        await set_slot_binding(
+            user.user_id, slot_id,
+            model_id=body.model_id,
+            profile_id=body.profile_id,
+            prompt_preset_id=body.prompt_preset_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"slot_id": slot_id, "model_id": body.model_id}
+    return {
+        "slot_id": slot_id,
+        "model_id": body.model_id,
+        "profile_id": body.profile_id,
+        "prompt_preset_id": body.prompt_preset_id,
+    }
 
 
 @router.delete("/{slot_id}")

@@ -469,8 +469,10 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
             return "Error: 模型的 provider 不存在，请检查 writer slot 配置。"
 
         profile = None
-        if model.get("profile_id"):
-            profile = await get_model_profile(model["profile_id"])
+        # Use slot-level profile_id (not model-level)
+        slot_profile_id = binding.get("profile_id")
+        if slot_profile_id:
+            profile = await get_model_profile(slot_profile_id)
 
         writer_client = LLMClient(LLMConfig(
             url=provider["api_url"],
