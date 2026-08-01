@@ -100,11 +100,12 @@ def _floors_summary(dir_path: Path) -> str:
 
 
 def _scan_tree(instance_dir: Path) -> str:
-    """Build a flat listing of the instance root directory.
+    """Build a listing of the instance root directory.
 
-    - Root-level files are listed.
-    - All directories are shown as a single line each (not expanded).
-    - floors/ gets special stats (latest floor, summary coverage, unsummarized count).
+    - Root-level files and dirs are listed (including .teahouse/).
+    - Normal directories are shown as a single line, but .teahouse/ and
+      _prototype/.teahouse/ are fully expanded.
+    - floors/ gets special stats.
     - Use Glob to explore inside directories when needed.
     """
     lines: list[str] = []
@@ -115,18 +116,90 @@ def _scan_tree(instance_dir: Path) -> str:
         key=lambda e: (not e.is_dir(), e.name),
     )
 
+    # .teahouse/ is a special dir that should appear in the tree
+    teahouse_dir = root / ".teahouse"
+    if teahouse_dir.is_dir():
+        entries.append(teahouse_dir)
+
     for i, entry in enumerate(entries):
         is_last = i == len(entries) - 1
         connector = "└── " if is_last else "├── "
 
         if entry.is_dir() and entry.name == "floors":
             lines.append(f"{connector}{_floors_summary(entry)}")
+        elif entry.is_dir() and entry.name == ".teahouse":
+            lines.append(f"{connector}.teahouse/")
+            _scan_teahouse_dir(entry, lines, indent="    ", prototype=False)
+        elif entry.is_dir() and entry.name == "_prototype":
+            lines.append(f"{connector}_prototype/")
+            _scan_prototype_dir(entry, lines, indent="    ")
         elif entry.is_dir():
             lines.append(f"{connector}{entry.name}/")
         else:
             lines.append(f"{connector}{entry.name}")
 
+    has_prototype = any(entry.is_dir() and entry.name == "_prototype" for entry in entries)
+    if has_prototype:
+        lines.append("(This simplified tree shows only the instance root and _prototype/ structure. Use Glob/Read tools to explore directory contents in full detail.)")
+    else:
+        lines.append("(This simplified tree shows only the instance root structure. Use Glob/Read tools to explore directory contents in full detail.)")
+
     return "\n".join(lines)
+
+
+def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str, *, prototype: bool) -> None:
+    """Recursively scan .teahouse/ directory, fully expanding all subdirectories."""
+    entries = sorted(
+        [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
+        key=lambda e: (not e.is_dir(), e.name),
+    )
+
+    for i, entry in enumerate(entries):
+        is_last = i == len(entries) - 1
+        connector = "└── " if is_last else "├── "
+
+        if entry.is_dir():
+            lines.append(f"{indent}{connector}{entry.name}/")
+            _scan_teahouse_dir(entry, lines, indent + "    ", prototype=prototype)
+        else:
+            suffix = ""
+            if entry.name == "output-blocks.jsonl":
+                if prototype:
+                    suffix = "  (enabled after prototype packing; currently editable as initial output blocks for this prototype)"
+                else:
+                    suffix = "  (read-only, use output tool to modify)"
+            lines.append(f"{indent}{connector}{entry.name}{suffix}")
+
+
+def _scan_prototype_dir(dir_path: Path, lines: list[str], indent: str) -> None:
+    """Scan _prototype/ — normal dirs get single-line, .teahouse/ is fully expanded, floors/ gets prototype-specific stats."""
+    entries = sorted(
+        [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
+        key=lambda e: (not e.is_dir(), e.name),
+    )
+
+    # .teahouse/ is a special dir that should appear in the tree
+    teahouse_dir = dir_path / ".teahouse"
+    if teahouse_dir.is_dir():
+        entries.append(teahouse_dir)
+
+    for i, entry in enumerate(entries):
+        is_last = i == len(entries) - 1
+        connector = "└── " if is_last else "├── "
+
+        if entry.is_dir() and entry.name == "floors":
+            stats = get_floors_stats(entry)
+            if stats:
+                lines.append(f"{indent}{connector}floors/  ({stats['total_floors']} floors total) after packing as prototype becomes initial floors, register manually in output-blocks.jsonl as output block")
+            else:
+                lines.append(f"{indent}{connector}floors/")
+        elif entry.is_dir() and entry.name == ".teahouse":
+            lines.append(f"{indent}{connector}.teahouse/")
+            _scan_teahouse_dir(entry, lines, indent + "    ", prototype=True)
+        elif entry.is_dir():
+            lines.append(f"{indent}{connector}{entry.name}/")
+        else:
+            lines.append(f"{indent}{connector}{entry.name}")
 
 
 def _scan_skills(instance_dir: Path) -> str:

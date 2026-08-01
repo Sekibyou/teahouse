@@ -144,13 +144,14 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 导演（Director）的系统提示词由 `director_system.py` 的 `assemble_system_prompt()` 动态组装，包含以下组件：
 
 ```
-1. director-system/role.md       — 角色定义
-2. director-system/behavior.md   — 行为准则（含工具调用上限）
-3. tools.json usage 文本          — 由 load_tools_usage() 从 tools.json 生成
-4. 实例目录树                      — 动态扫描，floors/skills/current 折叠
-5. Skill 目录                      — 解析每个 SKILL.md 的 name + description
-6. 实例 teahouse.md               — 直接注入
+1. 实例 teahouse.md               — 直接注入（角色定义、配置、Skill 路由）
+2. director-system/behavior.md   — 行为准则
+3. tools.json usage 文本          — 由调用方从 tools.json 生成后传入
+4. 实例目录树                      — 动态扫描，所有目录只显示一行（不展开），floors/ 有特殊统计信息
+5. Skill 列表                      — 扫描系统 skills + 实例 skills，解析每个 SKILL.md 的 name + description；实例 skills 可覆盖同名系统 skill
 ```
+
+**注意**：顺序是固定的——teahouse.md 在最前面，是创作者的主要定制入口。
 
 ### tools.json — 工具定义的唯一数据源
 
@@ -159,7 +160,7 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 | 输出 | 函数 | 用途 |
 |---|---|---|
 | OpenAI function calling schema | `load_tools()` (tools.py) | 传给 LLM API 作为可调用工具列表 |
-| 自然语言使用指南 | `load_tools_usage()` (tools.py) | 注入导演系统提示词，教导导演如何使用工具 |
+| 自然语言使用指南 | `load_tools_usage()` (tools.py) | 生成文本后传入 `assemble_system_prompt()`，注入导演系统提示词 |
 
 每个 tool 条目包含：
 - `name` / `description` / `parameters` — 标准 function calling schema
@@ -200,12 +201,11 @@ assets/              静态资源（图片、字体、音频等）
 
 ### 目录树显示规则
 
-系统提示词中自动注入目录树，按以下规则折叠以节省 token：
+系统提示词中通过 `_scan_tree()` 动态注入目录树，规则如下：
 
-| 目录 | 显示方式 |
-|---|---|
-| `settings/`、`variables/`、根目录文件 | 完全展开 |
-| `temp/`、`skills/` | 只显示目录名（紧凑），不展开文件 |
-| `floors/` | 折叠为统计行，如 `floors/ (Newest: floor-009.md; Total: 9 files)` |
+- 所有目录都**只显示一行目录名**（不展开），如 `├── settings/`、`├── skills/`
+- `floors/` 显示特殊统计信息，如 `floors/  (Latest floor: 009 (9 floors); Last summary covered floors 1~5; 4 floors unsummarized)`
+- 根目录文件逐行列出
+- 排除 `.git`、`__pycache__`、`sessions` 等内部目录
 
 需要深入探索时通过 Glob 工具按需查看。
