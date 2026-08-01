@@ -136,6 +136,13 @@ class LLMClient:
 
         messages = preprocess_messages(messages, self.api_style)
 
+        # Strip internal frontend keys before sending to LLM API
+        for m in messages:
+            m.pop("blocks", None)
+            m.pop("reasoning", None)
+            m.pop("status", None)
+            m.pop("id", None)
+
         if self.api_style == "anthropic":
             body["messages"] = messages
             if system:

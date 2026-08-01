@@ -47,7 +47,9 @@ function mergeConsecutiveSameRole(msgs: RichMessage[]): RichMessage[] {
   const result: RichMessage[] = []
   for (const m of msgs) {
     const last = result[result.length - 1]
-    if (last && last.role === m.role) {
+    const lastHasBlocks = last?.blocks && last.blocks.length > 0
+    const curHasBlocks = m.blocks && m.blocks.length > 0
+    if (last && last.role === m.role && !lastHasBlocks && !curHasBlocks) {
       last.content = last.content ? last.content + "\n" + m.content : m.content
     } else {
       result.push({ ...m })
@@ -307,20 +309,21 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }, [])
 
   // 当 phase 变为 idle 时，将所有未收到结果的 tool_call block 标记为"(interrupted)"
+  // 同时将该 assistant 消息的 status 标记为 done，防止下一轮被当作中断上下文重复注入
   useEffect(() => {
     if (genPhase === "idle") {
       setMessages(prev => {
         let changed = false
         const next = prev.map(m => {
-          if (m.role !== "assistant" || !m.blocks) return m
+          if (m.role !== "assistant" || !m.blocks || m.status === "done") return m
+          changed = true
           const updatedBlocks = m.blocks.map(b => {
             if (b.type === "tool_call" && b.result === undefined) {
-              changed = true
               return { ...b, result: "(interrupted)" }
             }
             return b
           })
-          return changed ? { ...m, blocks: updatedBlocks } : m
+          return { ...m, blocks: updatedBlocks, status: "done" as MsgStatus }
         })
         return changed ? next : prev
       })
@@ -382,12 +385,17 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       : { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
     const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
 
-    // 中断上下文注入：如果上一条 assistant 未完成，插入 [system] 消息
-    const lastMsg = sendMessages[sendMessages.length - 1]
-    if (lastMsg && lastMsg.role === "assistant" && lastMsg.status !== "done") {
+    // 中断上下文注入：找到最后一条未完成的 assistant，在其后插入 [system] 消息
+    const lastAssistantIndex = (() => {
+      for (let i = sendMessages.length - 1; i >= 0; i--) {
+        if (sendMessages[i].role === "assistant" && sendMessages[i].status !== "done") return i
+      }
+      return -1
+    })()
+    if (lastAssistantIndex !== -1) {
       const reason = useGenerationStore.getState().consumeAbortReason()
       if (reason === "user_interrupted") {
-        sendMessages.push({ id: nextId(), role: "user", content: "[system] user interrupted", reasoning: "", status: "done" } as RichMessage)
+        sendMessages.splice(lastAssistantIndex + 1, 0, { id: nextId(), role: "user", content: "[system] user interrupted", reasoning: "", status: "done" } as RichMessage)
       }
     }
     if (userMsg) sendMessages.push(userMsg)
@@ -409,16 +417,27 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       const activeInst = getActiveInstance()
       const shouldUseTools = useTools && activeInst !== null
 
+      const apiMessages = mergedMessages.map((m) => {
+        const msg: Record<string, unknown> = { role: m.role, content: m.content || "" }
+        if (m.blocks && m.blocks.length > 0) {
+          msg.blocks = m.blocks
+        }
+        if (m.reasoning) {
+          msg.reasoning = m.reasoning
+        }
+        return msg
+      })
+
       let stream: ReadableStream<Uint8Array>
       if (shouldUseTools) {
         stream = await chatApi.sendToolStream(
-          mergedMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          apiMessages,
           activeInst!.id,
           abortController.signal,
         )
       } else {
         stream = await chatApi.sendStream(
-          mergedMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          apiMessages,
           abortController.signal,
           "writer",
         )

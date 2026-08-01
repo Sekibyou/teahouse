@@ -272,6 +272,117 @@ MAX_TOOL_ROUNDS = 15  # Safety limit for tool use iterations
 APPROVAL_REQUIRED_TOOLS = {"GitCommit"}
 
 
+def _preprocess_frontend_blocks(messages: list[dict], api_style: str) -> list[dict]:
+    """Convert frontend RichMessage blocks into API-format tool_calls and tool_result messages.
+
+    The frontend stores tool interactions as:
+      blocks: [
+        {type: "text", text: "..."},
+        {type: "tool_call", id, name, args, result?: string},
+        ...
+      ]
+
+    For interrupted messages (where blocks exist on an assistant message):
+    - text blocks → accumulated into content
+    - tool_call with real result → assistant tool_call + tool_result message pair
+    - tool_call with result="(interrupted)" or no result → assistant tool_call + synthetic
+      tool_result indicating the tool was cancelled by user interruption
+    """
+    result: list[dict] = []
+
+    for msg in messages:
+        blocks = msg.pop("blocks", None)
+        msg.pop("reasoning", None)
+        msg.pop("status", None)
+        msg.pop("id", None)
+
+        if not blocks or msg.get("role") != "assistant":
+            result.append(msg)
+            continue
+
+        # Check if this is an interrupted message
+        has_interrupted = any(
+            b.get("type") == "tool_call" and b.get("result") in (None, "(interrupted)")
+            for b in blocks
+        )
+
+        if not has_interrupted:
+            # Normal message: blocks are just display artifacts, strip and pass through
+            result.append(msg)
+            continue
+
+        # Interrupted assistant: reconstruct with proper tool_calls
+        text_parts: list[str] = []
+        all_tool_calls: list[dict] = []
+        tool_results: list[dict] = []
+
+        for b in blocks:
+            if b.get("type") == "text" and b.get("text"):
+                text_parts.append(b["text"])
+            elif b.get("type") == "tool_call":
+                tc_id = b.get("id", "")
+                tc_name = b.get("name", "")
+                tc_args = b.get("args", {})
+                tc_result = b.get("result")
+
+                if api_style == "anthropic":
+                    api_tc = {
+                        "type": "tool_use",
+                        "id": tc_id,
+                        "name": tc_name,
+                        "input": tc_args,
+                    }
+                else:
+                    api_tc = {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc_name,
+                            "arguments": json.dumps(tc_args),
+                        },
+                    }
+                all_tool_calls.append(api_tc)
+
+                if tc_result is not None and tc_result != "(interrupted)":
+                    result_msg = tc_result
+                else:
+                    result_msg = f"[cancelled by user interruption]"
+                if api_style == "anthropic":
+                    tool_results.append({
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": tc_id, "content": result_msg}],
+                    })
+                else:
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": result_msg,
+                    })
+
+        # Build the assistant message
+        content_text = "".join(text_parts) if text_parts else None
+
+        if all_tool_calls:
+            if api_style == "anthropic":
+                content_array: list[dict] = []
+                if content_text:
+                    content_array.append({"type": "text", "text": content_text})
+                content_array.extend(all_tool_calls)
+                result.append({"role": "assistant", "content": content_array})
+            else:
+                result.append({
+                    "role": "assistant",
+                    "content": content_text or None,
+                    "tool_calls": all_tool_calls,
+                })
+            result.extend(tool_results)
+        else:
+            # Only text, no tool calls
+            result.append({"role": "assistant", "content": content_text or ""})
+
+    return result
+
+
 class ToolApprovalStore:
     """In-memory store for pending tool approvals."""
 
@@ -320,6 +431,9 @@ async def _tool_use_loop(
     """
     api_style = client.api_style
     msg = list(messages)
+
+    # Convert frontend blocks to API tool_calls format (for interrupted generations)
+    msg = _preprocess_frontend_blocks(msg, api_style)
 
     tools = load_tools()
     tools_usage = load_tools_usage()
@@ -487,12 +601,14 @@ async def chat(body: ChatRequest, request: Request):
         )
 
     if not body.stream:
-        text = await client.send_message(body.messages, system=body.system)
+        msgs = _preprocess_frontend_blocks(list(body.messages), client.api_style)
+        text = await client.send_message(msgs, system=body.system)
         state.broadcast("llm_done", {"full_text": text})
         return {"status": "ok", "full_text": text}
 
     async def sse_stream():
-        async for chunk in client.send_message_stream(body.messages, system=body.system):
+        msgs = _preprocess_frontend_blocks(list(body.messages), client.api_style)
+        async for chunk in client.send_message_stream(msgs, system=body.system):
             event = chunk["type"]  # "reasoning" or "text"
             yield f"event: {event}\ndata: {json.dumps(chunk)}\n\n"
         yield "event: done\ndata: {}\n\n"
