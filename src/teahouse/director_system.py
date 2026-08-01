@@ -13,7 +13,9 @@ All template content lives in markdown files, not in Python code.
 from __future__ import annotations
 
 import re
+import yaml
 from pathlib import Path
+from string import Template
 from typing import Optional
 
 # ---------------------------------------------------------------------------
@@ -293,3 +295,81 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     parts.append(f"————可用 Skill 列表开始————\n\n{skills}\n\n————可用 Skill 列表结束————")
 
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Template-based prompt preset resolution
+# ---------------------------------------------------------------------------
+
+
+def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> dict[str, str]:
+    """Compute the variable values available for prompt preset templates.
+
+    Returns a dict with keys: teahouse.md, behavior.md, tools_usage, file_tree, available_skills
+    """
+    variables: dict[str, str] = {}
+
+    # teahouse.md
+    teahouse_path = instance_dir / INSTANCE_TEAHOUSE
+    if teahouse_path.exists():
+        variables["teahouse.md"] = teahouse_path.read_text(encoding="utf-8").strip()
+    else:
+        variables["teahouse.md"] = ""
+
+    # behavior.md
+    for filename in TEMPLATE_FILES:
+        filepath = TEMPLATE_DIR / filename
+        if filepath.exists():
+            variables["behavior.md"] = filepath.read_text(encoding="utf-8").strip()
+            break
+    else:
+        variables["behavior.md"] = ""
+
+    # tools_usage
+    variables["tools_usage"] = tools_usage_text.strip()
+
+    # file_tree
+    variables["file_tree"] = _scan_tree(instance_dir)
+
+    # available_skills
+    variables["available_skills"] = _scan_skills(instance_dir)
+
+    return variables
+
+
+def resolve_preset_template(yaml_text: str, variables: dict[str, str]) -> tuple[str, list[dict]]:
+    """Parse a YAML preset template and resolve variables.
+
+    Returns (system_prompt, fake_messages_list).
+
+    Fake messages can be specified in two ways:
+    1. `messages:` key — a list of {role, content} dicts (same format as Generate config)
+    2. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange
+    """
+    data = yaml.safe_load(yaml_text) or {}
+
+    # Resolve system template with {{variable}} substitution
+    system_template = data.get("system", "") or ""
+    tmpl = Template(system_template)
+    system_prompt = tmpl.safe_substitute(**variables)
+
+    # Collect fake messages: explicit `messages` key takes priority,
+    # then fall back to top-level `user`/`assistant` shorthand
+    fake_messages_raw = data.get("messages")
+
+    if isinstance(fake_messages_raw, list):
+        fake_messages = [
+            {"role": msg["role"], "content": msg.get("content", "") or ""}
+            for msg in fake_messages_raw
+            if isinstance(msg, dict) and "role" in msg
+        ]
+    else:
+        fake_messages = []
+        user_text = data.get("user")
+        assistant_text = data.get("assistant")
+        if user_text:
+            fake_messages.append({"role": "user", "content": str(user_text).strip()})
+        if assistant_text:
+            fake_messages.append({"role": "assistant", "content": str(assistant_text).strip()})
+
+    return system_prompt, fake_messages
