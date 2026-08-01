@@ -7,6 +7,8 @@
   // ============================================================
 
   // ---- 内部状态 ----
+  let currentScene = null;
+  let currentSceneUuid = null;
   const uiComponents = {};
   const stylesheets = new Set();
   const eventCallbacks = {};
@@ -60,6 +62,9 @@
       eventCallbacks[event] = eventCallbacks[event].filter(function(cb) { return cb !== callback; });
     },
 
+    // Scene 管理
+    activateScene: function(uuid) { callHost('activateScene', [uuid]); },
+
     // 内部使用：事件分发
     _emit: function(event, data) {
       if (!eventCallbacks[event]) return;
@@ -86,6 +91,32 @@
 
   // ---- Scene 管理 ----
 
+  function activateScene(uuid) {
+    // 卸载旧 scene
+    if (currentScene && currentScene.unmount) {
+      try { currentScene.unmount(); } catch(e) {}
+    }
+
+    // 获取新 scene 并注入
+    window.Teahouse.getOutputBlock(uuid).then(function(block) {
+      if (block && block.content_type === 'scene_js') {
+        var script = document.createElement('script');
+        script.textContent = block.rendered;
+        script.setAttribute('data-scene-uuid', uuid);
+        document.head.appendChild(script);
+        currentSceneUuid = uuid;
+      }
+    }).catch(function(err) {
+      console.error('[Teahouse Bootstrap] activateScene failed:', err);
+    });
+  }
+
+  function registerScene(name, component) {
+    currentScene = component;
+  }
+
+  // ---- UI 组件管理 ----
+
   var uiQueue = [];
   var uiLayerReady = false;
 
@@ -95,23 +126,29 @@
     }
     uiComponents[label] = element;
     if (uiLayerReady) {
-      document.getElementById('teahouse-ui-layer')!.appendChild(element);
+      document.getElementById('teahouse-ui-layer').appendChild(element);
     } else {
-      uiQueue.push({ label, element });
+      uiQueue.push({ label: label, element: element });
     }
   }
 
   function flushUIQueue() {
-    const layer = document.getElementById('teahouse-ui-layer');
+    var layer = document.getElementById('teahouse-ui-layer');
     if (!layer) return;
-    for (const { label, element } of uiQueue) {
-      layer.appendChild(element);
-      uiComponents[label] = element;
+    for (var i = 0; i < uiQueue.length; i++) {
+      var item = uiQueue[i];
+      layer.appendChild(item.element);
+      uiComponents[item.label] = item.element;
     }
     uiQueue.length = 0;
   }
 
-  // ---- 默认渲染：获取 ep 块并渲染 rich_text ----
+  // ---- 默认渲染：获取 ep 块并渲染 rich_text（带翻页） ----
+
+  // 翻页状态：共享给 UI 组件读写
+  var pageState = { blocks: [], currentIndex: 0 };
+
+  window.Teahouse._pageState = pageState;
 
   function defaultRender() {
     window.Teahouse.listOutputBlocks().then(function(blocks) {
@@ -124,7 +161,10 @@
         .sort(function(a, b) { return b.epNum - a.epNum; });
 
       if (epBlocks.length > 0) {
-        renderEpBlock(epBlocks[0]);
+        pageState.blocks = epBlocks;
+        pageState.currentIndex = 0;
+        renderCurrentEp();
+        window.Teahouse._emit('page.change', { index: 0, total: epBlocks.length });
       } else {
         // Fallback: 渲染所有 rich_text 块
         var rtBlocks = blocks.filter(function(b) { return b.content_type === 'rich_text'; });
@@ -137,6 +177,18 @@
     });
   }
 
+  function renderCurrentEp() {
+    if (pageState.blocks.length === 0) return;
+    renderEpBlock(pageState.blocks[pageState.currentIndex]);
+  }
+
+  function goToPage(index) {
+    if (index < 0 || index >= pageState.blocks.length) return;
+    pageState.currentIndex = index;
+    renderCurrentEp();
+    window.Teahouse._emit('page.change', { index: index, total: pageState.blocks.length });
+  }
+
   function renderEpBlock(block) {
     var container = document.getElementById('teahouse-content');
     if (!container) return;
@@ -144,15 +196,22 @@
     window.Teahouse.getOutputBlock(block.uuid).then(function(full) {
       return window.Teahouse.renderRichText(full.content);
     }).then(function(html) {
-      // 按分隔符切片渲染为气泡
-      var parts = html.split('<hr>');
+      // 小说式整章渲染：章节标题 + 连续正文（保留 <hr> 作为页内分隔）
+      var chapter = document.createElement('article');
+      chapter.className = 'teahouse-chapter';
+
+      var header = document.createElement('header');
+      header.className = 'teahouse-chapter-title';
+      header.textContent = block.note || block.label || '';
+      chapter.appendChild(header);
+
+      var body = document.createElement('div');
+      body.className = 'teahouse-chapter-body';
+      body.innerHTML = html;
+      chapter.appendChild(body);
+
       container.innerHTML = '';
-      parts.forEach(function(part) {
-        var bubble = document.createElement('div');
-        bubble.className = 'teahouse-bubble';
-        bubble.innerHTML = part;
-        container.appendChild(bubble);
-      });
+      container.appendChild(chapter);
     }).catch(function(err) {
       console.error('[Teahouse Bootstrap] renderEpBlock failed:', err);
     });
@@ -164,8 +223,20 @@
     switch (block.content_type) {
       case 'rich_text':
         if (/^ep\d+$/i.test(block.label)) {
-          renderEpBlock(block);
+          // 新 ep 到来：加入列表，跳到最新页
+          var num = parseInt(block.label.replace(/^ep/i, ''), 10);
+          var exists = pageState.blocks.some(function(b) { return b.uuid === block.uuid; });
+          if (!exists) {
+            pageState.blocks.push(Object.assign({}, block, { epNum: num }));
+            pageState.blocks.sort(function(a, b) { return b.epNum - a.epNum; });
+          }
+          pageState.currentIndex = 0;
+          renderCurrentEp();
+          window.Teahouse._emit('page.change', { index: 0, total: pageState.blocks.length });
         }
+        break;
+      case 'scene_js':
+        window.Teahouse.activateScene(block.uuid);
         break;
       case 'ui_js':
         // Evaluate UI JS block — sandbox host embeds initial ones in srcdoc,
@@ -188,9 +259,31 @@
     switch (block.content_type) {
       case 'rich_text':
         if (/^ep\d+$/i.test(block.label)) {
-          renderEpBlock(block);
+          // 更新列表中的块，重新渲染
+          for (var i = 0; i < pageState.blocks.length; i++) {
+            if (pageState.blocks[i].uuid === block.uuid) {
+              pageState.blocks[i] = Object.assign({}, block, { epNum: pageState.blocks[i].epNum });
+              break;
+            }
+          }
+          if (pageState.blocks.length > 0 && pageState.blocks[pageState.currentIndex].uuid === block.uuid) {
+            renderCurrentEp();
+          }
         }
         break;
+      case 'scene_js':
+        window.Teahouse.activateScene(block.uuid);
+        break;
+    }
+  });
+
+  window.Teahouse.on('output.delete', function(data) {
+    if (data.uuid === currentSceneUuid) {
+      if (currentScene && currentScene.unmount) {
+        try { currentScene.unmount(); } catch(e) {}
+      }
+      currentScene = null;
+      currentSceneUuid = null;
     }
   });
 
@@ -231,16 +324,16 @@
       uiLayer.className = 'teahouse-ui-layer';
       document.body.appendChild(uiLayer);
     }
-    uiLayerReady = true;
-    flushUIQueue();
     window.parent.postMessage({ _type: 'ready' }, '*');
   }
 
-  // 在整个 sandbox 初始化完成后执行默认渲染
-  setTimeout(function() {
-    defaultRender();
-  }, 100);
+  // 整个 sandbox 初始化完成后执行默认渲染
+  defaultRender();
 
-  // 暴露方法到全局供场景和 UI 脚本使用
+  // 暴露方法到全局供场景脚本使用
+  window.activateScene = activateScene;
+  window.registerScene = registerScene;
   window.registerUI = registerUI;
+  window.goToPage = goToPage;
+  window.renderCurrentEp = renderCurrentEp;
 })();

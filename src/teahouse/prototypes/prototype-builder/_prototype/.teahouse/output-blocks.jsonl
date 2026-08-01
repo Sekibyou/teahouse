@@ -1,0 +1,4 @@
+{"uuid": "init00000001", "label": "ui_bootstrap", "note": "沙盒基础设施 + 翻页状态 + 小说式章节渲染", "content": "{{sandbox/bootstrap.js}}", "content_type": "bootstrap_js"}
+{"uuid": "init00000002", "label": "ui_pagebar", "note": "章节导航条：上一章 / 进度(N/M) / 下一章 + 目录跳转", "content": "{{sandbox/page-bar.js}}", "content_type": "ui_js"}
+{"uuid": "init00000003", "label": "ui_theme", "note": "小说阅读主题 — 居中限宽版式", "content": "{{sandbox/theme.css}}", "content_type": "css"}
+{"uuid": "init00000004", "label": "ep1", "note": "开场白", "content": "{{floors/floor-001.md}}", "content_type": "rich_text"}
