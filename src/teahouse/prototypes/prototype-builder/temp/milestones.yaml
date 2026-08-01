@@ -29,9 +29,8 @@
 #    - 在 tasks 条目中记录对应的 commit hash，方便回溯
 #
 # 4. commit 规范
-#    - 沙盒代码：style: / feat: / fix: 前缀
-#    - 设定文件：content: 前缀
-#    - 变量系统：vars: 前缀
+#    - 提交类型使用 GitCommit 的 "other" 类型
+#    - message 内加前缀：style: / feat: / fix:（沙盒代码）、content:（设定）、vars:（变量）
 # ============================================================
 
 tasks:

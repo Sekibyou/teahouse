@@ -162,7 +162,7 @@ _prototype/
 - **沙盒代码迭代前先 commit**，验证通过后再 commit 锁定，改坏可回退
 - **设定文件大规模调整前先 commit**
 - **每完成一个阶段 commit 一次**，在 milestones tasks 中记录 commit hash
-- commit 前缀建议：`style:` / `feat:` / `fix:`（沙盒代码）、`content:`（设定）、`vars:`（变量）
+- 提交类型使用 `other`，message 内加前缀区分：`style:` / `feat:` / `fix:`（沙盒代码）、`content:`（设定）、`vars:`（变量）
 
 ### 目录访问权限
 
