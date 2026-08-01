@@ -12,7 +12,7 @@ import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 
-type MsgStatus = "pending" | "reasoning" | "streaming" | "done"
+type MsgStatus = "pending" | "reasoning" | "streaming" | "done" | "queued"
 
 interface ContentBlock {
   type: "text" | "tool_call"
@@ -36,6 +36,24 @@ interface RichMessage {
 let msgIdCounter = 0
 function nextId() {
   return `msg-${++msgIdCounter}`
+}
+
+/**
+ * 合并连续相同 role 的消息为单条（用换行分隔）。
+ * Anthropic API 会在服务端自动合并；OpenAI 原生不强制交替；
+ * 但严格第三方提供商（Kimi、Qwen 等）要求严格交替，合并后满足所有 API。
+ */
+function mergeConsecutiveSameRole(msgs: RichMessage[]): RichMessage[] {
+  const result: RichMessage[] = []
+  for (const m of msgs) {
+    const last = result[result.length - 1]
+    if (last && last.role === m.role) {
+      last.content = last.content ? last.content + "\n" + m.content : m.content
+    } else {
+      result.push({ ...m })
+    }
+  }
+  return result
 }
 
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
@@ -219,14 +237,21 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const isStreaming = genPhase === "generating"
   const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
 
-  // Refresh git when generation ends
+  // Refresh git + drain queued messages when generation ends
   const prevGenPhaseRef = useRef(genPhase)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
   useEffect(() => {
     const prev = prevGenPhaseRef.current
     prevGenPhaseRef.current = genPhase
     if ((prev === "generating" || prev === "waiting_approval") && genPhase === "idle") {
       if (instId) {
         useGitStore.getState().fetchGitStatus(instId)
+      }
+      // 消费排队消息：生成结束后如果有排队消息，自动发起新请求
+      const hasQueued = messagesRef.current.some(m => m.role === "user" && m.status === "queued")
+      if (hasQueued) {
+        _doSend("", true)
       }
     }
   }, [genPhase, instId])
@@ -278,6 +303,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const handleStop = useCallback(() => {
     aborterRef.current?.abort()
     useGenerationStore.getState().abort("user_interrupted")
+    // 不在这里清空排队消息——_doSend 的 setTimeout 检查会消费它们
   }, [])
 
   // 当 phase 变为 idle 时，将所有未收到结果的 tool_call block 标记为"(interrupted)"
@@ -336,22 +362,41 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       return
     }
 
-    const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
+    // 消费排队消息：读取当前 messages，将 queued → done，构建 sendMessages
+    const currentMessages = messages
+    const queuedMsgs = currentMessages.filter(m => m.role === "user" && m.status === "queued")
+    const hasQueued = queuedMsgs.length > 0
+
+    // 没有排队消息且 text 为空 → 无需发送
+    if (!hasQueued && !text.trim()) return
+
+    // 构建发送用的消息数组（queued → done）
+    const sendMessages: RichMessage[] = currentMessages.map(m =>
+      (m.role === "user" && m.status === "queued") ? { ...m, status: "done" as MsgStatus } : m
+    )
+
+    // 如果有排队消息，它们作为 user 输入（不再新建 userMsg）
+    // 如果没有排队消息，用 text 参数新建 userMsg
+    const userMsg: RichMessage | null = hasQueued
+      ? null
+      : { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
     const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
 
     // 中断上下文注入：如果上一条 assistant 未完成，插入 [system] 消息
-    const lastMsg = messages[messages.length - 1]
-    const sendMessages = [...messages]
+    const lastMsg = sendMessages[sendMessages.length - 1]
     if (lastMsg && lastMsg.role === "assistant" && lastMsg.status !== "done") {
       const reason = useGenerationStore.getState().consumeAbortReason()
       if (reason === "user_interrupted") {
         sendMessages.push({ id: nextId(), role: "user", content: "[system] user interrupted", reasoning: "", status: "done" } as RichMessage)
       }
     }
-    sendMessages.push(userMsg, assistantMsg)
+    if (userMsg) sendMessages.push(userMsg)
+    sendMessages.push(assistantMsg)
 
-    const newMessages = sendMessages
-    setMessages(newMessages)
+    // 合并连续相同 role 的消息（兼容 Anthropic / 严格 OpenAI 提供商）
+    const mergedMessages = mergeConsecutiveSameRole(sendMessages)
+
+    setMessages(mergedMessages)
     setInput("")
     setError("")
     useGenerationStore.getState().startGenerating()
@@ -367,15 +412,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       let stream: ReadableStream<Uint8Array>
       if (shouldUseTools) {
         stream = await chatApi.sendToolStream(
-          newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          mergedMessages.map((m) => ({ role: m.role, content: m.content || "" })),
           activeInst!.id,
           abortController.signal,
         )
       } else {
         stream = await chatApi.sendStream(
-          newMessages.map((m) => ({ role: m.role, content: m.content || "" })),
+          mergedMessages.map((m) => ({ role: m.role, content: m.content || "" })),
           abortController.signal,
-          "writer",  // Default non-tool chat to writer model
+          "writer",
         )
       }
 
@@ -621,8 +666,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       if (isStreaming && input.trim()) {
-        // 生成期间：直接插入用户消息，不中断当前执行
-        const userMsg: RichMessage = { id: nextId(), role: "user", content: input.trim(), reasoning: "", status: "done" }
+        // 生成期间：排队消息，灰色气泡显示，等生成结束后自动发送
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: input.trim(), reasoning: "", status: "queued" }
         setMessages(prev => [...prev, userMsg])
         setInput("")
         scrollToBottom()
@@ -705,6 +750,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" ? (
               <AssistantBubble message={msg} />
+            ) : msg.status === "queued" ? (
+              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted/50 text-muted-foreground border border-dashed border-border">
+                {msg.content}
+              </div>
             ) : (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                 {msg.content}
