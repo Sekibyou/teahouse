@@ -121,6 +121,9 @@
   body {
     @apply bg-background text-foreground;
   }
+  html, body, #root {
+    overscroll-behavior: none;
+  }
 
   /* ---- Scrollbar ---- */
   ::-webkit-scrollbar {
@@ -229,4 +232,12 @@
     border-radius: 1px;
     min-height: 14px;
   }
+}
+
+/* Safe area insets for notched devices */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
 }

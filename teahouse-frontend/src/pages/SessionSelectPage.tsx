@@ -1,19 +1,24 @@
 import { useEffect, useState, useRef } from "react"
-import { useNavigate } from "react-router-dom"
-import { Play, Loader2, X, Download, Upload, Trash2, Clock, Hash, Info } from "lucide-react"
+import { useNavigate, useOutletContext } from "react-router-dom"
+import { Play, Loader2, X, Download, Upload, Trash2, Clock, Hash, Info, Sun, Moon, LogOut, Settings, User, ArrowLeft } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
 import { renderText } from "@/lib/htmlSanitizer"
 import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
+import { useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { Prototype, Instance } from "@/lib/types"
 
 export function SessionSelectPage() {
   const navigate = useNavigate()
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
+  const isMobile = useIsMobile()
+  const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
 
   const [prototypes, setPrototypes] = useState<Prototype[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
@@ -40,6 +45,29 @@ export function SessionSelectPage() {
   // Import
   const [importState, setImportState] = useState<"idle" | "loading">("idle")
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Mobile: tab switching and detail view
+  const [mobileActiveTab, setMobileActiveTab] = useState<"prototypes" | "instances">("prototypes")
+  const [mobileDetailType, setMobileDetailType] = useState<"proto" | "instance" | null>(null)
+  const [mobileDetailProto, setMobileDetailProto] = useState<Prototype | null>(null)
+  const [mobileDetailInstance, setMobileDetailInstance] = useState<Instance | null>(null)
+
+  // Mobile: menu
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const { clearAuth } = useAuthActions()
+
+  // Dark mode for mobile header
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem("theme")
+    return saved ? saved === "dark" : true
+  })
+
+  const handleToggleTheme = () => {
+    setIsDark(!isDark)
+    document.documentElement.classList.toggle("dark", !isDark)
+    localStorage.setItem("theme", isDark ? "light" : "dark")
+    if (toggleTheme) toggleTheme()
+  }
 
   useEffect(() => { loadData() }, [])
 
@@ -74,6 +102,10 @@ export function SessionSelectPage() {
     setSelectedInstance(null)
     setSelectedProto(proto)
     setShowNewSessionForm(false)
+    if (isMobile) {
+      setMobileDetailType("proto")
+      setMobileDetailProto(proto)
+    }
   }
 
   const selectInstance = (inst: Instance) => {
@@ -81,6 +113,18 @@ export function SessionSelectPage() {
     setSelectedInstance(inst)
     setShowNewSessionForm(false)
     setReadmeData(null)
+    if (isMobile) {
+      setMobileDetailType("instance")
+      setMobileDetailInstance(inst)
+    }
+  }
+
+  const backToList = () => {
+    setMobileDetailType(null)
+    setMobileDetailProto(null)
+    setMobileDetailInstance(null)
+    setSelectedProto(null)
+    setSelectedInstance(null)
   }
 
   // ---- Actions ----
@@ -169,6 +213,199 @@ export function SessionSelectPage() {
     )
   }
 
+  // ============================================================================
+  // Mobile layout
+  // ============================================================================
+  if (isMobile) {
+    // Mobile detail view — when a prototype or instance is selected
+    if (mobileDetailType === "proto" && mobileDetailProto) {
+      return (
+        <MobileProtoDetail
+          proto={mobileDetailProto}
+          readmeData={readmeData}
+          readmeLoading={readmeLoading}
+          showNewSessionForm={showNewSessionForm}
+          instanceName={instanceName}
+          newSessionError={newSessionError}
+          actionLoading={actionLoading}
+          onInstanceNameChange={(v) => { setInstanceName(v); setNewSessionError("") }}
+          onStartSession={handleStartSession}
+          onShowForm={() => setShowNewSessionForm(true)}
+          onHideForm={() => { setShowNewSessionForm(false); setInstanceName("") }}
+          onDelete={async () => {
+            if (mobileDetailProto) {
+              await confirmDeletePrototype()
+              backToList()
+            }
+          }}
+          onDownload={handleDownload}
+          onImport={handleImport}
+          importState={importState}
+          fileInputRef={fileInputRef}
+          onBack={backToList}
+        />
+      )
+    }
+
+    if (mobileDetailType === "instance" && mobileDetailInstance) {
+      return (
+        <MobileInstanceDetail
+          instance={mobileDetailInstance}
+          actionLoading={actionLoading}
+          onContinue={() => handleContinue(mobileDetailInstance)}
+          onDelete={async () => {
+            setInstanceToDelete(mobileDetailInstance)
+          }}
+          onBack={backToList}
+        />
+      )
+    }
+
+    return (
+      <div className="h-full flex flex-col">
+        {/* Mobile header */}
+        <header className="h-10 border-b border-border flex items-center justify-between px-3 shrink-0">
+          <span className="font-semibold text-sm">LowStar's Teahouse</span>
+          <div className="relative">
+            <button
+              className="p-1 rounded hover:bg-muted"
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+            {showMobileMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[140px]">
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                    onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
+                  >
+                    {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    主题切换
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                    onClick={() => { navigate("/settings"); setShowMobileMenu(false) }}
+                  >
+                    <Settings className="h-4 w-4" />
+                    设置
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-red-500"
+                    onClick={() => { clearAuth(); setShowMobileMenu(false) }}
+                  >
+                    <LogOut className="h-4 w-4" />
+                    退出登录
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </header>
+
+        {/* Tab bar */}
+        <div className="flex border-b border-border shrink-0">
+          <button
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mobileActiveTab === "prototypes"
+                ? "text-foreground border-b-2 border-primary"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => setMobileActiveTab("prototypes")}
+          >
+            原型 ({prototypes.length})
+          </button>
+          <button
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mobileActiveTab === "instances"
+                ? "text-foreground border-b-2 border-primary"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => setMobileActiveTab("instances")}
+          >
+            实例 ({instances.length})
+          </button>
+        </div>
+
+        {/* Tab content */}
+        <div className="flex-1 overflow-y-auto">
+          {mobileActiveTab === "prototypes" && (
+            <div className="p-2 space-y-1">
+              <div className="flex items-center justify-between px-2 pb-1">
+                <span className="text-xs text-muted-foreground">选择原型开始新会话</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".teabrew,.zip"
+                    className="hidden"
+                    onChange={handleImport}
+                  />
+                  <button
+                    className="p-1 rounded hover:bg-muted text-muted-foreground"
+                    disabled={importState === "loading"}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="导入原型"
+                  >
+                    {importState === "loading" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              {prototypes.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-3 text-center">暂无原型</p>
+              ) : (
+                prototypes.map((proto) => (
+                  <ProtoCard
+                    key={proto.id}
+                    proto={proto}
+                    isSelected={selectedProto?.id === proto.id}
+                    onClick={() => selectProto(proto)}
+                  />
+                ))
+              )}
+            </div>
+          )}
+          {mobileActiveTab === "instances" && (
+            <div className="p-2 space-y-1">
+              <span className="text-xs text-muted-foreground px-2">继续已有会话</span>
+              {instances.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-3 text-center">暂无实例</p>
+              ) : (
+                instances.map((inst) => (
+                  <InstanceCard
+                    key={inst.id}
+                    instance={inst}
+                    isSelected={selectedInstance?.id === inst.id}
+                    onClick={() => selectInstance(inst)}
+                  />
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Confirm delete instance (mobile) */}
+        <ConfirmDialog
+          open={instanceToDelete !== null}
+          title="确认删除实例"
+          message={`确定要删除实例 "${instanceToDelete?.name}" 吗？此操作将永久删除该实例的所有数据。`}
+          variant="destructive"
+          confirmText="删除"
+          onConfirm={confirmDeleteInstance}
+          onCancel={() => setInstanceToDelete(null)}
+        />
+      </div>
+    )
+  }
+
+  // ============================================================================
+  // Desktop layout
+  // ============================================================================
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -568,4 +805,196 @@ function formatFullTime(ts: number) {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+// ============================================================================
+// MobileProtoDetail — fullscreen detail for mobile
+// ============================================================================
+function MobileProtoDetail({
+  proto, readmeData, readmeLoading, showNewSessionForm, instanceName,
+  newSessionError, actionLoading, onInstanceNameChange, onStartSession,
+  onShowForm, onHideForm, onDelete, onDownload, onImport, importState, fileInputRef, onBack,
+}: {
+  proto: Prototype
+  readmeData: { metadata: Record<string, unknown>; readme: string } | null
+  readmeLoading: boolean
+  showNewSessionForm: boolean
+  instanceName: string
+  newSessionError: string
+  actionLoading: boolean
+  onInstanceNameChange: (v: string) => void
+  onStartSession: () => void
+  onShowForm: () => void
+  onHideForm: () => void
+  onDelete: () => void
+  onDownload: () => void
+  onImport: (e: React.ChangeEvent<HTMLInputElement>) => void
+  importState: "idle" | "loading"
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+  onBack: () => void
+}) {
+  const meta = readmeData?.metadata
+  const htmlContent = readmeData?.readme
+    ? renderText(readmeData.readme, [])
+    : ""
+
+  useEffect(() => {
+    const styleId = "bbcode-animation-css-readme"
+    if (document.getElementById(styleId)) return
+    const style = document.createElement("style")
+    style.id = styleId
+    style.textContent = getBBCodeAnimationCSS()
+    document.head.appendChild(style)
+    return () => {
+      const el = document.getElementById(styleId)
+      if (el) el.remove()
+    }
+  }, [])
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Nav bar */}
+      <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
+        <button className="p-1 rounded hover:bg-muted" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-semibold text-sm truncate">{proto.name}</h2>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {!proto.is_builtin && (
+            <>
+              <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onDownload} title="下载">
+                <Download className="h-4 w-4" />
+              </button>
+              <button className="p-1.5 rounded hover:bg-muted text-red-500" onClick={onDelete} title="删除">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        {/* Metadata bar */}
+        {meta && (meta.author || meta.version) && (
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
+            {meta.author && <span>作者：{meta.author as string}</span>}
+            {meta.version && <span>版本：{meta.version as string}</span>}
+          </div>
+        )}
+
+        {proto.description && (
+          <p className="text-sm text-muted-foreground mb-4">{proto.description}</p>
+        )}
+
+        {/* Readme */}
+        {readmeLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : htmlContent ? (
+          <div
+            className="prose prose-sm dark:prose-invert max-w-none"
+            dangerouslySetInnerHTML={{ __html: htmlContent }}
+          />
+        ) : (
+          <div className="text-center py-12 text-muted-foreground text-sm">
+            {proto.is_builtin
+              ? "暂无详细介绍。"
+              : "暂无 README。可在 _prototype/ 目录下创建 README.md 后重新打包。"}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom action bar */}
+      <div className="border-t border-border p-3 shrink-0">
+        {!showNewSessionForm ? (
+          <Button className="w-full gap-2" size="lg" onClick={onShowForm}>
+            <Play className="h-4 w-4" />
+            开始会话
+          </Button>
+        ) : (
+          <div className="space-y-2">
+            <Input
+              value={instanceName}
+              onChange={e => onInstanceNameChange(e.target.value)}
+              placeholder="实例名称"
+              autoFocus
+              onKeyDown={e => { if (e.key === "Enter") onStartSession() }}
+            />
+            {newSessionError && <p className="text-sm text-red-500">{newSessionError}</p>}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={onHideForm}>取消</Button>
+              <Button className="flex-1" onClick={onStartSession} disabled={!instanceName.trim() || actionLoading}>
+                {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                创建
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// MobileInstanceDetail — fullscreen detail for mobile
+// ============================================================================
+function MobileInstanceDetail({
+  instance, actionLoading, onContinue, onDelete, onBack,
+}: {
+  instance: Instance
+  actionLoading: boolean
+  onContinue: () => void
+  onDelete: () => void
+  onBack: () => void
+}) {
+  return (
+    <div className="h-full flex flex-col">
+      {/* Nav bar */}
+      <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
+        <button className="p-1 rounded hover:bg-muted" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-semibold text-sm truncate">{instance.name}</h2>
+          {instance.prototype_name && (
+            <p className="text-xs text-muted-foreground truncate">来源：{instance.prototype_name}</p>
+          )}
+        </div>
+        <button className="p-1.5 rounded hover:bg-muted text-red-500" onClick={onDelete} title="删除">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">状态：</span>
+            <span>{instance.status === "active" ? "进行中" : instance.status}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">楼层：</span>
+            <span>{instance.floor_count}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">创建时间：</span>
+            <span>{formatFullTime(instance.created_at)}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">最后更新：</span>
+            <span>{formatFullTime(instance.updated_at)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-border p-3 shrink-0">
+        <Button className="w-full gap-2" size="lg" onClick={onContinue} disabled={actionLoading}>
+          <Play className="h-4 w-4" />
+          继续会话
+        </Button>
+      </div>
+    </div>
+  )
 }

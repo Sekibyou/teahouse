@@ -108,6 +108,47 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 
 第三方可通过 API 自行编写前端（QQ 桥接、Web 前端、游戏引擎接入等）。
 
+## 移动端 / 窄屏适配
+
+前端同时支持**桌面宽屏（≥1081px）**和**窄屏（≤1080px，含竖屏平板/笔记本）**两套布局。
+
+### 核心约定
+
+- **顶层变量切换**：用 `useIsMobile()`（`@/hooks/useMediaQuery`，基于 `(max-width: 1080px)`）在 JS 层面分支，而非纯 CSS 断点。交互差异大，很多组件需写两份渲染（`isMobile ? <MobileVariant /> : <DesktopVariant />`）。
+- **移动端无全局顶栏**：`MainLayout` 在 `isMobile` 时只渲染纯背景壳，不渲染桌面顶栏。所有导航/操作入口转移到具体页面的悬浮球或菜单。
+- **全屏面板模式**：设置、导演栏、Git 版本控制等桌面端的侧栏/弹窗，在移动端改为**全屏页面**，带自己的导航栏（`h-10`）+ 返回按钮（`ChevronLeft` 图标）。此类全屏面板须用 `absolute inset-0 z-50` 容器包裹，并常驻挂载以保持 SSE 连接。
+- **SSE 连接**：游玩（OutputPanel）与导演（ChatPanel）的面板**始终挂载**，非活跃时用 CSS `display:none` 隐藏，不能卸载。
+
+### 各页面布局要点
+
+**MainLayout.tsx**：`isMobile` 时仅渲染 `<main class="flex-1 overflow-auto"><Outlet context={{ isMobile, toggleTheme }} /></main>`，通过 Outlet context 向下传递 `isMobile` 和 `toggleTheme`，子页面用 `useOutletContext()` 读取。
+
+**WorkspacePage.tsx（核心）**：移动端用悬浮球替代常驻面板——
+- 主区域：游玩模式显示 `OutputPanel`（沙盒）全屏；后台模式显示**简化 textarea 编辑器**（不用 Monaco，无 diff 追踪）。
+- **左上悬浮球**（仅后台模式，File 图标）：点开半屏文件树浮层（左侧 `w-[75%] max-w-[320px]`，点击右侧空白关闭）。文件树 `FileTreeView` 传 `isMobile` prop 加大触控目标（`py-3`）。
+- **右上悬浮球**（常驻，模式名 + 汉堡菜单）：下拉菜单含 游玩/后台 Switch、版本控制、设置、主题切换、退出到主页。
+- **左下悬浮球**（常驻，MessageCircle 图标）：触发**全屏导演栏**（ChatPanel 全屏 + 导航栏返回）。
+- 全屏面板状态用 `fullscreenPanel: "director" | "settings" | "git" | null` 管理。
+
+**SessionSelectPage.tsx**：移动端顶部 "原型/实例" tab 切换 + 全宽列表 → 选中进入**全屏详情页**（`MobileProtoDetail` / `MobileInstanceDetail`，带返回按钮），类似 master-detail。底部放操作按钮（开始会话/继续会话）。
+
+**SettingsPage.tsx / PluginsSettingsPage.tsx**：移动端为全屏页面，`h-10` 导航栏 + `ChevronLeft` 返回。tab 栏加 `overflow-x-auto` 允许横向滚动。LLM 管理弹窗（`LLMManagementDialog`）在移动端用 `absolute inset-0` 全屏容器包裹。
+
+**ChatPanel.tsx**：结构不变，移动端在全屏容器内渲染即可。发送按钮注意触控尺寸（≥44px）。
+
+### 桌面拖拽手柄
+
+ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`pointerup` + `touch-action: none`，兼顾触控设备。
+
+### 全局 CSS（globals.css）
+
+- `html, body, #root { overscroll-behavior: none }` — 阻止移动端下拉刷新
+- `.pb-safe` / `.pt-safe` — 处理 iPhone 刘海屏安全区，加到全屏面板底部
+
+### 约定
+
+**新增或修改页面时**：若涉及两套布局，优先用 `useIsMobile()` 分支而非仅加 CSS class；新 UI 触发按键必须 ≥44px 触控目标；不要卸载会建立 SSE 的面板。
+
 ## 实例版本控制 (Git)
 
 每个实例创建时自动执行 `git init` + 初始 commit。实例是一个独立的 git 仓库，与主仓库隔离。

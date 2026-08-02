@@ -1,23 +1,29 @@
 import { useEffect, useState, useCallback, useRef } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
   Puzzle, PanelLeftOpen, GripVertical, Archive, RefreshCw,
+  BookOpen, MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
+  GitBranch, Sun, Moon, LogOut, Settings, ArrowLeft, ChevronLeft,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { instancesApi, gitApi, pluginsApi, prototypesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
+import { useAuthActions } from "@/stores/authStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginPanel } from "@/components/PluginPanel"
+import { GitDialog } from "@/components/GitDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { FileTreeNode } from "@/lib/types"
 import type { Plugin } from "@/lib/pluginTypes"
 
@@ -31,6 +37,25 @@ export function WorkspacePage() {
   const chatWidth = useViewModeStore((s) => s.chatWidth)
   const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
   const setChatWidth = useViewModeStore((s) => s.setChatWidth)
+  const isMobile = useIsMobile()
+  const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
+  const { clearAuth } = useAuthActions()
+
+  // Mobile state
+  const [showFileTree, setShowFileTree] = useState(false)
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "settings" | "git" | null>(null)
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem("theme")
+    return saved ? saved === "dark" : true
+  })
+
+  const handleToggleTheme = () => {
+    setIsDark(!isDark)
+    document.documentElement.classList.toggle("dark", !isDark)
+    localStorage.setItem("theme", isDark ? "light" : "dark")
+    if (toggleTheme) toggleTheme()
+  }
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -349,31 +374,353 @@ export function WorkspacePage() {
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
+  const handleDragStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     setIsDragging(true)
   }, [])
 
   useEffect(() => {
     if (!isDragging) return
-    const handleMouseMove = (e: MouseEvent) => {
+    const handlePointerMove = (e: PointerEvent) => {
       if (!containerRef.current) return
       const rect = containerRef.current.getBoundingClientRect()
       const newWidthPx = rect.right - e.clientX
       const newWidthPct = (newWidthPx / rect.width) * 100
       setChatWidth(Math.min(Math.max(newWidthPct, 20), 60))
     }
-    const handleMouseUp = () => setIsDragging(false)
-    window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("mouseup", handleMouseUp)
+    const handlePointerUp = () => setIsDragging(false)
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", handlePointerUp)
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("mouseup", handleMouseUp)
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
     }
   }, [isDragging, setChatWidth])
 
   if (!activeInstance) return null
 
+  // ============================================================================
+  // Mobile layout
+  // ============================================================================
+  if (isMobile) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden bg-background">
+        {/* Fullscreen panels */}
+        {fullscreenPanel === "director" && (
+          <div className="absolute inset-0 z-50 bg-background flex flex-col">
+            <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
+              <button className="p-1 rounded hover:bg-muted" onClick={() => setFullscreenPanel(null)}>
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="font-semibold text-sm">导演</span>
+            </div>
+            <div className="flex-1 flex flex-col min-h-0">
+              <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
+            </div>
+          </div>
+        )}
+
+        {fullscreenPanel === "settings" && (
+          <div className="absolute inset-0 z-50 bg-background flex flex-col">
+            <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
+              <button className="p-1 rounded hover:bg-muted" onClick={() => setFullscreenPanel(null)}>
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="font-semibold text-sm">设置</span>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {/* Inline settings content — simplified for mobile */}
+              <MobileSettingsContent
+                instId={instId!}
+                activeInstance={activeInstance}
+                onClose={() => setFullscreenPanel(null)}
+              />
+            </div>
+          </div>
+        )}
+
+        {fullscreenPanel === "git" && (
+          <div className="absolute inset-0 z-50 bg-background flex flex-col">
+            <GitDialog
+              instanceId={instId!}
+              open={true}
+              onClose={() => setFullscreenPanel(null)}
+              onRefresh={() => { refresh({ editor: false }); setFullscreenPanel(null) }}
+            />
+          </div>
+        )}
+
+        {/* Main content area */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {mode === "play" ? (
+            <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} />
+          ) : (
+            /* Backstage mode — textarea editor */
+            <div className="flex-1 flex flex-col min-h-0">
+              {selectedFile ? (
+                <>
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+                    <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isDirty && <span className="text-xs text-orange-500">未保存</span>}
+                      <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
+                        {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                        保存
+                      </Button>
+                    </div>
+                  </div>
+                  <textarea
+                    className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
+                    value={editedContent}
+                    onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
+                    spellCheck={false}
+                  />
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm">点击左上角文件图标选择文件</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* File tree overlay (half-screen) — only in backstage mode */}
+        {showFileTree && (
+          <>
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowFileTree(false)} />
+            <div className="fixed left-0 top-0 bottom-0 w-[75%] max-w-[320px] z-50 bg-background border-r border-border flex flex-col shadow-lg">
+              <div className="p-3 border-b border-border flex items-center justify-between shrink-0">
+                <span className="text-sm font-semibold truncate" title={activeInstance.name}>
+                  {activeInstance.name}
+                </span>
+                <button className="p-1 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto py-1">
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <FileTreeView
+                    nodes={fileTree}
+                    expanded={expanded}
+                    selectedFile={selectedFile}
+                    onToggle={toggleExpand}
+                    onSelect={(path) => {
+                      if (path === selectedFile) return
+                      setEditedContent("")
+                      setFileContent("")
+                      setGitHeadContent("")
+                      setIsDirty(false)
+                      setSelectedFile(path)
+                      setShowFileTree(false)
+                    }}
+                    onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
+                    onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
+                    onDelete={handleDeleteEntry}
+                    fileStatuses={fileStatuses}
+                    isMobile
+                  />
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Floating balls + bottom bar */}
+        {/* Top-left: file tree trigger (only in backstage mode) */}
+        {mode === "backstage" && !fullscreenPanel && (
+          <div className="fixed top-3 left-3 z-30">
+            <button
+              className="w-10 h-10 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              onClick={() => setShowFileTree(true)}
+            >
+              <File className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {/* Top-right: menu trigger */}
+        {!fullscreenPanel && (
+          <div className="fixed top-3 right-3 z-30">
+            <button
+              className="px-3 py-2 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+            >
+              {mode === "play" ? <Gamepad2 className="h-3.5 w-3.5" /> : <Wrench className="h-3.5 w-3.5" />}
+              <span>{mode === "play" ? "游玩" : "后台"}</span>
+              <Menu className="h-3.5 w-3.5" />
+            </button>
+
+            {showMobileMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[160px]">
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <span className="text-sm">游玩模式</span>
+                    <Switch
+                      checked={mode === "backstage"}
+                      onCheckedChange={(v) => {
+                        useViewModeStore.getState().setMode(v ? "backstage" : "play")
+                        setShowMobileMenu(false)
+                      }}
+                    />
+                  </div>
+                  <div className="border-t border-border" />
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
+                  >
+                    <GitBranch className="h-4 w-4" />
+                    版本控制
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => { setFullscreenPanel("settings"); setShowMobileMenu(false) }}
+                  >
+                    <Settings className="h-4 w-4" />
+                    设置
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
+                  >
+                    {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    主题切换
+                  </button>
+                  <div className="border-t border-border" />
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => {
+                      setActiveInstance(null)
+                      navigate("/", { replace: true })
+                    }}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    退出到主页
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Bottom-left: director trigger */}
+        {!fullscreenPanel && (
+          <div className="fixed bottom-6 left-3 z-30">
+            <button
+              className="w-12 h-12 rounded-full bg-secondary text-secondary-foreground shadow-lg flex items-center justify-center active:scale-95 transition-transform border border-border"
+              onClick={() => setFullscreenPanel("director")}
+            >
+              <MessageCircle className="h-6 w-6" />
+            </button>
+          </div>
+        )}
+
+        {/* Create Dialog */}
+        {showCreate && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCreate(null)}>
+            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+              <h3 className="font-semibold">新建{showCreate.type === "directory" ? "文件夹" : "文件"}</h3>
+              <div>
+                {showCreate.parentPath && (
+                  <p className="text-xs text-muted-foreground mb-2">位置：{showCreate.parentPath || "/"}</p>
+                )}
+                <Input
+                  value={createName}
+                  onChange={e => setCreateName(e.target.value)}
+                  placeholder={showCreate.type === "directory" ? "文件夹名称" : "文件名"}
+                  autoFocus
+                  onKeyDown={e => { if (e.key === "Enter") handleCreateEntry() }}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>取消</Button>
+                <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>创建</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm delete dialog */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="确认删除"
+          message={`确定删除 "${deleteTarget}" 吗？此操作不可撤销。`}
+          variant="destructive"
+          confirmText="删除"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+
+        {/* Export prototype dialog */}
+        {showExportDialog && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
+            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+              <h3 className="font-semibold">导出为原型</h3>
+              <p className="text-xs text-muted-foreground">
+                将实例的 <code className="bg-muted px-1 rounded">_prototype/</code> 目录打包为可复用的原型。请先使用导演构建该目录。
+              </p>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">原型名称</label>
+                <Input
+                  value={exportName}
+                  onChange={e => { setExportName(e.target.value); setExportError("") }}
+                  placeholder="为原型起个名字"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
+                <Input
+                  value={exportDescription}
+                  onChange={e => setExportDescription(e.target.value)}
+                  placeholder="简要描述，用于原型列表展示"
+                  maxLength={50}
+                />
+              </div>
+              <div className="flex gap-3">
+                <div className="space-y-1 flex-1">
+                  <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                  <Input
+                    value={exportAuthor}
+                    onChange={e => setExportAuthor(e.target.value)}
+                    placeholder="作者名"
+                  />
+                </div>
+                <div className="space-y-1 w-24">
+                  <label className="text-sm font-medium">版本</label>
+                  <Input
+                    value={exportVersion}
+                    onChange={e => setExportVersion(e.target.value)}
+                    placeholder="1.0.0"
+                  />
+                </div>
+              </div>
+              {exportError && <p className="text-sm text-red-500">{exportError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
+                  {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                  导出
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ============================================================================
+  // Desktop layout
+  // ============================================================================
   return (
     <div ref={containerRef} className="h-full flex overflow-hidden">
       {/* Left/center area — file tree + editor (backstage) OR output panel (play).
@@ -513,7 +860,8 @@ export function WorkspacePage() {
             className={`w-1.5 border-l border-border shrink-0 cursor-col-resize hover:bg-primary/30 transition-colors relative group ${
               isDragging ? "bg-primary/50" : ""
             }`}
-            onMouseDown={handleDragStart}
+            onPointerDown={handleDragStart}
+            style={{ touchAction: "none" }}
           >
             <GripVertical className="h-4 w-4 absolute top-1/2 -translate-y-1/2 -left-[7px] text-muted-foreground/40 group-hover:text-muted-foreground pointer-events-none" />
           </div>
@@ -673,7 +1021,7 @@ export function WorkspacePage() {
 
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
-  onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0,
+  onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0, isMobile = false,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -685,6 +1033,7 @@ function FileTreeView({
   onDelete: (path: string) => void
   fileStatuses: Map<string, string>
   depth?: number
+  isMobile?: boolean
 }) {
   const stColor = (st: string | undefined) => {
     if (!st) return "text-muted-foreground"
@@ -705,7 +1054,9 @@ function FileTreeView({
         .map((node) => (
         <div key={node.path}>
           <div
-            className={`flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-muted/50 transition-colors group ${
+            className={`flex items-center gap-1 px-2 cursor-pointer hover:bg-muted/50 transition-colors group ${
+              isMobile ? "py-3" : "py-1"
+            } ${
               selectedFile === node.path ? "bg-accent" : ""
             }`}
             style={{ paddingLeft: `${8 + depth * 16}px` }}
@@ -782,10 +1133,82 @@ function FileTreeView({
               onDelete={onDelete}
               fileStatuses={fileStatuses}
               depth={depth + 1}
+              isMobile={isMobile}
             />
             )}
           </div>
         ))}
     </>
+  )
+}
+
+// ============================================================================
+// MobileSettingsContent — simplified settings for mobile overlay
+// ============================================================================
+function MobileSettingsContent({
+  instId,
+  activeInstance,
+  onClose,
+}: {
+  instId: string
+  activeInstance: { id: string; name: string } | null
+  onClose: () => void
+}) {
+  const navigate = useNavigate()
+  const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
+  const { clearAuth } = useAuthActions()
+
+  return (
+    <div className="space-y-4">
+      {/* Instance info */}
+      {activeInstance && (
+        <div className="p-3 rounded-md border border-border">
+          <p className="text-sm font-medium">{activeInstance.name}</p>
+          <p className="text-xs text-muted-foreground">ID: {activeInstance.id}</p>
+        </div>
+      )}
+
+      {/* Navigation actions */}
+      <div className="space-y-2">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2"
+          onClick={() => {
+            navigate("/settings")
+            onClose()
+          }}
+        >
+          <Settings className="h-4 w-4" />
+          完整设置
+        </Button>
+
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2"
+          onClick={() => {
+            navigate("/settings/plugins")
+            onClose()
+          }}
+        >
+          <Puzzle className="h-4 w-4" />
+          插件管理
+        </Button>
+      </div>
+
+      {/* Exit */}
+      <div className="pt-2 border-t border-border">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2"
+          onClick={() => {
+            setActiveInstance(null)
+            navigate("/", { replace: true })
+          }}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          退出到主页
+        </Button>
+      </div>
+    </div>
   )
 }

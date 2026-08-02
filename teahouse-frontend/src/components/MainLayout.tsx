@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth, useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { LoginPage } from "@/pages/LoginPage"
 
 export function MainLayout() {
@@ -16,6 +17,7 @@ export function MainLayout() {
   const { mode } = useViewModeStore()
   const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
   const toggleChatCollapsed = useViewModeStore((s) => s.toggleChatCollapsed)
+  const isMobile = useIsMobile()
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     const shouldBeDark = saved ? saved === "dark" : true
@@ -59,6 +61,20 @@ export function MainLayout() {
     )
   }
 
+  // Mobile: no global top bar — pages render fullscreen with their own navigation
+  if (isMobile) {
+    return (
+      <div className="h-screen flex flex-col overflow-hidden bg-background">
+        <div className="flex-1 flex overflow-hidden">
+          <main className="flex-1 overflow-auto">
+            <Outlet context={{ isMobile: true, toggleTheme }} />
+          </main>
+        </div>
+      </div>
+    )
+  }
+
+  // Desktop header with full navigation
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       <header className="h-12 border-b border-border flex items-center justify-between px-4 shrink-0">
@@ -139,7 +155,7 @@ export function MainLayout() {
 
       <div className="flex-1 flex overflow-hidden">
         <main className="flex-1 overflow-auto">
-          <Outlet />
+          <Outlet context={{ isMobile: false, toggleTheme }} />
         </main>
       </div>
     </div>
