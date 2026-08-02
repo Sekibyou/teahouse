@@ -214,7 +214,7 @@ async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_dir.name})
-    return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}"
+    return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}. File state is now up to date in your context — no need to Read it back."
 
 
 async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -253,12 +253,12 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
         new_content = content.replace(old_string, new_string)
         full.write_text(new_content, encoding="utf-8")
         state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
-        return f"Successfully replaced all {count} occurrences in {path}"
+        return f"Successfully replaced all {count} occurrences in {path}. File state is now up to date in your context — no need to Read it back."
     else:
         new_content = content.replace(old_string, new_string, 1)
         full.write_text(new_content, encoding="utf-8")
         state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
-        return f"Successfully applied edit to {path}"
+        return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
 
 
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -312,7 +312,7 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
 
     full.write_text(new_file, encoding="utf-8")
     state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_dir.name})
-    return f"Successfully replaced lines {start_line}–{end_line} in {path}"
+    return f"Successfully replaced lines {start_line}–{end_line} in {path}. File state is now up to date in your context — no need to Read it back."
 
 
 async def execute_glob(instance_dir: Path, args: dict[str, Any]) -> str:
