@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, API_BASE_URL } from "@/lib/api"
@@ -198,6 +198,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }, [messages, chatKey])
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
+  // 大输入框模式：点击按钮后独占「历史记录 + 输入框」总高度的 80%，便于长文本输入
+  const [expandedInput, setExpandedInput] = useState(false)
+  // 普通模式下输入框自动变高的上限（像素）
+  const INPUT_GROW_MAX = 120
   const [autoApproveCommit, setAutoApproveCommit] = useState(() => {
     const saved = localStorage.getItem("teahouse_auto_approve_commit")
     return saved === "true"
@@ -354,6 +358,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const text = input.trim()
     if (!text) return
 
+    setExpandedInput(false)
     _doSend(text, useTools)
   }
 
@@ -665,6 +670,18 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     return () => clearInterval(interval)
   }, [isStreaming])
 
+  // 普通模式下输入框随输入自动变高（有上限）；大输入框模式下交给 flex 拉伸填满，须清掉内联高度让其生效
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    if (expandedInput) {
+      el.style.height = ""
+      return
+    }
+    el.style.height = "auto"
+    el.style.height = Math.min(el.scrollHeight, INPUT_GROW_MAX) + "px"
+  }, [input, expandedInput])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (filteredCommands.length > 0) {
       if (e.key === "ArrowDown") {
@@ -692,6 +709,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         const userMsg: RichMessage = { id: nextId(), role: "user", content: input.trim(), reasoning: "", status: "queued" }
         setMessages(prev => [...prev, userMsg])
         setInput("")
+        setExpandedInput(false)
         scrollToBottom()
       } else {
         handleSend()
@@ -773,7 +791,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-2 space-y-3">
+      <div ref={scrollRef} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
         {messages.length === 0 && (
           <div className="text-center text-muted-foreground py-8">
             <p className="text-sm">发送消息开始对话</p>
@@ -808,7 +826,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t border-border shrink-0 relative">
+      <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
         {filteredCommands.length > 0 && (
           <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
             {filteredCommands.map((cmd, i) => (
@@ -886,10 +904,23 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             </div>
           </div>
         ) : (
-          <div className="flex gap-2">
+          <div className={`flex gap-2 ${expandedInput ? "flex-1 min-h-0" : "items-end"}`}>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
+              onClick={() => setExpandedInput(v => !v)}
+              title={expandedInput ? "收起小输入框" : "展开大输入框（占高度 80%）"}
+            >
+              {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
             <textarea
               ref={inputRef}
-              className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring min-h-[40px] max-h-[120px]"
+              className={`flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring ${
+                expandedInput
+                  ? "min-h-0 resize-y"
+                  : "resize-none min-h-[40px] max-h-[120px]"
+              }`}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -898,7 +929,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             />
             <Button
               size="icon"
-              className="shrink-0"
+              className="shrink-0 self-end h-10 w-10"
               onClick={isStreaming ? handleStop : handleSend}
               disabled={!isStreaming && !input.trim()}
               variant={isStreaming ? "destructive" : "default"}
@@ -906,7 +937,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             >
             {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
-        </div>
+          </div>
         )}
       </div>
 
