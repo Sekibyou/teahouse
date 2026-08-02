@@ -305,25 +305,25 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
 def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> dict[str, str]:
     """Compute the variable values available for prompt preset templates.
 
-    Returns a dict with keys: teahouse.md, behavior.md, tools_usage, file_tree, available_skills
+    Returns a dict with keys: teahouse, behavior, tools_usage, file_tree, available_skills
     """
     variables: dict[str, str] = {}
 
-    # teahouse.md
+    # teahouse.md — 注入实例根目录下的 teahouse.md
     teahouse_path = instance_dir / INSTANCE_TEAHOUSE
     if teahouse_path.exists():
-        variables["teahouse.md"] = teahouse_path.read_text(encoding="utf-8").strip()
+        variables["teahouse"] = teahouse_path.read_text(encoding="utf-8").strip()
     else:
-        variables["teahouse.md"] = ""
+        variables["teahouse"] = ""
 
-    # behavior.md
+    # behavior.md — 注入后端的 src/teahouse/director-system/behavior.md
     for filename in TEMPLATE_FILES:
         filepath = TEMPLATE_DIR / filename
         if filepath.exists():
-            variables["behavior.md"] = filepath.read_text(encoding="utf-8").strip()
+            variables["behavior"] = filepath.read_text(encoding="utf-8").strip()
             break
     else:
-        variables["behavior.md"] = ""
+        variables["behavior"] = ""
 
     # tools_usage
     variables["tools_usage"] = tools_usage_text.strip()

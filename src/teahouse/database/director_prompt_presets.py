@@ -11,8 +11,8 @@ from ..database.connection import generate_uuid, current_timestamp, execute, fet
 BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
 # 第一行注释（以 # 开头的行为 YAML 注释，不会被解析）
 #
-# system: 导演系统提示词模板，支持 {{variable}} 占位符
-#   可用变量：{{teahouse.md}} {{behavior.md}} {{tools_usage}} {{file_tree}} {{available_skills}}
+# system: 导演系统提示词模板，支持 ${variable} 占位符（string.Template 语法）
+#   可用变量：${teahouse} ${behavior} ${tools_usage} ${file_tree} ${available_skills}
 #
 # 预设对话历史（可选），两种写法：
 #
@@ -31,19 +31,19 @@ BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
 
 system: |
   ————根目录下 teahouse.md 内容开始————
-  {{teahouse.md}}
+  ${teahouse}
   ————根目录下 teahouse.md 内容结束————
   ————behavior 开始————
-  {{behavior.md}}
+  ${behavior}
   ————behavior 结束————
   ————工具使用指南开始————
-  {{tools_usage}}
+  ${tools_usage}
   ————工具使用指南结束————
   ————当前文件结构树开始————
-  {{file_tree}}
+  ${file_tree}
   ————当前文件结构树结束————
   ————可用 Skill 列表开始————
-  {{available_skills}}
+  ${available_skills}
   ————可用 Skill 列表结束————
 """
 
