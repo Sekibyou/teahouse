@@ -510,8 +510,12 @@ async def _tool_use_loop(
         try:
             async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
                 if event["type"] == "text":
-                    collected_text += event["text"]
-                    _pending["content"] = collected_text
+                    # tool_args-marked events carry token-counting-only fragments
+                    # (OpenAI tool-call arguments), not real narrative text. Skip
+                    # them from accumulation; the frontend filters them too.
+                    if not event.get("tool_args"):
+                        collected_text += event["text"]
+                        _pending["content"] = collected_text
                     yield event  # stream text chunks to frontend
                 elif event["type"] == "reasoning":
                     _pending["reasoning"] += event.get("text", "")
@@ -631,8 +635,9 @@ async def _tool_use_loop(
     try:
         async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
             if event["type"] == "text":
-                _tail_text += event["text"]
-                _pending["content"] = _tail_text
+                if not event.get("tool_args"):
+                    _tail_text += event["text"]
+                    _pending["content"] = _tail_text
                 yield event
             elif event["type"] == "reasoning":
                 _pending["reasoning"] += event.get("text", "")
