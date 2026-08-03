@@ -408,7 +408,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const userMsg: RichMessage | null = hasQueued
       ? null
       : { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-    const assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+    // `let` so the SSE loop can close this turn and open a fresh assistant bubble
+    // when the backend signals a tool-round boundary (assistant_done).
+    let assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
 
     // 中断上下文注入：找到最后一条未完成的 assistant，在其后插入 [system] 消息
     const lastAssistantIndex = (() => {
@@ -496,16 +498,41 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (!dataStr) return
 
           if (currentType === "done") {
-            setMessages((prev) =>
-              prev.map((m) =>
+            setMessages((prev) => {
+              const target = prev.find((m) => m.id === assistantMsg.id)
+              // A bubble opened by assistant_done but that never received any
+              // content/reasoning is a spurious empty turn (e.g. the last tool
+              // round had no trailing text). Drop it instead of leaving an empty bubble.
+              if (target && target.status !== "done" && !target.content && !target.reasoning && (!target.blocks || target.blocks.length === 0)) {
+                return prev.filter((m) => m.id !== assistantMsg.id)
+              }
+              return prev.map((m) =>
                 m.id === assistantMsg.id ? { ...m, status: "done" as MsgStatus } : m
               )
-            )
+            })
             return
           }
 
           try {
             const data = JSON.parse(dataStr)
+
+            if (currentType === "assistant_done") {
+              // Tool-round boundary: close the current bubble as a completed turn
+              // and start a fresh assistant message. Mirrors how the same data is
+              // replayed from .sessions/ (one record per tool round), so realtime
+              // and refresh render the chain-of-thought spread across turns.
+              setMessages((prev) => {
+                const closed = prev.map((m) =>
+                  m.id === assistantMsg.id && m.status !== "done"
+                    ? { ...m, status: "done" as MsgStatus }
+                    : m
+                )
+                const nextAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+                assistantMsg = nextAssistant
+                return [...closed, nextAssistant]
+              })
+              return
+            }
 
             if (currentType === "tool_call") {
               // 首次事件：从"等待中"切换到活跃

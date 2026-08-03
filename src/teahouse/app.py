@@ -617,6 +617,10 @@ async def _tool_use_loop(
 
         # Flush this round's completed assistant record (reasoning + text + all tool results)
         _flush_assistant(collected_text, _round_blocks)
+        # Signal the frontend that this tool round is a complete assistant turn, so
+        # it can close the current bubble and start a fresh one — matching the
+        # per-round records later replayed from .sessions/.
+        yield {"type": "assistant_done"}
 
         # Broadcast floors stats after each tool round
         from .director_system import get_floors_stats
