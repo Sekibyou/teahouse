@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, memo } from "react"
 import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -57,6 +57,25 @@ function mergeConsecutiveSameRole(msgs: RichMessage[]): RichMessage[] {
     }
   }
   return result
+}
+
+/**
+ * 更新单条消息：只替换目标索引那条（保持其它引用不变），
+ * 配合 AssistantBubble 的 memo 让无关消息跳过重渲染。
+ */
+function updateMessage(
+  prev: RichMessage[],
+  id: string,
+  updater: (m: RichMessage) => RichMessage
+): RichMessage[] | null {
+  const idx = prev.findIndex((m) => m.id === id)
+  if (idx === -1) return null
+  const target = prev[idx]
+  const nextMsg = updater(target)
+  if (nextMsg === target) return null
+  const next = prev.slice()
+  next[idx] = nextMsg
+  return next
 }
 
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
@@ -252,6 +271,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const genApprovalData = useGenerationStore((s) => s.approvalData)
   const isStreaming = genPhase === "generating"
   const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
+
+  // 供 AssistantBubble 使用：全局布尔稳定，时钟/token 高频抖动但只传给最新活跃气泡
+  const isGlobalGenerating = genPhase === "generating"
+  const isIdle = genPhase === "idle"
+  const elapsed = useGenerationStore((s) => s.elapsed)
+  const tokenCount = useGenerationStore((s) => s.tokenCount)
 
   // Refresh git + drain queued messages when generation ends
   const prevGenPhaseRef = useRef(genPhase)
@@ -506,8 +531,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               if (target && target.status !== "done" && !target.content && !target.reasoning && (!target.blocks || target.blocks.length === 0)) {
                 return prev.filter((m) => m.id !== assistantMsg.id)
               }
-              return prev.map((m) =>
-                m.id === assistantMsg.id ? { ...m, status: "done" as MsgStatus } : m
+              return (
+                updateMessage(prev, assistantMsg.id, (m) =>
+                  m.status === "done" ? m : { ...m, status: "done" }
+                ) || prev
               )
             })
             return
@@ -537,11 +564,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             if (currentType === "tool_call") {
               // 首次事件：从"等待中"切换到活跃
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id && m.status === "pending"
-                    ? { ...m, status: "streaming" as MsgStatus }
-                    : m
-                )
+                updateMessage(prev, assistantMsg.id, (m) =>
+                  m.status === "pending" ? { ...m, status: "streaming" } : m
+                ) || prev
               )
               // 估算 token 数
               useGenerationStore.getState().addTokens(
@@ -549,16 +574,13 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               )
               // 追加 tool_call block
               setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.id !== assistantMsg.id) return m
-                  const blocks = [...(m.blocks || []), {
-                    type: "tool_call" as const,
-                    id: data.id,
-                    name: data.name,
-                    args: data.args,
-                  }]
-                  return { ...m, blocks }
-                })
+                updateMessage(prev, assistantMsg.id, (m) => ({
+                  ...m,
+                  blocks: [
+                    ...(m.blocks || []),
+                    { type: "tool_call" as const, id: data.id, name: data.name, args: data.args },
+                  ],
+                })) || prev
               )
               return
             }
@@ -570,15 +592,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               )
               // 更新对应 tool_call block 的 result
               setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.id !== assistantMsg.id) return m
-                  const blocks = (m.blocks || []).map((b) =>
-                    b.type === "tool_call" && b.id === data.id
-                      ? { ...b, result: data.result }
-                      : b
-                  )
-                  return { ...m, blocks }
-                })
+                updateMessage(prev, assistantMsg.id, (m) => ({
+                  ...m,
+                  blocks: (m.blocks || []).map((b) =>
+                    b.type === "tool_call" && b.id === data.id ? { ...b, result: data.result } : b
+                  ),
+                })) || prev
               )
               return
             }
@@ -592,15 +611,14 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                     if (res.ok) {
                       // 标记对应 block result
                       setMessages((prev) =>
-                        prev.map((m) => {
-                          if (m.id !== assistantMsg.id) return m
-                          const blocks = (m.blocks || []).map((b) =>
+                        updateMessage(prev, assistantMsg.id, (m) => ({
+                          ...m,
+                          blocks: (m.blocks || []).map((b) =>
                             b.type === "tool_call" && b.id === data.id
                               ? { ...b, result: "（自动批准）" }
                               : b
-                          )
-                          return { ...m, blocks }
-                        })
+                          ),
+                        })) || prev
                       )
                       return
                     }
@@ -624,11 +642,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
               }
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id && m.status === "pending"
-                    ? { ...m, status: "streaming" as MsgStatus }
-                    : m
-                )
+                updateMessage(prev, assistantMsg.id, (m) =>
+                  m.status === "pending" ? { ...m, status: "streaming" } : m
+                ) || prev
               )
               if (data.tool_args) return
               if (!chunkText) return
@@ -636,28 +652,32 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
             if (data.type === "reasoning") {
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsg.id
-                    ? { ...m, status: "reasoning" as MsgStatus, reasoning: m.reasoning + chunkText }
-                    : m
-                )
+                updateMessage(prev, assistantMsg.id, (m) => ({
+                  ...m,
+                  status: "reasoning",
+                  reasoning: m.reasoning + chunkText,
+                })) || prev
               )
             } else {
               useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
-              setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.id !== assistantMsg.id) return m
-                  const blocks = [...(m.blocks || [])]
-                  // 如果最后一块是 text，追加到它；否则新建 text block
-                  const last = blocks[blocks.length - 1]
-                  if (last && last.type === "text") {
-                    blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
-                  } else {
-                    blocks.push({ type: "text", text: chunkText })
-                  }
-                  return { ...m, blocks, content: m.content + chunkText, status: "streaming" as MsgStatus }
-                })
-              )
+              setMessages((prev) => {
+                const target = prev.find((m) => m.id === assistantMsg.id)
+                if (!target) return prev
+                const blocks = [...(target.blocks || [])]
+                // 如果最后一块是 text，追加到它；否则新建 text block
+                const last = blocks[blocks.length - 1]
+                if (last && last.type === "text") {
+                  blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
+                } else {
+                  blocks.push({ type: "text", text: chunkText })
+                }
+                return updateMessage(prev, assistantMsg.id, (m) => ({
+                  ...m,
+                  blocks,
+                  content: m.content + chunkText,
+                  status: "streaming",
+                })) || prev
+              })
             }
           } catch {
             // skip malformed JSON
@@ -684,11 +704,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
       // Mark done
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsg.id && m.status !== "done"
-            ? { ...m, status: "done" as MsgStatus }
-            : m
-        )
+        updateMessage(prev, assistantMsg.id, (m) =>
+          m.status !== "done" ? { ...m, status: "done" } : m
+        ) || prev
       )
     } catch (err) {
       // Ignore abort errors (user clicked stop)
@@ -857,7 +875,16 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           return messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" ? (
-              <AssistantBubble message={msg} isLatest={msg.id === lastAssistantId} />
+              <AssistantBubble
+                message={msg}
+                isLatest={msg.id === lastAssistantId}
+                isGlobalGenerating={isGlobalGenerating}
+                isIdle={isIdle}
+                // 时钟/token 只传给最新气泡：其它气泡靠 memo 跳过重渲染，
+                // 即使已订阅的 elapsed/tokenCount 每秒在变也不牵连它们。
+                elapsed={msg.id === lastAssistantId ? elapsed : 0}
+                tokenCount={msg.id === lastAssistantId ? tokenCount : 0}
+              />
             ) : msg.status === "queued" ? (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted/50 text-muted-foreground border border-dashed border-border">
                 {msg.content}
@@ -1040,18 +1067,27 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 }
 
 // ---- Assistant message bubble with thinking block ----
-
-function AssistantBubble({ message, isLatest }: { message: RichMessage; isLatest: boolean }) {
+// memo + 自定义浅比较：消息对象引用不变或 isLatest 不变时跳过重渲染，
+// 配合 updateMessage 只替换单条，让流式更新不再触发全列表重建。
+const AssistantBubble = memo(function AssistantBubble({
+  message,
+  isLatest,
+  isGlobalGenerating,
+  isIdle,
+  elapsed,
+  tokenCount,
+}: {
+  message: RichMessage
+  isLatest: boolean
+  isGlobalGenerating: boolean
+  isIdle: boolean
+  elapsed: number
+  tokenCount: number
+}) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
 
   const { status, reasoning, content, blocks } = message
   const hasBlocks = blocks && blocks.length > 0
-
-  const globalPhase = useGenerationStore((s) => s.phase)
-  const isIdle = globalPhase === "idle"
-  const isGlobalGenerating = globalPhase === "generating"
-  const elapsed = useGenerationStore((s) => s.elapsed)
-  const tokenCount = useGenerationStore((s) => s.tokenCount)
 
   // 此消息是当前正在生成的最新 assistant（非 done 非 pending，全局 streaming，且是最后一个 assistant）
   const isActiveMessage = isLatest && status !== "done" && status !== "pending" && isGlobalGenerating
@@ -1176,7 +1212,12 @@ function AssistantBubble({ message, isLatest }: { message: RichMessage; isLatest
       )}
     </div>
   )
-}
+}, (prevProps, nextProps) =>
+  prevProps.message === nextProps.message &&
+  prevProps.isLatest === nextProps.isLatest &&
+  prevProps.isGlobalGenerating === nextProps.isGlobalGenerating &&
+  prevProps.isIdle === nextProps.isIdle
+)
 
 function formatCommitPreview(args: Record<string, unknown>): string {
   const type = args.type as string
