@@ -769,6 +769,36 @@ async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends
     raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")
 
 
+# ===== Director session memory (.sessions/) =====
+
+
+@router.get("/instances/{instance_id}/session")
+async def get_session(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Read the instance's persisted director-session memory (records, newest last)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..sessions import load_records
+    return {"records": load_records(instance_dir)}
+
+
+@router.delete("/instances/{instance_id}/session")
+async def clear_session(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Wipe the instance's persisted director-session memory (/clear)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..sessions import clear
+    clear(instance_dir)
+    return {"status": "ok"}
+
+
 # ===== Text style rules =====
 
 

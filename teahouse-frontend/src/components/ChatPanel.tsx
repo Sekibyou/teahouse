@@ -372,6 +372,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       if (chatKey) {
         try { localStorage.setItem(chatKey, "[]") } catch {}
       }
+      // 同时清空后端实例目录里的持久化会话记忆（.sessions/）
+      const inst = getActiveInstance()
+      if (inst) {
+        instancesApi.clearSessionMemory(inst.id).catch(() => {})
+      }
       toast.success("会话已清空")
       scrollToBottom()
       return

@@ -225,6 +225,10 @@ def list_file_tree(instance_dir: Path) -> list[dict]:
         except OSError:
             return items
         for entry in entries:
+            # Hide the director's session memory so it never surfaces in the
+            # file tree (it holds conversation history, not editable content).
+            if entry.name == ".sessions":
+                continue
             rel = str(entry.relative_to(relative_to)).replace("\\", "/")
             if entry.is_dir():
                 items.append({

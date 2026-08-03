@@ -444,6 +444,38 @@ async def _tool_use_loop(
     # Convert frontend blocks to API tool_calls format (for interrupted generations)
     msg = _preprocess_frontend_blocks(msg, api_style)
 
+    from . import sessions
+
+    # Persist this round's real user input (the last user message the frontend
+    # sent). Preset fake messages / system prompt are injected into `msg` below
+    # and never reach persistence, so only real conversation is recorded.
+    # In phase 1 the frontend resends full history; take only the final user
+    # message so the new assistant output merges correctly.
+    _real_user_content = None
+    for _m in reversed(msg):
+        if _m.get("role") == "user":
+            _real_user_content = _m.get("content")
+            break
+    if _real_user_content and not isinstance(_real_user_content, list):
+        sessions.append_user(instance_dir, _real_user_content)
+
+    # Function-scope pending record for interruption fallback. Accumulated as
+    # streaming chunks arrive; cleared on each normal flush. If the generator is
+    # closed mid-stream (frontend disconnect / LLM error), Phase 1's
+    # ``except GeneratorExit`` persists whatever text/reasoning had accumulated
+    # so a long partial reply isn't lost wholesale.
+    _pending = {"content": "", "reasoning": ""}
+
+    def _flush_assistant(content: str, blocks: list[dict] | None = None) -> None:
+        sessions.append_assistant(
+            instance_dir,
+            content=content,
+            reasoning=_pending["reasoning"],
+            blocks=blocks or [],
+        )
+        _pending["content"] = ""
+        _pending["reasoning"] = ""
+
     tools = load_tools()
     tools_usage = load_tools_usage()
 
@@ -474,22 +506,35 @@ async def _tool_use_loop(
         # ── Phase 1: Streaming LLM call ──
         collected_text = ""
         all_tool_calls = None  # stores {"type": "tool_calls", "calls": [...]} when received
-
-        async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
-            if event["type"] == "text":
-                collected_text += event["text"]
-                yield event  # stream text chunks to frontend
-            elif event["type"] == "reasoning":
-                yield event
-            elif event["type"] == "tool_calls":
-                all_tool_calls = event["calls"]
-            elif "error" in event:
-                yield {"type": "text", "text": f"LLM API error: {event['error']}"}
-                return
+        try:
+            async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
+                if event["type"] == "text":
+                    collected_text += event["text"]
+                    _pending["content"] = collected_text
+                    yield event  # stream text chunks to frontend
+                elif event["type"] == "reasoning":
+                    _pending["reasoning"] += event.get("text", "")
+                    yield event
+                elif event["type"] == "tool_calls":
+                    all_tool_calls = event["calls"]
+                elif "error" in event:
+                    yield {"type": "text", "text": f"LLM API error: {event['error']}"}
+                    return
+        except GeneratorExit:
+            # Frontend disconnected mid-stream. Persist whatever reasoning/text
+            # had accumulated so a long partial reply isn't lost wholesale.
+            if _pending["content"] or _pending["reasoning"]:
+                _flush_assistant(
+                    _pending["content"],
+                    [{"type": "text", "text": _pending["content"]}] if _pending["content"] else None,
+                )
+            raise
 
         # ── Phase 2: If no tool calls, done ──
         if not all_tool_calls:
             # If there was text but no separate text event yielded, yield it now
+            # Persist the plain-text assistant reply (no tool blocks).
+            _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None)
             return
 
         # ── Phase 3: Add assistant message with tool_calls ──
@@ -518,6 +563,10 @@ async def _tool_use_loop(
             })
 
         # ── Phase 4: Yield all tool_call events FIRST, then execute sequentially ──
+        _round_blocks: list[dict] = []
+        if collected_text:
+            _round_blocks.append({"type": "text", "text": collected_text})
+
         for tc in all_tool_calls:
             tc_id = tc["id"]
             name = tc["function"]["name"]
@@ -546,17 +595,23 @@ async def _tool_use_loop(
                 approved_result = await approval_store.wait_for_approval(tc_id)
                 if approved_result is None:
                     reject_reason = "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
+                    _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": reject_reason})
                     yield {"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}
                     _feed_tool_result(msg, api_style, tc_id, name, reject_reason)
                     continue
+                _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": approved_result})
                 yield {"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}
                 _feed_tool_result(msg, api_style, tc_id, name, approved_result)
                 continue
 
             # Execute
             result = await execute_tool(name, args, instance_dir, user_id, instance_id)
+            _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result})
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
             _feed_tool_result(msg, api_style, tc_id, name, result)
+
+        # Flush this round's completed assistant record (reasoning + text + all tool results)
+        _flush_assistant(collected_text, _round_blocks)
 
         # Broadcast floors stats after each tool round
         from .director_system import get_floors_stats
@@ -571,14 +626,30 @@ async def _tool_use_loop(
         "content": "已达到单轮工具调用上限（15 次）。已执行的工具调用都已获得结果，未执行的工具调用请在新一轮对话中重试。请基于已有结果输出当前可完成的内容。",
     })
 
-    async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
-        if event["type"] == "text":
-            yield event
-        elif event["type"] == "reasoning":
-            yield event
-        elif event["type"] == "tool_calls":
-            # If LLM returns tool calls even at max, execute them inline
-            pass
+    _tail_text = ""
+    try:
+        async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
+            if event["type"] == "text":
+                _tail_text += event["text"]
+                _pending["content"] = _tail_text
+                yield event
+            elif event["type"] == "reasoning":
+                _pending["reasoning"] += event.get("text", "")
+                yield event
+            elif event["type"] == "tool_calls":
+                # If LLM returns tool calls even at max, execute them inline
+                pass
+    except GeneratorExit:
+        if _pending["content"] or _pending["reasoning"]:
+            _flush_assistant(
+                _pending["content"],
+                [{"type": "text", "text": _pending["content"]}] if _pending["content"] else None,
+            )
+        raise
+    else:
+        # Normal completion: persist the final tail reply as its own assistant record.
+        if _tail_text:
+            _flush_assistant(_tail_text, [{"type": "text", "text": _tail_text}])
 
 
 @app.post("/v1/chat")

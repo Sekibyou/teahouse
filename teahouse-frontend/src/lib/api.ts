@@ -192,6 +192,15 @@ export const instancesApi = {
   deleteEntry: async (instanceId: string, path: string) => {
     return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(path)}`)
   },
+
+  // Director session memory (.sessions/)
+  getSessionMemory: async (instanceId: string) => {
+    return get<{ records: Record<string, unknown>[] }>(`/api/instances/${instanceId}/session`)
+  },
+
+  clearSessionMemory: async (instanceId: string) => {
+    return del<{ status: string }>(`/api/instances/${instanceId}/session`)
+  },
 }
 
 // Session API
