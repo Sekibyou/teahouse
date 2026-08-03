@@ -120,8 +120,8 @@ def render_records(records: list[dict]) -> list[dict]:
 
     Tool results are clipped to a short preview so the renderer never pulls
     large tool outputs into memory — the full result stays in storage for LLM
-    context. Reasoning is dropped from display (a thinking artifact, not part
-    of the visible transcript).
+    context. Reasoning is kept (the thinking-collapse UI shows it) but is never
+    fed back into LLM context (see ``records_to_context``).
     """
     out: list[dict] = []
     for rec in records:
@@ -147,6 +147,7 @@ def render_records(records: list[dict]) -> list[dict]:
         out.append({
             "role": "assistant",
             "content": rec.get("content", ""),
+            "reasoning": rec.get("reasoning", ""),
             "blocks": blocks,
         })
     return out
