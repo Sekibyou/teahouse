@@ -439,24 +439,25 @@ async def _tool_use_loop(
     Yields SSE-compatible dict events: text, tool_call, tool_result, approval_required.
     """
     api_style = client.api_style
-    msg = list(messages)
-
-    # Convert frontend blocks to API tool_calls format (for interrupted generations)
-    msg = _preprocess_frontend_blocks(msg, api_style)
 
     from . import sessions
 
-    # Persist this round's real user input (the last user message the frontend
-    # sent). Preset fake messages / system prompt are injected into `msg` below
-    # and never reach persistence, so only real conversation is recorded.
-    # In phase 1 the frontend resends full history; take only the final user
-    # message so the new assistant output merges correctly.
-    _real_user_content = None
-    for _m in reversed(msg):
-        if _m.get("role") == "user":
-            _real_user_content = _m.get("content")
-            break
-    if _real_user_content and not isinstance(_real_user_content, list):
+    # Authoritative context comes from the persisted session history; the
+    # frontend no longer holds it. We rebuild LLM messages from .sessions/ (full,
+    # never-clipped tool results) so the director re-gets prior tool outputs.
+    msg = sessions.records_to_context(instance_dir, api_style)
+
+    # The frontend sends only this round's new user input (or nothing). Append it
+    # as the trailing user message so the assistant replies to it.
+    new_inputs = [m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")]
+    if new_inputs:
+        # Strip reasoning/blocks markers (frontend may still send them).
+        msg.append({"role": "user", "content": new_inputs[-1]["content"]})
+
+    # Persist this round's real user input. Preset fake messages / system prompt
+    # are injected into `msg` below and never reach persistence.
+    _real_user_content = new_inputs[-1]["content"] if new_inputs else None
+    if _real_user_content:
         sessions.append_user(instance_dir, _real_user_content)
 
     # Function-scope pending record for interruption fallback. Accumulated as

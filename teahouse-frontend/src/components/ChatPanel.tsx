@@ -116,27 +116,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     }
   }, [instId, instName])
 
-  // 启动时清理已删除实例的会话缓存
-  useEffect(() => {
-    instancesApi.list().then(res => {
-      if (!res.ok || !res.data) return
-      const validIds = new Set(res.data.map((inst: { id: string }) => inst.id))
-      const keysToRemove: string[] = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (key && key.startsWith("chat-messages-")) {
-          const id = key.slice("chat-messages-".length)
-          if (!validIds.has(id)) {
-            keysToRemove.push(key)
-          }
-        }
-      }
-      for (const key of keysToRemove) {
-        localStorage.removeItem(key)
-      }
-    }).catch(() => {})
-  }, [])
-
   // Slot state — lightweight model info display
   const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
   const [llmDialogOpen, setLlmDialogOpen] = useState(false)
@@ -161,41 +140,71 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     })
   }, [messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
 
-  // Restore messages from localStorage on mount / instance change
-  useEffect(() => {
-    if (!chatKey) {
-      setMessages([])
-      return
+  // ------------------------------------------------------------------
+  // History loading — memory is owned by the backend (.sessions/). We pull a
+  // bounded window of recent records and render them; earlier records are
+  // lazy-loaded when the user scrolls to the top.
+  // ------------------------------------------------------------------
+  const PAGE_SIZE = 30
+  const historyCursorRef = useRef<number | null>(null)  // count of records already known loaded
+  const loadingMoreRef = useRef(false)
+  const historyLoadedRef = useRef(false)
+
+  // Convert a backend session record (or an in-flight local message) into the
+  // RichMessage shape the renderer uses.
+  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string }): RichMessage {
+    return {
+      id: nextId(),
+      role: rec.role === "user" ? "user" : "assistant",
+      content: rec.content || "",
+      reasoning: rec.reasoning || "",
+      status: "done",
+      blocks: rec.blocks || undefined,
     }
-    try {
-      const saved = localStorage.getItem(chatKey)
-      if (saved) {
-        const parsed = JSON.parse(saved) as RichMessage[]
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed)
-          const maxId = parsed.reduce((max, m) => {
-            const num = parseInt(m.id.replace("msg-", ""), 10)
-            return num > max ? num : max
-          }, 0)
-          if (maxId > 0) msgIdCounter = maxId
+  }
+
+  const loadHistory = useCallback((replace: boolean) => {
+    if (!instId || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    const offset = replace ? 0 : (historyCursorRef.current ?? 0)
+    instancesApi.getSessionMemory(instId, { limit: PAGE_SIZE, offset }).then(res => {
+      if (!res.ok) return
+      const recs = res.data?.records || []
+      const total = res.data?.total ?? 0
+      if (replace) {
+        const first = recs.map(r => recordToRichMessage(r as any))
+        setMessages(first)
+        historyCursorRef.current = first.length
+        historyLoadedRef.current = first.length >= total
+      } else if (recs.length > 0) {
+        const more = recs.map(r => recordToRichMessage(r as any))
+        setMessages(prev => [...more, ...prev])
+        historyCursorRef.current = (historyCursorRef.current ?? 0) + more.length
+        if (more.length < PAGE_SIZE || (historyCursorRef.current ?? 0) >= total) {
+          historyLoadedRef.current = true
         }
       } else {
-        setMessages([])
+        historyLoadedRef.current = true
       }
-    } catch {
-      // localStorage 数据损坏则忽略
-    }
-  }, [chatKey])
+    }).catch(() => {}).finally(() => { loadingMoreRef.current = false })
+  }, [instId])
 
-  // Persist messages to localStorage on change
+  // Initial load (on mount / instance change): replace with the latest window.
   useEffect(() => {
-    if (!chatKey) return
-    try {
-      localStorage.setItem(chatKey, JSON.stringify(messages))
-    } catch {
-      // 序列化失败或存储满时忽略
+    setMessages([])
+    historyCursorRef.current = null
+    historyLoadedRef.current = false
+    loadHistory(true)
+  }, [instId, loadHistory])
+
+  // Lazy-load earlier history when the user scrolls near the top.
+  const handleHistoryScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    if (el.scrollTop < 60 && !historyLoadedRef.current && !loadingMoreRef.current) {
+      loadHistory(false)
     }
-  }, [messages, chatKey])
+  }, [loadHistory])
+
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
   // 大输入框模式：点击按钮后独占「历史记录 + 输入框」总高度的 80%，便于长文本输入
@@ -369,10 +378,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     if (text === "/clear") {
       setMessages([])
       setInput("")
-      if (chatKey) {
-        try { localStorage.setItem(chatKey, "[]") } catch {}
-      }
-      // 同时清空后端实例目录里的持久化会话记忆（.sessions/）
+      historyCursorRef.current = null
+      historyLoadedRef.current = true
+      // 清空后端实例目录里的持久化会话记忆（.sessions/）
       const inst = getActiveInstance()
       if (inst) {
         instancesApi.clearSessionMemory(inst.id).catch(() => {})
@@ -434,16 +442,29 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       const activeInst = getActiveInstance()
       const shouldUseTools = useTools && activeInst !== null
 
-      const apiMessages = mergedMessages.map((m) => {
-        const msg: Record<string, unknown> = { role: m.role, content: m.content || "" }
-        if (m.blocks && m.blocks.length > 0) {
-          msg.blocks = m.blocks
-        }
-        if (m.reasoning) {
-          msg.reasoning = m.reasoning
-        }
-        return msg
-      })
+      // Phase 2: the backend owns conversation memory (.sessions/). For the
+      // director (tools path) we send only this round's new input; the backend
+      // rebuilds full context from its own session store. The non-tools writer
+      // path still sends the assembled history (its context isn't session-based).
+      let apiMessages: Record<string, unknown>[] = []
+      if (shouldUseTools) {
+        const queuedUserMsgs = currentMessages.filter(m => m.role === "user" && m.status === "queued")
+        const pendingContent = hasQueued
+          ? (queuedUserMsgs[queuedUserMsgs.length - 1]?.content || text)
+          : text
+        apiMessages = pendingContent ? [{ role: "user", content: pendingContent }] : []
+      } else {
+        apiMessages = mergedMessages.map((m) => {
+          const msg: Record<string, unknown> = { role: m.role, content: m.content || "" }
+          if (m.blocks && m.blocks.length > 0) {
+            msg.blocks = m.blocks
+          }
+          if (m.reasoning) {
+            msg.reasoning = m.reasoning
+          }
+          return msg
+        })
+      }
 
       let stream: ReadableStream<Uint8Array>
       if (shouldUseTools) {
@@ -796,7 +817,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
+      <div ref={scrollRef} onScroll={handleHistoryScroll} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
         {messages.length === 0 && (
           <div className="text-center text-muted-foreground py-8">
             <p className="text-sm">发送消息开始对话</p>

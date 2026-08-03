@@ -194,8 +194,12 @@ export const instancesApi = {
   },
 
   // Director session memory (.sessions/)
-  getSessionMemory: async (instanceId: string) => {
-    return get<{ records: Record<string, unknown>[] }>(`/api/instances/${instanceId}/session`)
+  getSessionMemory: async (instanceId: string, opts?: { limit?: number; offset?: number }) => {
+    const params = new URLSearchParams()
+    if (opts?.limit) params.set("limit", String(opts.limit))
+    if (opts?.offset) params.set("offset", String(opts.offset))
+    const qs = params.toString()
+    return get<{ records: Record<string, unknown>[]; total: number }>(`/api/instances/${instanceId}/session${qs ? `?${qs}` : ""}`)
   },
 
   clearSessionMemory: async (instanceId: string) => {

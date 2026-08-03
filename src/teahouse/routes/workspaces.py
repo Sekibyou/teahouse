@@ -773,16 +773,29 @@ async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends
 
 
 @router.get("/instances/{instance_id}/session")
-async def get_session(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Read the instance's persisted director-session memory (records, newest last)."""
+async def get_session(
+    instance_id: str,
+    limit: int | None = None,
+    offset: int = 0,
+    user: UserInfo = Depends(require_user),
+):
+    """Read the instance's director-session memory for display.
+
+    Returns records newest-last, with tool results clipped to a short preview
+    (the renderer never sees the full tool output). ``offset``/``limit`` select
+    a window measured from the newest record for lazy-loading; ``total`` is the
+    full record count. The backend still reads the full history when building
+    LLM context.
+    """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    from ..sessions import load_records
-    return {"records": load_records(instance_dir)}
+    from ..sessions import load_records, render_records
+    records, total = load_records(instance_dir, limit=limit, offset=offset)
+    return {"records": render_records(records), "total": total}
 
 
 @router.delete("/instances/{instance_id}/session")
