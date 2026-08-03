@@ -22,6 +22,8 @@ interface ContentBlock {
   name?: string                // type=tool_call 时的工具名
   args?: Record<string, unknown>
   result?: string
+  /** BatchExecute 展开显示元数据：{path, index, total}（仅用于标注，不进 LLM） */
+  batch?: { path: string; index: number; total: number }
 }
 
 interface RichMessage {
@@ -578,7 +580,13 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                   ...m,
                   blocks: [
                     ...(m.blocks || []),
-                    { type: "tool_call" as const, id: data.id, name: data.name, args: data.args },
+                    {
+                      type: "tool_call" as const,
+                      id: data.id,
+                      name: data.name,
+                      args: data.args,
+                      ...(data._batch_meta ? { batch: data._batch_meta } : {}),
+                    },
                   ],
                 })) || prev
               )
@@ -1152,6 +1160,11 @@ const AssistantBubble = memo(function AssistantBubble({
                       <Terminal className="h-3 w-3 shrink-0" />
                       <span className="font-mono font-medium text-foreground">{block.name}</span>
                       <span className="font-mono opacity-60 truncate">{formatBlockArgs(block)}</span>
+                      {block.batch && (
+                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">
+                          BatchExecute {block.batch.index}/{block.batch.total}
+                        </span>
+                      )}
                     </div>
                     {block.result === "(interrupted)" ? (
                       <div className="flex items-start gap-1.5 text-muted-foreground/50">

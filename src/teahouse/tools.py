@@ -806,6 +806,34 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
     return f"Error: 未知 mode '{mode}'，支持 append / replace / delete"
 
 
+async def execute_batch_execute(instance_dir: Path, args: dict[str, Any]) -> str:
+    """BatchExecute executor — reports the batch anchor record.
+
+    The batch is expanded into its real sub-calls by app._tool_use_loop (mode B)
+    before this executor runs. This executor only produces the *anchor* result for
+    the BatchExecute call itself so the director sees a concrete "expanded N steps"
+    record to tie the sub-results to. If expansion failed earlier (the call survived
+    with only `path`), re-attempt the load to surface the real error.
+    """
+    from .script import load_batch, BatchError
+    raw_path = str(args.get("path", "")).strip()
+    total = args.get("total")
+
+    if total is not None:
+        # Anchor path: expansion already succeeded upstream; report the summary.
+        return (
+            f"BatchExecute 已展开共 {total} 步，按脚本行序执行。\n"
+            f"后续各条结果均以 [BatchExecute X/{total}] 前缀标识其在批次中的序号。"
+        )
+
+    # Fallback: expansion failed (only path present). Re-attempt to surface why.
+    try:
+        steps = load_batch(instance_dir, raw_path)
+    except BatchError as e:
+        return f"Error: BatchExecute 未能展开脚本: {e}"
+    return f"BatchExecute 已展开共 {len(steps)} 步。"
+
+
 async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
     """Write the full todo list (overwrite). Session-only, no persistence."""
     todos = args["todos"]
@@ -1053,6 +1081,7 @@ TOOL_EXECUTORS = {
     "FileOps": execute_file_ops,
     "Output": execute_output,
     "TodoWrite": execute_todo_write,
+    "BatchExecute": execute_batch_execute,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,

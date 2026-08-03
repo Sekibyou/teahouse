@@ -136,12 +136,29 @@ class LLMClient:
 
         messages = preprocess_messages(messages, self.api_style)
 
-        # Strip internal frontend keys before sending to LLM API
-        for m in messages:
-            m.pop("blocks", None)
-            m.pop("reasoning", None)
-            m.pop("status", None)
-            m.pop("id", None)
+        # Map internal reasoning onto the API's reasoning field and keep it.
+        # Thinking-enabled models (e.g. DeepSeek-Reasoner) require the prior
+        # assistant turn's reasoning to be echoed back in full, or they reject
+        # the request with "reasoning_content must be passed back". For OpenAI
+        # the field is `reasoning_content`; Anthropic keeps it as a thinking
+        # block produced below. We only attach it when the message actually has
+        # reasoning (a no-thinking turn must not fabricate one).
+        if self.api_style == "openai":
+            for m in messages:
+                reasoning = m.pop("reasoning", None)
+                m.pop("blocks", None)
+                m.pop("status", None)
+                m.pop("id", None)
+                if m.get("role") == "assistant" and reasoning:
+                    m["reasoning_content"] = reasoning
+        else:
+            # anthropic style: strip internal keys, thinking is represented via
+            # content blocks (already handled by the caller upstream).
+            for m in messages:
+                m.pop("reasoning", None)
+                m.pop("blocks", None)
+                m.pop("status", None)
+                m.pop("id", None)
 
         if self.api_style == "anthropic":
             body["messages"] = messages

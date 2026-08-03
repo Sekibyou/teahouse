@@ -214,6 +214,18 @@
     }
   },
   {
+    "name": "BatchExecute",
+    "description": "顺序执行一段静态 JSONL 工具脚本。脚本是每行一条工具调用的 .jsonl 文件，按行展开为多个真实工具调用一次性执行。",
+    "usage": "按行顺序执行一个静态 JSONL 批处理脚本。脚本每行是一条工具调用，形如：\n\n    {\"tool\": \"Output\", \"args\": {\"content\": \"{{temp/draft-1.md}}\", \"label\": \"ep1\", \"note\": \"第一章\", \"mode\": \"append\"}}\n\n后端会把脚本展开成多个真实工具调用逐行执行，每个展开的调用与手写完全一致（独立 SSE 事件、独立 tool_result、独立持久化）。\n\n### ⚠️ 你会收到什么（顺序理解规则）\n\n调用 `BatchExecute` 后，你**会先收到一条 BatchExecute 自身的工具结果**（说明本次已展开 N 步）；随后收到的是被展开的各个子调用的结果集合。\n\n每条子调用的返回都**以前缀行开头**，明确说明它不是你手动发起的，形如：\n\n    [This call was invoked by BatchExecute, NOT by you manually. It is auto-expanded sub-step 2/4 of the script temp/batch-test.jsonl]\n    Successfully applied edit to ...\n\n前缀行之下**才是该子调用原本的返回内容**。前缀含义：\n- **X/Y 中的 Y** = 本次批次的步骤总数；**X** = 该步骤在脚本中的序号（1 起）。\n\n**判断先后顺序的唯一可靠依据，是每条结果前缀里的 X 数字**：\n- 脚本按行序执行（X=1 先于 X=2，依此类推），严格串行，不存在并发。\n- 实际返回时各条结果的物理排列通常与编号一致，但这是实现细节，不可依赖；请始终以 X 为准，不要凭物理排列下结论。\n\n参数：\n- `path`（必填）：脚本文件路径，相对于实例根目录。\n  - ``settings/scripts/some.jsonl`` 执行全部步骤\n  - ``settings/scripts/some.jsonl:13-20`` 只执行第 13~20 步（1 起，含端点），用于续跑被截断的批次\n\n用法：\n- **批量操作**：当你要连续做多个确定的工具调用（如开局流程、楼层收束、重复的多步修改）时，把步骤先写进 .jsonl，再一次性 BatchExecute，避免一轮轮手发。\n- **可编辑**：脚本是纯文本。执行前先用 Read 查看，用 Edit 修改其中个别步骤的参数，再 BatchExecute 即可——你要批量执行什么，就先把它改成那样。\n- **机制**：本工具会返回一条自身的摘要结果（展开 N 步），随后把脚本展开成普通工具调用序列逐个执行，相当于你一次性发出了这么多工具调用。所以会占用工具调用上限（15 次/轮）。若一轮超限被截断，可用行切片在下一轮续跑剩余步骤。\n- **不会递归展开**：脚本某步若又写了 BatchExecute，该步不会被再次展开（为防死循环，BatchExecute 只展开一层）。\n\n注意：脚本里的参数默认是静态的，不会自动替换任何占位符。若需要差异化，直接改脚本里的参数值即可。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string", "description": "脚本文件路径，相对于实例根目录，支持 .jsonl:start-end 行切片"}
+      },
+      "required": ["path"]
+    }
+  },
+  {
     "name": "SlowTest",
     "description": "测试工具：等待 2 秒后返回 OK。用于验证前端的工具调用渲染效果。",
     "usage": "等待 2 秒后返回 OK。\n\n参数：\n- `description`（必填）：简单描述本次测试场景。",
