@@ -159,6 +159,16 @@ class LLMClient:
     def _api_url(self) -> str:
         return normalize_api_url(self.config.url, self.api_style)
 
+    def _client(self, timeout: float = 300) -> httpx.AsyncClient:
+        """Shared httpx client with native connect/read retry.
+
+        httpx's transport-level retry covers ConnectError/ConnectTimeout/ReadTimeout
+        etc. (RETRYABLE_EXCEPTIONS), which also works inside streaming generators
+        where a manual backoff loop can't be interleaved with body iteration.
+        """
+        transport = httpx.AsyncHTTPTransport(retries=self.max_retries)
+        return httpx.AsyncClient(timeout=timeout, transport=transport)
+
     async def _retry_request(self, body: dict) -> httpx.Response:
         """Post with exponential backoff on transient network errors.
 
@@ -167,7 +177,7 @@ class LLMClient:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=120) as client:
+                async with self._client(timeout=120) as client:
                     return await client.post(self._api_url, headers=self._headers(), json=body)
             except RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
@@ -248,7 +258,7 @@ class LLMClient:
                 yield chunk
 
     async def _stream_openai(self, body: dict) -> AsyncGenerator[dict, None]:
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with self._client() as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
@@ -274,7 +284,7 @@ class LLMClient:
                             yield {"type": "text", "text": text}
 
     async def _stream_anthropic(self, body: dict) -> AsyncGenerator[dict, None]:
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with self._client() as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
@@ -340,7 +350,7 @@ class LLMClient:
         tool_call_acc: dict[int, dict] = {}
         first_chunk = True
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with self._client() as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
@@ -406,7 +416,7 @@ class LLMClient:
         tool_blocks: dict[int, dict] = {}
         first_chunk = True
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with self._client() as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
