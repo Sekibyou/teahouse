@@ -704,10 +704,12 @@ export function getBBCodeAnimationCSS(): string {
   opacity: 0;
 }
 
-/* tip 提示 — 灯泡 icon + 虚线下划线 + hover 弹出提示气泡 */
+/* tip 提示 — 灯泡 icon + 虚线下划线 + hover 弹出提示气泡
+   气泡本体是 .bbcode-tip-bubble（position:fixed，由 getBBCodeTooltipScript() 驱动，
+   负责智能定位与视口四向避让）。这里只负责换行、配色与淡入淡出。
+   无 JS 时不展示气泡（content 为空，不报错）。 */
 .bbcode-tip {
   cursor: help;
-  position: relative;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;
@@ -718,46 +720,170 @@ export function getBBCodeAnimationCSS(): string {
   font-size: 0.7em;
   margin-left: 1px;
 }
-/* 气泡提示框 — 用第二个伪元素实现，通过 wrapper 的 title 属性承载 */
 .bbcode-tip-wrapper {
-  position: relative;
   display: inline;
 }
-.bbcode-tip-wrapper::after {
-  content: attr(data-tip-text);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+
+/* JS 驱动的主气泡 */
+.bbcode-tip-bubble {
+  position: fixed;
+  z-index: 2147483000;
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: min(40vh, calc(100vh - 16px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: normal;
+  word-break: break-word;
   background: #1e1e2e;
   color: #e0e0e0;
   font-size: 0.8em;
-  padding: 4px 10px;
+  line-height: 1.5;
+  padding: 6px 10px;
   border-radius: 6px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 10;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-}
-.bbcode-tip-wrapper::before {
-  content: '';
-  position: absolute;
-  bottom: calc(100% + 1px);
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: #1e1e2e;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 10;
+  transition: opacity 0.16s ease;
 }
-.bbcode-tip-wrapper:hover::after,
-.bbcode-tip-wrapper:hover::before {
+/* 显示阶段由 JS 在气泡元素上加 .bbcode-tip-visible，配合 transition 淡入 */
+.bbcode-tip-bubble.bbcode-tip-visible {
   opacity: 1;
 }
+/* 无 JS 兜底：正文里 data-tip-text 会被 DOMPurify 剥掉（宿主/沙盒渲染均如此），
+   因此 JS 正常时一定可见；无 JS 时不展示气泡（不空白、不报错）。 */
+`;
+}
+/**
+ * 获取 BBCode tip 气泡的驱动脚本（JS 源码字符串）
+ *
+ * 与 getBBCodeAnimationCSS() 以同样的方式注入（沙盒 srcdoc / 宿主页面 <head>）。
+ * 用一个共享的 position:fixed 气泡元素 + document 级事件委托，实现：
+ *   - 长文本智能换行（由 .bbcode-tip-bubble 的 max-width 决定）
+ *   - 视口四向智能避让：触发器贴左/右/上/下边缘时自动 clamp + 上下翻转，
+ *     气泡永远不超出可视区域
+ * 主流程：measure 触发器位置 → 测量气泡尺寸 → 决策放置 → 定位 → 淡入。
+ */
+export function getBBCodeTooltipScript(): string {
+  return `
+(function () {
+  if (window.__bbcodeTipInit) return;
+  window.__bbcodeTipInit = true;
+
+  var VIS = 'bbcode-tip-visible';
+  var GAP = 8; // 视口安全边距
+  var bubble = null;
+  var activeWrap = null;
+  var currentText = '';
+  var rafPending = false;
+
+  function createBubble() {
+    var el = document.createElement('div');
+    el.className = 'bbcode-tip-bubble';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  // 将气泡摆到屏幕外探针点，量出实际宽高（已挂上文字）
+  function probeSize() {
+    var prevLeft = bubble.style.left, prevTop = bubble.style.top;
+    bubble.style.left = '-9999px';
+    bubble.style.top = '9999px';
+    var s = bubble.getBoundingClientRect();
+    bubble.style.left = prevLeft;
+    bubble.style.top = prevTop;
+    return { width: s.width, height: s.height };
+  }
+
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  function position() {
+    if (!bubble || !activeWrap || !bubble.isConnected) return;
+    var wrap = activeWrap;
+    if (!wrap.isConnected) { hide(); return; }
+    var viewportW = window.innerWidth || 0;
+    var viewportH = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
+    var r = wrap.getBoundingClientRect();
+    if (!r || r.width === 0) return;
+
+    var size = probeSize();
+    var bw = Math.min(size.width, viewportW - GAP * 2);
+    var bh = Math.min(size.height, viewportH - GAP * 2);
+
+    // 纵向决策：优先下方，空间不足翻上方，都不足取剩余更多的一侧
+    var roomBelow = viewportH - r.bottom - GAP;
+    var roomAbove = r.top - GAP;
+    var below = bh <= roomBelow;
+    var above = bh <= roomAbove;
+    var top;
+    if (below) {
+      top = r.bottom + 6;
+    } else if (above) {
+      top = r.top - bh - 6;
+    } else {
+      top = roomBelow >= roomAbove ? r.bottom + 6 : r.top - bh - 6;
+    }
+    bubble.dataset.dir = (below || (roomBelow >= roomAbove && !above)) ? 'below' : 'above';
+
+    // 纵向 clamp，防极端情况仍越界（bubble 内部 overflow:auto 兜底）
+    top = clamp(top, GAP, viewportH - bh - GAP);
+
+    // 水平：居中后 clamp，贴左贴右都不溢出
+    var left = r.left + r.width / 2 - bw / 2;
+    left = clamp(left, GAP, viewportW - bw - GAP);
+
+    bubble.style.left = left + 'px';
+    bubble.style.top = top + 'px';
+    bubble.style.maxWidth = 'min(300px, ' + (viewportW - GAP * 2) + 'px)';
+  }
+
+  function schedulePosition() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(function () {
+      rafPending = false;
+      position();
+    });
+  }
+
+  function show() {
+    if (!bubble) bubble = createBubble();
+    bubble.textContent = currentText;
+    bubble.classList.add(VIS);
+    position();
+  }
+
+  function hide() {
+    if (!bubble) return;
+    bubble.classList.remove(VIS);
+    activeWrap = null;
+    currentText = '';
+  }
+
+  document.addEventListener('pointerover', function (e) {
+    var wrap = e.target && e.target.closest && e.target.closest('.bbcode-tip-wrapper');
+    if (!wrap) return;
+    var text = (wrap.getAttribute('data-tip-text') || '').trim();
+    if (!text) return;
+    activeWrap = wrap;
+    currentText = text;
+    show();
+  });
+
+  document.addEventListener('pointerout', function (e) {
+    // 仍停留在同一 wrapper 内（如移到灯泡 icon 上）则保持显示
+    var related = e.relatedTarget;
+    if (activeWrap && related && related.closest && related.closest('.bbcode-tip-wrapper') === activeWrap) {
+      return;
+    }
+    hide();
+  });
+
+  // 触发器锁定定位，不跟随鼠标；只在滚轮/缩放/窗口变化时重算
+  window.addEventListener('scroll', schedulePosition, true);
+  window.addEventListener('resize', schedulePosition);
+  window.addEventListener('wheel', schedulePosition, { passive: true });
+})();
 `;
 }
 

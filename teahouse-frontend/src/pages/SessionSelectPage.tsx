@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
 import { renderText } from "@/lib/htmlSanitizer"
-import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
+import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -648,17 +648,27 @@ function ProtoDetail({
     ? renderText(readmeData.readme, [])
     : ""
 
-  // Inject BBCode animation CSS for the readme panel
+  // Inject BBCode animation CSS + tip tooltip script for the readme panel
   useEffect(() => {
-    const styleId = "bbcode-animation-css-readme"
-    if (document.getElementById(styleId)) return
-    const style = document.createElement("style")
-    style.id = styleId
-    style.textContent = getBBCodeAnimationCSS()
-    document.head.appendChild(style)
+    const cssId = "bbcode-animation-css-readme"
+    if (!document.getElementById(cssId)) {
+      const style = document.createElement("style")
+      style.id = cssId
+      style.textContent = getBBCodeAnimationCSS()
+      document.head.appendChild(style)
+    }
+    const tipId = "bbcode-tip-script"
+    if (!document.getElementById(tipId)) {
+      const s = document.createElement("script")
+      s.id = tipId
+      s.textContent = getBBCodeTooltipScript()
+      document.head.appendChild(s)
+    }
     return () => {
-      const el = document.getElementById(styleId)
-      if (el) el.remove()
+      const style = document.getElementById(cssId)
+      if (style) style.remove()
+      const s = document.getElementById(tipId)
+      if (s) s.remove()
     }
   }, [])
 
@@ -839,15 +849,25 @@ function MobileProtoDetail({
     : ""
 
   useEffect(() => {
-    const styleId = "bbcode-animation-css-readme"
-    if (document.getElementById(styleId)) return
-    const style = document.createElement("style")
-    style.id = styleId
-    style.textContent = getBBCodeAnimationCSS()
-    document.head.appendChild(style)
+    const cssId = "bbcode-animation-css-readme"
+    if (!document.getElementById(cssId)) {
+      const style = document.createElement("style")
+      style.id = cssId
+      style.textContent = getBBCodeAnimationCSS()
+      document.head.appendChild(style)
+    }
+    const tipId = "bbcode-tip-script"
+    if (!document.getElementById(tipId)) {
+      const s = document.createElement("script")
+      s.id = tipId
+      s.textContent = getBBCodeTooltipScript()
+      document.head.appendChild(s)
+    }
     return () => {
-      const el = document.getElementById(styleId)
-      if (el) el.remove()
+      const style = document.getElementById(cssId)
+      if (style) style.remove()
+      const s = document.getElementById(tipId)
+      if (s) s.remove()
     }
   }, [])
 

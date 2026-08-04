@@ -39,6 +39,7 @@ const DOMPURIFY_CONFIG: DOMPurifyConfig = {
     'href', 'target', 'rel',
     'colspan', 'rowspan',
     'open',  // details 标签的展开状态属性
+    'data-tip-text',  // BBCode [tip] —— 气泡提示文案，纯数据属性，无执行风险；由 getBBCodeTooltipScript() 读取
   ],
   // 防止 javascript: 等危险协议
   ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,

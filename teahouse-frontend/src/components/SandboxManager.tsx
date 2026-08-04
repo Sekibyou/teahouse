@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import type { TextStyleRule } from "@/lib/types"
-import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
+import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { renderText } from "@/lib/htmlSanitizer"
 import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
@@ -111,6 +111,9 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
         ...jsFiles.map((r) => files[r]),
       ].filter(Boolean).map((s) => `<script>${s}</script>`).join("\n")
 
+      // tip 气泡驱动脚本：随 srcdoc 注入沙盒 document，正文里的 [tip] 即可智能定位
+      const tipScriptTag = `<script>${getBBCodeTooltipScript()}</script>`
+
       const styleTags = [...cssFiles.map((r) => files[r]), getBBCodeAnimationCSS()]
         .filter(Boolean)
         .map((s) => `<style>${s}</style>`)
@@ -134,6 +137,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
   <script>
 ${bridge}
   </script>
+  ${tipScriptTag}
   ${scriptTags}
 </body>
 </html>`
