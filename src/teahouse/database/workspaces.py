@@ -267,69 +267,154 @@ def write_file(instance_dir: Path, file_path: str, content: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sandbox vars — .teahouse/vars/sandbox.json
+# Runtime vars — .teahouse/runtime_vars.jsonl
 #
-# Sandbox-owned variables (setVar), persisted for "file-as-state" recovery.
-# The only writer is the sandbox path (setVar); the director reads via
-# GetSandboxVars. Values may be any JSON-serializable object.
+# The single authority for instance variables ("文件即状态"). jsonl: one variable
+# per line, each a JSON object that can carry optional metadata:
+#     {"name":"金币","value":140}
+#     {"name":"修为","value":"炼气四层"}
+#     {"name":"A_擂台赛胜负","value":"2胜1负","note":"仅本剧本段",
+#      "change_log":[{"at":"floor-010","to":"1胜0负","why":"首胜"}]}
+# Convention:
+#   - Values are any JSON-serializable object.
+#   - `note` is overwritten on update; `change_log` is appended on update.
+#   - SetVar writes, GetSandboxVars reads, delete removes a name.
 # ---------------------------------------------------------------------------
 
-_SANDBOX_VARS_PATH = ".teahouse/vars/sandbox.json"
+_RUNTIME_VARS_PATH = ".teahouse/runtime_vars.jsonl"
+
+
+def _runtime_vars_path(instance_dir: Path) -> Path:
+    full = (instance_dir / _RUNTIME_VARS_PATH).resolve()
+    if not str(full).startswith(str(instance_dir.resolve())):
+        raise ValueError("Path traversal detected")
+    return full
 
 
 def read_sandbox_vars(instance_dir: Path, names: list[str] | None = None) -> list[dict]:
-    """Read sandbox vars and return a flat {name, value} list.
+    """Read runtime vars as a flat list of {name, value, note?, change_log?}.
 
     - `names` = None (or empty): return every initialized variable.
     - `names` = requested list: return **exactly one entry per requested name**,
-      using `value: None` for uninitialized names. This makes callers able to
-      check for "not set" explicitly instead of guessing from a missing key.
+      using `value: None` for uninitialized names, so callers can check "not set"
+      explicitly instead of guessing from a missing key.
 
-    Missing file (never written) behaves the same as an empty store.
+    Missing file behaves like an empty store.
     """
-    full = (instance_dir / _SANDBOX_VARS_PATH).resolve()
-    if not str(full).startswith(str(instance_dir.resolve())):
-        raise ValueError("Path traversal detected")
-    data: dict = {}
+    full = _runtime_vars_path(instance_dir)
+    data: dict[str, dict] = {}
     if full.exists():
         try:
-            parsed = json.loads(full.read_text(encoding="utf-8"))
-            if isinstance(parsed, dict):
-                data = parsed
-        except (json.JSONDecodeError, OSError):
+            for line in full.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict) and "name" in entry and "value" in entry:
+                    data[entry["name"]] = entry
+        except OSError:
             data = {}
 
     if names:
-        return [
-            {"name": n, "value": data.get(n)}
-            for n in names
-        ]
-    return [{"name": k, "value": v} for k, v in data.items()]
+        out = []
+        for n in names:
+            if n in data:
+                out.append(dict(data[n]))
+            else:
+                out.append({"name": n, "value": None})
+        return out
+    return [dict(data[k]) for k in data]
 
 
-def write_sandbox_vars(instance_dir: Path, updates: dict) -> None:
-    """Atomically merge `updates` into the sandbox vars file and write back.
+def write_sandbox_vars(
+    instance_dir: Path,
+    updates: dict,
+    note: dict | None = None,
+    change_log: dict | None = None,
+) -> None:
+    """Merge variables into the jsonl file.
 
-    Read-merge-overwrite of a single file — the sandbox is the only writer,
-    so there is no cross-file race with the director's prose writes.
+    - `updates`: {name: value} — overwrite the value.
+    - `note`: {name: content} — overwrite that variable's note.
+    - `change_log`: {name: entry} — append an entry to that variable's change_log
+      list (each entry is a JSON-serializable object, e.g. {"at","to","why"}).
+
+    Missing names in updates are created (with optional metadata). No name is
+    ever duplicated — one line per name.
     """
-    full = (instance_dir / _SANDBOX_VARS_PATH).resolve()
-    if not str(full).startswith(str(instance_dir.resolve())):
-        raise ValueError("Path traversal detected")
-    data: dict = {}
+    full = _runtime_vars_path(instance_dir)
+    data: dict[str, dict] = {}
+
     if full.exists():
         try:
-            existing = json.loads(full.read_text(encoding="utf-8"))
-            if isinstance(existing, dict):
-                data = existing
-        except (json.JSONDecodeError, OSError):
+            for line in full.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict) and "name" in entry:
+                    data[entry["name"]] = entry
+        except OSError:
             data = {}
-    data.update(updates)
+
+    note = note or {}
+    change_log = change_log or {}
+
+    for name, value in updates.items():
+        entry = data.get(name, {"name": name})
+        entry["value"] = value
+        data[name] = entry
+    for name, content in note.items():
+        entry = data.get(name, {"name": name, "value": None})
+        entry["note"] = content
+        data[name] = entry
+    for name, entry_item in change_log.items():
+        entry = data.get(name, {"name": name, "value": None})
+        log = entry.get("change_log")
+        if not isinstance(log, list):
+            log = []
+        log.append(entry_item)
+        entry["change_log"] = log
+        data[name] = entry
+
     full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    lines = [json.dumps(data[k], ensure_ascii=False) for k in data]
+    full.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def delete_sandbox_vars(instance_dir: Path, names: list[str]) -> None:
+    """Remove named variables from the jsonl file (their lines are dropped)."""
+    full = _runtime_vars_path(instance_dir)
+    if not full.exists():
+        return
+    remove = set(names)
+    try:
+        lines = full.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    kept = []
+    for line in lines:
+        st = line.strip()
+        if not st:
+            continue
+        try:
+            entry = json.loads(st)
+        except json.JSONDecodeError:
+            kept.append(line)
+            continue
+        if isinstance(entry, dict) and "name" in entry and entry["name"] in remove:
+            continue  # drop
+        kept.append(line)
+    if not kept:
+        full.unlink()
+    else:
+        full.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
 def delete_file_or_dir(instance_dir: Path, file_path: str) -> None:

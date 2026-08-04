@@ -31,22 +31,12 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 检查以下目录和文件，如果不存在则创建：
 
 ```
-FileOps mkdir variables/
 FileOps mkdir settings/
 FileOps mkdir temp/
 FileOps mkdir .teahouse/output/floors/
 ```
 
-检查并创建变量系统文件（如果不存在）：
-
-- `variables/active-vars.yaml` — 所有当前变量
-- `variables/key-vars-change-log.yaml` — 重要的变量变更历史
-- `variables/vars-manager.md` — 描述哪些变量值得被记录，哪些变量在变动时应该留下变更历史
-
-对于 `vars-manager.md`：
-- 先 Read `settings/` 中的设定文件，了解故事的世界观和角色体系
-- 基于设定内容，生成适合本故事的变量管理规则
-- 如果没有设定文件或设定内容很少，则创建空文件即可
+**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetVar` 工具写、`GetSandboxVars` 读），是实例内唯一的变量载体（文件即状态）。设定（含中短期动态设定）放在 `settings/` 下。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
 
 ### 步骤 1：理解楼层配置
 
@@ -75,13 +65,21 @@ Glob summary/sum-*.md                     → 列出所有总结
 
 ### 步骤 4：了解当前变量状态
 
+**核心变量已实时注入你的系统提示词**（no cache）——构建上下文时系统已把 `.teahouse/runtime_vars.jsonl` 当前的 `${name}` 变量快照拼进提示词开头，你通常已经看到它们的现值，无需再 Read（避免游玩时的读取往返）。
+
+若需读取特定变量、或系统提示词里没体现，用 `GetSandboxVars(names=[...])` 按名精确读取，例如：
+
 ```
-Read variables/active-vars.yaml
-Read variables/key-vars-change-log.yaml
-Read variables/vars-manager.md
+GetSandboxVars(names=["金币", "修为", "主角名"])
 ```
 
-理解当前变量系统中记录的所有状态。如果某些变量对当前剧情很重要，且 `key-vars-change-log.yaml` 中有其变更历史，则还应阅读变更时对应章节的正文，获取更多细节。
+需要更新剧情状态时，用 `SetVar` 直接写（与正文一起落盘、进 git、导演/沙盒立即感知），例如：
+
+```
+SetVar(updates={"金币": 140, "修为": "炼气四层"})
+```
+
+记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。
 
 ### 步骤 5：阅读相关设定
 
@@ -121,7 +119,7 @@ Glob .teahouse/output/floors/floor-*.md
 2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
    - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{summary/sum-*.md}}` 而非逐层）
    - 更新设定引用范围（基于当前变量值调整锚点/行号）
-   - 在 user 消息中填入当前的变量状态描述（基于 `variables/active-vars.yaml`）
+   - 在 user 消息中用 `${name}` 变量字面量引用当前变量值（如 `${金币}`、`${主角名}`、`${修为}`），Generate 发送给正文 AI 前会统一展开为值；也可用 `{{settings/xxx.yaml|...}}` 切片注入相关设定
    - 在最后一条 user 消息中填入用户的实际写作要求
    - 必要时添加伪造的 user/assistant 对话来破限或引导文风
 

@@ -37,6 +37,7 @@ from ..database.workspaces import (
     update_floor_count,
     read_sandbox_vars,
     write_sandbox_vars,
+    delete_sandbox_vars,
 )
 from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
 
@@ -92,10 +93,6 @@ class FileCreateRequest(BaseModel):
 
 class FileWriteRequest(BaseModel):
     content: str
-
-
-class SandboxVarsUpdateRequest(BaseModel):
-    updates: dict
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +503,8 @@ async def save_instance_file(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/instances/{instance_id}/sandbox-vars")
-async def get_sandbox_vars(
+@router.get("/instances/{instance_id}/runtime-vars")
+async def get_runtime_vars(
     instance_id: str,
     names: list[str] = Query(default=[]),
     user: UserInfo = Depends(require_user),
@@ -522,10 +519,17 @@ async def get_sandbox_vars(
     return {"vars": vars_}
 
 
-@router.patch("/instances/{instance_id}/sandbox-vars")
-async def set_sandbox_vars(
+class RuntimeVarsUpdateRequest(BaseModel):
+    updates: dict = {}
+    note: dict = {}
+    change_log: dict = {}
+    delete: list[str] = []
+
+
+@router.patch("/instances/{instance_id}/runtime-vars")
+async def set_runtime_vars(
     instance_id: str,
-    body: SandboxVarsUpdateRequest,
+    body: RuntimeVarsUpdateRequest,
     user: UserInfo = Depends(require_user),
 ):
     u = await require_user_info(user)
@@ -535,17 +539,18 @@ async def set_sandbox_vars(
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        write_sandbox_vars(instance_dir, body.updates)
+        if body.updates:
+            write_sandbox_vars(instance_dir, body.updates, note=body.note, change_log=body.change_log)
+        elif body.note or body.change_log:
+            write_sandbox_vars(instance_dir, {}, note=body.note, change_log=body.change_log)
+        if body.delete:
+            delete_sandbox_vars(instance_dir, body.delete)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     state.broadcast(
         "file_changed",
-        {
-            "path": ".teahouse/vars/sandbox.json",
-            "tool": "SetVar",
-            "instance_id": instance_id,
-        },
+        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetVar", "instance_id": instance_id},
     )
     # Read back the full current vars so the caller (sandbox) can reconcile.
     return {"status": "ok", "vars": read_sandbox_vars(instance_dir, None)}

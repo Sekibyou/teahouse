@@ -45,8 +45,8 @@ _prototype/
 │   ├── world.yaml                 # 世界观
 │   ├── characters.yaml            # 角色
 │   └── generate-config-default.yaml
+├── .teahouse/runtime_vars.jsonl   # [推荐] 变量系统（文件即状态）
 ├── assets/                        # [推荐] 静态资源
-├── variables/                     # [推荐] 空的变量模板（仅目录）
 ├── temp/                          # [推荐] 占位空目录
 └── summary/                       # [可选] 初始空目录（总结摘要）
 ```
@@ -179,7 +179,7 @@ Glob _prototype/**/*
 ## 注意事项
 
 - **不要复制 `.teahouse/output/floors/` 的内容**：楼层是故事进度，不属于原型。但该目录本身需要创建（含 `.gitkeep`），因为它是新实例的初始楼层目录，且 `.gitignore` 需保证它能入库。
-- **不要复制 `variables/` 内容**：变量是故事状态，不属于原型。变量目录只保留空模板即可。
+- **不要复制 `.teahouse/runtime_vars.jsonl` 内容**：变量是故事状态，不属于原型。导出时该文件只保留为空模板（builder 在打包前写入的预设变量除外——若这是一套可复用的默认变量，可保留作为新实例的初始变量）。
 - **不要复制 `summary/` 内容**：摘要文本是实例的进度记忆，不属于原型。
 - **不要复制 `.git/`**：git 历史是实例私有的。
 - **检查 `_prototype/teahouse.md`**：确保其中不包含当前楼层的引用、具体章节信息，且归档界已清空。

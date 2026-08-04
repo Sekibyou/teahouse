@@ -13,10 +13,13 @@ All template content lives in markdown files, not in Python code.
 from __future__ import annotations
 
 import re
+import json
 import yaml
 from pathlib import Path
-from string import Template
 from typing import Optional
+
+from .placeholder import resolve_variables
+from .database.workspaces import read_sandbox_vars as _read_sandbox_vars
 
 # ---------------------------------------------------------------------------
 # Template directory — path relative to this file
@@ -171,10 +174,6 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str, *, prototy
             # sandbox disable toggle — collapsed, shows only a file count
             count = sum(1 for f in entry.rglob("*") if f.is_file())
             lines.append(f"{indent}{connector}output_disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
-        elif entry.is_dir() and entry.name == "vars" and dir_path.name == ".teahouse":
-            # sandbox variables — collapsed, sandbox-only write. Director reads via GetSandboxVars.
-            count = sum(1 for f in entry.rglob("*") if f.is_file())
-            lines.append(f"{indent}{connector}vars/  ({count} file(s) — sandbox-owned state, read via GetSandboxVars, do not edit)")
         elif entry.is_dir():
             lines.append(f"{indent}{connector}{entry.name}/")
             _scan_teahouse_dir(entry, lines, indent + "    ", prototype=prototype)
@@ -276,6 +275,10 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
 
     Then behavior.md, tools usage guide, instance directory listing,
     and skills catalogue.
+
+    The whole result is then resolved (via resolve_variables): `${name}` sandbox
+    variable snapshots and `{{path}}` file slices are inlined — this is the no-cache
+    injection that lets the director see current state without a Read round-trip.
     """
     parts: list[str] = []
 
@@ -303,7 +306,14 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     skills = _scan_skills(instance_dir)
     parts.append(f"————可用 Skill 列表开始————\n\n{skills}\n\n————可用 Skill 列表结束————")
 
-    return "\n\n".join(parts)
+    text = "\n\n".join(parts)
+
+    # Resolve sandbox variables + file slices across the whole prompt (no-cache).
+    var_map = _build_var_map(instance_dir)
+    if "{{" in text or "${" in text:
+        text = resolve_variables(text, var_map, instance_dir)
+
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -311,74 +321,96 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
 # ---------------------------------------------------------------------------
 
 
+def _build_var_map(instance_dir: Path) -> dict:
+    """Flat name→value map: sandbox variables + a fresh ${...} snapshot.
+
+    Also merges none of the internal `teahouse.*` keys here — those are supplied by
+    the caller (build_template_variables for presets) where they truly exist. For the
+    plain assemble path there may be no preset binding, so we only expose sandbox vars.
+    """
+    try:
+        items = _read_sandbox_vars(instance_dir, None)
+    except Exception:
+        return {}
+    return {item["name"]: item["value"] for item in items}
+
+
 def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> dict[str, str]:
     """Compute the variable values available for prompt preset templates.
 
-    Returns a dict with keys: teahouse, behavior, tools_usage, file_tree, available_skills
+    Returns a flat name→value map usable as the var_map for ${...} resolution:
+      - `teahouse.behavior` / `teahouse.tools_usage` / `teahouse.file_tree` /
+        `teahouse.available_skills` — system-internal values, only present while
+        assembling this preset (elsewhere they are missing → render literally).
+      - All sandbox variables merged in (the ${name} no-cache snapshot).
+    teahouse.md is intentionally NOT here — preset templates reference it as a file
+    slice `{{teahouse.md}}`.
     """
     variables: dict[str, str] = {}
 
-    # teahouse.md — 注入实例根目录下的 teahouse.md
-    teahouse_path = instance_dir / INSTANCE_TEAHOUSE
-    if teahouse_path.exists():
-        variables["teahouse"] = teahouse_path.read_text(encoding="utf-8").strip()
-    else:
-        variables["teahouse"] = ""
-
-    # behavior.md — 注入后端的 src/teahouse/director-system/behavior.md
+    # behavior.md — system-internal, only resolvable during preset assembly
     for filename in TEMPLATE_FILES:
         filepath = TEMPLATE_DIR / filename
         if filepath.exists():
-            variables["behavior"] = filepath.read_text(encoding="utf-8").strip()
+            variables["teahouse.behavior"] = filepath.read_text(encoding="utf-8").strip()
             break
     else:
-        variables["behavior"] = ""
+        variables["teahouse.behavior"] = ""
 
-    # tools_usage
-    variables["tools_usage"] = tools_usage_text.strip()
+    variables["teahouse.tools_usage"] = tools_usage_text.strip()
+    variables["teahouse.file_tree"] = _scan_tree(instance_dir)
+    variables["teahouse.available_skills"] = _scan_skills(instance_dir)
 
-    # file_tree
-    variables["file_tree"] = _scan_tree(instance_dir)
-
-    # available_skills
-    variables["available_skills"] = _scan_skills(instance_dir)
+    # Sandbox variables (no-cache snapshot)
+    try:
+        items = _read_sandbox_vars(instance_dir, None)
+    except Exception:
+        items = []
+    for item in items:
+        variables[item["name"]] = item["value"]
 
     return variables
 
 
-def resolve_preset_template(yaml_text: str, variables: dict[str, str]) -> tuple[str, list[dict]]:
-    """Parse a YAML preset template and resolve variables.
+def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_dir: Path) -> tuple[str, list[dict]]:
+    """Parse a YAML preset template and resolve variables + file slices.
 
     Returns (system_prompt, fake_messages_list).
 
     Fake messages can be specified in two ways:
     1. `messages:` key — a list of {role, content} dicts (same format as Generate config)
     2. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange
+
+    `variables` is the var_map from build_template_variables (teahouse.* internal +
+    sandbox vars). system: and fake-message contents are resolved via resolve_variables
+    (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
     """
     data = yaml.safe_load(yaml_text) or {}
 
-    # Resolve system template with {{variable}} substitution
+    # Resolve system template with ${variable} + {{path}} substitution
     system_template = data.get("system", "") or ""
-    tmpl = Template(system_template)
-    system_prompt = tmpl.safe_substitute(**variables)
+    system_prompt = resolve_variables(system_template, variables, instance_dir)
 
     # Collect fake messages: explicit `messages` key takes priority,
     # then fall back to top-level `user`/`assistant` shorthand
     fake_messages_raw = data.get("messages")
 
     if isinstance(fake_messages_raw, list):
-        fake_messages = [
-            {"role": msg["role"], "content": msg.get("content", "") or ""}
-            for msg in fake_messages_raw
-            if isinstance(msg, dict) and "role" in msg
-        ]
+        fake_messages = []
+        for msg in fake_messages_raw:
+            if isinstance(msg, dict) and "role" in msg:
+                content = msg.get("content", "") or ""
+                fake_messages.append({
+                    "role": msg["role"],
+                    "content": resolve_variables(str(content), variables, instance_dir),
+                })
     else:
         fake_messages = []
         user_text = data.get("user")
         assistant_text = data.get("assistant")
         if user_text:
-            fake_messages.append({"role": "user", "content": str(user_text).strip()})
+            fake_messages.append({"role": "user", "content": resolve_variables(str(user_text).strip(), variables, instance_dir)})
         if assistant_text:
-            fake_messages.append({"role": "assistant", "content": str(assistant_text).strip()})
+            fake_messages.append({"role": "assistant", "content": resolve_variables(str(assistant_text).strip(), variables, instance_dir)})
 
     return system_prompt, fake_messages

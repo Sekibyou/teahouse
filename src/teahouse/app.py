@@ -561,7 +561,7 @@ async def _tool_use_loop(
         if binding_full and binding_full.get("preset_template_yaml"):
             variables = build_template_variables(instance_dir, tools_usage)
             tool_system, fake_msgs = resolve_preset_template(
-                binding_full["preset_template_yaml"], variables
+                binding_full["preset_template_yaml"], variables, instance_dir
             )
             if fake_msgs:
                 msg = fake_msgs + msg

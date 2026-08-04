@@ -21,10 +21,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .placeholder import resolve_placeholders, resolve_messages_placeholders
+from .placeholder import resolve_placeholders, resolve_variables
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
-from .database.workspaces import read_sandbox_vars as _read_sandbox_vars
+from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
@@ -194,8 +194,28 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
     return "\n".join(result_lines)
 
 
+def _fmt_var_entry(item: dict) -> str:
+    """Format a {name, value, note?, change_log?} entry for director display."""
+    import json as _json
+    try:
+        value_txt = _json.dumps(item["value"], ensure_ascii=False)
+    except (TypeError, ValueError):
+        value_txt = str(item["value"])
+    line = f"{item['name']}: {value_txt}"
+    if item.get("note"):
+        line += f"\n  note: {item['note']}"
+    log = item.get("change_log")
+    if log:
+        try:
+            log_txt = _json.dumps(log, ensure_ascii=False)
+        except (TypeError, ValueError):
+            log_txt = str(log)
+        line += f"\n  change_log: {log_txt}"
+    return line
+
+
 async def execute_get_sandbox_vars(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Read sandbox variables by name. Sandbox-owned state; read-only for the director."""
+    """Read runtime variables by name. Values + optional note/change_log metadata."""
     names = args.get("names")
     if names is None:
         return "Error: 'names' is required — pass an array of variable names to read (e.g. [\"opt-3-1\"])"
@@ -211,15 +231,122 @@ async def execute_get_sandbox_vars(instance_dir: Path, args: dict[str, Any]) -> 
     if not items:
         return "No sandbox variables found with the requested names."
 
-    import json as _json
-    lines = []
-    for item in items:
-        try:
-            value_txt = _json.dumps(item["value"], ensure_ascii=False)
-        except (TypeError, ValueError):
-            value_txt = str(item["value"])
-        lines.append(f"{item['name']}: {value_txt}")
-    return "\n".join(lines)
+    return "\n".join(_fmt_var_entry(item) for item in items)
+
+
+async def execute_set_var(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Write runtime variables. Merges `updates` (+ optional `note`/`change_log`).
+
+    - `updates`: {name: value} — overwrite value; missing names are created.
+    - `note`: {name: content} — overwrite that variable's note (metadata).
+    - `change_log`: {name: entry} — APPEND an entry to that variable's change_log.
+    - `delete`: list of names — remove those variables entirely.
+    File-as-state: persisted to .teahouse/runtime_vars.jsonl, authoritative + git-tracked.
+    """
+    updates = args.get("updates")
+    note = args.get("note")
+    change_log = args.get("change_log")
+    delete = args.get("delete")
+
+    if not isinstance(delete, list):
+        delete = []
+    delete = [str(d) for d in delete]
+
+    if updates is not None and not isinstance(updates, dict):
+        return "Error: 'updates' must be an object of {name: value}"
+    if note is not None and not isinstance(note, dict):
+        return "Error: 'note' must be an object of {name: content}"
+    if change_log is not None and not isinstance(change_log, dict):
+        return "Error: 'change_log' must be an object of {name: entry}"
+    if not updates and not note and not change_log and not delete:
+        return "Error: provide at least one of updates / note / change_log / delete"
+
+    # Reserved namespace guard across every name-bearing arg
+    prefix_warn = ""
+    reserved = []
+    for mapping in (updates, note, change_log):
+        if not mapping:
+            continue
+        for k in mapping:
+            if str(k).startswith("teahouse."):
+                reserved.append(str(k))
+    for k in delete:
+        if str(k).startswith("teahouse."):
+            reserved.append(str(k))
+    if reserved:
+        prefix_warn = (
+            f"\nWARNING: 'teahouse.' is a reserved prefix for system-internal variables. "
+            f"Ignoring reserved key(s): {', '.join(reserved)}."
+        )
+        reserved_key_set = set(reserved)
+        for mapping in (updates, note, change_log):
+            if not mapping:
+                continue
+            for k in list(mapping):
+                if str(k) in reserved_key_set:
+                    mapping.pop(k)
+        delete = [d for d in delete if d not in reserved_key_set]
+
+    try:
+        if updates:
+            _write_sandbox_vars(instance_dir, updates, note=note, change_log=change_log)
+        elif note or change_log:
+            # metadata-only update with no value change
+            _write_sandbox_vars(instance_dir, {}, note=note, change_log=change_log)
+        if delete:
+            from .database.workspaces import delete_sandbox_vars as _delete_sandbox_vars
+            _delete_sandbox_vars(instance_dir, delete)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    state.broadcast(
+        "file_changed",
+        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetVar", "instance_id": instance_dir.name},
+    )
+
+    affected = list(updates.keys()) if updates else []
+    affected += list(note.keys()) if note else []
+    affected += list(change_log.keys()) if change_log else []
+    if delete:
+        return "Variables deleted: " + ", ".join(delete) + prefix_warn
+
+    items = _read_sandbox_vars(instance_dir, list(dict.fromkeys(affected)))
+    if not items:
+        return "No variables found." + prefix_warn
+    return "Variables set:\n" + "\n".join(_fmt_var_entry(item) for item in items) + prefix_warn
+
+
+def _sandbox_var_map(instance_dir: Path) -> dict:
+    """Flat name→value dict of the instance sandbox variables."""
+    try:
+        items = _read_sandbox_vars(instance_dir, None)
+    except ValueError:
+        return {}
+    return {item["name"]: item["value"] for item in items}
+
+
+def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dict]:
+    """Resolve ${name} + {{path}} in every string value of a messages list (Generate).
+
+    Both surfaces an LLM consumes resolve variables before send (酒馆-style): the
+    writer/Generate path materializes `${name}` to its value so the prose `AI` writes
+    uses real values (not placeholders) — the sandbox later applies special effects via
+    regex on the resolved text.
+    """
+    var_map = _sandbox_var_map(instance_dir)
+
+    def _resolve_value(v):
+        if isinstance(v, str):
+            if "{{" in v or "${" in v:
+                return resolve_variables(v, var_map, instance_dir)
+            return v
+        if isinstance(v, dict):
+            return {k: _resolve_value(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_resolve_value(x) for x in v]
+        return v
+
+    return [_resolve_value(m) for m in messages]
 
 
 async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -231,10 +358,12 @@ async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     path = args["path"]
     content = args["content"]
 
-    # Resolve {{path}} placeholders (only when explicitly requested)
+    # Resolve {{path}} placeholders (only when explicitly requested).
+    # File slicing is a "copy/move" primitive that does NOT resolve variables —
+    # content is materialized verbatim, only placeholders pointing at other files expand.
     if args.get("resolve_placeholders", False) and "{{" in content:
         try:
-            content = resolve_placeholders(content, instance_dir)
+            content = resolve_placeholders(content, instance_dir, strict=True)
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
@@ -258,10 +387,11 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
     new_string = args["new_string"]
     replace_all = args.get("replace_all", False)
 
-    # Resolve {{path}} placeholders in new_string (only when explicitly requested)
+    # Resolve {{path}} placeholders in new_string (only when explicitly requested).
+    # File slicing does NOT resolve variables (copy/move primitive).
     if args.get("resolve_placeholders", False) and "{{" in new_string:
         try:
-            new_string = resolve_placeholders(new_string, instance_dir)
+            new_string = resolve_placeholders(new_string, instance_dir, strict=True)
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
@@ -321,10 +451,11 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     # LLMs pass these as literal backslash-n in JSON tool-call args.
     decoded = new_content.replace("\\r\\n", "\n").replace("\\n", "\n")
 
-    # Resolve {{path}} placeholders (only when explicitly requested)
+    # Resolve {{path}} placeholders (only when explicitly requested).
+    # File slicing does NOT resolve variables (copy/move primitive).
     if args.get("resolve_placeholders", False) and "{{" in decoded:
         try:
-            decoded = resolve_placeholders(decoded, instance_dir)
+            decoded = resolve_placeholders(decoded, instance_dir, strict=True)
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
@@ -453,8 +584,8 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
 
     output_full.parent.mkdir(parents=True, exist_ok=True)
 
-    # Step 2: Resolve placeholders
-    resolved = resolve_messages_placeholders(messages, instance_dir)
+    # Step 2: Resolve ${variables} + {{path}} file slices before sending to the writer LLM.
+    resolved = _resolve_messages_vars(messages, instance_dir)
 
     # Step 3: Optionally dump resolved payload (debug only)
     if dump_payload_str:
@@ -934,6 +1065,7 @@ TOOL_EXECUTORS = {
     "TodoWrite": execute_todo_write,
     "BatchExecute": execute_batch_execute,
     "GetSandboxVars": execute_get_sandbox_vars,
+    "SetVar": execute_set_var,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,

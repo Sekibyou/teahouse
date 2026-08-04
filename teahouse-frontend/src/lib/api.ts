@@ -397,10 +397,19 @@ export const floorsApi = {
   },
 }
 
-// Sandbox vars API — sandbox-owned state persisted to .teahouse/vars/sandbox.json
+// Sandbox vars API — instance variable state persisted to .teahouse/runtime_vars.jsonl
 export interface SandboxVarEntry {
   name: string
   value: unknown
+  note?: string
+  change_log?: unknown[]
+}
+
+export interface SandboxVarsUpdate {
+  updates?: Record<string, unknown>
+  note?: Record<string, string>
+  change_log?: Record<string, unknown>
+  delete?: string[]
 }
 
 export const sandboxVarsApi = {
@@ -408,12 +417,12 @@ export const sandboxVarsApi = {
     const params = names.length
       ? `?${names.map((n) => `names=${encodeURIComponent(n)}`).join("&")}`
       : ""
-    return get<{ vars: SandboxVarEntry[] }>(`/api/instances/${instanceId}/sandbox-vars${params}`)
+    return get<{ vars: SandboxVarEntry[] }>(`/api/instances/${instanceId}/runtime-vars${params}`)
   },
-  set: async (instanceId: string, updates: Record<string, unknown>) => {
+  set: async (instanceId: string, payload: SandboxVarsUpdate) => {
     return patch<{ status: string; vars: SandboxVarEntry[] }>(
-      `/api/instances/${instanceId}/sandbox-vars`,
-      { updates }
+      `/api/instances/${instanceId}/runtime-vars`,
+      payload
     )
   },
 }

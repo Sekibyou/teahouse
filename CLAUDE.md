@@ -43,7 +43,25 @@
 | **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层 |
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
+| **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetVar` 写、`GetSandboxVars` 读；核心变量注入导演系统提示词（no cache） |
 | **fc("输出")** | 输出 fc，指定文件内容作为玩家可见的输出 |
+
+## 占位符语法
+
+实例配置/提示词/工具内容里使用三种占位符，语义互不混淆：
+
+| 语法 | 含义 | 在哪里解析为值 |
+|---|---|---|
+| `{{path\|切片}}` | **文件切片**（复制/搬运，不修改内容），如 `{{settings/characters.yaml\|from="## 秦悠"}}`、`{{glob:output/floors/floor-*.md:last30}}` | Write/Edit/WriteLine 显式 `resolve_placeholders=true`；系统提示词/预设模板（lenient，文档示例保持字面量） |
+| `${name}` | **普通变量引用**（沙盒变量），如 `${金币}`、`${user_name}` | 导演系统提示词组装 + Generate 发送给正文 AI 前（酒馆式展开为值）；沙盒内手动 `Teahouse.replacePlaceholders()` 替换 |
+| `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词预设模板组装时临时注入；其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
+
+规则：
+- `${}` 严格匹配 `\${...}`；裸 `$` 不处理。**变量不存在 → 原样显示**（不报错、不删）。
+- `teahouse.` 前缀为系统保留命名空间，setVar/SetVar 禁止用其命名（会告警忽略）。
+- 喂给 AI（系统提示词、Generate）的内容替换 `${}` + 展开 `{{}}`；`Write/Edit/WriteLine`（文件编辑）只做 `{{}}` 切片、不解变量。
+
+
 
 ## 认证
 
@@ -173,7 +191,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 ### 切换分支的特殊说明
 
-`GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`floors/`、`variables/`、`settings/` 等）。切换后：
+`GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`floors/`、`.teahouse/runtime_vars.jsonl`、`settings/` 等）。切换后：
 1. 当前对话的上下文（messages）保留在前端 localStorage 中，导演不会失忆
 2. 下一次系统提示词组装时会自动读取目标分支的文件状态
 3. 如需查看旧分支的楼层文件，可用 `Read` 工具加路径前缀（如果能拿到具体路径），或者切回去查看
@@ -228,19 +246,20 @@ skills/              Skill 包，每个子目录一个 Skill
     examples/         可选，示例文件
     references/       可选，参考文档
     scripts/          可选，可执行脚本
-variables/           变量文件夹（故事状态跟踪）
-  active.yaml         当前活跃变量
-  key_variables.yaml  关键变量列表
-  key_variables_schema.yaml
+.teahouse/            引擎内部目录
+  runtime_vars.jsonl   变量系统（文件即状态，SetVar/GetSandboxVars，一变量一行 jsonl，可带 note/change_log）
+  output/
+    floors/           正文历史（floor-N.md 定稿 / floor-N-draft.md 半正式稿）
+    sandbox/          沙盒渲染资源
+      bootstrap.js    沙盒基础设施脚本
+      *.js            场景/UI 脚本
+      *.css           样式文件
+  text-style-rules.yaml  文本样式着色规则
 floors/              正文楼层 + 总结（归档，commit 后不可变）
   floor-001.md        正文楼层，编号递增
   sum-001.md          总结，编号递增（与楼层编号独立）
 temp/                临时文件夹，存放草稿等中间文件
   draft.md            未完成草稿（续写用）
-sandbox/             沙盒渲染资源，与 Output 工具推送到前端的代码相关
-  bootstrap.js        沙盒基础设施脚本
-  *.js                场景/UI 脚本
-  *.css               样式文件
 assets/              静态资源（图片、字体、音频等）
 ```
 

@@ -132,7 +132,7 @@ await Teahouse.writeFile(".teahouse/output/sandbox/state.json", JSON.stringify(s
 
 #### `Teahouse.setVar(updates) → Promise<{name,value}[]>`
 
-原子合并写入沙盒变量，落盘到 `.teahouse/vars/sandbox.json`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value}]`。
+原子合并写入实例变量，落盘到 `.teahouse/runtime_vars.jsonl`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
 
 ```js
 await Teahouse.setVar({
@@ -141,7 +141,7 @@ await Teahouse.setVar({
 })
 ```
 
-**写者约定**：沙盒变量**只有沙盒能写**（唯一写口）。正文、设定等一律走导演工具，不要用 `writeFile` 写正文——沙盒写正文有并发/精确性风险。沙盒要改剧情就走 `Teahouse.send()` 告知导演。
+**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `settings/` 设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
 
 #### `Teahouse.getVars(names) → Promise<{name,value}[]>`
 
@@ -154,7 +154,7 @@ const [user] = await Teahouse.getVars(["user_name"])
 
 > **🚨 空值 / 缺值语义（最容易写错的地方）**
 >
-> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `.teahouse/vars/sandbox.json` 不存在、或某个变量从未 `setVar` 写入，效果完全一样——对应条目返回 `{name, value: null}`。
+> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `.teahouse/runtime_vars.jsonl` 不存在、或某个变量从未写入，效果完全一样——对应条目返回 `{name, value: null}`。
 >
 > **只在你明确传入 `names` 时才保证"每个名字都有"**；不传 `names`（读全部）时，未初始化的变量根本不在，返回的都是已存在的：
 >
@@ -183,9 +183,23 @@ const [user] = await Teahouse.getVars(["user_name"])
 >
 > 同理，`setVar` 的返回是"写后全部变量"，也可用它做 `getVars` 的镜像缓存。
 
-#### 导演侧读取：`GetSandboxVars(names=["x"])`
+#### 变量字面量替换：`Teahouse.replacePlaceholders(text?)`
 
-导演**不能写、只能读**沙盒变量（通过 `GetSandboxVars` tool，按名数组读）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetSandboxVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。
+沙盒默认**不自动**把正文里的 `${name}` 字面量替换为变量值（渲染层须接触原始正文、且要留机会做特效特写，如 `${user_name}` → 正则 → `[rainbow]LowStar[/rainbow]`）。需要统一替换时手动调用：
+
+```js
+// 传 text：只替换这段文本里的 ${name}；返回值是替换后的文本
+Teahouse.replacePlaceholders("你好，${user_name}").then(rendered => ...)
+
+// 不传 text：对整页正文做一次兜底替换（默认 bootstrap 里已调用，可自行关掉）
+Teahouse.replacePlaceholders()
+```
+
+替换是固定字符串替换，仅当某值想"全篇统一变成字面值"时用；要做灵活特效，直接在已替换的文本上做正则特写更灵活。
+
+#### 导演侧读写：`GetSandboxVars` / `SetVar`
+
+导演**既能读也能写**变量（`GetSandboxVars` 读、`SetVar` 写，走同一 `.teahouse/runtime_vars.jsonl`）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetSandboxVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。核心变量会注入导演系统提示词（no cache），导演通常无需额外读取。
 
 ### 发送消息
 

@@ -1,7 +1,22 @@
 """
-Placeholder resolver — replaces {{path}} syntax with actual file contents.
+Placeholder/slice resolver — `{{path}}` file slices and `${name}` variables.
 
-Supported syntax:
+`{{path}}` file slices: pure "copy/move" primitive — inlines file content verbatim,
+materializing no semantic change. Used by Write/Edit/WriteLine (resolve_placeholders).
+
+`${name}` variables: reference a value from a var_map (sandbox vars + system-internal
+`teahouse.*`). Strict: must be `$` immediately followed by `{...}`; a bare `$` is left
+alone. If the name is NOT in var_map, the literal `${name}` is kept unchanged (原样显示).
+`teahouse.xxx` values exist only during director system-prompt assembly; elsewhere they
+are ordinary missing variables and render literally (naturally 不泄露内部提示词).
+
+Two surfaces only AI consumes auto-resolve BOTH `${}` and `{{}}`:
+  - Generate yaml (sent to the writer LLM)
+  - Director system prompt / preset template assembly (no-cache variable snapshot)
+The sandbox/render surface does NOT auto-resolve — it calls the inject function to
+replace remaining `${name}` literals manually.
+
+File-slice syntax {{path}}:
   {{path}}                               Full file
   {{path:10-30}}                         Line range (1-indexed, inclusive)
   {{path:10-20|from="A"|to="B"}}         Line range then anchor crop
@@ -24,13 +39,84 @@ class PlaceholderError(Exception):
     """Raised when a placeholder cannot be resolved."""
 
 
-def resolve_placeholders(text: str, instance_dir: Path) -> str:
-    """Replace all {{...}} placeholders in text with actual file contents."""
+# A resolved value may itself contain ${...} or {{...}} (e.g. a variable whose value is
+# another variable reference). Guard against runaway/cyclic expansion.
+MAX_RESOLVE_DEPTH = 10
+
+
+def resolve_placeholders(text: str, instance_dir: Path, strict: bool = False) -> str:
+    """Replace all {{...}} placeholders in text with actual file contents.
+
+    strict=False (default): a placeholder that cannot resolve (bad path, missing
+    file, invalid glob/lastN) is left **verbatim** — important because prompt doc
+    text often contains `{{glob:...:lastN}}` style **examples** that must not blow
+    up assembly. Active, well-formed slices still expand.
+    strict=True: raises PlaceholderError on failure (used by Write/Edit/WriteLine
+    where the director explicitly opted in and should see the error).
+    """
     def _replacer(match: re.Match) -> str:
         raw = match.group(1).strip()
-        return _resolve_one(raw, instance_dir)
+        try:
+            return _resolve_one(raw, instance_dir)
+        except PlaceholderError:
+            if strict:
+                raise
+            return match.group(0)  # keep literal
 
     return re.sub(r"\{\{(.+?)\}\}", _replacer, text)
+
+
+_VARIABLE_RE = re.compile(r"\$\{(.+?)\}")
+
+
+def _substitute_variable_literals(text: str, var_map: dict) -> str:
+    """One pass of ${name} substitution. Missing variables render literally."""
+    def _replacer(match: re.Match) -> str:
+        name = match.group(1).strip()
+        if name in var_map:
+            return _stringify(var_map[name])
+        return match.group(0)  # 原样显示
+
+    return _VARIABLE_RE.sub(_replacer, text)
+
+
+def substitute_variables(text: str, var_map: dict) -> str:
+    """Resolve ${name} variables ONLY (single pass, no {{}}). Missing → literal."""
+    return _substitute_variable_literals(text, var_map)
+
+
+def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False) -> str:
+    """Resolve ${name} and {{path}} for AI-facing surfaces (system prompt / Generate).
+
+    Alternates ${} → {{}} → ${} → ... until stable, so a {{path}} slice whose content
+    references a variable (and vice versa) resolves fully. Bounded by max_depth:
+    past the limit, remaining placeholders are left literal (no hard error), so a
+    variable whose value (transitively) references itself degrades gracefully.
+
+    Missing variables render literally; a bare `$` is never touched. File slices
+    are lenient (strict=False): unresolvable `{{...}}` (a doc example) stays literal
+    rather than raising.
+    """
+    for _ in range(max_depth):
+        before = text
+        text = _substitute_variable_literals(text, var_map)
+        if "{{" in text:
+            text = resolve_placeholders(text, instance_dir, strict=strict)
+        if text == before:
+            break
+    return text
+
+
+def _stringify(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        try:
+            import json
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
 
 
 def resolve_messages_placeholders(messages: list[dict], instance_dir: Path) -> list[dict]:

@@ -46,11 +46,47 @@
     readFile: function(path) { return callHost('readFile', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
-    // 沙盒变量（setVar 落盘到 .teahouse/vars/sandbox.json，文件即状态）
-    //   setVar(updates) — 原子合并写；返回写后全部变量 [{name, value}]
-    //   getVars(names)  — 按名读取；返回 [{name, value}]
-    setVar: function(updates) { return callHost('setVar', [updates]); },
+    // 实例变量（setVar 落盘到 .teahouse/runtime_vars.jsonl，文件即状态）
+    //   setVar(updates)              — {name:value} 合并写；返回写后全部变量 [{name,value,note?,change_log?}]
+    //   setVar({updates,note,change_log,delete}) — 可带元数据：note 覆盖、change_log 追加、delete 删名
+    //   getVars(names)               — 按名读取；返回 [{name,value,note?,change_log?}]
+    setVar: function(updates, extra) {
+      if (extra && typeof extra === 'object') {
+        return callHost('setVar', [{ updates: updates, note: extra.note, change_log: extra.change_log, delete: extra.delete }]);
+      }
+      return callHost('setVar', [updates]);
+    },
     getVars: function(names) { return callHost('getVars', [names || []]); },
+
+    // 变量字面量替换（手动/兜底一键替换）
+    //   replacePlaceholders(text?) — 把 text（或整页正文）里所有 ${name} 字面量替换为变量值。
+    //   沙盒默认【不】自动替换正文里的 ${name}，因为渲染层必须接触原始正文、且需要机会做
+    //   特效特写（如 ${user_name} → 正则 → [rainbow]李四[/rainbow]）。
+    //   需要时手动调用本函数统一替换，或关闭下方 defaultRender 里的默认调用。
+    replacePlaceholders: function(text) {
+      return window.Teahouse.getVars([]).then(function(entries) {
+        if (!entries || entries.length === 0) return text;
+        var map = {};
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].value === null || entries[i].value === undefined) continue;
+          map[entries[i].name] = String(entries[i].value);
+        }
+        var apply = function(s) {
+          if (!s) return s;
+          return s.replace(/\$\{([^}]+)\}/g, function(m, name) {
+            return Object.prototype.hasOwnProperty.call(map, name) ? map[name] : m;
+          });
+        };
+        if (text !== undefined && text !== null) return apply(text);
+        // 没传 text：对整页正文做兜底替换（默认关闭，见 defaultRender 注释）
+        var content = document.getElementById('teahouse-content');
+        if (content && !content.dataset.varsReplaced) {
+          content.dataset.varsReplaced = '1';
+          content.innerHTML = apply(content.innerHTML);
+        }
+        return content ? content.innerHTML : text;
+      });
+    },
 
     // 发送消息
     send: function(message) { callHost('send', [message]); },
@@ -131,6 +167,9 @@
       pageState.currentIndex = pageState.floors.length - 1;
       renderCurrent();
       prefetchTitles(pageState.floors);
+      // 默认对整页做一次变量兜底替换。若你的正文里有 ${user_name} 这类想保留做特效特写的
+      // 字面量，删掉这行即可（或用 Teahouse.replacePlaceholders(text) 仅在指定时机手动替换）。
+      window.Teahouse.replacePlaceholders();
       window.Teahouse._emit('page.change', { index: pageState.currentIndex, total: pageState.floors.length });
     }).catch(function(err) {
       console.error('[Teahouse Bootstrap] defaultRender failed:', err);
@@ -232,6 +271,7 @@
       pageState.currentIndex = idx >= 0 ? idx : (pageState.floors.length - 1);
       renderCurrent();
       prefetchTitles(pageState.floors);
+      window.Teahouse.replacePlaceholders();
       window.Teahouse._emit('page.change', { index: pageState.currentIndex, total: pageState.floors.length });
     }).catch(function() {});
   }

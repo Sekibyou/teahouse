@@ -87,52 +87,35 @@ Read .teahouse/output/floors/floor-032.md
 
 正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
 
-同时更新变量系统：
+正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
+
+同时更新变量系统（`.teahouse/runtime_vars.jsonl`，**核心变量已在你系统提示词里 no-cache 呈现**，通常无需额外读取）：
 
 ```
-Read variables/active-vars.yaml
-Read variables/key-vars-change-log.yaml
-Read variables/vars-manager.md
+GetSandboxVars()   → 读全部变量
+SetVar(updates={...})  → 写变量
 ```
 
 基于新增楼层的内容，识别变量/设定变更。
 
-#### 变量作用域规范
+#### 变量 vs 设定的边界
 
-每个变量都应标注自身的作用域，方便后续清理：
-
-- **全局变量**（`scope: global`）：贯穿整个故事的变量，如角色修为、核心关系、主线目标等
-- **局部变量**（`scope: local`）：仅在某段剧情内有效的变量，需标注关联章节和事件描述。例如：
-  ```yaml
-  A_擂台赛胜负:
-    value: "2胜1负"
-    scope: local
-    created_from: "floor-015"
-    related_event: "青云山擂台赛"
-    note: "三局两胜制，与B的赌约"
-  ```
+- **变量**（SetVar 管理）：高度精炼、会频繁变动的数值/重要值（`金币`、`修为`、`好感度`）。核心变量注入系统提示词（no cache）。
+- **动态设定**（settings/ 文件管理）：较长、中短期生效的文字状态——人物关系变化、任务进展、二人闹别扭等。它们会随剧情变，但**不是变量**，归 `settings/` 用 Write/Edit/WriteLine 维护，识别到变化时就地更新对应设定文件。
 
 #### 变量操作
 
-对于每个变更：
-1. **更新 `variables/active-vars.yaml`** 中的当前值
-2. **如果是关键变量变更**（按 `vars-manager.md` 中的定义），追加一条记录到 `variables/key-vars-change-log.yaml`，包含：变更前后值、变更原因、发生楼层
+对于每个数值型状态变更，用 `SetVar` 合并写入：
 
-格式示例：
-```yaml
-changes:
-  - variable: "characters.A.attitude_toward_B"
-    label: "林月对苏然的信任"
-    scope: global
-    changed_from: "敌视，认为苏然是叛徒"
-    changed_to: "开始信任，但仍保留一丝警惕"
-    reason: "苏然在战斗中救下了林月的同伴"
-    trigger_floor: 33
 ```
+SetVar(updates={"金币": 140, "修为": "炼气四层", "主线进度": "青云山试炼完成"})
+```
+
+范围/变更历史如需留档（便于跨楼层追踪"何时因何变了多少"），可在 `settings/` 下维护一份可选的变量变更记录文件（如 `settings/variable-change-log.md`）并用 Edit 追加。这是可选的——通常直接把变更写进设定与正文即可。
 
 #### 清理无用变量
 
-结合 `vars-manager.md` 的规则，检查 `variables/active-vars.yaml` 中的局部变量：明显已过期（如标注的事件早已结束）则清理，不确定时保留，宁可多留也不要误删。
+用 `GetSandboxVars()` 读全部变量，结合对故事的理解清理明显过期、不再有影响的数值变量：确实过期则 `SetVar` 覆盖为合理值或删除键；不确定时保留，宁可多留也不要误删。
 
 ### 步骤 6：写入摘要文本（导演参考）
 
@@ -143,7 +126,7 @@ Write summary/sum-A-B.md               → 写入摘要文本
 
 如果拆分为多个摘要，每个写入独立文件。
 
-> ⚠️ 摘要文本仅供导演参考，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `settings/` 设定与 `variables/` 变量。
+> ⚠️ 摘要文本仅供导演参考，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `settings/` 设定与 `.teahouse/runtime_vars.jsonl` 变量。
 
 ### 步骤 7：推进归档界
 
@@ -163,7 +146,7 @@ Edit teahouse.md：
 GitCommit(type="summary", start=A, end=B, message="简短描述")
 ```
 
-提交将锁定本次总结对 `settings/`、`variables/`、`summary/`、`teahouse.md` 的全部变更。如果有多个摘要范围，每个单独一次 GitCommit。
+提交将锁定本次总结对 `settings/`、`.teahouse/runtime_vars.jsonl`、`summary/`、`teahouse.md` 的全部变更。如果有多个摘要范围，每个单独一次 GitCommit。
 
 ## 注意事项
 

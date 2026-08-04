@@ -189,7 +189,18 @@ ${bridge}
         }
         case "setVar": {
           if (instanceId && _args[0]) {
-            const res = await sandboxVarsApi.set(instanceId, _args[0] as Record<string, unknown>)
+            const payload = _args[0] as {
+              updates?: Record<string, unknown>
+              note?: Record<string, string>
+              change_log?: Record<string, unknown>
+              delete?: string[]
+            }
+            // Accept either the full payload {updates,note,change_log,delete} or a bare
+            // updates object for backward compat.
+            const normalized = payload && typeof payload === "object" && "updates" in payload
+              ? payload
+              : { updates: payload as Record<string, unknown> }
+            const res = await sandboxVarsApi.set(instanceId, normalized)
             result = res.ok ? res.data?.vars : undefined
           }
           break

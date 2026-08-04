@@ -27,13 +27,11 @@ _prototype/
 │   │   │   ├── page-bar.js
 │   │   │   └── theme.css
 │   │   └── floors/               ← 初始楼层：floor-001.md（开场白占位）
+│   ├── runtime_vars.jsonl         ← 变量系统（文件即状态，SetVar/GetSandboxVars）
 │   └── text-style-rules.yaml     ← 文本样式着色规则
-├── settings/                     ← 设定文件（占位）
+├── settings/                     ← 设定文件：静态设定 + 动态设定（占位）
 │   ├── characters.yaml
 │   └── world.yaml
-├── variables/                    ← 变量系统（占位）
-│   ├── active-vars.yaml
-│   └── vars-manager.md
 ├── summary/                      ← 总结摘要（初始空）
 ├── temp/                         ← （原型内，预留）
 ├── assets/                       ← 静态资源
@@ -100,14 +98,14 @@ _prototype/
 
 ### 阶段 3：变量系统确认
 
-1. 阅读 `_prototype/variables/active-vars.yaml` 和 `_prototype/variables/vars-manager.md` 的注释了解格式
-2. 与用户确认需要追踪的关键变量（金币、装备、好感度、任务进度等）
-3. 明确每个变量在何时更新、由哪个 skill 负责更新：
-   - 变量值分行书写，方便 WriteLine 工具精确修改单个值
-   - 每个变量一行，避免嵌套结构
-4. 基于变量系统，调整 `_prototype/skills/` 下各 skill 的提示词（尤其是 generate-floor 和 summarize 中的变量更新步骤）
-5. 写入 `_prototype/variables/active-vars.yaml`（初始值）和 `_prototype/variables/vars-manager.md`（变量管理规则）
-6. 在 `temp/milestones.yaml` 的 tasks 区域记录完成状态
+1. 明确本故事的变量载体统一在 `.teahouse/runtime_vars.jsonl`（文件即状态），由导演 `SetVar` 写、`GetSandboxVars` 读、沙盒 `setVar` 写。**不存在 `variables/` 目录**。
+2. 与用户确认需要追踪的**变量**——仅限高度精炼、会频繁变动的数值/重要值（金币、修为、好感度、主角名等）。核心变量会注入导演系统提示词（no cache），导演与沙盒共享这份状态。
+3. 明确如何划分**变量 vs 设定**：
+   - **变量** → SetVar 管理。
+   - **静态设定**（长期不变，如兄妹关系）→ `settings/`。
+   - **动态设定**（中短期文字，如二人闹别扭、任务进展）→ 也放 `settings/`，靠后续工作流提示词区分、就地更新。
+4. 在打包前，用 prototype-builder 的沙盒写入预设变量到 `.teahouse/runtime_vars.jsonl`（builder 的价值：打包前先写预设变量，运行时导演/沙盒直接读，无需运行时注入）。
+5. 在 `temp/milestones.yaml` 的 tasks 区域记录完成状态
 
 ### 阶段 4：teahouse.md 编写
 
