@@ -29,33 +29,27 @@
 
 ## 楼层与总结命名规范
 
-楼层和总结文件必须存放在 `floors/` 目录下，遵循严格的命名格式供系统统计：
+正文楼层必须存放在 `.teahouse/output/floors/` 目录下，总结摘要存放于根 `summary/` 目录，遵循严格的命名格式供系统统计与目录树展示：
 
-| 类型 | 命名格式 | 示例 |
-|---|---|---|
-| 正文楼层 | `floor-N.md` | `floor-1.md`、`floor-42.md` |
-| 总结 | `sum-N.md`（单层）或 `sum-A-B.md`（范围） | `sum-7.md`、`sum-1-7.md` |
+| 类型 | 位置 | 命名格式 | 示例 |
+|---|---|---|---|
+| 正式楼层 | `.teahouse/output/floors/` | `floor-N.md` | `floor-1.md`、`floor-42.md` |
+| 半正式稿 | `.teahouse/output/floors/` | `floor-N-draft.md`（每层唯一，就地覆盖） | `floor-3-draft.md` |
+| 总结摘要 | `summary/` | `sum-N.md` 或 `sum-A-B.md` | `summary/sum-7.md`、`summary/sum-1-7.md` |
 
-**正式输出（已确认提交的楼层/总结）必须放在 `floors/` 下，并严格遵循上述命名格式。**
+**正式定稿（已确认提交的楼层）必须为 `.teahouse/output/floors/floor-N.md`，严格遵循命名格式。**
 
-草稿和中间产物**禁止**放在 `floors/` 下。草稿应写入 `temp/` 目录（按需创建），文件名不做格式要求。
+- 半正式稿 `floor-N-draft.md` 是写稿过程中的可见输出，每层**唯一**，返工时就地覆盖；用户满意后重命名为 `floor-N.md`。
+- 真草稿和中间产物写入 `temp/` 目录（按需创建），文件名不做格式要求。
 
-## Output 工具规则
+## 正文输出机制（文件系统驱动）
 
-生成正文内容后，**必须**使用 Output 工具将内容推送到前端。不要只在文件中写入内容而忽略推送。
+**正文和沙盒代码的「输出」即文件落盘，没有任何推送工具。** 前端监听导演的工具调用（Write/Edit/FileOps 等触发 `file_changed`）后自动刷新读取：
 
-- label 命名规则由 `teahouse.md` 约定
-- 使用 `rich_text` 类型前，先加载对应的 skill 了解 BBCode 标签白名单
-
-### 🚨 代码文件：先 Write 文件，再 Output 引用
-
-对于 `bootstrap_js`、`ui_js`、`css` 类型，**禁止将代码直接内联到 content 字段**。必须遵循以下流程：
-
-1. **Write** 将代码写入 `sandbox/` 目录下的 `.js` 或 `.css` 文件
-2. **Output append** 使用 `{{path}}` 占位符引用该文件，如 `content: "{{sandbox/statusbar.js}}"`
-3. 后续修改代码时，**直接 Edit 对应的 `.js`/`.css` 文件即可**，无需再次调用 Output。前端会自动读取最新文件内容。
-
-**为什么禁止内联**：内联代码会破坏 output-blocks.jsonl 的 JSON 结构（换行和引号导致解析崩溃），且无法通过 Edit 工具对代码做增量修改。
+- **正文历史**：写入 `.teahouse/output/floors/` 下的 `floor-N-draft.md`（写稿中）或 `floor-N.md`（定稿）。前端靠**文件名中间数字**排序展示。
+- **沙盒代码**：写入 `.teahouse/output/sandbox/*.js` / `*.css`。渲染器按文件名分派——`bootstrap.js` 最先执行、`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
+- 需引用历史楼层入上下文时，用 `{{glob:output/floors/floor-*.md:lastN}}` 占位符自动按楼层数字取最近 N 层窗口。
+- 沙盒代码需整体禁用时，把 `.teahouse/output/sandbox/` 下的文件移到 `.teahouse/output_disabled/`（无子结构，目录本身即禁用标记）。
 
 ## 实例目录结构
 
@@ -63,11 +57,12 @@
 
 | 目录 | 性质 | 用途 |
 |---|---|---|
-| `.teahouse/` | 必需 | 系统数据（输出块、样式规则等） |
-| `floors/` | 必需 | 正文楼层与总结，命名**必须遵循规范** |
-| `skills/` | 必需 | Skill 包，每个子目录一个 Skill |
+| `.teahouse/output/sandbox/` | 必需 | 沙盒渲染代码（bootstrap.js 最先、*.css、其余 *.js） |
+| `.teahouse/output/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
+| `.teahouse/output_disabled/` | 可选 | 沙盒代码整体禁用开关（无子结构，移入即禁用） |
+| `.teahouse/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
+| `summary/` | 必需 | 总结摘要文本（导演参考，不进正文 Bot 上下文） |
 | `settings/` | 推荐 | 故事设定（角色、世界观等）及 Generate Payload 配置模板 |
 | `variables/` | 推荐 | 故事变量（状态跟踪） |
 | `assets/` | 推荐 | 静态资源（图片、字体、音频等） |
-| `sandbox/` | 推荐 | 官方前端的沙盒渲染代码 |
-| `temp/` | 推荐 | 临时文件：未完成草稿（draft-{N}-{V}.md）、Generate Payload 配置（generate-config-{N}-{V}.yaml） |
+| `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md）、Generate Payload 配置（generate-config-{N}-{V}.yaml） |

@@ -1,12 +1,14 @@
 (function() {
   /* 章节导航条 — 三部分结构
      ◀ 上一章 | N/M · 章节名（点击展开目录快速跳转） | 下一章 ▶
-     当前查看章节高亮"阅读中"，最新章节显示"最新"徽标。 */
+
+     数据源：window.Teahouse._pageState.floors —— 由 bootstrap 从
+     .teahouse/output/floors/ 读取，按楼层数字升序；currentIndex 指向当前展示楼层。 */
 
   var ACCENT = '#60a5fa';
   var LATEST = '#fbbf24';
 
-  /* HTML 转义，防止 note 中的特殊字符破坏结构 */
+  /* HTML 转义 */
   function esc(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -15,11 +17,13 @@
       .replace(/"/g, '&quot;');
   }
 
-  function chapterName(item) {
-    return item.note || ('第 ' + item.epNum + ' 章');
+  /* 章节名：优先 floor.title（bootstrap 从正文首行提取），否则回退到"第 N 章" */
+  function chapterName(floor) {
+    if (floor.title) return floor.title;
+    var n = floor.num + ' 章';
+    return '第 ' + n + (floor.draft ? '（草稿）' : '');
   }
 
-  /* 圆形箭头按钮基础样式 */
   var ARROW_BTN =
     'width:40px;height:40px;flex:none;' +
     'display:flex;align-items:center;justify-content:center;' +
@@ -28,7 +32,6 @@
     'backdrop-filter:blur(8px);cursor:pointer;font-size:13px;' +
     'transition:border-color 0.2s,opacity 0.2s;';
 
-  /* ---- 模块级：更新导航条状态（进度文字 + 箭头启用态） ---- */
   function updateState() {
     var title = document.getElementById('chapter-nav-title');
     var prevBtn = document.getElementById('chapter-nav-prev');
@@ -36,7 +39,7 @@
     if (!title || !prevBtn || !nextBtn) return;
 
     var st = window.Teahouse._pageState;
-    if (!st || !st.blocks || st.blocks.length === 0) {
+    if (!st || !st.floors || st.floors.length === 0) {
       title.textContent = '目录';
       prevBtn.disabled = true;
       nextBtn.disabled = true;
@@ -45,22 +48,16 @@
       return;
     }
 
-    /* 升序定位当前章节，得出 N/M */
-    var sorted = st.blocks.slice().sort(function(a, b) {
-      return a.epNum - b.epNum;
-    });
-    var cur = st.blocks[st.currentIndex];
-    var pos = -1;
-    for (var i = 0; i < sorted.length; i++) {
-      if (sorted[i].uuid === cur.uuid) { pos = i; break; }
-    }
-    var n = pos >= 0 ? pos + 1 : st.currentIndex + 1;
-    var m = sorted.length;
+    // floors 已按楼层数字升序；currentIndex 是数组下标（0 = 第 1 章）。
+    // 打开时定位到最新章（currentIndex = length-1），故显示 N = currentIndex+1。
+    var n = st.currentIndex + 1;
+    var m = st.floors.length;
+    var cur = st.floors[st.currentIndex];
     title.textContent = n + '/' + m + ' · ' + chapterName(cur);
 
-    /* 箭头：上一章=已是最旧章节；下一章=已是最新章节时禁用 */
-    var atFirst = st.currentIndex >= st.blocks.length - 1;
-    var atLast = st.currentIndex <= 0;
+    // ◀ 上一章 = 回首章方向（index-1）；▶ 下一章 = 往最新/后一页（index+1）。
+    var atFirst = st.currentIndex <= 0;               /* 已是第 1 章 */
+    var atLast = st.currentIndex >= st.floors.length - 1; /* 已是最新章 */
     prevBtn.disabled = atFirst;
     nextBtn.disabled = atLast;
     prevBtn.style.opacity = atFirst ? '0.35' : '1';
@@ -77,14 +74,12 @@
       'z-index:300;user-select:none;display:flex;align-items:center;gap:10px;' +
       'font-family:"Noto Sans SC","PingFang SC",sans-serif;';
 
-    /* ---- 上一章 ---- */
     var prevBtn = document.createElement('button');
     prevBtn.id = 'chapter-nav-prev';
     prevBtn.title = '上一章';
     prevBtn.innerHTML = '&#9664;';
     prevBtn.style.cssText = ARROW_BTN;
 
-    /* ---- 中间：当前进度 N/M + 章节名（点击展开目录） ---- */
     var trigger = document.createElement('button');
     trigger.id = 'chapter-nav-trigger';
     trigger.style.cssText =
@@ -100,17 +95,14 @@
     titleSpan.style.cssText =
       'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     titleSpan.textContent = '目录';
-
     trigger.appendChild(titleSpan);
 
-    /* ---- 下一章 ---- */
     var nextBtn = document.createElement('button');
     nextBtn.id = 'chapter-nav-next';
     nextBtn.title = '下一章';
     nextBtn.innerHTML = '&#9654;';
     nextBtn.style.cssText = ARROW_BTN;
 
-    /* ---- 下拉目录面板 ---- */
     var panel = document.createElement('div');
     panel.id = 'chapter-nav-panel';
     panel.style.cssText =
@@ -128,73 +120,52 @@
     wrap.appendChild(nextBtn);
     wrap.appendChild(panel);
 
-    function closePanel() {
-      panel.style.display = 'none';
-    }
+    function closePanel() { panel.style.display = 'none'; }
 
-    /* ---- 上一章 / 下一章 ----
-       pageState.blocks 按 epNum 降序（最新章节在前，index=0 为最新）
-       上一章 = index + 1（更旧），下一章 = index - 1（更新） */
     function goRelative(dir) {
       var st = window.Teahouse._pageState;
-      if (!st || !st.blocks || st.blocks.length === 0) return;
-      var target = dir < 0 ? st.currentIndex + 1 : st.currentIndex - 1;
-      if (target < 0 || target >= st.blocks.length) return;
+      if (!st || !st.floors || st.floors.length === 0) return;
+      // ◀ 上一章 (dir=-1) → 回首章方向 index-1；▶ 下一章 (dir=+1) → 后一页 index+1
+      var target = st.currentIndex + dir;
+      if (target < 0 || target >= st.floors.length) return;
       closePanel();
       window.goToPage(target);
     }
 
-    prevBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      goRelative(-1);
-    });
-    nextBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      goRelative(1);
-    });
+    prevBtn.addEventListener('click', function(e) { e.stopPropagation(); goRelative(-1); });
+    nextBtn.addEventListener('click', function(e) { e.stopPropagation(); goRelative(1); });
 
-    /* ---- 触发器：展开/收起目录 ---- */
     trigger.addEventListener('click', function(e) {
       e.stopPropagation();
       var showing = panel.style.display !== 'none';
-      if (showing) {
-        closePanel();
-      } else {
-        renderMenu();
-        panel.style.display = 'block';
-      }
+      if (showing) { closePanel(); } else { renderMenu(); panel.style.display = 'block'; }
     });
 
-    /* 点击外部关闭 */
     document.addEventListener('click', function(e) {
       if (!wrap.contains(e.target)) closePanel();
     });
 
-    /* ---- 渲染章节列表 ---- */
     function renderMenu() {
       var state = window.Teahouse._pageState;
-      if (!state || !state.blocks || state.blocks.length === 0) {
+      if (!state || !state.floors || state.floors.length === 0) {
         panel.innerHTML =
           '<div style="padding:12px;color:#888;font-size:13px;text-align:center;">暂无章节</div>';
         return;
       }
 
-      /* 按章节编号升序展示（第 1 章在最上） */
-      var sorted = state.blocks.slice().sort(function(a, b) {
-        return a.epNum - b.epNum;
-      });
-      var maxEp = sorted[sorted.length - 1].epNum; /* 最新章节编号 */
-      var currentUuid = state.blocks[state.currentIndex].uuid;
+      var sorted = state.floors.slice(); /* 已按楼层数字升序 */
+      var maxNum = sorted[sorted.length - 1].num;
+      var currentNum = state.floors[state.currentIndex].num;
 
       var html = '';
       for (var i = 0; i < sorted.length; i++) {
         var item = sorted[i];
-        var isCurrent = item.uuid === currentUuid;
-        var isLatest = item.epNum === maxEp;
+        var isCurrent = item.num === currentNum;
+        var isLatest = item.num === maxNum;
         var name = esc(chapterName(item));
 
         html +=
-          '<div class="chapter-nav-item" data-uuid="' + item.uuid + '" style="' +
+          '<div class="chapter-nav-item" data-num="' + item.num + '" style="' +
           'display:flex;align-items:center;gap:8px;' +
           'padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;' +
           (isCurrent
@@ -207,33 +178,25 @@
             ? '<span style="flex:none;font-size:10px;color:' + ACCENT + ';' +
               'border:1px solid rgba(96,165,250,0.5);padding:1px 7px;border-radius:10px;">阅读中</span>'
             : '') +
-          (isLatest && !isCurrent
+          (item.draft
             ? '<span style="flex:none;font-size:10px;color:' + LATEST + ';' +
-              'border:1px solid rgba(251,191,36,0.5);padding:1px 7px;border-radius:10px;">最新</span>'
+              'border:1px solid rgba(251,191,36,0.5);padding:1px 7px;border-radius:10px;">草稿</span>'
             : '') +
           '</div>';
       }
       panel.innerHTML = html;
 
-      /* 悬停反馈 + 点击跳转 */
       var items = panel.querySelectorAll('.chapter-nav-item');
       for (var j = 0; j < items.length; j++) {
         (function(el) {
-          el.addEventListener('mouseenter', function() {
-            el.style.background = 'rgba(255,255,255,0.08)';
-          });
-          el.addEventListener('mouseleave', function() {
-            el.style.background = '';
-          });
+          el.addEventListener('mouseenter', function() { el.style.background = 'rgba(255,255,255,0.08)'; });
+          el.addEventListener('mouseleave', function() { el.style.background = ''; });
           el.addEventListener('click', function(e) {
             e.stopPropagation();
-            var uuid = el.getAttribute('data-uuid');
+            var num = parseInt(el.getAttribute('data-num'), 10);
             var st = window.Teahouse._pageState;
-            for (var k = 0; k < st.blocks.length; k++) {
-              if (st.blocks[k].uuid === uuid) {
-                window.goToPage(k);
-                break;
-              }
+            for (var k = 0; k < st.floors.length; k++) {
+              if (st.floors[k].num === num) { window.goToPage(k); break; }
             }
             closePanel();
           });
@@ -241,9 +204,7 @@
       }
     }
 
-    /* 初始状态 */
     updateState();
-
     return wrap;
   }
 
@@ -252,7 +213,6 @@
   if (window.registerUI) {
     window.registerUI('teahouse-chapter-nav', nav);
   }
-
   window.Teahouse.on('page.change', updateState);
   updateState();
 })();

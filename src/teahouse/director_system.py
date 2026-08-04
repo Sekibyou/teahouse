@@ -150,7 +150,11 @@ def _scan_tree(instance_dir: Path) -> str:
 
 
 def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str, *, prototype: bool) -> None:
-    """Recursively scan .teahouse/ directory, fully expanding all subdirectories."""
+    """Recursively scan .teahouse/ directory, fully expanding all subdirectories.
+
+    output/floors/ is summarized via get_floors_stats; output/sandbox/ is expanded
+    as normal files; output_disabled/ is shown collapsed as a disable toggle.
+    """
     entries = sorted(
         [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
         key=lambda e: (not e.is_dir(), e.name),
@@ -160,17 +164,18 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str, *, prototy
         is_last = i == len(entries) - 1
         connector = "└── " if is_last else "├── "
 
-        if entry.is_dir():
+        if entry.is_dir() and entry.name == "floors" and dir_path.name == "output":
+            # .teahouse/output/floors/ — the context-engine's floor history
+            lines.append(f"{indent}{connector}{_floors_summary(entry)}")
+        elif entry.is_dir() and entry.name == "output_disabled":
+            # sandbox disable toggle — collapsed, shows only a file count
+            count = sum(1 for f in entry.rglob("*") if f.is_file())
+            lines.append(f"{indent}{connector}output_disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
+        elif entry.is_dir():
             lines.append(f"{indent}{connector}{entry.name}/")
             _scan_teahouse_dir(entry, lines, indent + "    ", prototype=prototype)
         else:
-            suffix = ""
-            if entry.name == "output-blocks.jsonl":
-                if prototype:
-                    suffix = "  (enabled after prototype packing; currently editable as initial output blocks for this prototype)"
-                else:
-                    suffix = "  (read-only, use output tool to modify)"
-            lines.append(f"{indent}{connector}{entry.name}{suffix}")
+            lines.append(f"{indent}{connector}{entry.name}")
 
 
 def _scan_prototype_dir(dir_path: Path, lines: list[str], indent: str) -> None:
@@ -192,7 +197,7 @@ def _scan_prototype_dir(dir_path: Path, lines: list[str], indent: str) -> None:
         if entry.is_dir() and entry.name == "floors":
             stats = get_floors_stats(entry)
             if stats:
-                lines.append(f"{indent}{connector}floors/  ({stats['total_floors']} floors total) after packing as prototype becomes initial floors, register manually in output-blocks.jsonl as output block")
+                lines.append(f"{indent}{connector}floors/  ({stats['total_floors']} floors total) after packing as prototype becomes initial floors, placed under .teahouse/output/floors/")
             else:
                 lines.append(f"{indent}{connector}floors/")
         elif entry.is_dir() and entry.name == ".teahouse":

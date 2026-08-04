@@ -6,11 +6,19 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "offset": {"type": "integer"},
-        "limit": {"type": "integer"}
+        "path": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        }
       },
-      "required": ["path"]
+      "required": [
+        "path"
+      ]
     }
   },
   {
@@ -20,11 +28,20 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "content": {"type": "string"},
-        "resolve_placeholders": {"type": "boolean"}
+        "path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "resolve_placeholders": {
+          "type": "boolean"
+        }
       },
-      "required": ["path", "content"]
+      "required": [
+        "path",
+        "content"
+      ]
     }
   },
   {
@@ -34,13 +51,27 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "old_string": {"type": "string"},
-        "new_string": {"type": "string"},
-        "replace_all": {"type": "boolean"},
-        "resolve_placeholders": {"type": "boolean"}
+        "path": {
+          "type": "string"
+        },
+        "old_string": {
+          "type": "string"
+        },
+        "new_string": {
+          "type": "string"
+        },
+        "replace_all": {
+          "type": "boolean"
+        },
+        "resolve_placeholders": {
+          "type": "boolean"
+        }
       },
-      "required": ["path", "old_string", "new_string"]
+      "required": [
+        "path",
+        "old_string",
+        "new_string"
+      ]
     }
   },
   {
@@ -50,13 +81,27 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"},
-        "start_line": {"type": "integer"},
-        "end_line": {"type": "integer"},
-        "new_content": {"type": "string"},
-        "resolve_placeholders": {"type": "boolean"}
+        "path": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer"
+        },
+        "end_line": {
+          "type": "integer"
+        },
+        "new_content": {
+          "type": "string"
+        },
+        "resolve_placeholders": {
+          "type": "boolean"
+        }
       },
-      "required": ["path", "start_line", "new_content"]
+      "required": [
+        "path",
+        "start_line",
+        "new_content"
+      ]
     }
   },
   {
@@ -66,9 +111,13 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "pattern": {"type": "string"}
+        "pattern": {
+          "type": "string"
+        }
       },
-      "required": ["pattern"]
+      "required": [
+        "pattern"
+      ]
     }
   },
   {
@@ -78,23 +127,36 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "pattern": {"type": "string"}
+        "pattern": {
+          "type": "string"
+        }
       },
-      "required": ["pattern"]
+      "required": [
+        "pattern"
+      ]
     }
   },
   {
     "name": "Generate",
     "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",
-    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `dump_payload`（可选）：展开占位符后的实际 Payload JSON 输出路径（调试用）。不建议主动调用此参数，除非用户明确要求调试\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      {{settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
+    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `dump_payload`（可选）：展开占位符后的实际 Payload JSON 输出路径（调试用）。不建议主动调用此参数，除非用户明确要求调试\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      {{settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  {{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
     "parameters": {
       "type": "object",
       "properties": {
-        "source_file": {"type": "string"},
-        "path": {"type": "string"},
-        "dump_payload": {"type": "string"}
+        "source_file": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "dump_payload": {
+          "type": "string"
+        }
       },
-      "required": ["source_file", "path"]
+      "required": [
+        "source_file",
+        "path"
+      ]
     }
   },
   {
@@ -104,9 +166,13 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "name": {"type": "string"}
+        "name": {
+          "type": "string"
+        }
       },
-      "required": ["name"]
+      "required": [
+        "name"
+      ]
     }
   },
   {
@@ -116,13 +182,31 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "type": {"type": "string", "enum": ["floor", "summary", "other"]},
-        "number": {"type": "integer"},
-        "start": {"type": "integer"},
-        "end": {"type": "integer"},
-        "message": {"type": "string"}
+        "type": {
+          "type": "string",
+          "enum": [
+            "floor",
+            "summary",
+            "other"
+          ]
+        },
+        "number": {
+          "type": "integer"
+        },
+        "start": {
+          "type": "integer"
+        },
+        "end": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        }
       },
-      "required": ["type", "message"]
+      "required": [
+        "type",
+        "message"
+      ]
     }
   },
   {
@@ -132,11 +216,26 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["list", "create", "switch", "delete", "rename"]},
-        "name": {"type": "string"},
-        "new_name": {"type": "string"}
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "switch",
+            "delete",
+            "rename"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string"
+        }
       },
-      "required": ["action"]
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -146,9 +245,13 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "target_hash": {"type": "string"}
+        "target_hash": {
+          "type": "string"
+        }
       },
-      "required": ["target_hash"]
+      "required": [
+        "target_hash"
+      ]
     }
   },
   {
@@ -158,7 +261,9 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "limit": {"type": "integer"}
+        "limit": {
+          "type": "integer"
+        }
       }
     }
   },
@@ -169,7 +274,9 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string"}
+        "path": {
+          "type": "string"
+        }
       }
     }
   },
@@ -189,28 +296,25 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": {"type": "string", "enum": ["mkdir", "move", "delete"]},
-        "path": {"type": "string"},
-        "destination": {"type": "string"}
+        "action": {
+          "type": "string",
+          "enum": [
+            "mkdir",
+            "move",
+            "delete"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        }
       },
-      "required": ["action", "path"]
-    }
-  },
-  {
-    "name": "Output",
-    "description": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。",
-    "usage": "将内容块推送到前端显示，支持 append/replace/delete 三种模式。content 支持 {{path}} 占位符引用文件内容。\n\n参数：\n- `content`（必填）：输出内容模板，支持 {{path}} 占位符。占位符语法同 Generate 工具：\n  {{path}}                引用整个文件\n  {{path:10-30}}          行范围\n  {{path|from=\"A\"}}      锚点\n  {{glob:模式}}           glob 匹配\n- `label`（必填）：程序标识符，前端据此筛选和渲染。命名规则由 teahouse.md 约定\n  - ep{N} 块的 N 必须与对应的 floor 编号保持一致（如 ep42 对应 floors/floor-042.md）\n- `note`（必填）：人类可读备注，如\"第一章正文第一版\"\n- `mode`（必填）：append / replace / delete\n- `target_uuid`（replace / delete 时必填）：要替换或删除的块的 uuid。可用 Grep 工具查询 .teahouse/output-blocks.jsonl 获取 target_uuid\n- `content_type`（可选）：内容类型，默认 \"rich_text\"\n  - `rich_text` — BBCode 富文本（默认），由宿主层解析为 HTML 后注入沙盒\n  - `text` — 纯文本，保留换行\n  - `bootstrap_js` — 沙盒基础设施脚本（全局唯一），注入沙盒 iframe 并执行\n  - `ui_js` — UI 组件脚本（追加式），悬浮组件如状态栏、背包面板，支持动态注入/卸载\n  - `css` — 全局样式表（追加式），注入沙盒 iframe <head>\n\n🚨 对于 bootstrap_js / ui_js / css 类型，content 务必使用 {{path}} 占位符引用 sandbox/ 目录下的 .js/.css 文件，例如 content: \"{{sandbox/statusbar.js}}\"。不要将代码直接写为 content 的值——内联代码会撑爆 output-blocks.jsonl，且无法通过 Edit 工具单独修改。正确流程：先 Write 创建 sandbox/xxx.js，再 Output 引用它。后续修改代码时直接 Edit 对应的 .js/.css 文件，前端会自动读取最新文件内容。\n\n🚨 使用 rich_text 类型前，必须先调用 SkillRead(name=\"teahouse-sandbox-richtext-render\") 加载 BBCode 标签白名单。BBCode 渲染器只支持 18 个标签（b/i/u/s/color/size/shake/fade/bounce/wave/rainbow/glow/pulse/typing/shadow/highlight/spoiler/tip），使用列表之外的任何标签都不会被渲染，会原样显示为纯文本。\n\n查询已有输出块：使用 Grep 工具搜索 .teahouse/output-blocks.jsonl（每行一个 JSON 记录），如 Grep pattern=\"ep42\" 查找特定章节的块。\n\nmode 说明：\n- `append`：创建新输出块，后端返回 uuid。前端可据此维护 DOM 节点\n- `replace`：替换已有块的内容，uuid 不变。前端应原地更新而非创建新节点\n- `delete`：移除已有块",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "content": {"type": "string"},
-        "label": {"type": "string"},
-        "note": {"type": "string"},
-        "mode": {"type": "string", "enum": ["append", "replace", "delete"]},
-        "target_uuid": {"type": "string"},
-        "content_type": {"type": "string", "enum": ["bootstrap_js", "ui_js", "css", "rich_text", "text"]}
-      },
-      "required": ["content", "label", "note", "mode"]
+      "required": [
+        "action",
+        "path"
+      ]
     }
   },
   {
@@ -220,9 +324,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "path": {"type": "string", "description": "脚本文件路径，相对于实例根目录，支持 .jsonl:start-end 行切片"}
+        "path": {
+          "type": "string",
+          "description": "脚本文件路径，相对于实例根目录，支持 .jsonl:start-end 行切片"
+        }
       },
-      "required": ["path"]
+      "required": [
+        "path"
+      ]
     }
   },
   {
@@ -232,9 +341,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "description": {"type": "string", "description": "简单描述本次测试场景"}
+        "description": {
+          "type": "string",
+          "description": "简单描述本次测试场景"
+        }
       },
-      "required": ["description"]
+      "required": [
+        "description"
+      ]
     }
   }
 ]

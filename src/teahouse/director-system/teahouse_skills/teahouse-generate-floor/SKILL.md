@@ -15,6 +15,15 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 
 正文生成的核心思路：**先理解当前状态，再构造写作请求**。你不是自己写正文，而是通过 Generate 工具让正文 AI 来写。你的职责是提供准确、完整的上下文。
 
+正文「输出」即**文件落盘**：正文历史唯一来源是 `.teahouse/output/floors/`。半正式稿 `floor-N-draft.md`（每层唯一，就地覆盖）是写稿过程中的可见输出；满意后重命名为 `floor-N.md` 即为定稿。前端监听导演的工具调用后自动刷新读取，无需任何推送工具。
+
+## 目录约定
+
+- `temp/` — 真草稿（多版本、多块拼接，创作过程中间产物）
+- `.teahouse/output/floors/` — 上下文引擎正文历史（半正式稿 + 定稿），每层最多一份，就地覆盖
+  - `floor-N-draft.md` — 半正式稿（创作过程中）
+  - `floor-N.md` — 正式定稿（满意后 rename）
+
 ## SOP
 
 ### 步骤 0：检查文件夹和文件结构
@@ -25,6 +34,7 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 FileOps mkdir variables/
 FileOps mkdir settings/
 FileOps mkdir temp/
+FileOps mkdir .teahouse/output/floors/
 ```
 
 检查并创建变量系统文件（如果不存在）：
@@ -40,7 +50,7 @@ FileOps mkdir temp/
 
 ### 步骤 1：理解楼层配置
 
-`teahouse.md` 已注入系统提示词。关注其中的楼层字数目标、最大/最小字数限制。
+`teahouse.md` 已注入系统提示词。关注其中的楼层字数目标、最大/最小字数限制，以及**归档界**（已总结到哪一层）。
 
 ### 步骤 2：创建任务清单
 
@@ -48,16 +58,18 @@ FileOps mkdir temp/
 
 ### 步骤 3：阅读前文，理解剧情
 
+正文历史位于 `.teahouse/output/floors/`，按楼层数字排序：
+
 ```
-Glob floors/floor-*.md       → 列出所有楼层
-Glob floors/sum-*.md         → 列出所有总结
+Glob .teahouse/output/floors/floor-*.md   → 列出所有楼层/草稿
+Glob summary/sum-*.md                     → 列出所有总结
 ```
 
 **阅读策略：**
 
-- **最近 10 层**：必须阅读**原文全文**。这是保持剧情连贯性的核心。如果楼层内容很长，用行号范围分段阅读。
-- **第 11~50 层**：阅读**总结**（`sum-*.md`），不必逐层读原文。如果某次总结覆盖了这些楼层，阅读对应的 `sum-*.md` 即可。
-- **超过 50 层之前**：通常不需要回顾，除非涉及跨章节的伏笔或角色复出。
+- **最近楼层**：优先用 `{{glob:output/floors/floor-*.md:last10}}` 一次性注入最近 10 层正文（按楼层数字自动升序、正式稿优先于草稿）。如需精读某层，用 Read 直接读文件。
+- **更早楼层（已被总结覆盖）**：阅读 `summary/sum-*.md` 总结，不必逐层读原文。
+- 归档界标记在 `teahouse.md` 全局变量区——超过归档界、未被总结覆盖的楼层，正文必须进上下文；被总结覆盖的楼层看总结即可。
 
 充分理解用户的创作意图、叙事风格和当前剧情走向。
 
@@ -81,21 +93,20 @@ Glob settings/**/*
 
 在摘抄设定时：
 - 结合当前变量的值进行筛选，只摘抄与当前剧情相关的设定
-- 自行总结最近十章之外的、没有被变量系统记录但有用的关键信息——例如人物历史互动、细小的事件、口癖、习惯等
+- 自行总结最近几十章之外的、没有被变量系统记录但有用的关键信息——例如人物历史互动、细小的事件、口癖、习惯等
 - 使用行号范围或锚点语法截取关键部分，一般不要一次性塞入全文
 
-### 步骤 6：检查草稿状态
+### 步骤 6：检查当前层草稿状态
+
+检查 `.teahouse/output/floors/` 中当前层（或最近层）的半正式稿状态：
 
 ```
-Read temp/draft.md
+Glob .teahouse/output/floors/floor-*.md
 ```
 
-检查 `temp/` 文件夹中的草稿状态：
-
-- **没有草稿**：正常开始生成新楼层。
-- **有未完成的草稿**：询问用户是续写还是重写。
-- **已有完整草稿但未 Output**：先 Output 给用户查看，再询问用户意图。
-- **已有完整草稿且已 Output**：询问用户是想修改还是重写。如果用户要求续写，检查草稿是否已完成——如果草稿看起来完整，可能是用户想修改而非续写，确认用户意图。
+- **没有当前层草稿**：正常开始生成新楼层。
+- **有半正式稿（floor-N-draft.md）**：这是正在创作中的可见输出，询问用户是继续/修改还是放弃重写。
+- **已有定稿（floor-N.md）**：询问用户是想对定稿做修改（就地 Edit/WriteLine）还是写下一层。
 
 ### 步骤 7：准备 Generate 配置文件
 
@@ -108,13 +119,13 @@ Read temp/draft.md
    - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}-1.yaml`）→ `temp/generate-config-{{N}}-1.yaml`
 
 2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
-   - 更新 `{{glob:floors/floor-*.md}}` 引用——如果楼层很多，改为只引用最近 10 层正文 + 相关总结
+   - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{summary/sum-*.md}}` 而非逐层）
    - 更新设定引用范围（基于当前变量值调整锚点/行号）
    - 在 user 消息中填入当前的变量状态描述（基于 `variables/active-vars.yaml`）
    - 在最后一条 user 消息中填入用户的实际写作要求
    - 必要时添加伪造的 user/assistant 对话来破限或引导文风
 
-3. **调用 Generate**：
+3. **调用 Generate**（真草稿落 temp，多版本并存供返工）：
    ```
    Generate(
      source_file: "temp/generate-config-{{N}}-1.yaml",
@@ -124,58 +135,33 @@ Read temp/draft.md
 
 4. **返工时**：版本号递增，如 `temp/generate-config-{{N}}-2.yaml` → Generate → `temp/draft-{{N}}-2.md`
 
-### 步骤 8：输出到前端
+### 步骤 8：落半正式稿（把正文交给前端展示）
 
-生成完成后，使用 Output 工具将正文推送到前端：
+Generate 产出的 temp 真草稿定稿后，落为唯一半正式稿，前端即可自动刷新展示：
 
 ```
-Output(
-  content: "{{temp/draft-{{N}}-1.md}}",
-  label: "ep{{N}}",
-  note: "第{{N}}章正文第一版",
-  mode: "append"
-)
+FileOps move temp/draft-{{N}}-{{V}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 ```
 
-label 必须遵循 `teahouse.md` 中约定的命名规则。前端会自动提取这些输出块并展示，因此命名规范至关重要。
+半正式稿 `floor-N-draft.md` **每层唯一**——返工/修改时直接覆盖它（FileOps move 会覆盖已有同名目标）。它是前端在写稿过程中看到的正文版本。
 
 ### 步骤 9：通知用户并等待指示
 
-通知用户查看产物。等待用户进一步指示。
+通知用户查看产物（前端已自动展示 `floor-{{N}}-draft.md`）。等待用户进一步指示。
 
-- **如果用户要求返工**：版本号递增（draft-{{N}}-2.md），修改对应版本的 config 文件（generate-config-{{N}}-2.yaml），重新 Generate，然后使用 Output replace 更新：
-  ```
-  Output(
-    content: "{{temp/draft-{{N}}-2.md}}",
-    label: "ep{{N}}",
-    note: "第{{N}}章正文第二版",
-    mode: "replace",
-    target_uuid: "<之前 append 返回的 uuid>"
-  )
-  ```
-- **如果用户要求修改某一层**：不要重新生成，使用 Edit 或 WriteLine 工具进行精确替换。除非用户明确要求重写。
+- **如果用户要求返工**：版本号递增生成新的 temp 草稿（draft-{{N}}-2.md）后，再次 FileOps move 覆盖 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+- **如果用户要求修改这一层**：不要重新生成，直接对 `.teahouse/output/floors/floor-{{N}}-draft.md` 用 Edit 或 WriteLine 精确替换。除非用户明确要求重写。
 
-### 步骤 10：用户确认后 Git 提交
+### 步骤 10：用户确认后，正式定稿并 Git 提交
 
-**必须等用户明确确认满意后**，才执行提交操作：
+**必须等用户明确确认满意后**，才执行定稿与提交：
 
-1. 将 draft 文件移动到 `floors/` 文件夹，按楼层编号重命名为 `floor-{{N}}.md`：
+1. 将半正式稿重命名为正式定稿：
    ```
-   FileOps move temp/draft-{{N}}-{{V}}.md floors/floor-{{N}}.md
+   FileOps move .teahouse/output/floors/floor-{{N}}-draft.md .teahouse/output/floors/floor-{{N}}.md
    ```
 
-2. 使用 Output replace 将内容路径更新为新路径：
-   ```
-   Output(
-     content: "{{floors/floor-{{N}}.md}}",
-     label: "ep{{N}}",
-     note: "第{{N}}章正文（已提交）",
-     mode: "replace",
-     target_uuid: "<之前 append/最后一次 replace 返回的 uuid>"
-   )
-   ```
-
-3. 执行 Git 提交：
+2. 执行 Git 提交：
    ```
    GitCommit(type="floor", number={{N}}, message="简短描述")
    ```
@@ -183,6 +169,7 @@ label 必须遵循 `teahouse.md` 中约定的命名规则。前端会自动提�
 ## 注意事项
 
 - **不要一次性塞入太多设定全文**——这会导致上下文过长。使用行号范围或锚点语法截取与当前剧情有关的关键部分。
-- **最近十章的正文需完整塞入 Generate 请求中**。再之前的内容如果对本轮有用，需总结后再塞入。
-- **如果用户的要求是续写**，你应该先检查 `temp/` 文件夹中的草稿状态。
-- **如果用户要求修改某一层**，不要重新生成，使用 Edit 或 WriteLine 工具进行精确替换；除非用户明确要求重写。
+- **最近章节的正文需完整塞入 Generate 请求中**——用 `{{glob:output/floors/floor-*.md:lastN}}` 自动取窗口，并按归档界判断哪些已被总结覆盖。
+- **如果用户的要求是续写**，你应该先检查 `.teahouse/output/floors/` 中的草稿状态。
+- **如果用户要求修改某一层**，不要重新生成，使用 Edit 或 WriteLine 对对应 floor 文件精确替换；除非用户明确要求重写。
+- **半正式稿每层唯一**：返工覆盖而非累加新文件。

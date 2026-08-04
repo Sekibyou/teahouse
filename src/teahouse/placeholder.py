@@ -9,6 +9,7 @@ Supported syntax:
   {{path|from="A"}}                      From anchor to end
   {{path|to="B"}}                        From start to anchor
   {{glob:pattern}}                       Glob-matched files, sorted
+  {{glob:pattern:lastN}}                 Glob-matched files, keep the last N by numeric segment (descending)
 
 Note: use | as the anchor separator, : for the line range.
 """
@@ -75,10 +76,55 @@ def _resolve_one(raw: str, instance_dir: Path) -> str:
     return _resolve_file(raw, instance_dir)
 
 
-def _resolve_glob(pattern: str, instance_dir: Path) -> str:
+_NUM_SEGMENT_RE = re.compile(r"(\d+)")
+
+
+def _first_number(name: str) -> int | None:
+    """Return the first numeric segment in a filename, or None if absent.
+
+    e.g. 'floor-5.md' -> 5, 'floor-5-draft.md' -> 5, 'readme.md' -> None.
+    """
+    m = _NUM_SEGMENT_RE.search(name)
+    return int(m.group(1)) if m else None
+
+
+def _is_draft(name: str) -> bool:
+    """A file is a 'draft' (semi-formal) when its stem carries a -draft suffix."""
+    return bool(re.search(r"-draft\.", name))
+
+
+def _resolve_glob(raw_pattern: str, instance_dir: Path) -> str:
+    # Split off an optional trailing ':lastN' suffix, e.g. 'floors/floor-*.md:last30'.
+    pattern = raw_pattern
+    last_n: int | None = None
+    if ":" in raw_pattern:
+        head, _, tail = raw_pattern.rpartition(":")
+        low = tail.strip()
+        if low.lower().startswith("last"):
+            try:
+                n = int(low[4:].strip())
+            except ValueError:
+                n = None
+            if n is not None:
+                if n <= 0:
+                    raise PlaceholderError(f"lastN must be > 0: {raw_pattern}")
+                pattern, last_n = head.strip(), n
+            else:
+                raise PlaceholderError(f"Invalid lastN suffix in glob: {raw_pattern}")
+
+    # Match against the instance root. `.teahouse/` is a hidden directory that
+    # plain globs skip, so a shorthand pattern like "output/floors/floor-*.md"
+    # (per the {{glob:...:lastN}} design) is retried under `.teahouse/output/`.
     matched = sorted(instance_dir.glob(pattern))
+    if not matched and not pattern.startswith(".teahouse/"):
+        prefixed = sorted(instance_dir.glob(f".teahouse/{pattern}"))
+        if prefixed:
+            matched = prefixed
     if not matched:
         raise PlaceholderError(f"glob pattern matched no files: {pattern}")
+
+    if last_n is not None:
+        matched = _take_last_by_number(matched, last_n)
 
     parts = []
     for path in matched:
@@ -86,6 +132,32 @@ def _resolve_glob(pattern: str, instance_dir: Path) -> str:
         content = path.read_text(encoding="utf-8")
         parts.append(f"--- {rel} ---\n{content}")
     return "\n\n".join(parts)
+
+
+def _take_last_by_number(matched: list[Path], last_n: int) -> list[Path]:
+    """Keep the files whose numeric segment ranks in the top `last_n` (descending).
+
+    Files are grouped by numeric segment; within one number the formal floor
+    (floor-N.md) wins over the draft (floor-N-draft.md). Files without a numeric
+    segment are dropped when a lastN window is requested. The chosen files are
+    returned in ascending numeric order (floor 1 → N), since a glob window feeds
+    prose into the context in story order.
+    """
+    best_by_num: dict[int, Path] = {}
+    for p in matched:
+        num = _first_number(p.name)
+        if num is None:
+            continue
+        current = best_by_num.get(num)
+        if current is None or (not _is_draft(p.name) and _is_draft(current.name)):
+            best_by_num[num] = p
+
+    chosen_nums = sorted(best_by_num.keys(), reverse=True)[:last_n]
+    ordered = sorted(
+        ((best_by_num[num], num) for num in chosen_nums),
+        key=lambda pn: (pn[1], 0 if not _is_draft(pn[0].name) else 1),
+    )
+    return [p for p, _ in ordered]
 
 
 def _resolve_file(raw: str, instance_dir: Path) -> str:

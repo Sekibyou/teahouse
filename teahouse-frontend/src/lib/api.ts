@@ -362,27 +362,34 @@ export const gitApi = {
   },
 }
 
-// Output blocks API
-export const outputBlocksApi = {
-  list: async (instanceId: string) => {
-    return get<{ blocks: { uuid: string; label: string; note: string; content: string; content_type: string }[] }>(
-      `/api/instances/${instanceId}/output-blocks`
-    )
-  },
-
-  get: async (instanceId: string, uuid: string) => {
-    return get<{ uuid: string; label: string; note: string; content: string; content_type: string }>(
-      `/api/instances/${instanceId}/output-blocks/${uuid}`
-    )
-  },
-}
-
 // Text style rules API
 export const textStyleRulesApi = {
   get: async (instanceId: string) => {
     return get<{ rules: import("@/lib/types").TextStyleRule[] }>(
       `/api/instances/${instanceId}/text-style-rules`
     )
+  },
+}
+
+// Sandbox source API — reads .teahouse/output/sandbox/ (file-system driven)
+export const sandboxSrcApi = {
+  get: async (instanceId: string) => {
+    return get<{ files: Record<string, string> }>(
+      `/api/instances/${instanceId}/sandbox-src`
+    )
+  },
+}
+
+// Floors API — sorted floor listing from .teahouse/output/floors/
+export interface FloorEntry {
+  num: number
+  path: string
+  draft: boolean
+}
+
+export const floorsApi = {
+  list: async (instanceId: string) => {
+    return get<{ floors: FloorEntry[] }>(`/api/instances/${instanceId}/floors`)
   },
 }
 

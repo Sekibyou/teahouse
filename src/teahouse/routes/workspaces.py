@@ -718,57 +718,6 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
     return {"name": skill_name, "export_path": str(export_path)}
 
 
-# ===== Output blocks =====
-
-
-@router.get("/instances/{instance_id}/output-blocks")
-async def list_output_blocks(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Get all active output blocks (summary: uuid, label, note)."""
-    u = await require_user_info(user)
-    inst = await get_instance(instance_id)
-    if not inst or inst["user_id"] != u["id"]:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    instance_dir = _resolve_instance_dir(inst)
-
-    from ..tools import _load_output_blocks
-    blocks = _load_output_blocks(instance_dir)
-    return {
-        "blocks": [
-            {"uuid": b["uuid"], "label": b["label"], "note": b["note"], "content": b.get("content", ""), "content_type": b.get("content_type", "rich_text")}
-            for b in blocks
-        ]
-    }
-
-
-@router.get("/instances/{instance_id}/output-blocks/{uuid}")
-async def get_output_block(instance_id: str, uuid: str, user: UserInfo = Depends(require_user)):
-    """Get a single output block with resolved content."""
-    u = await require_user_info(user)
-    inst = await get_instance(instance_id)
-    if not inst or inst["user_id"] != u["id"]:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    instance_dir = _resolve_instance_dir(inst)
-
-    from ..tools import _load_output_blocks
-    from ..placeholder import resolve_placeholders
-    blocks = _load_output_blocks(instance_dir)
-    for b in blocks:
-        if b["uuid"] == uuid:
-            content_template = b["content"]
-            try:
-                resolved = resolve_placeholders(content_template, instance_dir)
-            except Exception:
-                resolved = content_template
-            return {
-                "uuid": b["uuid"],
-                "label": b["label"],
-                "note": b["note"],
-                "content": resolved,
-                "content_type": b.get("content_type", "rich_text"),
-            }
-    raise HTTPException(status_code=404, detail=f"Output block '{uuid}' not found")
-
-
 # ===== Director session memory (.sessions/) =====
 
 
@@ -827,6 +776,77 @@ async def get_text_style_rules(instance_id: str, user: UserInfo = Depends(requir
     from ..tools import _load_text_style_rules
     rules = _load_text_style_rules(instance_dir)
     return {"rules": rules}
+
+
+# ===== Sandbox source & floors (file-system driven output) =====
+
+def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
+    """Read all files under .teahouse/output/sandbox/, keyed by relative path.
+
+    The sandbox renderer owns this directory exclusively — it is the single
+    content source for bootstrap.js / *.css / *.js scripts.
+    """
+    sandbox_dir = instance_dir / ".teahouse" / "output" / "sandbox"
+    files: dict[str, str] = {}
+    if not sandbox_dir.is_dir():
+        return files
+    for p in sorted(sandbox_dir.rglob("*")):
+        if p.is_file():
+            rel = str(p.relative_to(instance_dir)).replace("\\", "/")
+            try:
+                files[rel] = p.read_text(encoding="utf-8")
+            except Exception:
+                continue
+    return files
+
+
+def _list_floors(instance_dir: Path) -> list[dict]:
+    """List floors in .teahouse/output/floors/, sorted ascending by floor number.
+
+    Returns [{num, path, draft}] where {num} is the file's leading numeric segment
+    and {draft} is True for floor-N-draft.md (semi-formal). A formal floor wins
+    over its draft when both exist for the same number.
+    """
+    import re
+    floors_dir = instance_dir / ".teahouse" / "output" / "floors"
+    best: dict[int, dict] = {}
+    if floors_dir.is_dir():
+        _num_re = re.compile(r"(\d+)")
+        for p in sorted(floors_dir.glob("floor-*")):
+            if not p.is_file():
+                continue
+            m = _num_re.search(p.name)
+            if not m:
+                continue
+            num = int(m.group(1))
+            draft = bool(re.search(r"-draft\.", p.name))
+            rel = str(p.relative_to(instance_dir)).replace("\\", "/")
+            cur = best.get(num)
+            if cur is None or (not draft and cur.get("draft")):
+                best[num] = {"num": num, "path": rel, "draft": draft}
+    return [best[num] for num in sorted(best)]
+
+
+@router.get("/instances/{instance_id}/sandbox-src")
+async def get_sandbox_src(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get all sandbox source files (bootstrap.js + *.css + *.js) content."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    return {"files": _list_sandbox_files(instance_dir)}
+
+
+@router.get("/instances/{instance_id}/floors")
+async def get_floors(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Get the sorted floor listing from .teahouse/output/floors/."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    return {"floors": _list_floors(instance_dir)}
 
 
 # ===== Git operations =====

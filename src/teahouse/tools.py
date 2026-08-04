@@ -18,7 +18,6 @@ import json
 import os
 import re as _re
 import shutil
-import uuid as _uuid
 from pathlib import Path
 from typing import Any
 
@@ -605,67 +604,11 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Output tool executor — manages .teahouse/output-blocks.jsonl
+# Text style rules — .teahouse/text-style-rules.yaml
 # ---------------------------------------------------------------------------
 
 TEHOUSE_DIR = ".teahouse"
-OUTPUT_BLOCKS_FILE = "output-blocks.jsonl"
 TEXT_STYLE_RULES_FILE = "text-style-rules.yaml"
-
-
-def _output_blocks_path(instance_dir: Path) -> Path:
-    """Get the path to output-blocks.jsonl, ensuring .teahouse/ exists."""
-    teahouse_dir = instance_dir / TEHOUSE_DIR
-    teahouse_dir.mkdir(parents=True, exist_ok=True)
-    return teahouse_dir / OUTPUT_BLOCKS_FILE
-
-
-def _load_output_blocks(instance_dir: Path) -> list[dict]:
-    """Load output blocks from JSONL. Falls back to legacy YAML, auto-migrating."""
-    jsonl_path = _output_blocks_path(instance_dir)
-    yaml_path = instance_dir / TEHOUSE_DIR / "output-blocks.yaml"
-
-    # 1. Try JSONL first (new format)
-    if jsonl_path.exists():
-        blocks = []
-        for line in jsonl_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                blocks.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return blocks
-
-    # 2. Fall back to YAML (legacy), auto-migrate
-    if yaml_path.exists():
-        try:
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
-            return []
-        if data is None:
-            return []
-        blocks = data.get("blocks", [])
-        _save_output_blocks(instance_dir, blocks)
-        return blocks
-
-    return []
-
-
-def _save_output_blocks(instance_dir: Path, blocks: list[dict]) -> None:
-    """Save output blocks to JSONL (one JSON record per line)."""
-    path = _output_blocks_path(instance_dir)
-    lines = []
-    for b in blocks:
-        entry = {k: v for k, v in b.items() if k != "rendered"}
-        lines.append(json.dumps(entry, ensure_ascii=False))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Text style rules — .teahouse/text-style-rules.yaml
-# ---------------------------------------------------------------------------
 
 
 def _text_style_rules_path(instance_dir: Path) -> Path:
@@ -684,126 +627,6 @@ def _load_text_style_rules(instance_dir: Path) -> list[dict]:
     if data is None:
         return []
     return data.get("rules", [])
-
-
-async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
-    """Manage output blocks: append, replace, or delete.
-
-    content supports {{path}} placeholder syntax for referencing file content.
-    Placeholders are resolved at persist time for SSE/API; the template is stored in JSONL.
-    instance_id is the DB UUID for SSE broadcast filtering.
-    """
-    mode = args["mode"]
-    content_template = args["content"]
-    label = args["label"]
-    note = args["note"]
-    content_type = args.get("content_type", "rich_text")
-
-    blocks = _load_output_blocks(instance_dir)
-
-    if mode == "append":
-        # Resolve placeholders for SSE/frontend consumption
-        try:
-            resolved = resolve_placeholders(content_template, instance_dir)
-        except Exception as e:
-            return f"Error: 占位符解析失败: {e}"
-
-        block_uuid = _uuid.uuid4().hex[:12]
-        block = {
-            "uuid": block_uuid,
-            "label": label,
-            "note": note,
-            "content": content_template,
-            "content_type": content_type,
-        }
-        blocks.append(block)
-        _save_output_blocks(instance_dir, blocks)
-
-        state.broadcast("output.append", {
-            "uuid": block_uuid,
-            "label": label,
-            "note": note,
-            "content": resolved,
-            "content_type": content_type,
-            "instance_id": instance_id or instance_dir.name,
-        })
-
-        return (
-            f"输出块已添加\n"
-            f"  uuid: {block_uuid}\n"
-            f"  label: {label}\n"
-            f"  note: {note}\n"
-            f"  content_type: {content_type}"
-        )
-
-    elif mode == "replace":
-        target_uuid = args.get("target_uuid")
-        if not target_uuid:
-            return "Error: replace 模式需要 target_uuid 参数"
-
-        idx = None
-        for i, b in enumerate(blocks):
-            if b["uuid"] == target_uuid:
-                idx = i
-                break
-        if idx is None:
-            return f"Error: 未找到 uuid={target_uuid} 的输出块。可用 Grep 工具查询 .teahouse/output-blocks.jsonl。"
-
-        try:
-            resolved = resolve_placeholders(content_template, instance_dir)
-        except Exception as e:
-            return f"Error: 占位符解析失败: {e}"
-
-        blocks[idx]["content"] = content_template
-        blocks[idx]["label"] = label
-        blocks[idx]["note"] = note
-        blocks[idx]["content_type"] = content_type
-        _save_output_blocks(instance_dir, blocks)
-
-        state.broadcast("output.replace", {
-            "uuid": target_uuid,
-            "label": label,
-            "note": note,
-            "content": resolved,
-            "content_type": content_type,
-            "instance_id": instance_id or instance_dir.name,
-        })
-
-        return (
-            f"输出块已替换\n"
-            f"  uuid: {target_uuid}\n"
-            f"  label: {label}\n"
-            f"  note: {note}\n"
-            f"  content_type: {content_type}"
-        )
-
-    elif mode == "delete":
-        target_uuid = args.get("target_uuid")
-        if not target_uuid:
-            return "Error: delete 模式需要 target_uuid 参数"
-
-        idx = None
-        for i, b in enumerate(blocks):
-            if b["uuid"] == target_uuid:
-                idx = i
-                break
-        if idx is None:
-            return f"Error: 未找到 uuid={target_uuid} 的输出块"
-
-        removed = blocks[idx]
-        del blocks[idx]
-        _save_output_blocks(instance_dir, blocks)
-
-        state.broadcast("output.delete", {
-            "uuid": target_uuid,
-            "label": removed["label"],
-            "note": removed["note"],
-            "instance_id": instance_id or instance_dir.name,
-        })
-
-        return f"输出块已删除\n  uuid: {target_uuid}\n  label: {removed['label']}\n  note: {removed['note']}"
-
-    return f"Error: 未知 mode '{mode}'，支持 append / replace / delete"
 
 
 async def execute_batch_execute(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -1079,7 +902,6 @@ TOOL_EXECUTORS = {
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
-    "Output": execute_output,
     "TodoWrite": execute_todo_write,
     "BatchExecute": execute_batch_execute,
     "GitCommit": execute_git_commit,
@@ -1112,8 +934,6 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
         try:
             if name == "Generate":
                 result = await executor(instance_dir, args, user_id)
-            elif name == "Output":
-                result = await executor(instance_dir, args, instance_id)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
             else:

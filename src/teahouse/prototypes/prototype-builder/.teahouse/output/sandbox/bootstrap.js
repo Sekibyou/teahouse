@@ -1,0 +1,266 @@
+(function() {
+  'use strict';
+
+  // ============================================================
+  // Teahouse Sandbox Bootstrap
+  // 参考实现 — 创作者可替换整个文件
+  //
+  // 文件系统驱动的展示模型：
+  //   - 正文历史位于 .teahouse/output/floors/，靠文件名中间数字排序
+  //     （floor-5.md / floor-5-draft.md），由 Teahouse.listFloors() 提供
+  //   - 沙盒通过 Teahouse.readFile(path) + Teahouse.renderRichText() 渲染正文
+  //   - 宿主在楼上文件变更时推送 'output.refresh'，沙盒据此重读刷新
+  // ============================================================
+
+  // ---- 内部状态 ----
+  var uiComponents = {};
+  var eventCallbacks = {};
+  var uiQueue = [];
+  var uiLayerReady = false;
+
+  // ---- Teahouse API 桥（通过 postMessage 调用宿主） ----
+  function callHost(method, args) {
+    return new Promise(function(resolve, reject) {
+      var callId = 'call_' + Math.random().toString(36).substr(2, 9);
+      var handler = function(e) {
+        if (e.data && e.data._callId === callId) {
+          window.removeEventListener('message', handler);
+          if (e.data._error) {
+            reject(new Error(e.data._error));
+          } else {
+            resolve(e.data._result);
+          }
+        }
+      };
+      window.addEventListener('message', handler);
+      window.parent.postMessage({ _method: method, _args: args, _callId: callId }, '*');
+    });
+  }
+
+  // ---- Teahouse 公开 API ----
+  window.Teahouse = {
+    // 楼层（正文历史）——按文件名数字排序，由宿主从 .teahouse/output/floors/ 读取
+    listFloors: function() { return callHost('listFloors', []); },
+
+    // 文件操作
+    readFile: function(path) { return callHost('readFile', [path]); },
+    writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
+
+    // 发送消息
+    send: function(message) { callHost('send', [message]); },
+
+    // 富文本渲染（宿主解析 BBCode/着色/Markdown）
+    renderRichText: function(text) { return callHost('renderRichText', [text]); },
+
+    // 事件监听
+    on: function(event, callback) {
+      if (!eventCallbacks[event]) eventCallbacks[event] = [];
+      eventCallbacks[event].push(callback);
+    },
+    off: function(event, callback) {
+      if (!eventCallbacks[event]) return;
+      eventCallbacks[event] = eventCallbacks[event].filter(function(cb) { return cb !== callback; });
+    },
+
+    // 内部使用：事件分发
+    _emit: function(event, data) {
+      if (!eventCallbacks[event]) return;
+      eventCallbacks[event].forEach(function(cb) { cb(data); });
+    }
+  };
+
+  // ---- 监听宿主推送的事件 ----
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (!d || !d._type) return;
+    if (d._type === '_teahouse_event') {
+      window.Teahouse._emit(d._event, d._data);
+    } else {
+      switch (d._type) {
+        case 'tool_call':
+        case 'tool_result':
+        case 'thinking':
+          window.Teahouse._emit(d._type, d._payload);
+          break;
+      }
+    }
+  });
+
+  // ---- UI 组件管理 ----
+  function registerUI(label, element) {
+    if (uiComponents[label]) {
+      uiComponents[label].remove();
+    }
+    uiComponents[label] = element;
+    if (uiLayerReady) {
+      document.getElementById('teahouse-ui-layer').appendChild(element);
+    } else {
+      uiQueue.push({ label: label, element: element });
+    }
+  }
+
+  function flushUIQueue() {
+    var layer = document.getElementById('teahouse-ui-layer');
+    if (!layer) return;
+    for (var i = 0; i < uiQueue.length; i++) {
+      var item = uiQueue[i];
+      layer.appendChild(item.element);
+      uiComponents[item.label] = item.element;
+    }
+    uiQueue.length = 0;
+  }
+
+  // ---- 默认渲染：按楼层文件名数字渲染正文（带翻页） ----
+  // 翻页状态：共享给 UI 组件读写。
+  //   floors:        [{ num, path, draft }] 按楼层数字升序
+  //   currentIndex:  当前展示的楼层下标（0 = 最新一层）
+  var pageState = { floors: [], currentIndex: 0 };
+  window.Teahouse._pageState = pageState;
+
+  function defaultRender() {
+    window.Teahouse.listFloors().then(function(floors) {
+      if (!floors || floors.length === 0) return;
+      // 沙盒内按楼层数字升序；展示时最新（数字最大）在前
+      pageState.floors = floors.slice().sort(function(a, b) { return a.num - b.num; });
+      pageState.currentIndex = pageState.floors.length - 1;
+      renderCurrent();
+      prefetchTitles(pageState.floors);
+      window.Teahouse._emit('page.change', { index: pageState.currentIndex, total: pageState.floors.length });
+    }).catch(function(err) {
+      console.error('[Teahouse Bootstrap] defaultRender failed:', err);
+    });
+  }
+
+  function renderCurrent() {
+    if (!pageState.floors || pageState.floors.length === 0) return;
+    var floor = pageState.floors[pageState.currentIndex];
+    renderFloor(floor);
+  }
+
+  // 为每个楼层异步预取标题（page-bar 的目录显示用），不阻塞展示
+  function prefetchTitles(floors) {
+    if (!floors) return;
+    var pending = 0;
+    for (var i = 0; i < floors.length; i++) {
+      (function(floor) {
+        pending++;
+        window.Teahouse.readFile(floor.path).then(function(markdown) {
+          if (markdown) floor.title = titleOf(markdown, floor);
+        }).catch(function() {}).then(function() { pending--; return null; });
+      })(floors[i]);
+    }
+  }
+
+  function goToPage(index) {
+    if (index < 0 || index >= pageState.floors.length) return;
+    pageState.currentIndex = index;
+    renderCurrent();
+    window.Teahouse._emit('page.change', { index: index, total: pageState.floors.length });
+  }
+
+  // 从楼层正文提取首行标题（如 "# 第X章 · 标题"），无则回退到楼层名
+  function titleOf(markdown, floor) {
+    var lines = String(markdown || '').split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var t = /^\s*#+\s+(.+)$/.exec(lines[i]);
+      if (t) return t[1].trim();
+    }
+    return '第 ' + floor.num + ' 章' + (floor.draft ? '（草稿）' : '');
+  }
+
+  function renderFloor(floor) {
+    var container = document.getElementById('teahouse-content');
+    if (!container) return;
+
+    window.Teahouse.readFile(floor.path).then(function(markdown) {
+      if (markdown === null || markdown === undefined) {
+        // 半正式稿刚被删除/迁移——回退显示空
+        container.innerHTML = '<p style="opacity:.5;text-align:center;padding:3rem 0;">（楼层内容暂不可用）</p>';
+        return;
+      }
+      return window.Teahouse.renderRichText(markdown).then(function(html) {
+        // 小说式整章渲染：章节标题 + 连续正文（保留 <hr> 作为页内分隔）
+        var chapter = document.createElement('article');
+        chapter.className = 'teahouse-chapter';
+
+        var header = document.createElement('header');
+        header.className = 'teahouse-chapter-title';
+        header.textContent = titleOf(markdown, floor);
+        chapter.appendChild(header);
+
+        var body = document.createElement('div');
+        body.className = 'teahouse-chapter-body';
+        body.innerHTML = html;
+        chapter.appendChild(body);
+
+        container.innerHTML = '';
+        container.appendChild(chapter);
+      });
+    }).catch(function(err) {
+      console.error('[Teahouse Bootstrap] renderFloor failed:', err);
+    });
+  }
+
+  // ---- 宿主推送事件处理 ----
+  // output.refresh：.teahouse 下文件变更（含 floors、sandbox、样式），重新拉楼层并刷新展示
+  window.Teahouse.on('output.refresh', function(data) {
+    if (data && data.path && data.path.indexOf('.teahouse/output/sandbox/') === 0) {
+      // 沙盒代码变了会触发宿主重建 iframe（本实例直接销毁重建），无需处理
+      return;
+    }
+    reloadAndRender();
+  });
+
+  function reloadAndRender() {
+    window.Teahouse.listFloors().then(function(floors) {
+      if (floors && floors.length > 0) {
+        pageState.floors = floors.slice().sort(function(a, b) { return a.num - b.num; });
+      }
+      // 尽量停留在当前楼层：按 num 匹配，否则回到最新
+      var curNum = pageState.floors[pageState.currentIndex] ?
+        pageState.floors[pageState.currentIndex].num : null;
+      var idx = -1;
+      for (var i = 0; i < pageState.floors.length; i++) {
+        if (pageState.floors[i].num === curNum) { idx = i; break; }
+      }
+      pageState.currentIndex = idx >= 0 ? idx : (pageState.floors.length - 1);
+      renderCurrent();
+      prefetchTitles(pageState.floors);
+      window.Teahouse._emit('page.change', { index: pageState.currentIndex, total: pageState.floors.length });
+    }).catch(function() {});
+  }
+
+  // ---- 初始化 ----
+  function ensureContainers() {
+    if (!document.getElementById('teahouse-content')) {
+      var contentDiv = document.createElement('div');
+      contentDiv.id = 'teahouse-content';
+      contentDiv.className = 'teahouse-content';
+      document.body.appendChild(contentDiv);
+    }
+    if (!document.getElementById('teahouse-ui-layer')) {
+      var uiLayer = document.createElement('div');
+      uiLayer.id = 'teahouse-ui-layer';
+      uiLayer.className = 'teahouse-ui-layer';
+      document.body.appendChild(uiLayer);
+    }
+  }
+
+  function boot() {
+    ensureContainers();
+    uiLayerReady = true;
+    flushUIQueue();
+    window.parent.postMessage({ _type: 'ready' }, '*');
+    defaultRender();
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
+  if (document.readyState === 'interactive' || document.readyState === 'complete') {
+    boot();
+  }
+
+  // 暴露方法到全局供 UI 组件使用
+  window.registerUI = registerUI;
+  window.goToPage = goToPage;
+  window.renderCurrent = renderCurrent;
+})();

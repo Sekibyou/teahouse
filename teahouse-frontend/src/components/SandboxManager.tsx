@@ -1,111 +1,117 @@
-import { useEffect, useRef, useCallback, useState } from "react"
-import type { OutputBlock } from "@/hooks/useOutputSSE"
-import type { ContentType, TextStyleRule } from "@/lib/types"
+import { useEffect, useRef, useState, useCallback } from "react"
+import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
 import { renderText } from "@/lib/htmlSanitizer"
-import { outputBlocksApi, instancesApi, textStyleRulesApi } from "@/lib/api"
+import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi } from "@/lib/api"
+import { useSSERefresh } from "@/hooks/useSSERefresh"
 
 // ============================================================
-// SandboxManager — unified sandbox iframe + TeahouseBridge
+// SandboxManager — file-system driven sandbox iframe + TeahouseBridge
+//
+// Sources of truth (instance .teahouse/output/ tree):
+//   - .teahouse/output/sandbox/  → bootstrap.js (first), *.css (inject <head>),
+//                                  other *.js (append). Read via sandboxSrcApi.
+//   - .teahouse/output/floors/   → prose history the sandbox reads at runtime
+//                                  via listFloors + readFile.
+// No output blocks / content_type. The host watches file_changed SSE:
+//   - sandbox file changed → rebuild srcdoc
+//   - floors/style changed → postMessage output.refresh so the sandbox re-reads
+//
+// Timing note: the iframe is ALWAYS mounted; its srcdoc is fed via the `srcDoc`
+// prop once a valid HTML document is built. Doing the build inside a separate
+// async effect guarantees the iframe exists before its srcdoc is set.
 // ============================================================
 
 interface SandboxManagerProps {
   instanceId: string | undefined
   instanceName: string | undefined
-  blocks: OutputBlock[]
   onSend?: (message: string) => void
-  isEmpty: boolean
-  rulesVersion?: number
 }
 
-/**
- * Lifecycle:
- * 1. On mount / blocks change: detect bootstrap_js block
- * 2. Fetch file content for bootstrap + css + ui_js blocks via readFile
- * 3. Build srcdoc with ALL code injected, set on iframe
- * 4. Sandbox boots → sends {_type: "ready"} → host marks ready
- * 5. Host forwards SSE events into sandbox via postMessage
- * 6. Fallback: no bootstrap → host renders rich_text directly via renderText()
- */
-export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmpty, rulesVersion }: SandboxManagerProps) {
+export function SandboxManager({ instanceId, instanceName, onSend }: SandboxManagerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [sandboxReady, setSandboxReady] = useState(false)
-  const [fallbackContent, setFallbackContent] = useState<string | null>(null)
-  const [srcdoc, setSrcdoc] = useState<string | null>(null)
   const [textStyleRules, setTextStyleRules] = useState<TextStyleRule[]>([])
+  const [srcdoc, setSrcdoc] = useState<string>("")
+  const [srcdocVersion, setSrcdocVersion] = useState(0)
+  const [hasSandbox, setHasSandbox] = useState(false)
 
-  // ---- Load text style rules when instance or rules change ----
+  // send a refresh event into the iframe (fires once the sandbox is mounted & ready)
+  const sendToSandbox = useCallback((event: string, data: unknown) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { _type: "_teahouse_event", _event: event, _data: data },
+      "*"
+    )
+  }, [])
 
+  // ---- text style rules ----
   useEffect(() => {
-    if (!instanceId) {
-      setTextStyleRules([])
-      return
-    }
+    if (!instanceId) { setTextStyleRules([]); return }
     ;(async () => {
       const res = await textStyleRulesApi.get(instanceId)
-      if (res.ok && res.data) {
-        setTextStyleRules(res.data.rules ?? [])
-      }
+      if (res.ok && res.data) setTextStyleRules(res.data.rules ?? [])
     })()
-  }, [instanceId, rulesVersion])
-
-  // ---- Determine block types from the list ----
-  const bootstrapBlock = blocks.find((b) => b.content_type === "bootstrap_js")
-  const cssBlocks = blocks.filter((b) => b.content_type === "css")
-  const uiBlocks = blocks.filter((b) => b.content_type === "ui_js")
-
-  // ---- Fetch resolved content for a block (code or rich_text) ----
-  const fetchContent = useCallback(async (block: OutputBlock): Promise<string> => {
-    // SSE delivers resolved content directly
-    if (block.content && !block.content.startsWith("{{")) return block.content
-    // Fallback: fetch from API (which resolves on the server)
-    if (instanceId) {
-      const res = await outputBlocksApi.get(instanceId, block.uuid)
-      if (res.ok && res.data) return res.data.content
-    }
-    return ""
   }, [instanceId])
 
-  // ---- Phase 1: Fetch code file content for blocks, build srcdoc ----
+  // ---- file_changed watchdog: route to srcdoc rebuild vs sandbox refresh ----
+  useSSERefresh({
+    instanceId,
+    instanceName,
+    onFileChanged: useCallback((path: string) => {
+      if (!path) return
+      // srcdoc is built solely from .teahouse/output/sandbox/. Any change under
+      // .teahouse/output/ that is NOT floors/ (sandbox code moved/edited/written,
+      // or moved to/from output_disabled) can alter that directory's contents,
+      // so rebuild the iframe. Only floor changes are handled in-sandbox.
+      const isFloors = path.includes(".teahouse/output/floors/")
+      const isOutput = path.includes(".teahouse/output")
+      if (isOutput && !isFloors) {
+        setSrcdocVersion((v) => v + 1)
+      } else {
+        // floors / text-style-rules / anything else → ask sandbox to re-read
+        sendToSandbox("output.refresh", { path })
+      }
+    }, [sendToSandbox]),
+    onWorkspaceChanged: useCallback(() => {
+      sendToSandbox("output.refresh", { path: "*" })
+    }, [sendToSandbox]),
+  })
 
+  // ---- Build srcdoc from .teahouse/output/sandbox/ (feeds iframe via srcDoc) ----
   useEffect(() => {
-    if (!instanceId || !bootstrapBlock) {
-      setSrcdoc(null)
-      return
-    }
-
+    if (!instanceId) { setHasSandbox(false); setSrcdoc(""); return }
     let cancelled = false
 
-    async function build() {
-      // Fetch code content for each code block via readFile
-      const bootstrapCode = await fetchContent(bootstrapBlock!)
-      if (cancelled) return
+    ;(async () => {
+      const res = await sandboxSrcApi.get(instanceId)
+      if (cancelled || !res.ok || !res.data) return
+      const files = res.data.files || {}
+      const rels = Object.keys(files)
+      setHasSandbox(rels.length > 0)
+      if (rels.length === 0) { setSrcdoc(""); return }
 
-      // Fetch CSS blocks
-      const cssCode = await Promise.all(
-        cssBlocks.map((b) => fetchContent(b))
-      )
-      if (cancelled) return
+      // Dispatch by filename/extension:
+      //   bootstrap.js first, *.css → <style>, other *.js → appended <script>
+      const bootstrap = rels.find((r) => r.endsWith("/bootstrap.js") || r === "bootstrap.js")
+      const cssFiles = rels.filter((r) => r.endsWith(".css")).sort()
+      const jsFiles = rels
+        .filter((r) => r.endsWith(".js") && r !== bootstrap)
+        .sort()
 
-      // Fetch UI JS blocks
-      const uiCode = await Promise.all(
-        uiBlocks.map((b) => fetchContent(b))
-      )
-      if (cancelled) return
+      const bridge = `(function() {
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (d && d._type === '_teahouse_event' && window.Teahouse && window.Teahouse._emit) {
+      window.Teahouse._emit(d._event, d._data);
+    }
+  });
+})();`
 
-      // Gather all styles: theme CSS + BBCode animation CSS
-      const allStyles = [...cssCode, getBBCodeAnimationCSS()]
-
-      // Gather all scripts:
-      // 1. postMessage bridge (inline)
-      // 2. bootstrap.js
-      // 3. ui_js blocks
       const scriptTags = [
-        bootstrapCode,
-        ...uiCode,
+        bootstrap ? files[bootstrap] : "",
+        ...jsFiles.map((r) => files[r]),
       ].filter(Boolean).map((s) => `<script>${s}</script>`).join("\n")
 
-      const styleTags = allStyles
+      const styleTags = [...cssFiles.map((r) => files[r]), getBBCodeAnimationCSS()]
         .filter(Boolean)
         .map((s) => `<style>${s}</style>`)
         .join("\n")
@@ -117,89 +123,54 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; }
-    /* 沙盒默认滚动条美化（与主项目一致，硬编码颜色） */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
     *, *::before, *::after { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
   </style>
+  ${styleTags}
 </head>
 <body>
   <script>
-// Teahouse Bridge — 沙盒内 postMessage 通信层
-(function() {
-  window.addEventListener('message', function(e) {
-    var d = e.data;
-    if (d && d._type === '_teahouse_event') {
-      if (window.Teahouse && window.Teahouse._emit) {
-        window.Teahouse._emit(d._event, d._data);
-      }
-    }
-  });
-})();
+${bridge}
   </script>
   ${scriptTags}
-  ${styleTags}
 </body>
 </html>`
 
       if (!cancelled) setSrcdoc(doc)
-    }
+    })()
 
-    build()
     return () => { cancelled = true }
-  }, [instanceId, bootstrapBlock?.uuid, cssBlocks.length, uiBlocks.length, fetchContent])
+  }, [instanceId, srcdocVersion])
 
-  // ---- Phase 2: Set srcdoc on iframe ----
-
-  useEffect(() => {
-    if (srcdoc && iframeRef.current) {
-      iframeRef.current.srcdoc = srcdoc
-    }
-  }, [srcdoc])
-
-  // ---- postMessage bridge — handle requests from sandbox ----
-
+  // ---- onMessage bridge ----
   const handleMessage = useCallback(async (e: MessageEvent) => {
     const iframe = iframeRef.current
     if (!iframe || e.source !== iframe.contentWindow) return
-
     const d = e.data
     if (!d || typeof d !== "object") return
 
     if (d._type === "ready") {
-      setSandboxReady(true)
       iframe.contentWindow?.postMessage({ _type: "init", instanceId, instanceName }, "*")
       return
     }
-
     if (!d._method) return
     const { _method, _args, _callId } = d
 
     try {
       let result: unknown = undefined
-
       switch (_method) {
-        case "listOutputBlocks": {
+        case "listFloors": {
           if (instanceId) {
-            const res = await outputBlocksApi.list(instanceId)
-            result = res.ok ? res.data?.blocks : []
-          }
-          break
-        }
-        case "getOutputBlock": {
-          if (instanceId && _args[0]) {
-            const res = await outputBlocksApi.get(instanceId, _args[0] as string)
-            result = res.ok ? res.data : null
+            const res = await floorsApi.list(instanceId)
+            result = res.ok ? res.data?.floors : []
           }
           break
         }
         case "renderRichText": {
           const text = _args[0] as string
-          if (text) {
-            result = renderText(text, textStyleRules)
-          }
+          if (text) result = renderText(text, textStyleRules)
           break
         }
         case "readFile": {
@@ -217,14 +188,10 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
           break
         }
         case "send": {
-          if (_args[0] && onSend) {
-            onSend(_args[0] as string)
-            result = true
-          }
+          if (_args[0] && onSend) { onSend(_args[0] as string); result = true }
           break
         }
       }
-
       iframe.contentWindow?.postMessage({ _callId, _result: result }, "*")
     } catch (err) {
       iframe.contentWindow?.postMessage({
@@ -239,148 +206,25 @@ export function SandboxManager({ instanceId, instanceName, blocks, onSend, isEmp
     return () => window.removeEventListener("message", handleMessage)
   }, [handleMessage])
 
-  // ---- Forward SSE events to sandbox (initial full sync + incremental deltas) ----
-
-  const syncedRef = useRef(false)
-  const prevBlocksRef = useRef<Map<string, OutputBlock>>(new Map())
-
-  useEffect(() => {
-    if (!sandboxReady || !iframeRef.current || !bootstrapBlock) return
-
-    if (!syncedRef.current) {
-      // Initial full sync: push all blocks once (skip code types embedded in srcdoc)
-      for (const block of blocks) {
-        if (block.content_type === "bootstrap_js" ||
-            block.content_type === "css" ||
-            block.content_type === "ui_js") {
-          continue
-        }
-        sendToSandbox("output.append", block)
-        prevBlocksRef.current.set(block.uuid, block)
-      }
-      syncedRef.current = true
-      return
-    }
-
-    // Incremental delta: detect new/changed/deleted blocks
-    const prev = prevBlocksRef.current
-    const current = new Map(blocks
-      .filter(b =>
-        b.content_type !== "bootstrap_js" &&
-        b.content_type !== "css" &&
-        b.content_type !== "ui_js"
-      )
-      .map(b => [b.uuid, b])
-    )
-
-    for (const [uuid, block] of current) {
-      if (!prev.has(uuid)) {
-        sendToSandbox("output.append", block)
-      } else if (prev.get(uuid)!.content !== block.content || prev.get(uuid)!.note !== block.note) {
-        sendToSandbox("output.replace", block)
-      }
-    }
-
-    for (const uuid of prev.keys()) {
-      if (!current.has(uuid)) {
-        sendToSandbox("output.delete", { uuid })
-      }
-    }
-
-    prevBlocksRef.current = current
-  }, [blocks, sandboxReady, bootstrapBlock])
-
-  function sendToSandbox(_event: string, _data: unknown) {
-    iframeRef.current?.contentWindow?.postMessage({
-      _type: "_teahouse_event",
-      _event,
-      _data,
-    }, "*")
-  }
-
-  // ---- When text style rules change, re-render active ep block in sandbox ----
-  // Skip the initial load (sandbox renders with rules from the start).
-  // Only fire on subsequent updates (e.g. director edited text-style-rules.yaml).
-
-  const rulesSkipInitialRef = useRef(true)
-
-  useEffect(() => {
-    if (!sandboxReady || !bootstrapBlock || blocks.length === 0) return
-
-    if (rulesSkipInitialRef.current) {
-      rulesSkipInitialRef.current = false
-      return
-    }
-
-    // Find the highest ep block and re-forward it so sandbox re-renders with new rules
-    const epBlocks = blocks
-      .filter((b) => /^ep\d+$/i.test(b.label) && b.content_type === "rich_text")
-    if (epBlocks.length === 0) return
-
-    const latest = epBlocks.reduce((a, b) => {
-      const na = parseInt(a.label.replace(/^ep/i, ""), 10)
-      const nb = parseInt(b.label.replace(/^ep/i, ""), 10)
-      return na > nb ? a : b
-    })
-    sendToSandbox("output.replace", latest)
-  }, [textStyleRules, sandboxReady, bootstrapBlock, blocks])
-
-  // Reset skip flag when instance changes (sandbox restarts)
-  useEffect(() => {
-    rulesSkipInitialRef.current = true
-  }, [instanceId])
-
-  useEffect(() => {
-    if (bootstrapBlock || isEmpty) {
-      setFallbackContent(null)
-      return
-    }
-
-    const epBlocks = blocks
-      .filter((b) => /^ep\d+$/i.test(b.label) && b.content_type === "rich_text")
-      .sort((a, b) => {
-        const na = parseInt(a.label.replace(/^ep/i, ""), 10)
-        const nb = parseInt(b.label.replace(/^ep/i, ""), 10)
-        return nb - na
-      })
-
-    if (epBlocks.length > 0) {
-      ;(async () => {
-        if (!instanceId) return
-        const content = await fetchContent(epBlocks[0])
-        if (content) {
-          setFallbackContent(renderText(content, textStyleRules))
-        }
-      })()
-    }
-  }, [bootstrapBlock, blocks, isEmpty, instanceId, textStyleRules, fetchContent])
-
-  // ---- Render ----
-
-  if (isEmpty) return null
-
-  if (bootstrapBlock) {
+  // ---- empty state: no sandbox code at all ----
+  if (!instanceId || !hasSandbox) {
     return (
-      <iframe
-        ref={iframeRef}
-        className="w-full h-full border-0 bg-white dark:bg-neutral-900"
-        sandbox="allow-scripts"
-        title="Teahouse Sandbox"
-        style={{ minHeight: "400px" }}
-      />
-    )
-  }
-
-  if (fallbackContent) {
-    return (
-      <div className="flex-1 overflow-auto py-4 px-6">
-        <div
-          className="prose prose-sm dark:prose-invert prose-chat max-w-none"
-          dangerouslySetInnerHTML={{ __html: fallbackContent }}
-        />
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">
+        <div className="text-center">
+          <p className="text-sm">等待 AI 生成内容...</p>
+        </div>
       </div>
     )
   }
 
-  return null
+  return (
+    <iframe
+      ref={iframeRef}
+      className="w-full h-full border-0 bg-white dark:bg-neutral-900"
+      sandbox="allow-scripts"
+      title="Teahouse Sandbox"
+      srcDoc={srcdoc}
+      style={{ minHeight: "400px" }}
+    />
+  )
 }

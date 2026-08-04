@@ -208,9 +208,6 @@ export interface TextStyleRule {
   order: number
 }
 
-// Output block content types
-export type ContentType = "bootstrap_js" | "ui_js" | "css" | "rich_text" | "text"
-
 // Floors stats from SSE floors_changed event
 export interface FloorsStats {
   latest_floor: number | null

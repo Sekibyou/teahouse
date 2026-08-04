@@ -9,8 +9,8 @@
 1. 工作进度追踪文件为 `temp/milestones.yaml`，跨会话后先读此文件恢复进度
 2. 与用户讨论细化设定，临时草稿和测试数据放入 `temp/`（根目录下唯一允许修改的目录）
 3. 确认后，直接写入 `_prototype/` 下对应的目标文件
-4. 修改沙盒代码时，直接在 `_prototype/sandbox/` 现有文件上修改
-5. 通过 output 工具推送内容到前端测试（测试数据从 `temp/` 读取）
+4. 修改沙盒代码时，直接在 `_prototype/.teahouse/output/sandbox/` 现有文件上修改
+5. 前端渲染靠文件落盘（见下），测试数据从 `temp/` 写入 `_prototype/.teahouse/output/floors/` 的草稿文件即可预览
 6. 打包前检查 `_prototype/` 下是否有未清理的无用占位符文件
 
 ## _prototype/ 目录
@@ -21,20 +21,20 @@
 _prototype/
 ├── teahouse.md                   ← 目标实例的配置文件
 ├── .teahouse/
-│   ├── output-blocks.jsonl       ← 输出块配置，引用路径以 _prototype/ 为基准
+│   ├── output/                   ← 正文 + 沙盒代码（文件系统驱动的唯一内容源）
+│   │   ├── sandbox/              ← 沙盒渲染代码：bootstrap.js 最先、*.css、其余 *.js
+│   │   │   ├── bootstrap.js
+│   │   │   ├── page-bar.js
+│   │   │   └── theme.css
+│   │   └── floors/               ← 初始楼层：floor-001.md（开场白占位）
 │   └── text-style-rules.yaml     ← 文本样式着色规则
-├── floors/
-│   └── floor-001.md              ← 开场白占位
-├── sandbox/                      ← 沙盒代码（可直接运行）
-│   ├── bootstrap.js
-│   ├── page-bar.js
-│   └── theme.css
 ├── settings/                     ← 设定文件（占位）
 │   ├── characters.yaml
 │   └── world.yaml
 ├── variables/                    ← 变量系统（占位）
 │   ├── active-vars.yaml
 │   └── vars-manager.md
+├── summary/                      ← 总结摘要（初始空）
 ├── temp/                         ← （原型内，预留）
 ├── assets/                       ← 静态资源
 └── .gitignore
@@ -64,11 +64,13 @@ _prototype/
 
 原型创作阶段无需此配置。
 
-## 输出块管理
+## 正文展示与归档界
 
-- 正文块的 label 的规范为：`ep{N}` — 第 N 章正文。前端自动提取 ep 块并进行展示。这个 N 应该与当前正在创作的楼层保持严格一致，例如已提交的最高楼层是10，当前正在创作11，则推送的11章草稿或者11章正文的 label 应为 `ep11`。
-- 当前使用的 sandbox 里会基于正文块的 note 进行渲染标题，因此 content 里不应该包含标题，标题应该放入 note 字段，并且 note 字段不应该包含其他无关内容。建议 note 格式为 `第X章 · 标题内容`。
-- `.teahouse\output-blocks.jsonl` 文件应该保持只读，善用 `grep` 工具针对label、note或者引用文件进行检索，在楼层较高时此文件会很长。针对输出块的修改请使用 `output` 工具进行，切勿直接修改此文件。此文件中的引用路径以实例根目录为基准（如 `{{_prototype/sandbox/bootstrap.js}}`、`{{temp/test-floor-001.md}}`）。
+- **正文历史位于 `_prototype/.teahouse/output/floors/`**，靠文件名中间数字排序（`floor-5.md`、`floor-5-draft.md`），前端/沙盒自动按数字升序渲染，无需 label 概念。
+- 半正式稿 `floor-N-draft.md` 即刻可见，满意后重命名 `floor-N.md` 定稿；每层唯一，返工就地覆盖。
+- **章节标题放正文里**（`# 第X章 · 标题`），不再有 note 字段。
+- 归档界 `summarized_to` 记录在 `_prototype/teahouse.md` 全局变量区，配合 `{{glob:output/floors/floor-*.md:lastN}}` 取上下文窗口。
+- 旧的 `ep{N}` label 与 `.teahouse/output-blocks.jsonl` 已废弃，不要使用。
 
 ## 用户意图 → Skill 路由
 
@@ -113,7 +115,7 @@ _prototype/
    - 定义导演身份（描述为某种类型故事的导演，如"资深科幻小说家"）
    - 填写楼层配置（字数目标等）
    - 填写总结规则
-   - 填写输出块 label 命名规则
+   - 说明正文展示与归档界（`.teahouse/output/floors/` 文件名排序 + `summarized_to` 全局变量）
    - 填写 Generate Payload 配置文件的用法说明和工作流约定
    - 确认 skill 路由完整
 2. 确保 `_prototype/settings/generate-config-default.yaml` 存在并根据故事类型调整模板内容
@@ -123,12 +125,11 @@ _prototype/
 
 1. 询问用户是否需要自定义前端界面
 2. 如需要：
-   - 参考 `teahouse-sandbox-builder` skill，直接在 `_prototype/sandbox/` 现有文件上修改
-   - 通过 output 工具推送 `temp/` 下的测试数据到前端，验证效果
+   - 参考 `teahouse-sandbox-builder` skill，直接在 `_prototype/.teahouse/output/sandbox/` 现有文件上修改
+   - 把 `temp/` 下的测试数据写入 `_prototype/.teahouse/output/floors/` 的草稿文件，前端自动读取预览效果
    - `bootstrap.js` 是基础设施，一般不需要大改
    - `theme.css` 可按用户审美调整配色、字体、气泡样式
-   - 如有特殊需求可创建额外的 ui_js 文件
-   - 更新 `_prototype/.teahouse/output-blocks.jsonl`（以 `_prototype/` 为基准的相对路径）
+   - 如有特殊需求可创建额外的 `*.js` 组件
 3. 如不需要，跳过此阶段
 4. 在 `temp/milestones.yaml` 的 tasks 区域记录完成状态
 
@@ -171,18 +172,14 @@ _prototype/
 |---|---|---|
 | `temp/` | 读写 | 唯一允许修改的根目录，存放草稿、测试数据、进度文件 |
 | `_prototype/` | 读写 | 所有产出直接写入此目录 |
-| `.teahouse/output-blocks.jsonl` | 只读 | 通过 output 工具间接操作 |
 | 其他根目录文件 | 只读 | 不可修改 |
 
 ### 路径基准说明
 
-- **根目录 `.teahouse/output-blocks.jsonl`**：引用路径以实例根目录为基准
-  - 沙盒代码：`{{_prototype/sandbox/bootstrap.js}}`
-  - 测试数据：`{{temp/test-floor-001.md}}`
-- **`_prototype/.teahouse/output-blocks.jsonl`**：引用路径以 `_prototype/` 为基准
-  - 沙盒代码：`{{sandbox/bootstrap.js}}`
-  - 楼层文件：`{{floors/floor-001.md}}`
-- **打包时**：`_prototype/` 内的路径保持不变，`temp/` 下的测试数据不打包
+- **沙盒代码路径**：`_prototype/.teahouse/output/sandbox/*.js|*.css`，渲染器按文件名分派（bootstrap.js 最先、*.css 注入 head、其余 *.js 追加）。
+- **初始楼层路径**：`_prototype/.teahouse/output/floors/floor-001.md`，导出后成为新实例的正文历史起点。
+- **出后实例的正文/设定占位符**：`{{glob:output/floors/floor-*.md:lastN}}`、`{{settings/characters.yaml|from=...}}`（相对新实例根目录）。
+- **打包时**：`_prototype/` 内的路径保持不变，`temp/` 下的测试数据不打包。
 
 ### 注意事项
 
