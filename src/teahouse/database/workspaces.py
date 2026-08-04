@@ -9,6 +9,7 @@ Directory layout:
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import stat
 import zipfile
@@ -263,6 +264,72 @@ def write_file(instance_dir: Path, file_path: str, content: str) -> None:
         raise ValueError("Path traversal detected")
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Sandbox vars — .teahouse/vars/sandbox.json
+#
+# Sandbox-owned variables (setVar), persisted for "file-as-state" recovery.
+# The only writer is the sandbox path (setVar); the director reads via
+# GetSandboxVars. Values may be any JSON-serializable object.
+# ---------------------------------------------------------------------------
+
+_SANDBOX_VARS_PATH = ".teahouse/vars/sandbox.json"
+
+
+def read_sandbox_vars(instance_dir: Path, names: list[str] | None = None) -> list[dict]:
+    """Read sandbox vars and return a flat {name, value} list.
+
+    - `names` = None (or empty): return every initialized variable.
+    - `names` = requested list: return **exactly one entry per requested name**,
+      using `value: None` for uninitialized names. This makes callers able to
+      check for "not set" explicitly instead of guessing from a missing key.
+
+    Missing file (never written) behaves the same as an empty store.
+    """
+    full = (instance_dir / _SANDBOX_VARS_PATH).resolve()
+    if not str(full).startswith(str(instance_dir.resolve())):
+        raise ValueError("Path traversal detected")
+    data: dict = {}
+    if full.exists():
+        try:
+            parsed = json.loads(full.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data = parsed
+        except (json.JSONDecodeError, OSError):
+            data = {}
+
+    if names:
+        return [
+            {"name": n, "value": data.get(n)}
+            for n in names
+        ]
+    return [{"name": k, "value": v} for k, v in data.items()]
+
+
+def write_sandbox_vars(instance_dir: Path, updates: dict) -> None:
+    """Atomically merge `updates` into the sandbox vars file and write back.
+
+    Read-merge-overwrite of a single file — the sandbox is the only writer,
+    so there is no cross-file race with the director's prose writes.
+    """
+    full = (instance_dir / _SANDBOX_VARS_PATH).resolve()
+    if not str(full).startswith(str(instance_dir.resolve())):
+        raise ValueError("Path traversal detected")
+    data: dict = {}
+    if full.exists():
+        try:
+            existing = json.loads(full.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                data = existing
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    data.update(updates)
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def delete_file_or_dir(instance_dir: Path, file_path: str) -> None:

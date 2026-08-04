@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS } from "@/lib/bbcodeParser"
 import { renderText } from "@/lib/htmlSanitizer"
-import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi } from "@/lib/api"
+import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 
 // ============================================================
@@ -184,6 +184,21 @@ ${bridge}
           if (instanceId && _args[0] && _args[1] !== undefined) {
             const res = await instancesApi.writeFile(instanceId, _args[0] as string, _args[1] as string)
             result = res.ok
+          }
+          break
+        }
+        case "setVar": {
+          if (instanceId && _args[0]) {
+            const res = await sandboxVarsApi.set(instanceId, _args[0] as Record<string, unknown>)
+            result = res.ok ? res.data?.vars : undefined
+          }
+          break
+        }
+        case "getVars": {
+          if (instanceId) {
+            const names = Array.isArray(_args[0]) ? (_args[0] as string[]) : []
+            const res = await sandboxVarsApi.get(instanceId, names)
+            result = res.ok ? res.data?.vars : []
           }
           break
         }

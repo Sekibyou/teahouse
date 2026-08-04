@@ -46,6 +46,12 @@
     readFile: function(path) { return callHost('readFile', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
+    // 沙盒变量（setVar 落盘到 .teahouse/vars/sandbox.json，文件即状态）
+    //   setVar(updates) — 原子合并写；返回写后全部变量 [{name, value}]
+    //   getVars(names)  — 按名读取；返回 [{name, value}]
+    setVar: function(updates) { return callHost('setVar', [updates]); },
+    getVars: function(names) { return callHost('getVars', [names || []]); },
+
     // 发送消息
     send: function(message) { callHost('send', [message]); },
 

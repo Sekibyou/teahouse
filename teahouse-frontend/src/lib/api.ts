@@ -80,6 +80,10 @@ async function put<T>(endpoint: string, body?: unknown): Promise<RequestResult<T
   return request<T>(endpoint, { method: "PUT", body: body ? JSON.stringify(body) : undefined })
 }
 
+async function patch<T>(endpoint: string, body?: unknown): Promise<RequestResult<T>> {
+  return request<T>(endpoint, { method: "PATCH", body: body ? JSON.stringify(body) : undefined })
+}
+
 async function del<T>(endpoint: string): Promise<RequestResult<T>> {
   return request<T>(endpoint, { method: "DELETE" })
 }
@@ -390,6 +394,27 @@ export interface FloorEntry {
 export const floorsApi = {
   list: async (instanceId: string) => {
     return get<{ floors: FloorEntry[] }>(`/api/instances/${instanceId}/floors`)
+  },
+}
+
+// Sandbox vars API — sandbox-owned state persisted to .teahouse/vars/sandbox.json
+export interface SandboxVarEntry {
+  name: string
+  value: unknown
+}
+
+export const sandboxVarsApi = {
+  get: async (instanceId: string, names: string[]) => {
+    const params = names.length
+      ? `?${names.map((n) => `names=${encodeURIComponent(n)}`).join("&")}`
+      : ""
+    return get<{ vars: SandboxVarEntry[] }>(`/api/instances/${instanceId}/sandbox-vars${params}`)
+  },
+  set: async (instanceId: string, updates: Record<string, unknown>) => {
+    return patch<{ status: string; vars: SandboxVarEntry[] }>(
+      `/api/instances/${instanceId}/sandbox-vars`,
+      { updates }
+    )
   },
 }
 

@@ -171,6 +171,10 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str, *, prototy
             # sandbox disable toggle — collapsed, shows only a file count
             count = sum(1 for f in entry.rglob("*") if f.is_file())
             lines.append(f"{indent}{connector}output_disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
+        elif entry.is_dir() and entry.name == "vars" and dir_path.name == ".teahouse":
+            # sandbox variables — collapsed, sandbox-only write. Director reads via GetSandboxVars.
+            count = sum(1 for f in entry.rglob("*") if f.is_file())
+            lines.append(f"{indent}{connector}vars/  ({count} file(s) — sandbox-owned state, read via GetSandboxVars, do not edit)")
         elif entry.is_dir():
             lines.append(f"{indent}{connector}{entry.name}/")
             _scan_teahouse_dir(entry, lines, indent + "    ", prototype=prototype)

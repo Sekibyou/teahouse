@@ -35,6 +35,8 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
     update_floor_count,
+    read_sandbox_vars,
+    write_sandbox_vars,
 )
 from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
 
@@ -90,6 +92,10 @@ class FileCreateRequest(BaseModel):
 
 class FileWriteRequest(BaseModel):
     content: str
+
+
+class SandboxVarsUpdateRequest(BaseModel):
+    updates: dict
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +504,51 @@ async def save_instance_file(
         return {"path": path, "status": "saved"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/sandbox-vars")
+async def get_sandbox_vars(
+    instance_id: str,
+    names: list[str] = Query(default=[]),
+    user: UserInfo = Depends(require_user),
+):
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    vars_ = read_sandbox_vars(instance_dir, names or None)
+    return {"vars": vars_}
+
+
+@router.patch("/instances/{instance_id}/sandbox-vars")
+async def set_sandbox_vars(
+    instance_id: str,
+    body: SandboxVarsUpdateRequest,
+    user: UserInfo = Depends(require_user),
+):
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        write_sandbox_vars(instance_dir, body.updates)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state.broadcast(
+        "file_changed",
+        {
+            "path": ".teahouse/vars/sandbox.json",
+            "tool": "SetVar",
+            "instance_id": instance_id,
+        },
+    )
+    # Read back the full current vars so the caller (sandbox) can reconcile.
+    return {"status": "ok", "vars": read_sandbox_vars(instance_dir, None)}
 
 
 @router.post("/instances/{instance_id}/files")

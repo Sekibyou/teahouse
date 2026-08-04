@@ -24,6 +24,7 @@ from typing import Any
 from .placeholder import resolve_placeholders, resolve_messages_placeholders
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
+from .database.workspaces import read_sandbox_vars as _read_sandbox_vars
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
@@ -191,6 +192,34 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
     result_lines.append(f"  ({start + 1}–{min(end, total)}/{total} lines, file: {path})")
 
     return "\n".join(result_lines)
+
+
+async def execute_get_sandbox_vars(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Read sandbox variables by name. Sandbox-owned state; read-only for the director."""
+    names = args.get("names")
+    if names is None:
+        return "Error: 'names' is required — pass an array of variable names to read (e.g. [\"opt-3-1\"])"
+    if not isinstance(names, list):
+        names = [names]
+    names = [str(n) for n in names]
+
+    try:
+        items = _read_sandbox_vars(instance_dir, names)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    if not items:
+        return "No sandbox variables found with the requested names."
+
+    import json as _json
+    lines = []
+    for item in items:
+        try:
+            value_txt = _json.dumps(item["value"], ensure_ascii=False)
+        except (TypeError, ValueError):
+            value_txt = str(item["value"])
+        lines.append(f"{item['name']}: {value_txt}")
+    return "\n".join(lines)
 
 
 async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -904,6 +933,7 @@ TOOL_EXECUTORS = {
     "FileOps": execute_file_ops,
     "TodoWrite": execute_todo_write,
     "BatchExecute": execute_batch_execute,
+    "GetSandboxVars": execute_get_sandbox_vars,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,

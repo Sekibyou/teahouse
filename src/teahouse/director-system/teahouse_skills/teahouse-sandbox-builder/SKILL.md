@@ -128,6 +128,65 @@ await Teahouse.writeFile(".teahouse/output/sandbox/state.json", JSON.stringify(s
 
 **权限**：文件操作受 JWT 身份控制，与当前用户权限一致。沙盒可读写实例内任意路径。
 
+### 沙盒变量
+
+#### `Teahouse.setVar(updates) → Promise<{name,value}[]>`
+
+原子合并写入沙盒变量，落盘到 `.teahouse/vars/sandbox.json`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value}]`。
+
+```js
+await Teahouse.setVar({
+  user_name: "LowStar",
+  opt_3_1: "opt2"          // 记录玩家在选项块的选择
+})
+```
+
+**写者约定**：沙盒变量**只有沙盒能写**（唯一写口）。正文、设定等一律走导演工具，不要用 `writeFile` 写正文——沙盒写正文有并发/精确性风险。沙盒要改剧情就走 `Teahouse.send()` 告知导演。
+
+#### `Teahouse.getVars(names) → Promise<{name,value}[]>`
+
+按名读取沙盒变量。`names` 为变量名数组，不传则读全部。用于沙盒内重新渲染（如点击后回显选中态、把 `${user}` 替换为实际值）。
+
+```js
+const [user] = await Teahouse.getVars(["user_name"])
+// => [{ name: "user_name", value: "LowStar" }]
+```
+
+> **🚨 空值 / 缺值语义（最容易写错的地方）**
+>
+> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `.teahouse/vars/sandbox.json` 不存在、或某个变量从未 `setVar` 写入，效果完全一样——对应条目返回 `{name, value: null}`。
+>
+> **只在你明确传入 `names` 时才保证"每个名字都有"**；不传 `names`（读全部）时，未初始化的变量根本不在，返回的都是已存在的：
+>
+> ```js
+> // 假定只写过 name1="陆霜"：
+> getVars(["name1","name2"])       // => [{name:"name1",value:"陆霜"},{name:"name2",value:null}]
+> getVars()                        // => [{name:"name1",value:"陆霜"}]   // 读全部，只有已存在
+> ```
+>
+> **因此代码用 `value === null` 判断"未初始化"**，给出回退，不要用 `undefined` 判断（`null` 是稳定值；`undefined` 只在 JSON 序列化边界才出现）。参考范式：
+>
+> ```js
+> function resolveNames(markdown) {
+>   return Teahouse.getVars(["name1","name2"]).then(function(entries) {
+>     var valueMap = {};
+>     for (var i = 0; i < entries.length; i++) valueMap[entries[i].name] = entries[i].value;
+>     return markdown.replace(/\{\{name(\d+)\}\}/g, function(full, num) {
+>       var val = valueMap['name' + num];
+>       return (val !== null && val !== '' && val !== undefined)
+>         ? val
+>         : '未命名';          // 未初始化/空 → 回退
+>     });
+>   });
+> }
+> ```
+>
+> 同理，`setVar` 的返回是"写后全部变量"，也可用它做 `getVars` 的镜像缓存。
+
+#### 导演侧读取：`GetSandboxVars(names=["x"])`
+
+导演**不能写、只能读**沙盒变量（通过 `GetSandboxVars` tool，按名数组读）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetSandboxVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。
+
 ### 发送消息
 
 #### `Teahouse.send(message) → void`
