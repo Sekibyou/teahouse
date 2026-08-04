@@ -214,7 +214,7 @@ def _fmt_var_entry(item: dict) -> str:
     return line
 
 
-async def execute_get_sandbox_vars(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_get_runtime_vars(instance_dir: Path, args: dict[str, Any]) -> str:
     """Read runtime variables by name. Values + optional note/change_log metadata."""
     names = args.get("names")
     if names is None:
@@ -234,7 +234,7 @@ async def execute_get_sandbox_vars(instance_dir: Path, args: dict[str, Any]) -> 
     return "\n".join(_fmt_var_entry(item) for item in items)
 
 
-async def execute_set_var(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> str:
     """Write runtime variables. Merges `updates` (+ optional `note`/`change_log`).
 
     - `updates`: {name: value} — overwrite value; missing names are created.
@@ -301,7 +301,7 @@ async def execute_set_var(instance_dir: Path, args: dict[str, Any]) -> str:
 
     state.broadcast(
         "file_changed",
-        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetVar", "instance_id": instance_dir.name},
+        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_dir.name},
     )
 
     affected = list(updates.keys()) if updates else []
@@ -544,7 +544,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
 
     source_file_str = args.get("source_file", "")
     output_path_str = args.get("path", "")
-    dump_payload_str = args.get("dump_payload", "")
+    dump_payload_str = args.get("dump_payload_path", "")
 
     if not source_file_str:
         return "Error: 'source_file' is required — specify the YAML config file path (e.g. temp/generate-config-12-1.yaml)"
@@ -595,9 +595,9 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
             payload_json = json.dumps(resolved, ensure_ascii=False, indent=2)
             payload_full.write_text(payload_json, encoding="utf-8")
         except ValueError as e:
-            return f"Error: dump_payload 路径无效: {e}"
+            return f"Error: dump_payload_path 路径无效: {e}"
         except Exception as e:
-            return f"Error: 写入 dump_payload 失败: {e}"
+            return f"Error: 写入 dump_payload_path 失败: {e}"
 
     # Step 4: Resolve writer slot LLM client
     if not user_id:
@@ -1064,8 +1064,8 @@ TOOL_EXECUTORS = {
     "FileOps": execute_file_ops,
     "TodoWrite": execute_todo_write,
     "BatchExecute": execute_batch_execute,
-    "GetSandboxVars": execute_get_sandbox_vars,
-    "SetVar": execute_set_var,
+    "GetRuntimeVars": execute_get_runtime_vars,
+    "SetRuntimeVar": execute_set_runtime_var,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,

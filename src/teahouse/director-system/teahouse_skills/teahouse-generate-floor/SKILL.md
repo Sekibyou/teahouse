@@ -36,7 +36,7 @@ FileOps mkdir temp/
 FileOps mkdir .teahouse/output/floors/
 ```
 
-**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetVar` 工具写、`GetSandboxVars` 读），是实例内唯一的变量载体（文件即状态）。设定（含中短期动态设定）放在 `settings/` 下。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
+**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetRuntimeVar` 工具写、`GetRuntimeVars` 读），是实例内唯一的变量载体（文件即状态）。设定（含中短期动态设定）放在 `settings/` 下。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
 
 ### 步骤 1：理解楼层配置
 
@@ -67,16 +67,16 @@ Glob summary/sum-*.md                     → 列出所有总结
 
 **核心变量已实时注入你的系统提示词**（no cache）——构建上下文时系统已把 `.teahouse/runtime_vars.jsonl` 当前的 `${name}` 变量快照拼进提示词开头，你通常已经看到它们的现值，无需再 Read（避免游玩时的读取往返）。
 
-若需读取特定变量、或系统提示词里没体现，用 `GetSandboxVars(names=[...])` 按名精确读取，例如：
+若需读取特定变量、或系统提示词里没体现，用 `GetRuntimeVars(names=[...])` 按名精确读取，例如：
 
 ```
-GetSandboxVars(names=["金币", "修为", "主角名"])
+GetRuntimeVars(names=["金币", "修为", "主角名"])
 ```
 
-需要更新剧情状态时，用 `SetVar` 直接写（与正文一起落盘、进 git、导演/沙盒立即感知），例如：
+需要更新剧情状态时，用 `SetRuntimeVar` 直接写（与正文一起落盘、进 git、导演/沙盒立即感知），例如：
 
 ```
-SetVar(updates={"金币": 140, "修为": "炼气四层"})
+SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层"})
 ```
 
 记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。

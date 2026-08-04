@@ -550,7 +550,7 @@ async def set_runtime_vars(
 
     state.broadcast(
         "file_changed",
-        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetVar", "instance_id": instance_id},
+        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id},
     )
     # Read back the full current vars so the caller (sandbox) can reconcile.
     return {"status": "ok", "vars": read_sandbox_vars(instance_dir, None)}

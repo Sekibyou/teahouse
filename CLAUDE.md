@@ -43,7 +43,7 @@
 | **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层 |
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
-| **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetVar` 写、`GetSandboxVars` 读；核心变量注入导演系统提示词（no cache） |
+| **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
 | **fc("输出")** | 输出 fc，指定文件内容作为玩家可见的输出 |
 
 ## 占位符语法
@@ -58,7 +58,7 @@
 
 规则：
 - `${}` 严格匹配 `\${...}`；裸 `$` 不处理。**变量不存在 → 原样显示**（不报错、不删）。
-- `teahouse.` 前缀为系统保留命名空间，setVar/SetVar 禁止用其命名（会告警忽略）。
+- `teahouse.` 前缀为系统保留命名空间，setVar/SetRuntimeVar 禁止用其命名（会告警忽略）。
 - 喂给 AI（系统提示词、Generate）的内容替换 `${}` + 展开 `{{}}`；`Write/Edit/WriteLine`（文件编辑）只做 `{{}}` 切片、不解变量。
 
 
@@ -247,7 +247,7 @@ skills/              Skill 包，每个子目录一个 Skill
     references/       可选，参考文档
     scripts/          可选，可执行脚本
 .teahouse/            引擎内部目录
-  runtime_vars.jsonl   变量系统（文件即状态，SetVar/GetSandboxVars，一变量一行 jsonl，可带 note/change_log）
+  runtime_vars.jsonl   变量系统（文件即状态，SetRuntimeVar/GetRuntimeVars，一变量一行 jsonl，可带 note/change_log）
   output/
     floors/           正文历史（floor-N.md 定稿 / floor-N-draft.md 半正式稿）
     sandbox/          沙盒渲染资源

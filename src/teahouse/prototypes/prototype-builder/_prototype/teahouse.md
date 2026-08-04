@@ -45,9 +45,9 @@
 - 删除旧版本 config 文件，仅保留最新版本
 - 将最新 config 改名为 `generate-config-{N+1}-1.yaml`（下一楼层的起点）
 
-### dump_payload 参数
+### dump_payload_path 参数
 
-`dump_payload` 是可选调试参数，展开占位符后的完整 Payload JSON 写入指定路径。**不建议主动使用**，除非用户明确要求调试。
+`dump_payload_path` 是可选调试参数，传入文件路径时把展开占位符后的完整 Payload JSON 写入该路径。**不写就不输出，写了才输出**。**不建议主动使用**，除非用户明确要求调试。
 
 ## 用户意图 → Skill 路由
 

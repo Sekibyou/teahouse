@@ -27,7 +27,7 @@ _prototype/
 │   │   │   ├── page-bar.js
 │   │   │   └── theme.css
 │   │   └── floors/               ← 初始楼层：floor-001.md（开场白占位）
-│   ├── runtime_vars.jsonl         ← 变量系统（文件即状态，SetVar/GetSandboxVars）
+│   ├── runtime_vars.jsonl         ← 变量系统（文件即状态，SetRuntimeVar/GetRuntimeVars）
 │   └── text-style-rules.yaml     ← 文本样式着色规则
 ├── settings/                     ← 设定文件：静态设定 + 动态设定（占位）
 │   ├── characters.yaml
@@ -98,10 +98,10 @@ _prototype/
 
 ### 阶段 3：变量系统确认
 
-1. 明确本故事的变量载体统一在 `.teahouse/runtime_vars.jsonl`（文件即状态），由导演 `SetVar` 写、`GetSandboxVars` 读、沙盒 `setVar` 写。**不存在 `variables/` 目录**。
+1. 明确本故事的变量载体统一在 `.teahouse/runtime_vars.jsonl`（文件即状态），由导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读、沙盒 `setVar` 写。**不存在 `variables/` 目录**。
 2. 与用户确认需要追踪的**变量**——仅限高度精炼、会频繁变动的数值/重要值（金币、修为、好感度、主角名等）。核心变量会注入导演系统提示词（no cache），导演与沙盒共享这份状态。
 3. 明确如何划分**变量 vs 设定**：
-   - **变量** → SetVar 管理。
+   - **变量** → SetRuntimeVar 管理。
    - **静态设定**（长期不变，如兄妹关系）→ `settings/`。
    - **动态设定**（中短期文字，如二人闹别扭、任务进展）→ 也放 `settings/`，靠后续工作流提示词区分、就地更新。
 4. 在打包前，用 prototype-builder 的沙盒写入预设变量到 `.teahouse/runtime_vars.jsonl`（builder 的价值：打包前先写预设变量，运行时导演/沙盒直接读，无需运行时注入）。

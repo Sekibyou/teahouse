@@ -11,8 +11,12 @@ from ..database.connection import generate_uuid, current_timestamp, execute, fet
 BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
 # 第一行注释（以 # 开头的行为 YAML 注释，不会被解析）
 #
-# system: 导演系统提示词模板，支持 ${variable} 占位符（string.Template 语法）
-#   可用变量：${teahouse} ${behavior} ${tools_usage} ${file_tree} ${available_skills}
+# system: 导演系统提示词模板，支持两种占位符：
+#   {{path|切片}}          文件切片（teahouse.md 可写作 {{teahouse.md}}）
+#   ${teahouse.xxx}        系统内部值：${teahouse.behavior} ${teahouse.tools_usage}
+#                          ${teahouse.file_tree} ${teahouse.available_skills}
+#   ${name}                实例沙盒变量引用（如 ${金币}，组装时为 no-cache 快照）
+# 注意：teahouse. 前缀的系统内部值仅在此模板组装时注入，其余场景保持字面量（防内部泄露）。
 #
 # 预设对话历史（可选），两种写法：
 #
@@ -31,19 +35,19 @@ BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
 
 system: |
   ————根目录下 teahouse.md 内容开始————
-  ${teahouse}
+  {{teahouse.md}}
   ————根目录下 teahouse.md 内容结束————
   ————behavior 开始————
-  ${behavior}
+  ${teahouse.behavior}
   ————behavior 结束————
   ————工具使用指南开始————
-  ${tools_usage}
+  ${teahouse.tools_usage}
   ————工具使用指南结束————
   ————当前文件结构树开始————
-  ${file_tree}
+  ${teahouse.file_tree}
   ————当前文件结构树结束————
   ————可用 Skill 列表开始————
-  ${available_skills}
+  ${teahouse.available_skills}
   ————可用 Skill 列表结束————
 """
 

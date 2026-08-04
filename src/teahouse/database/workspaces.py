@@ -278,7 +278,7 @@ def write_file(instance_dir: Path, file_path: str, content: str) -> None:
 # Convention:
 #   - Values are any JSON-serializable object.
 #   - `note` is overwritten on update; `change_log` is appended on update.
-#   - SetVar writes, GetSandboxVars reads, delete removes a name.
+#   - SetRuntimeVar writes, GetRuntimeVars reads, delete removes a name.
 # ---------------------------------------------------------------------------
 
 _RUNTIME_VARS_PATH = ".teahouse/runtime_vars.jsonl"
