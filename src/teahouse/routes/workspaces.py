@@ -3,7 +3,9 @@ Prototype and instance API routes.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
+import uuid
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -683,19 +685,43 @@ async def run_instance_tools(
 
     instance_dir = _resolve_instance_dir(inst)
     user_id = u["id"]
-    results = []
-    for i, step in enumerate(body.steps, 1):
+    run_uuid = str(uuid.uuid4())
+
+    # Fire-and-forget: 步骤在后台串行执行（Generate 等长任务不阻塞请求返回），
+    # 每步完成后广播一条 tool_run（带 run_uuid / index / 结果 / 成败），组件据此
+    # 自行数 index 判定本批完成。步骤内部还会发 file_changed 驱动楼层/沙盒刷新。
+    task = asyncio.create_task(
+        _run_steps(instance_dir, user_id, run_uuid, body.steps)
+    )
+    # 兜底：取异常引用，避免"未处理异常"日志告警（任务结果无人读取）
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+    return {"ok": True, "accepted": True, "run_uuid": run_uuid, "steps": len(body.steps)}
+
+
+async def _run_steps(
+    instance_dir: Path,
+    user_id: str,
+    run_uuid: str,
+    steps: list[ToolsRunStep],
+) -> None:
+    for i, step in enumerate(steps, 1):
         name = step.tool
         cargs = step.args or {}
-        res = await execute_tool(name, cargs, instance_dir, user_id, inst["id"])
-        results.append({"index": i, "tool": name, "result": res})
-        if res.startswith("Error"):
-            return {
-                "ok": False,
-                "completed": results,
-                "failed": {"index": i, "tool": name, "result": res},
-            }
-    return {"ok": True, "completed": results}
+        result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name))
+        ok = not result.startswith("Error")
+        state.broadcast(
+            "tool_run",
+            {
+                "run_uuid": run_uuid,
+                "index": i,
+                "tool": name,
+                "result": result,
+                "ok": ok,
+                "instance_id": instance_dir.name,
+            },
+        )
+        if not ok:
+            return
 
 
 # ===== Skills =====

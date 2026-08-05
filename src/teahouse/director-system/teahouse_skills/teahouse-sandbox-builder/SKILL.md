@@ -237,13 +237,15 @@ Teahouse.send("开始第一章")
 
 ### 内联工具流水线：`Teahouse.runTool`
 
-#### runTool(steps) → Promise<{ok, completed, failed?}>
+#### runTool(steps) → Promise<{ok, accepted, run_uuid, steps}>
 
-依次执行一段**内联工具调用数组**（`[{tool, args}, ...]`），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：数组内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接按序执行、逐一 SSE 广播。
+依次执行一段**内联工具调用数组**（`[{tool, args}, ...]`），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：数组内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接按序执行。
 
 `steps` 元素形如 `{tool: "Write", args: {...}}`，与导演同名工具一致（同一 `execute_tool` 通道）。**不解析任何占位符**：需要运行时变量时，先用 `getVars()` 取到真实 js 值并在组装 `args` 时拼接，不要指望沙盒侧 `${{...}}` 占位符解析。
 
-返回汇总：`{ok: boolean, completed: [{index, tool, result}], failed?: {index, tool, result}}`——**任一步失败即停**，`ok:false` 并携带失败步；全部成功则 `ok:true`。**不流式，一次性返回全量结果**。
+**即发即返（fire-and-forget）**：本调用**只确认后端已受理**，立即返回 `{ok, accepted, run_uuid, steps}`，**不阻塞等待执行结果**。因为内联流水线里的 `Generate` 等步骤可能跑几十秒（调正文模型），同步等待会撞上前端 fetch 超时。各步骤在**后台串行执行**，**每完成一步广播一条 `tool_run` 事件**。产出落地后另有 `file_changed` SSE 驱动 `output.refresh` 刷新楼层/沙盒。
+
+**完成判定（关键）**：`run_uuid` 唯一标识"这一批调用"。沙盒组件应订阅 `tool_run` 事件，**按 `run_uuid` 筛选出本批、数 `index` 判定完成/失败**——任一步 `ok:false` 即整批失败（后端失败即停）；`index` 收齐到 `steps` 总数即整批完成。`run_uuid` 用于隔离同一沙盒里多个组件、甚至多个实例并发跑批。
 
 **创作重点**：runTool 把"流程"收进按钮对应的 js 里——脚本与触发器不分家，路径/命名不再隐形耦合。每步自带全部所需参数（路径、内容、generate 用的 yaml 源等），不依赖导演拍板。`Generate` 步可指定正文产出，`GitCommit` 步可落盘提交。
 
@@ -251,16 +253,21 @@ Teahouse.send("开始第一章")
 // 开场流水线：产第一楼 + 提交（newest_floor 用 js 运行时取值）
 const vs = await Teahouse.getVars()
 const floor = vs.newest_floor ?? "1"
+
+// 订阅本批结果
+const onRun = (data) => {
+  if (data.run_uuid !== res.run_uuid) return   // 只认本批
+  if (!data.ok) { console.error("流水线停在", data.index, data.result); return }
+  if (data.index >= res.steps) { console.log("全部完成"); reloadFloors() }
+}
+Teahouse.on("tool_run", onRun)
+
 const res = await Teahouse.runTool([
   { tool: "Generate", args: { source_file: "temp/opening.yaml",
                               path: `.teahouse/output/floors/floor-${floor}-draft.md` }},
   { tool: "GitCommit", args: { message: `floor-${floor}: 开场` } },
 ])
-if (res.ok) {
-  reloadFloors()  // SSE 已自动广播，落盘完成后重拉楼层重渲染
-} else {
-  console.error("流水线停在", res.failed)
-}
+if (!res.ok) { console.error("提交失败", res) }
 ```
 
 与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runTool()`**。
@@ -276,8 +283,11 @@ if (res.ok) {
 | 事件 | payload | 触发时机 |
 |---|---|---|
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
+| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条（含成败）—— 组件按 `run_uuid` 筛选、数 `index` 判定整批完成/失败 |
 
 宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
+
+`tool_run` 走同一条桥（宿主把后端 `tool_run` SSE 透传给沙盒），**不需要沙盒自己连 SSE**。用于 `runTool` 这类即发即返的批量路径反馈结果，见上文 runTool 章节。
 
 ```js
 Teahouse.on("output.refresh", function(data) {

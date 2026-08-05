@@ -75,6 +75,10 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
     onWorkspaceChanged: useCallback(() => {
       sendToSandbox("output.refresh", { path: "*" })
     }, [sendToSandbox]),
+    onToolRun: useCallback((payload: Record<string, unknown>) => {
+      // 透传 runTool 后台任务的单步结果给沙盒（组件按 run_uuid 筛选/数 index）
+      sendToSandbox("tool_run", payload)
+    }, [sendToSandbox]),
   })
 
   // ---- Build srcdoc from .teahouse/output/sandbox/ (feeds iframe via srcDoc) ----

@@ -168,16 +168,11 @@ export interface ToolsRunStep {
   args?: Record<string, unknown>
 }
 
-export interface ToolsRunStepResult {
-  index: number
-  tool: string
-  result: string
-}
-
 export interface ToolsRunResult {
   ok: boolean
-  completed: ToolsRunStepResult[]
-  failed?: ToolsRunStepResult
+  /** 即发即返：请求只确认已受理，不返回每步结果；实际产出由 SSE (file_changed) 推送刷新 */
+  accepted: boolean
+  steps: number
 }
 
 export const instancesApi = {

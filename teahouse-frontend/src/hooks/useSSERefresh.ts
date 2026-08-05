@@ -7,6 +7,8 @@ interface SSERefreshOptions {
   onFileChanged: (path: string) => void
   /** Called when workspace state changed (git operations, branch switch, etc.). */
   onWorkspaceChanged: () => void
+  /** Called when a runTool background step broadcast a result (success or failure). */
+  onToolRun?: (payload: Record<string, unknown>) => void
   /** The instance ID (UUID) to scope events to. */
   instanceId: string | undefined
   /** The instance name (directory name) as fallback match for tool-executor broadcasts. */
@@ -34,6 +36,7 @@ const DEBOUNCE_MS = 200
 export function useSSERefresh({
   onFileChanged,
   onWorkspaceChanged,
+  onToolRun,
   instanceId,
   instanceName,
 }: SSERefreshOptions) {
@@ -98,6 +101,17 @@ export function useSSERefresh({
         }
       })
 
+      es.addEventListener("tool_run", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data)
+          const id = data.instance_id
+          if (id && id !== instanceId && id !== instanceName) return
+          onToolRun?.(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
       es.onerror = () => {
         es.close()
         esRef.current = null
@@ -125,5 +139,5 @@ export function useSSERefresh({
         wsTimerRef.current = null
       }
     }
-  }, [instanceId, instanceName])
+  }, [instanceId, instanceName, onToolRun])
 }
