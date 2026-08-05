@@ -369,11 +369,13 @@ async def api_import_plugin_confirm(
             )
 
         plugin_id = await install_plugin_from_path(user.user_id, safe_name, Path(tmp_path))
-        # Seed declared network allowlist rules (idempotent).
+        # Register the plugin row in `plugins` FIRST so the network-rule rows'
+        # FK (plugin_id → plugins.id) is satisfiable, then seed the declared
+        # allowlist. order matters — seeding before scan would violate the FK.
+        await scan_and_register_user_plugins(user.user_id, safe_name)
         await seed_declared_network_rules(
             plugin_id, user.user_id, [r.to_dict() for r in m.network_allowlist]
         )
-        await scan_and_register_user_plugins(user.user_id, safe_name)
         return {"status": "ok", "plugin_id": plugin_id, "message": f"插件 '{plugin_id}' 已安装"}
     except HTTPException:
         raise
