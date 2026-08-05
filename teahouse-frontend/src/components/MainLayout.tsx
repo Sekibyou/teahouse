@@ -1,11 +1,14 @@
 import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, PanelLeftClose, PanelLeftOpen } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { Outlet, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { useAuth, useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useThemeStore } from "@/stores/themeStore"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import { SettingsDialog } from "@/components/SettingsDialog"
 import { LoginPage } from "@/pages/LoginPage"
 
 export function MainLayout() {
@@ -18,18 +21,9 @@ export function MainLayout() {
   const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
   const toggleChatCollapsed = useViewModeStore((s) => s.toggleChatCollapsed)
   const isMobile = useIsMobile()
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem("theme")
-    const shouldBeDark = saved ? saved === "dark" : true
-    document.documentElement.classList.toggle("dark", shouldBeDark)
-    return shouldBeDark
-  })
-
-  const toggleTheme = () => {
-    setIsDark(!isDark)
-    document.documentElement.classList.toggle("dark", !isDark)
-    localStorage.setItem("theme", isDark ? "light" : "dark")
-  }
+  const isDark = useThemeStore((s) => s.isDark)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
 
   useEffect(() => {
     if (isLoading) return
@@ -70,6 +64,7 @@ export function MainLayout() {
             <Outlet context={{ isMobile: true, toggleTheme }} />
           </main>
         </div>
+        <SettingsDialog />
       </div>
     )
   }
@@ -144,7 +139,7 @@ export function MainLayout() {
           <Button variant="ghost" size="icon" onClick={toggleTheme}>
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => navigate("/settings")}>
+          <Button variant="ghost" size="icon" onClick={() => openSettings()}>
             <Settings className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon" onClick={clearAuth}>
@@ -158,6 +153,7 @@ export function MainLayout() {
           <Outlet context={{ isMobile: false, toggleTheme }} />
         </main>
       </div>
+      <SettingsDialog />
     </div>
   )
 }

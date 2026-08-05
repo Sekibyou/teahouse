@@ -11,6 +11,7 @@ import { renderText } from "@/lib/htmlSanitizer"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { Prototype, Instance } from "@/lib/types"
 
@@ -19,6 +20,7 @@ export function SessionSelectPage() {
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const isMobile = useIsMobile()
   const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
 
   const [prototypes, setPrototypes] = useState<Prototype[]>([])
   const [instances, setInstances] = useState<Instance[]>([])
@@ -286,7 +288,7 @@ export function SessionSelectPage() {
                   </button>
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
-                    onClick={() => { navigate("/settings"); setShowMobileMenu(false) }}
+                    onClick={() => { openSettings(); setShowMobileMenu(false) }}
                   >
                     <Settings className="h-4 w-4" />
                     设置

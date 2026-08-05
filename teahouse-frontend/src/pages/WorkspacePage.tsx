@@ -11,21 +11,20 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { instancesApi, gitApi, pluginsApi, prototypesApi } from "@/lib/api"
+import { instancesApi, gitApi, prototypesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useAuthActions } from "@/stores/authStore"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { PluginPanel } from "@/components/PluginPanel"
 import { GitDialog } from "@/components/GitDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { FileTreeNode } from "@/lib/types"
-import type { Plugin } from "@/lib/pluginTypes"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
@@ -87,16 +86,6 @@ export function WorkspacePage() {
   // Track whether the file content has finished loading
   const [contentReady, setContentReady] = useState(false)
 
-  // Plugin panels state
-  const [enabledPlugins, setEnabledPlugins] = useState<Plugin[]>([])
-  const [pluginPanel, setPluginPanel] = useState<string | null>(null)
-
-  const loadPlugins = useCallback(async () => {
-    const res = await pluginsApi.list()
-    if (res.ok) {
-      setEnabledPlugins(res.data!.plugins.filter(p => p.enabled && p.has_frontend))
-    }
-  }, [])
   const [showCreate, setShowCreate] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [createName, setCreateName] = useState("")
 
@@ -116,11 +105,6 @@ export function WorkspacePage() {
 
   // Git state — file statuses for tree coloring from unified store
   const fileStatuses = useGitStore((s) => s.fileStatuses)
-
-  // Load plugin panels
-  useEffect(() => {
-    loadPlugins()
-  }, [loadPlugins])
 
   // Redirect if no active instance
   useEffect(() => {
@@ -870,32 +854,8 @@ export function WorkspacePage() {
             className="border-l border-border flex flex-col bg-muted/10 min-w-0 shrink-0"
             style={{ width: `${chatWidth}%` }}
           >
-            {/* Plugin panel tabs */}
-            {enabledPlugins.length > 0 && (
-              <div className="flex items-center gap-0 border-b border-border shrink-0 overflow-x-auto">
-                {enabledPlugins.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`px-3 py-1.5 text-xs font-medium transition-colors shrink-0 border-r border-border ${
-                      pluginPanel === p.id
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-muted text-muted-foreground"
-                    }`}
-                    onClick={() => setPluginPanel(pluginPanel === p.id ? null : p.id)}
-                    title={p.description}
-                  >
-                    <Puzzle className="h-3 w-3 inline mr-1" />
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="flex-1 flex flex-col min-h-0">
-              {pluginPanel ? (
-                <PluginPanel pluginId={pluginPanel} />
-              ) : (
-                <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
-              )}
+              <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
             </div>
           </aside>
         </>
@@ -1157,6 +1117,7 @@ function MobileSettingsContent({
   const navigate = useNavigate()
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const { clearAuth } = useAuthActions()
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
 
   return (
     <div className="space-y-4">
@@ -1174,7 +1135,7 @@ function MobileSettingsContent({
           variant="outline"
           className="w-full justify-start gap-2"
           onClick={() => {
-            navigate("/settings")
+            openSettings()
             onClose()
           }}
         >
@@ -1186,7 +1147,7 @@ function MobileSettingsContent({
           variant="outline"
           className="w-full justify-start gap-2"
           onClick={() => {
-            navigate("/settings/plugins")
+            openSettings("plugins")
             onClose()
           }}
         >

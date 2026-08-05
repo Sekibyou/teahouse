@@ -1,22 +1,27 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import {
   Server, Cpu, Sliders, X, Loader2, Plus, Pencil, Trash2,
   CheckCircle2, AlertCircle, Download, Star, FileText, Link2,
+  Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi } from "@/lib/api"
-import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset } from "@/lib/types"
+import { PluginPanel } from "@/components/PluginPanel"
+import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi } from "@/lib/api"
+import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import { SlotCard } from "@/components/SlotCard"
+import { useThemeStore } from "@/stores/themeStore"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import type { Plugin } from "@/lib/pluginTypes"
 
-interface LLMManagementDialogProps {
-  open: boolean
-  onClose: () => void
+interface SettingsDialogProps {
+  open?: boolean
+  onClose?: () => void
   defaultTab?: TabKey
 }
 
-type TabKey = "models" | "profiles" | "presets" | "slots"
+type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins"
 
 const API_FORMAT_LABELS: Record<string, string> = {
   openai: "OpenAI 兼容",
@@ -35,7 +40,17 @@ const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string }[] = [
   { key: "profiles", Icon: Sliders, label: "参数预设" },
   { key: "presets", Icon: FileText, label: "导演提示词预设" },
   { key: "slots", Icon: Link2, label: "槽位指定" },
+  { key: "general", Icon: SlidersHorizontal, label: "通用设置" },
+  { key: "plugins", Icon: Puzzle, label: "插件管理" },
 ]
+
+const permLabels: Record<string, string> = {
+  tool: "导演工具",
+  frontend: "前端面板",
+  network: "网络请求",
+  file_read: "读取文件",
+  file_write: "写入文件",
+}
 
 // ─── Inline field helper ───
 function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
@@ -67,7 +82,16 @@ function EditModal({ title, children, onClose }: { title: string; children: Reac
   )
 }
 
-export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagementDialogProps) {
+export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTab: defaultTabProp }: SettingsDialogProps) {
+  const storeOpen = useSettingsDialogStore((s) => s.open)
+  const storeDefaultTab = useSettingsDialogStore((s) => s.defaultTab)
+  const closeSettings = useSettingsDialogStore((s) => s.closeSettings)
+
+  // 未显式传 props 时由全局 store 驱动（MainLayout 挂载单实例）；
+  // 传了 props 则回退到受控用法（如 ChatPanel 旧的本地 llmDialogOpen）。
+  const open = openProp ?? storeOpen
+  const onClose = onCloseProp ?? closeSettings
+  const defaultTab = (defaultTabProp ?? storeDefaultTab) as TabKey | undefined
   const [tab, setTab] = useState<TabKey>("models")
 
   // ─── Provider state ───
@@ -116,6 +140,22 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
   // ─── Slot state ───
   const [slotBindings, setSlotBindings] = useState<SlotBindings>({ director: { model_id: null, profile_id: null, prompt_preset_id: null }, writer: { model_id: null, profile_id: null, prompt_preset_id: null } })
   const [slotsLoading, setSlotsLoading] = useState(false)
+
+  // ─── General settings state ───
+  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3 })
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsSaved, setSettingsSaved] = useState(false)
+
+  // ─── Plugins state ───
+  const [plugins, setPlugins] = useState<Plugin[]>([])
+  const [pluginsLoading, setPluginsLoading] = useState(false)
+  const [toggling, setToggling] = useState<Set<string>>(new Set())
+  const [configPlugin, setConfigPlugin] = useState<Plugin | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Plugin | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [error, setError] = useState("")
 
@@ -175,6 +215,25 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
       loadAll()
     }
   }, [open, defaultTab, loadAll])
+
+  // Theme readthrough
+  const isDark = useThemeStore((s) => s.isDark)
+  const setTheme = useThemeStore((s) => s.setTheme)
+
+  // Lazy-load general / plugins on first visit of those tabs
+  const settingsLoadedRef = useRef(false)
+  const pluginsLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!open) return
+    if (tab === "general" && !settingsLoadedRef.current) {
+      settingsLoadedRef.current = true
+      loadAppSettings()
+    }
+    if (tab === "plugins" && !pluginsLoadedRef.current) {
+      pluginsLoadedRef.current = true
+      loadPlugins()
+    }
+  }, [open, tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null
 
@@ -421,6 +480,73 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
     setSlotBindings(prev => ({ ...prev, [slotId]: binding }))
   }
 
+  // ─── General settings handlers ───
+  const loadAppSettings = async () => {
+    setSettingsLoading(true)
+    const res = await appSettingsApi.get()
+    if (res.ok) setAppSettings(res.data!)
+    setSettingsLoading(false)
+  }
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true)
+    setSettingsSaved(false)
+    const res = await appSettingsApi.update({ max_retries: appSettings.max_retries })
+    if (res.ok) {
+      setAppSettings(res.data!)
+      setSettingsSaved(true)
+      setTimeout(() => setSettingsSaved(false), 2000)
+    }
+    setSettingsSaving(false)
+  }
+
+  // ─── Plugins handlers ───
+  const loadPlugins = async () => {
+    setPluginsLoading(true)
+    const res = await pluginsApi.list()
+    if (res.ok) setPlugins(res.data!.plugins)
+    setPluginsLoading(false)
+  }
+
+  const handleToggle = async (p: Plugin) => {
+    setToggling((prev) => new Set(prev).add(p.id))
+    if (p.enabled) {
+      await pluginsApi.disable(p.id)
+    } else {
+      await pluginsApi.enable(p.id)
+    }
+    await loadPlugins()
+    setToggling((prev) => {
+      const next = new Set(prev)
+      next.delete(p.id)
+      return next
+    })
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const res = await pluginsApi.uninstall(deleteTarget.id)
+    setDeleting(false)
+    setDeleteTarget(null)
+    if (res.ok) {
+      if (configPlugin?.id === deleteTarget.id) setConfigPlugin(null)
+      await loadPlugins()
+    }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    const form = new FormData()
+    form.append("file", file)
+    await pluginsApi.importZip(form)
+    setUploading(false)
+    await loadPlugins()
+    if (fileInputRef.current) fileInputRef.current.value = ""
+  }
+
   // ─── Helpers for provider form state per card ───
 
   const getProviderFormFor = (p: LLMProvider) => {
@@ -494,7 +620,7 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
           <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
               <Cpu className="h-4 w-4 text-primary" />
-              <span className="font-semibold">模型管理</span>
+              <span className="font-semibold">设置</span>
             </div>
             <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
               <X className="h-4 w-4" />
@@ -1015,6 +1141,203 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
                   )}
                 </div>
               )}
+
+              {/* ── Tab 5: General Settings ── */}
+              {tab === "general" && (
+                <div className="p-5 space-y-6">
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">外观</div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          切换界面明暗主题。
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTheme(!isDark)}
+                        className="gap-1.5"
+                      >
+                        {isDark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                        {isDark ? "切换日间模式" : "切换夜间模式"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {settingsLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="rounded-lg border p-4 space-y-4">
+                        <div>
+                          <label className="text-sm font-medium flex items-center justify-between">
+                            <span>LLM 请求最大重试次数</span>
+                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                              {appSettings.max_retries}
+                            </span>
+                          </label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            网络波动时自动重试 LLM API 请求。不重试业务错误（4xx/5xx）。设为 0 则禁用重试。
+                          </p>
+                          <div className="mt-3 flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={0}
+                              max={10}
+                              value={appSettings.max_retries}
+                              onChange={(e) => setAppSettings({ ...appSettings, max_retries: Number(e.target.value) })}
+                              className="flex-1 h-2 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={10}
+                              value={appSettings.max_retries}
+                              onChange={(e) => {
+                                const v = Math.max(0, Math.min(10, Number(e.target.value) || 0))
+                                setAppSettings({ ...appSettings, max_retries: v })
+                              }}
+                              className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={handleSaveSettings}
+                        disabled={settingsSaving}
+                        className="w-full"
+                      >
+                        {settingsSaving ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : settingsSaved ? (
+                          <span>已保存</span>
+                        ) : (
+                          "保存设置"
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Tab 6: Plugins ── */}
+              {tab === "plugins" && (
+                pluginsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="p-5 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        已发现 {plugins.length} 个插件
+                      </p>
+                      <div>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".zip"
+                          onChange={handleImport}
+                          className="hidden"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploading}
+                        >
+                          {uploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
+                          导入插件
+                        </Button>
+                      </div>
+                    </div>
+
+                    {plugins.length === 0 ? (
+                      <div className="text-center text-muted-foreground py-12">
+                        <Puzzle className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                        <p className="text-sm">暂无可用插件</p>
+                        <p className="text-xs mt-1 opacity-60">将插件放入 {`data/{用户名}/plugins/`} 目录后自动发现，或点击「导入插件」上传 .zip</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {plugins.map((p) => (
+                          <div key={p.id} className="rounded-lg border p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium flex items-center gap-2">
+                                  {p.name}
+                                  <span className="text-[10px] text-muted-foreground font-normal">v{p.version}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant={p.enabled ? "default" : "outline"}
+                                  onClick={() => handleToggle(p)}
+                                  disabled={toggling.has(p.id)}
+                                >
+                                  {toggling.has(p.id) ? (
+                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                  ) : p.enabled ? (
+                                    <PowerOff className="h-3 w-3 mr-1" />
+                                  ) : (
+                                    <Power className="h-3 w-3 mr-1" />
+                                  )}
+                                  {p.enabled ? "已启用" : "已禁用"}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-muted-foreground hover:text-red-500"
+                                  onClick={() => setDeleteTarget(p)}
+                                  title="卸载插件"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {p.permissions.map((perm) => (
+                                <span key={perm} className="inline-flex items-center gap-1 text-[10px] bg-muted/50 px-1.5 py-0.5 rounded">
+                                  <Shield className="h-2.5 w-2.5" />
+                                  {permLabels[perm] || perm}
+                                </span>
+                              ))}
+                              <span className="text-[10px] text-muted-foreground ml-1">
+                                {p.has_backend ? "· 后端" : ""}{p.has_frontend ? "· 前端" : ""}
+                              </span>
+                            </div>
+
+                            {p.enabled && p.has_frontend && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setConfigPlugin(configPlugin?.id === p.id ? null : p)}
+                                className="text-xs"
+                              >
+                                <Puzzle className="h-3 w-3 mr-1" />
+                                {configPlugin?.id === p.id ? "关闭配置面板" : "打开配置面板"}
+                              </Button>
+                            )}
+
+                            {configPlugin?.id === p.id && (
+                              <div className="border rounded-md overflow-hidden" style={{ height: 280 }}>
+                                <PluginPanel pluginId={p.id} className="w-full h-full" />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
             </div>
           </div>
         </div>
@@ -1049,6 +1372,16 @@ export function LLMManagementDialog({ open, onClose, defaultTab }: LLMManagement
         confirmText="删除"
         onConfirm={deletePreset}
         onCancel={() => setDeletePresetTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="卸载插件"
+        message={`确定卸载「${deleteTarget?.name}」吗？此操作将删除该插件的所有文件和数据。`}
+        variant="destructive"
+        confirmText={deleting ? "卸载中..." : "卸载"}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </>
   )

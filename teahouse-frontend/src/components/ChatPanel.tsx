@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback, memo } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2 } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2, Puzzle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, API_BASE_URL } from "@/lib/api"
-import { LLMManagementDialog } from "@/components/LLMManagementDialog"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import type { FloorsStats } from "@/lib/types"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -139,7 +139,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
   // Slot state — lightweight model info display
   const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
-  const [llmDialogOpen, setLlmDialogOpen] = useState(false)
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
+  const [enabledPluginCount, setEnabledPluginCount] = useState(0)
 
   useEffect(() => {
     llmSlotsApi.getAll().then(res => {
@@ -160,6 +161,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       }
     })
   }, [messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
+
+  // Enabled plugin count for the header trigger
+  const refreshPluginCount = useCallback(async () => {
+    const res = await pluginsApi.list()
+    if (res.ok) setEnabledPluginCount(res.data!.plugins.filter(p => p.enabled).length)
+  }, [])
+  useEffect(() => {
+    refreshPluginCount()
+  }, [refreshPluginCount, messages.length > 0])
 
   // ------------------------------------------------------------------
   // History loading — memory is owned by the backend (.sessions/). We pull a
@@ -800,21 +810,29 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="p-3 border-b border-border shrink-0 space-y-2">
-        {/* Row 1: 导演 + model names */}
+        {/* Row 1: 导演 + enabled plugin count + model names */}
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">导演</h3>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
             <button
               className="flex items-center gap-1 hover:text-foreground transition-colors"
-              onClick={() => setLlmDialogOpen(true)}
-              title="打开模型管理"
+              onClick={() => openSettings("plugins")}
+              title="打开设置→插件管理"
+            >
+              <Puzzle className="h-3 w-3" />
+              <span className="text-foreground font-medium">{enabledPluginCount}</span>
+            </button>
+            <button
+              className="flex items-center gap-1 hover:text-foreground transition-colors"
+              onClick={() => openSettings("slots")}
+              title="打开设置→槽位指定"
             >
               导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span>
             </button>
             <button
               className="flex items-center gap-1 hover:text-foreground transition-colors"
-              onClick={() => setLlmDialogOpen(true)}
-              title="打开模型管理"
+              onClick={() => openSettings("slots")}
+              title="打开设置→槽位指定"
             >
               正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span>
             </button>
@@ -1064,11 +1082,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (instId) useGitStore.getState().fetchGitStatus(instId)
           onGitRefresh?.()
         }}
-      />
-      <LLMManagementDialog
-        open={llmDialogOpen}
-        onClose={() => setLlmDialogOpen(false)}
-        defaultTab="slots"
       />
     </div>
   )
