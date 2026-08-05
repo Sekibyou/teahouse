@@ -157,3 +157,115 @@ async def delete_all_plugin_data(plugin_id: str, user_id: str) -> None:
         "DELETE FROM plugin_data WHERE plugin_id = ? AND user_id = ?",
         (plugin_id, user_id),
     )
+
+
+# ── Network allowlist ─────────────────────────────────────────────
+
+
+async def seed_declared_network_rules(
+    plugin_id: str,
+    user_id: str,
+    rules: list[dict],
+) -> None:
+    """Insert (or refresh) a plugin's declared network rules. Idempotent:
+    an existing (plugin, user, scheme, host, port) declared row is updated,
+    preserving its enable flag across reinstalls."""
+    now = current_timestamp()
+    for r in rules:
+        scheme = r.get("scheme", "https")
+        host = r["host"]
+        port = r.get("port")
+        existing = await fetch_one(
+            """SELECT id, enabled FROM plugin_network_rules
+               WHERE plugin_id=? AND user_id=? AND scheme=? AND host=? AND port=? AND source='declare'""",
+            (plugin_id, user_id, scheme, host, port),
+        )
+        if existing:
+            await execute(
+                """UPDATE plugin_network_rules SET enabled=?, updated_at=?
+                   WHERE id=?""",
+                (existing["enabled"], now, existing["id"]),
+            )
+        else:
+            await execute(
+                """INSERT INTO plugin_network_rules
+                   (id, plugin_id, user_id, scheme, host, port, source, enabled, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (generate_uuid(), plugin_id, user_id, scheme, host, port, "declare", 1, now, now),
+            )
+
+
+async def get_network_rules(
+    plugin_id: str,
+    user_id: str,
+    enabled_only: bool = False,
+) -> list[dict]:
+    sql = """SELECT * FROM plugin_network_rules
+             WHERE plugin_id=? AND user_id=?"""
+    if enabled_only:
+        sql += " AND enabled=1"
+    sql += " ORDER BY source DESC, host, port"
+    rows = await fetch_all(sql, (plugin_id, user_id))
+    return [dict(r) for r in rows]
+
+
+async def get_network_rule(rule_id: str, user_id: str) -> Optional[dict]:
+    row = await fetch_one(
+        "SELECT * FROM plugin_network_rules WHERE id=? AND user_id=?",
+        (rule_id, user_id),
+    )
+    return dict(row) if row else None
+
+
+async def add_user_network_rule(
+    plugin_id: str,
+    user_id: str,
+    scheme: str,
+    host: str,
+    port: Optional[int],
+) -> dict:
+    now = current_timestamp()
+    rule_id = generate_uuid()
+    await execute(
+        """INSERT INTO plugin_network_rules
+           (id, plugin_id, user_id, scheme, host, port, source, enabled, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (rule_id, plugin_id, user_id, scheme, host, port, "user", 1, now, now),
+    )
+    row = await fetch_one(
+        "SELECT * FROM plugin_network_rules WHERE id=? AND user_id=?",
+        (rule_id, user_id),
+    )
+    return dict(row) if row else {}
+
+
+async def set_network_rule_enabled(rule_id: str, user_id: str, enabled: bool) -> bool:
+    await execute(
+        "UPDATE plugin_network_rules SET enabled=?, updated_at=? WHERE id=? AND user_id=?",
+        (int(enabled), current_timestamp(), rule_id, user_id),
+    )
+    return True
+
+
+async def update_user_network_rule(
+    rule_id: str,
+    user_id: str,
+    scheme: str,
+    host: str,
+    port: Optional[int],
+) -> bool:
+    """Update a USER-source rule. Declared rules are immutable — enforce at caller."""
+    await execute(
+        "UPDATE plugin_network_rules SET scheme=?, host=?, port=?, updated_at=? WHERE id=? AND user_id=? AND source='user'",
+        (scheme, host, port, current_timestamp(), rule_id, user_id),
+    )
+    return True
+
+
+async def delete_network_rule(rule_id: str, user_id: str) -> bool:
+    """Delete a USER-source rule. Declared rules are immutable — enforce at caller."""
+    await execute(
+        "DELETE FROM plugin_network_rules WHERE id=? AND user_id=? AND source='user'",
+        (rule_id, user_id),
+    )
+    return True

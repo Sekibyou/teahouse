@@ -1,6 +1,6 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
 import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
-import type { Plugin, PluginData } from "./pluginTypes"
+import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
@@ -532,17 +532,35 @@ export const pluginsApi = {
   enable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/enable`),
   disable: (id: string) => post<{ status: string; plugin_id: string; enabled: boolean }>(`/api/plugins/${id}/disable`),
   uninstall: (id: string) => del<{ status: string; plugin_id: string; message: string }>(`/api/plugins/${id}`),
-  importZip: (form: FormData) => {
+  // Two-phase install: preview (no persistence) → confirm (persist).
+  preview: (form: FormData) => {
     const token = getAuthToken()
     const headers: Record<string, string> = {}
-    // Don't set Content-Type — browser sets it with boundary for multipart
     if (token) headers["Authorization"] = `Bearer ${token}`
-    return fetch(`${API_BASE_URL}/api/plugins/import`, {
+    return fetch(`${API_BASE_URL}/api/plugins/preview`, {
       method: "POST",
       headers,
       body: form,
-    }).then(r => r.ok ? { ok: true as const, data: r.json() } : { ok: false as const, error: "导入失败" })
+    }).then(async r => {
+      if (r.ok) return { ok: true as const, data: await r.json() as PluginPreview }
+      const detail = (await r.json().catch(() => null))?.detail
+      return { ok: false as const, error: typeof detail === "string" ? detail : "插件预检失败" }
+    })
   },
+  confirmInstall: (previewId: string) =>
+    post<{ status: string; plugin_id: string; message: string }>("/api/plugins/import/confirm", { preview_id: previewId }),
+  // Network allowlist
+  getNetworkRules: (id: string) => get<{ plugin_id: string; rules: NetworkRule[] }>(`/api/plugins/${id}/network-rules`),
+  addNetworkRule: (id: string, rule: { scheme: string; host: string; port: number | null }) =>
+    post<{ status: string; rule: NetworkRule }>(`/api/plugins/${id}/network-rules`, rule),
+  updateNetworkRule: (id: string, ruleId: string, rule: { scheme: string; host: string; port: number | null }) =>
+    put<{ status: string; rule: NetworkRule }>(`/api/plugins/${id}/network-rules/${ruleId}`, rule),
+  enableNetworkRule: (id: string, ruleId: string) =>
+    post(`/api/plugins/${id}/network-rules/${ruleId}/enable`),
+  disableNetworkRule: (id: string, ruleId: string) =>
+    post(`/api/plugins/${id}/network-rules/${ruleId}/disable`),
+  deleteNetworkRule: (id: string, ruleId: string) =>
+    del(`/api/plugins/${id}/network-rules/${ruleId}`),
   getData: (id: string) => get<{ plugin_id: string; data: PluginData }>(`/api/plugins/${id}/data`),
   setData: (id: string, data: PluginData) => put<{ status: string; plugin_id: string }>(`/api/plugins/${id}/data`, { data }),
   deleteData: (id: string, key: string) => del<{ status: string }>(`/api/plugins/${id}/data/${key}`),

@@ -13,7 +13,7 @@ import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel,
 import { SlotCard } from "@/components/SlotCard"
 import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
-import type { Plugin } from "@/lib/pluginTypes"
+import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -156,6 +156,18 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [deleting, setDeleting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // install confirmation (two-phase)
+  const [preview, setPreview] = useState<PluginPreview | null>(null)
+  const [previewError, setPreviewError] = useState("")
+  const [conflictsAccepted, setConflictsAccepted] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const pendingZipRef = useRef<File | null>(null)
+  // network allowlist per-plugin panel
+  const [netRulesFor, setNetRulesFor] = useState<Plugin | null>(null)
+  const [netRules, setNetRules] = useState<NetworkRule[]>([])
+  const [netRulesLoading, setNetRulesLoading] = useState(false)
+  const [newRule, setNewRule] = useState<{ scheme: string; host: string; port: string }>({ scheme: "https", host: "", port: "" })
+  const [netRuleError, setNetRuleError] = useState("")
 
   const [error, setError] = useState("")
 
@@ -539,12 +551,93 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    const form = new FormData()
-    form.append("file", file)
-    await pluginsApi.importZip(form)
-    setUploading(false)
-    await loadPlugins()
-    if (fileInputRef.current) fileInputRef.current.value = ""
+    setPreviewError("")
+    try {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await pluginsApi.preview(form)
+      if (res.ok) {
+        pendingZipRef.current = file
+        setConflictsAccepted(false)
+        setPreview(res.data)
+      } else {
+        setPreviewError(res.error || "插件预检失败")
+        setPreview(null)
+      }
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  const handleConfirmInstall = async () => {
+    if (!preview) return
+    setInstalling(true)
+    try {
+      const res = await pluginsApi.confirmInstall(preview.preview_id)
+      setPreview(null)
+      pendingZipRef.current = null
+      if (res.ok) {
+        await loadPlugins()
+      } else {
+        setPreviewError(res.error || "安装失败")
+      }
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  // ─── Network allowlist handlers ───
+  const loadNetRules = async (p: Plugin) => {
+    setNetRulesFor(p)
+    setNetRulesLoading(true)
+    setNetRuleError("")
+    const res = await pluginsApi.getNetworkRules(p.id)
+    if (res.ok && res.data) setNetRules(res.data.rules)
+    else setNetRuleError(res.error || "加载网络白名单失败")
+    setNetRulesLoading(false)
+  }
+
+  const closeNetRules = () => {
+    setNetRulesFor(null)
+    setNetRules([])
+  }
+
+  const handleAddRule = async () => {
+    if (!netRulesFor) return
+    const port = newRule.port.trim() === "" ? null : Number(newRule.port)
+    if (!newRule.host.trim()) { setNetRuleError("host 不能为空"); return }
+    if (newRule.port.trim() !== "" && !(port && port >= 1 && port <= 65535)) {
+      setNetRuleError("port 需在 1-65535 之间")
+      return
+    }
+    const res = await pluginsApi.addNetworkRule(netRulesFor.id, {
+      scheme: newRule.scheme,
+      host: newRule.host.trim(),
+      port: port && port >= 1 && port <= 65535 ? port : null,
+    })
+    if (res.ok && res.data) {
+      setNetRules((prev) => [...prev, res.data!.rule])
+      setNewRule({ scheme: "https", host: "", port: "" })
+      setNetRuleError("")
+    } else {
+      setNetRuleError(res.error || "新增规则失败")
+    }
+  }
+
+  const handleToggleRule = async (rule: NetworkRule) => {
+    if (!netRulesFor) return
+    const next = !rule.enabled
+    const res = next
+      ? await pluginsApi.enableNetworkRule(netRulesFor.id, rule.id)
+      : await pluginsApi.disableNetworkRule(netRulesFor.id, rule.id)
+    if (res.ok) setNetRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, enabled: next } : r))
+  }
+
+  const handleDeleteRule = async (rule: NetworkRule) => {
+    if (!netRulesFor) return
+    const res = await pluginsApi.deleteNetworkRule(netRulesFor.id, rule.id)
+    if (res.ok) setNetRules((prev) => prev.filter((r) => r.id !== rule.id))
   }
 
   // ─── Helpers for provider form state per card ───
@@ -1256,6 +1349,98 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       </div>
                     </div>
 
+                    {previewError && (
+                      <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{previewError}</span>
+                      </div>
+                    )}
+
+                    {preview && (
+                      <div className="border rounded-md p-4 space-y-3 bg-card">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {preview.manifest.name}
+                              <span className="text-[10px] text-muted-foreground font-normal">v{preview.manifest.version}</span>
+                              {preview.manifest.description && (
+                                <span className="text-xs text-muted-foreground font-normal truncate max-w-[220px]">{preview.manifest.description}</span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">插件 ID: {preview.manifest.id}</p>
+                          </div>
+                          <button onClick={() => { setPreview(null); pendingZipRef.current = null }} className="text-muted-foreground hover:text-foreground">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        {preview.conflicts.length > 0 && (
+                          <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
+                            <div className="font-medium mb-1">以下工具与内置工具冲突，安装将被拒绝：</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {preview.conflicts.map((c) => (
+                                <span key={c} className="bg-red-500/10 px-1.5 py-0.5 rounded">{c}</span>
+                              ))}
+                            </div>
+                            <div className="mt-1.5">该插件无法安装，请插件作者修改工具名后重试。</div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <div className="text-muted-foreground mb-1">权限</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(preview.manifest.permissions.length > 0 ? preview.manifest.permissions : ["（无）"]).map((perm) => (
+                                <span key={perm} className="inline-flex items-center gap-1 bg-muted/50 px-1.5 py-0.5 rounded">
+                                  <Shield className="h-2.5 w-2.5" />
+                                  {permLabels[perm] || perm}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground mb-1">工具</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(preview.manifest.tools.length > 0 ? preview.manifest.tools.map(t => t.name) : ["（无）"]).map((n) => (
+                                <span key={n} className="bg-muted/50 px-1.5 py-0.5 rounded">{n}</span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {preview.network_allowlist.length > 0 && (
+                          <div>
+                            <div className="text-xs text-muted-foreground mb-1">声明的网络访问白名单</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {preview.network_allowlist.map((r, i) => (
+                                <span key={i} className="text-[11px] bg-muted/50 px-1.5 py-0.5 rounded font-mono">
+                                  {r.scheme}://{r.host}{r.port ? `:${r.port}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => { setPreview(null); pendingZipRef.current = null }}
+                          >
+                            取消
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={handleConfirmInstall}
+                            disabled={installing || preview.conflicts.length > 0}
+                          >
+                            {installing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                            确认安装
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     {plugins.length === 0 ? (
                       <div className="text-center text-muted-foreground py-12">
                         <Puzzle className="h-12 w-12 mx-auto mb-3 opacity-20" />
@@ -1314,6 +1499,105 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               </span>
                             </div>
 
+                            {(p.permissions || []).includes("network") && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => netRulesFor?.id === p.id ? closeNetRules() : loadNetRules(p)}
+                                className="text-xs"
+                              >
+                                <Link2 className="h-3 w-3 mr-1" />
+                                {netRulesFor?.id === p.id ? "收起网络白名单" : "展开网络白名单"}
+                              </Button>
+                            )}
+
+                            {netRulesFor?.id === p.id && (
+                              <div className="border rounded-md p-3 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium">网络访问白名单</span>
+                                  {netRulesLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                                </div>
+
+                                {netRuleError && (
+                                  <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-2 py-1.5">
+                                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                                    <span>{netRuleError}</span>
+                                  </div>
+                                )}
+
+                                {netRules.length === 0 && !netRulesLoading && (
+                                  <p className="text-xs text-muted-foreground">暂无白名单规则，插件无法访问网络。</p>
+                                )}
+
+                                <div className="space-y-2">
+                                  {netRules.map((rule) => (
+                                    <div key={rule.id} className="flex items-center justify-between gap-2 text-xs border rounded-md px-2.5 py-1.5">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="font-mono truncate">
+                                          {rule.scheme}://{rule.host}{rule.port ? `:${rule.port}` : ""}
+                                        </span>
+                                        <span
+                                          className={`shrink-0 px-1.5 py-0.5 text-[10px] rounded ${
+                                            rule.source === "user"
+                                              ? "bg-blue-500/10 text-blue-600"
+                                              : rule.enabled
+                                                ? "bg-emerald-500/10 text-emerald-600"
+                                                : "bg-muted/50 text-muted-foreground"
+                                          }`}
+                                        >
+                                          {rule.source === "user" ? "我的" : "声明"}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <button
+                                          onClick={() => handleToggleRule(rule)}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] ${rule.enabled ? "text-emerald-600" : "text-muted-foreground"}`}
+                                          title={rule.enabled ? "点击禁用" : "点击启用"}
+                                        >
+                                          {rule.enabled ? "启用" : "禁用"}
+                                        </button>
+                                        {rule.source === "user" && (
+                                          <button
+                                            onClick={() => handleDeleteRule(rule)}
+                                            className="text-red-500 hover:text-red-700 px-1"
+                                            title="删除规则"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-1">
+                                  <select
+                                    value={newRule.scheme}
+                                    onChange={(e) => setNewRule({ ...newRule, scheme: e.target.value })}
+                                    className="h-8 rounded-md border bg-transparent text-xs px-2"
+                                  >
+                                    <option value="https">https</option>
+                                    <option value="http">http</option>
+                                  </select>
+                                  <Input
+                                    className="h-8 text-xs flex-1"
+                                    placeholder="api.example.com 或 127.0.0.1"
+                                    value={newRule.host}
+                                    onChange={(e) => setNewRule({ ...newRule, host: e.target.value })}
+                                  />
+                                  <Input
+                                    className="h-8 text-xs w-16"
+                                    placeholder="端口"
+                                    value={newRule.port}
+                                    onChange={(e) => setNewRule({ ...newRule, port: e.target.value })}
+                                  />
+                                  <Button size="sm" variant="outline" className="shrink-0" onClick={handleAddRule}>
+                                    添加
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+
                             {p.enabled && p.has_frontend && (
                               <Button
                                 variant="ghost"
@@ -1322,7 +1606,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 className="text-xs"
                               >
                                 <Puzzle className="h-3 w-3 mr-1" />
-                                {configPlugin?.id === p.id ? "关闭配置面板" : "打开配置面板"}
+                                {configPlugin?.id === p.id ? "收起配置面板" : "展开配置面板"}
                               </Button>
                             )}
 

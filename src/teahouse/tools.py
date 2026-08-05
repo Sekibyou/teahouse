@@ -67,35 +67,41 @@ def _raw_tool_to_schema(tool: dict) -> dict:
     }
 
 
-def load_tools(path: Path | None = None) -> list[dict]:
+def load_tools(path: Path | None = None, user_id: str | None = None) -> list[dict]:
     """Load tool schemas from tools.json, returning OpenAI-compatible function-calling format.
 
     Call this once at startup. The result is also stored in the module-level TOOLS variable.
-    Includes plugin-provided tools if plugins are loaded.
+    Includes plugin-provided tools for the given user if plugins are loaded.
     """
     global TOOLS
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
     builtin = [_raw_tool_to_schema(t) for t in raw]
 
-    # Merge plugin tools
+    # Merge plugin tools — scoped to the calling user so one user's plugin
+    # tools never leak into another user's tool schema. Startup/global loads
+    # (no user_id) stay builtin-only; per-director-round loads pass the user.
     try:
-        from .plugins import get_tool_defs_from_plugins
-        plugin_defs = get_tool_defs_from_plugins()
-        plugin_schemas = [_raw_tool_to_schema(t) for t in plugin_defs]
-        TOOLS = builtin + plugin_schemas
+        if user_id:
+            from .plugins import get_tool_defs_from_plugins
+            plugin_defs = get_tool_defs_from_plugins(user_id)
+            plugin_schemas = [_raw_tool_to_schema(t) for t in plugin_defs]
+            TOOLS = builtin + plugin_schemas
+        else:
+            TOOLS = builtin
     except Exception:
         TOOLS = builtin
 
     return TOOLS
 
 
-def load_tools_usage(path: Path | None = None) -> str:
+async def load_tools_usage(path: Path | None = None, user_id: str | None = None) -> str:
     """Build the natural-language tool usage guide from tools.json.
 
     Each tool's `usage` field is rendered as a markdown section.
     Tools without a `usage` field are skipped.
-    Includes plugin tool usage guides.
+    Includes plugin tool usage guides, resolving `${var:key}` references against
+    the plugin's live plugin_data each assembly.
     Returns the combined text for injection into the director's system prompt.
     """
     p = path or _TOOLS_JSON_PATH
@@ -111,21 +117,46 @@ def load_tools_usage(path: Path | None = None) -> str:
         sections.append(f"## {name}\n")
         sections.append(f"{usage}\n")
 
-    # Append plugin tool usage guides
+    # Append plugin tool usage guides — scoped per user, resolving ${var:...}
+    # against the plugin's live data. Only when a user context is present.
     try:
-        from .plugins import get_tool_defs_from_plugins
-        plugin_defs = get_tool_defs_from_plugins()
-        if plugin_defs:
-            sections.append("\n## 插件工具\n")
-            for tool in plugin_defs:
-                name = tool["name"]
-                usage = tool.get("usage", tool["description"])
-                sections.append(f"### {name}\n")
-                sections.append(f"{usage}\n")
+        if user_id:
+            from .plugins import get_tool_defs_from_plugins
+            plugin_defs = get_tool_defs_from_plugins(user_id)
+            if plugin_defs:
+                sections.append("\n## 插件工具\n")
+                for tool in plugin_defs:
+                    name = tool["name"]
+                    usage = await _resolve_plugin_usage(tool, user_id) or tool["description"]
+                    sections.append(f"### {name}\n")
+                    sections.append(f"{usage}\n")
     except Exception:
         pass
 
     return "\n".join(sections)
+
+
+async def _resolve_plugin_usage(tool: dict, user_id: str | None) -> str | None:
+    """Resolve a plugin tool's `usage`, expanding `${var:key}` against the owning
+    plugin's live plugin_data. Unknown keys fall back to the literal token."""
+    usage = tool.get("usage")
+    if not usage or user_id is None or "${var:" not in usage:
+        return usage
+
+    import re as _re
+    plugin_id = tool.get("_plugin_id")
+    if not plugin_id:
+        return usage
+    from .database.plugins import get_plugin_data
+    try:
+        data = await get_plugin_data(plugin_id, user_id)
+    except Exception:
+        return usage
+
+    def _sub(m):
+        key = m.group(1)
+        return str(data.get(key, m.group(0)))
+    return _re.sub(r"\$\{var:([^}]+)\}", _sub, usage)
 
 
 # Eager-load at import time so existing imports of `TOOLS` still work
@@ -1068,6 +1099,26 @@ async def execute_git_log(instance_dir: Path, args: dict[str, Any]) -> str:
         return f"查看提交历史失败: {e}"
 
 
+async def execute_wait(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Wait a given number of milliseconds before returning.
+
+    Useful when a later step (an external service, a rate limit, a cooldown)
+    must not run immediately. Returns once the delay elapses.
+    """
+    import asyncio
+    raw = args.get("ms")
+    try:
+        ms = int(raw)
+    except (TypeError, ValueError):
+        return f"Error: Wait 需要数字类型的 ms 参数（毫秒）。收到: {raw!r}"
+    if ms < 0:
+        return f"Error: ms 不能为负数，收到 {ms}"
+    if ms > 300000:
+        return f"Error: ms 超出上限（最多 300000 = 5 分钟），收到 {ms}"
+    await asyncio.sleep(ms / 1000)
+    return f"已等待 {ms} 毫秒。"
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -1092,17 +1143,8 @@ TOOL_EXECUTORS = {
     "GitLog": execute_git_log,
     "GitStatus": execute_git_status,
     "GitDiff": execute_git_diff,
+    "Wait": execute_wait,
 }
-
-
-async def execute_slow_test(args: dict[str, Any], instance_dir: Path) -> str:
-    """Wait 2 seconds, then return OK. For testing tool call rendering on the frontend."""
-    import asyncio
-    await asyncio.sleep(2)
-    return "OK"
-
-
-TOOL_EXECUTORS["SlowTest"] = execute_slow_test
 
 
 async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None, instance_id: str | None = None) -> str:
@@ -1127,10 +1169,12 @@ async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user
     # Check plugin tool executors
     try:
         from .plugins import get_tool_executors_from_plugins, find_plugin_context_for_tool
-        plugin_execs = get_tool_executors_from_plugins()
+        plugin_execs = get_tool_executors_from_plugins(user_id)
         plugin_exec = plugin_execs.get(name)
         if plugin_exec:
             ctx = find_plugin_context_for_tool(name, user_id or "")
+            if ctx is not None and instance_dir is not None:
+                ctx.bind_instance(instance_dir)
             try:
                 result = await plugin_exec(args, ctx, instance_dir, user_id)
                 return result

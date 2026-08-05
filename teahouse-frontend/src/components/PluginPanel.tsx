@@ -33,18 +33,31 @@ export function PluginPanel({ pluginId, className }: PluginPanelProps) {
   // readable defaults in both light and dark modes.
   const injectThemeStyles = useCallback((rawHtml: string): string => {
     const dark = isDark()
+    // These hardcoded values mirror the host theme tokens in globals.css
+    // (--background / --foreground / --input .dark), so the sandboxed panel
+    // matches the surrounding dialog (the iframe can't read parent CSS vars).
+    const bg = dark ? "#09090b" : "#ffffff"
+    const fg = dark ? "#fafafa" : "#09090b"
+    const inputBg = dark ? "#27272a" : "#ffffff"
+    const inputBorder = dark ? "#27272a" : "rgba(128,128,128,0.3)"
     const themeStyles = `
 /* Injected by PluginPanel — base theme bridge */
 :root {
   color-scheme: ${dark ? "dark" : "light"};
-  background-color: ${dark ? "#171717" : "#ffffff"};
-  color: ${dark ? "#e5e5e5" : "#171717"};
+  background-color: ${bg};
+  color: ${fg};
   font-family: system-ui, -apple-system, sans-serif;
 }
+/* Keep the body transparent so background-color above is what's visible, not
+   the host dialog's darker backdrop showing through any gaps. */
+html, body {
+  background-color: transparent;
+  margin: 0;
+}
 input, textarea, select {
-  background-color: ${dark ? "#262626" : "#ffffff"};
-  color: ${dark ? "#e5e5e5" : "#171717"};
-  border-color: ${dark ? "#404040" : "rgba(128,128,128,0.3)"};
+  background-color: ${inputBg};
+  color: ${fg};
+  border-color: ${inputBorder};
 }
 input:focus, textarea:focus, select:focus {
   border-color: #6366f1;
@@ -158,7 +171,7 @@ input:focus, textarea:focus, select:focus {
       ref={iframeRef}
       srcDoc={injectThemeStyles(html)}
       className={className}
-      sandbox="allow-scripts allow-same-origin"
+      sandbox="allow-scripts"
       title={`Plugin: ${pluginId}`}
       style={{ width: "100%", height: "100%", border: "none" }}
     />

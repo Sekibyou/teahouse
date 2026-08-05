@@ -423,19 +423,20 @@
     }
   },
   {
-    "name": "SlowTest",
-    "description": "测试工具：等待 2 秒后返回 OK。用于验证前端的工具调用渲染效果。",
-    "usage": "等待 2 秒后返回 OK。\n\n参数：\n- `description`（必填）：简单描述本次测试场景。",
+    "name": "Wait",
+    "description": "等待指定的毫秒数后再继续后续操作",
+    "usage": "等待指定毫秒数后再继续。适用于需要在执行下一个步骤前留出间歇的场景（速率限制、外部服务冷却、依次发出的延迟）。等待结束即返回，不产生其他作用。",
     "parameters": {
       "type": "object",
       "properties": {
-        "description": {
-          "type": "string",
-          "description": "简单描述本次测试场景"
+        "ms": {
+          "type": "integer",
+          "description": "等待的毫秒数（非负，最大 300000 = 5 分钟）",
+          "minimum": 0
         }
       },
       "required": [
-        "description"
+        "ms"
       ]
     }
   }

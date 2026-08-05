@@ -551,8 +551,8 @@ async def _tool_use_loop(
         _pending["content"] = ""
         _pending["reasoning"] = ""
 
-    tools = load_tools()
-    tools_usage = load_tools_usage()
+    tools = load_tools(user_id=user_id)
+    tools_usage = await load_tools_usage(user_id=user_id)
 
     # Resolve prompt preset from director slot binding
     tool_system = None
