@@ -105,6 +105,47 @@
     }
   },
   {
+    "name": "TodoWrite",
+    "description": "创建/更新任务清单（todo list）追踪多步骤进度。一次调用覆盖整个清单",
+    "usage": "创建或更新任务清单追踪进度。**会话内有效，不落盘、不持久化**，下次会话需重建。\n\n使用场景：\n- 面对复杂的多步骤任务（3 个以上独立步骤）时，用此工具创建清单追踪进度。\n- 任务完成、步骤推进或计划变更时，更新清单反映最新状态。\n- 简单任务无需使用。\n\n参数：\n- `todos`（必填）：任务数组，每项包含：\n  - `content`（必填）：任务内容（祈使句表述）\n  - `status`（必填）：`pending`（待办）、`in_progress`（进行中）、`completed`（已完成）之一\n  - `activeForm`（必填）：进行中状态的动态描述（用于展示，如 \"正在生成楼层正文\"）\n\n注意：\n- **同一时刻只能有一个任务为 `in_progress`**，违反会报错。\n- 每次调用以完整清单覆盖旧清单（不是增量追加）。\n- 会话结束后清单不保留，超长短时记忆需写入文件（如 temp/ 下的草稿）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "todos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
+              },
+              "activeForm": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "content",
+              "status",
+              "activeForm"
+            ]
+          },
+          "description": "任务清单数组（一次调用覆盖整个清单）"
+        }
+      },
+      "required": [
+        "todos"
+      ]
+    }
+  },
+  {
     "name": "Glob",
     "description": "按 glob 模式匹配文件路径",
     "usage": "按 glob 模式匹配实例中的文件路径。\n\n参数：\n- `pattern`（必填）：glob 模式，相对于实例根目录。例如 **/*.md 匹配所有 markdown，floors/floor-*.md 匹配楼层文件\n\n注意：只返回匹配的文件列表，不返回文件内容。找到目标文件后用 Read 读取内容。",
