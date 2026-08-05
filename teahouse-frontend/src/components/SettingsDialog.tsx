@@ -7,7 +7,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { PluginPanel } from "@/components/PluginPanel"
+import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi } from "@/lib/api"
 import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import { SlotCard } from "@/components/SlotCard"
@@ -1495,7 +1495,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 </span>
                               ))}
                               <span className="text-[10px] text-muted-foreground ml-1">
-                                {p.has_backend ? "· 后端" : ""}{p.has_frontend ? "· 前端" : ""}
+                                {p.has_backend ? "· 后端" : ""}{p.has_frontend ? "· 配置面板" : ""}
                               </span>
                             </div>
 
@@ -1611,8 +1611,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             )}
 
                             {configPlugin?.id === p.id && (
-                              <div className="border rounded-md overflow-hidden" style={{ height: 280 }}>
-                                <PluginPanel pluginId={p.id} className="w-full h-full" />
+                              <div className="border rounded-md">
+                                <PluginConfigPanel
+                                  pluginId={p.id}
+                                  config={p.config || []}
+                                  onSaved={() => loadPlugins()}
+                                />
                               </div>
                             )}
                           </div>

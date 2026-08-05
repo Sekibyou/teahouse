@@ -10,7 +10,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -96,6 +95,24 @@ class NetworkRuleBody(BaseModel):
     port: Optional[int] = None
 
 
+def _config_for_plugin(p: dict) -> list[dict]:
+    """Read a plugin's declarative config schema from its plugin.json on disk.
+
+    config is manifest-declared data (not per-user), so we read it live from
+    source_path like the backend is loaded — no separate DB column needed.
+    Returns [] if the manifest can't be read or has no config.
+    """
+    import json as _json
+    source_path = p.get("source_path")
+    if not source_path:
+        return []
+    try:
+        manifest = _json.loads((Path(source_path) / "plugin.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return manifest.get("config", [])
+
+
 # ── Routes ────────────────────────────────────────────────────────
 
 
@@ -117,6 +134,7 @@ async def api_list_plugins(user: UserInfo = Depends(require_user)):
                 "permissions": p["permissions"],
                 "has_backend": bool(p["has_backend"]),
                 "has_frontend": bool(p["has_frontend"]),
+                "config": _config_for_plugin(p),
             }
             for p in plugins
         ]
@@ -137,6 +155,7 @@ async def api_get_plugin(plugin_id: str, user: UserInfo = Depends(require_user))
         "permissions": p["permissions"],
         "has_backend": bool(p["has_backend"]),
         "has_frontend": bool(p["has_frontend"]),
+        "config": _config_for_plugin(p),
     }
 
 
@@ -442,31 +461,3 @@ async def api_delete_data(plugin_id: str, key: str, user: UserInfo = Depends(req
     await delete_plugin_data(plugin_id, user.user_id, key)
     return {"status": "ok"}
 
-
-# ── Frontend file serving ─────────────────────────────────────────
-
-
-@router.get("/{plugin_id}/frontend/{file_path:path}")
-async def api_serve_plugin_frontend(
-    plugin_id: str,
-    file_path: str,
-    user: UserInfo = Depends(require_user),
-):
-    """Serve static files from a plugin's frontend/ directory."""
-    p = await get_plugin(plugin_id, user.user_id)
-    if not p:
-        raise HTTPException(status_code=404, detail="Plugin not found")
-    if not p["has_frontend"]:
-        raise HTTPException(status_code=404, detail="Plugin has no frontend")
-
-    source_path = p.get("source_path", "")
-    if not source_path:
-        raise HTTPException(status_code=404, detail="Plugin source path unknown")
-
-    target = Path(source_path) / "frontend" / file_path
-    if not target.resolve().is_relative_to(Path(source_path).resolve()):
-        raise HTTPException(status_code=400, detail="Path traversal detected")
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    return FileResponse(target)

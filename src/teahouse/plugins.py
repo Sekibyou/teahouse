@@ -40,6 +40,7 @@ class PluginManifest:
     permissions: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
     network_allowlist: list[NetworkRule] = field(default_factory=list)
+    config: list[dict] = field(default_factory=list)
     has_backend: bool = False
     has_frontend: bool = False
     source_path: str = ""
@@ -60,6 +61,7 @@ class PluginManifest:
             permissions=data.get("permissions", []),
             tools=data.get("tools", []),
             network_allowlist=rules,
+            config=data.get("config", []),
         )
 
 
@@ -333,7 +335,8 @@ def _scan_dir(root: Path) -> list[PluginManifest]:
         try:
             m = PluginManifest.from_json(manifest_path)
             m.has_backend = (entry / "backend.py").exists()
-            m.has_frontend = (entry / "frontend" / "index.html").exists()
+            # has_frontend now means "has a declarative config panel", not an iframe.
+            m.has_frontend = len(m.config) > 0
             m.source_path = str(entry.resolve())
             manifests.append(m)
         except Exception:
@@ -572,7 +575,8 @@ def _prevalidate_dir(plugin_dir: Path, expected_id: str | None) -> PluginManifes
             validate_backend_source(backend_path.read_text(encoding="utf-8"))
         except BackendUnsafeError as e:
             raise NetworkRuleError(f"backend.py 未通过安全校验: {e}")
-    m.has_frontend = (plugin_dir / "frontend" / "index.html").exists()
+    # has_frontend now means "has a declarative config panel", not an iframe.
+    m.has_frontend = len(m.config) > 0
 
     return m
 

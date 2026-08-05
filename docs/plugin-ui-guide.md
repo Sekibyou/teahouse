@@ -1,195 +1,96 @@
-# 插件 UI 设计指南
+# 插件配置 UI 指南
 
-插件前端是完全独立的 HTML 页面，通过 iframe + `srcdoc` 渲染，与主程序 CSS 隔离。
-`PluginPanel` 会自动注入基准主题样式，提供
-[color-scheme](https://developer.mozilla.org/en-US/docs/Web/CSS/color-scheme)、背景色、文字色、
-输入框颜色——插件只需使用继承变量即可获得可读的默认外观。
+插件系统的配置面板是**声明式**的：插件在 `plugin.json` 里声明 `config` schema，宿主前端统一渲染成表单。插件**不再支持**自由 HTML iframe 前端。
 
-## 自动注入的主题变量
+## 为什么声明式
 
-`PluginPanel` 在加载插件 HTML 时自动注入以下 `:root` 样式：
+- 插件定位为**网络桥接器**，配置需求是"label + 输入/开关/下拉"这类参数收集，声明式天然覆盖。
+- 高度自适应：宿主按内容渲染，不再有 iframe 的 280px 固定高度问题。
+- 样式/交互统一：复用宿主 shadcn 组件，跨插件视觉一致。
+- **配置阶段零网络零动作**：配置面板只收集参数，不触发后端、不发网络。网络活动发生在实例运行时：
 
-| 属性 | Light | Dark |
+| 场景 | 怎么处理 |
+|---|---|
+| 单次往返（测试连接、调一次 API） | 导演直接调插件 tool，结果进对话/输出 |
+| 持续网络活动（轮询、流、状态） | 插件写变量 → 沙盒 `Teahouse.getVars()` 实时渲染 |
+
+## config schema
+
+`plugin.json` 的 `config` 字段是**元件数组**，每项一个配置。渲染顺序即数组顺序。
+
+```jsonc
+{
+  "id": "mock-service",
+  "...": "...",
+  "config": [
+    {
+      "key": "url",
+      "type": "text",
+      "label": "Echo 服务 URL",
+      "default": "http://127.0.0.1:9999/",
+      "help": "第三方 echo 服务地址"
+    },
+    {
+      "key": "token",
+      "type": "password",
+      "label": "Token",
+      "default": ""
+    }
+  ]
+}
+```
+
+### 通用字段（所有元件）
+
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `color-scheme` | `light` | `dark` |
-| `background-color` | `#ffffff` | `#171717` |
-| `color` | `#171717` | `#e5e5e5` |
+| `key` | string (必填) | 写入 plugin_data 的键名 |
+| `type` | string (必填) | 元件类型，见下表 |
+| `label` | string (必填) | 输入框左侧显示的文字 |
+| `default` | string\|number\|boolean | 展开时若 plugin_data 无此键，用它初始化 |
+| `help` | string (可选) | label 下方的说明文字 |
 
-输入框 (`input, textarea, select`) 也会被注入对应的 dark/light 样式。
+### 元件类型
 
-**插件应使用 `background: transparent` 和 `color: inherit`**，这样无需任何额外工作就能继承正确的主题色。
-
-## 主程序颜色 Token
-
-如果插件希望与主程序 UI 保持更精确的视觉一致，可参考以下颜色映射。
-主程序使用 shadcn/ui + Tailwind CSS v4，颜色空间为 OKLCH。
-
-| Token | Light | Dark | 用途 |
-|---|---|---|---|
-| `--background` | `#ffffff` | `#171717` | 页面/面板背景 |
-| `--foreground` | `#171717` | `#fafafa` | 主文字色 |
-| `--muted` | `#f7f7f7` | `#404040` | 次级背景 |
-| `--muted-foreground` | `#737373` | `#a3a3a3` | 次级文字、提示 |
-| `--border` | `#e5e5e5` | `#404040` | 边框 |
-| `--input` | `#e5e5e5` | `#404040` | 输入框边框 |
-| `--primary` | `#1e293b` | `#fafafa` | 主色（按钮背景等） |
-| `--primary-foreground` | `#fafafa` | `#1e293b` | 主色上的文字 |
-| `--destructive` | `#dc2626` | `#dc2626` | 危险操作（删除等） |
-| `--destructive-foreground` | `#fafafa` | `#fafafa` | 危险操作上的文字 |
-| `--ring` | `#1e293b` | `#6b7280` | 焦点环 |
-
-> 颜色值来自 OKLCH 的 sRGB 近似。主程序的精确值见 `teahouse-frontend/src/styles/globals.css`。
-
-## 主题切换
-
-如需在插件内部检测主题变化，可通过 postMessage `init` 事件携带的 `theme` 字段：
-
-```js
-window.addEventListener('message', (e) => {
-  const d = e.data;
-  if (d.type === 'init') {
-    console.log('当前主题:', d.theme); // "dark" | "light"
-  }
-});
-```
-
-PluginPanel 注入的 `:root` 样式已自动处理了颜色切换，大多数情况下插件无需手动检测主题。
-
-## UI 片段
-
-以下是主程序常用 UI 元素的 CSS 近似实现，可直接复制使用。
-
-### 按钮
-
-```css
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.375rem;
-  height: 2rem;
-  padding: 0 0.625rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  outline: none;
-  white-space: nowrap;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* 主按钮 */
-.btn-primary {
-  background: #1e293b;
-  color: #fafafa;
-}
-.btn-primary:hover { opacity: 0.9; }
-
-/* outline 按钮 */
-.btn-outline {
-  background: transparent;
-  border-color: #e5e5e5;
-  color: inherit;
-}
-.btn-outline:hover { background: rgba(128,128,128,0.1); }
-
-/* ghost 按钮 */
-.btn-ghost {
-  background: transparent;
-  color: inherit;
-}
-.btn-ghost:hover { background: rgba(128,128,128,0.1); }
-
-/* 危险按钮 */
-.btn-destructive {
-  background: rgba(220,38,38,0.1);
-  color: #dc2626;
-}
-.btn-destructive:hover { background: rgba(220,38,38,0.2); }
-```
-
-### 输入框
-
-```css
-.input {
-  width: 100%;
-  padding: 0.5rem 0.625rem;
-  border: 1px solid rgba(128,128,128,0.3);
-  border-radius: 6px;
-  font-size: 0.813rem;
-  background: transparent;
-  color: inherit;
-  outline: none;
-}
-.input:focus {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
-}
-```
-
-### 标签/徽章
-
-```css
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.125rem 0.375rem;
-  border-radius: 4px;
-  font-size: 0.625rem;
-  font-weight: 500;
-  background: rgba(128,128,128,0.1);
-  color: inherit;
-  opacity: 0.7;
-}
-```
-
-### 提示文字
-
-```css
-.hint {
-  font-size: 0.688rem;
-  opacity: 0.5;
-}
-
-.muted-text {
-  color: inherit;
-  opacity: 0.7;
-}
-```
-
-### 卡片/面板
-
-```css
-.card {
-  border: 1px solid rgba(128,128,128,0.2);
-  border-radius: 8px;
-  padding: 1rem;
-}
-```
-
-## 布局建议
-
-- 插件内容区域使用 `padding: 16px`，与主程序内边距一致
-- 垂直间距使用 `8px / 12px / 16px` 的步进，避免过大的间距
-- 最大宽度不设限制，iframe 容器会自动管理尺寸
-- 不要在插件内使用 `position: fixed` 做全屏遮罩——iframe 边界会裁剪
-
-## postMessage 协议
-
-插件通过 `window.parent.postMessage()` 与主程序通信：
-
-| 方向 | type | 说明 |
+| type | 渲染 | 额外字段 |
 |---|---|---|
-| 插件 → 宿主 | `ready` | 插件加载完成，携带 `pluginId` |
-| 宿主 → 插件 | `init` | 初始化响应，携带 `pluginId` 和 `theme` |
-| 插件 → 宿主 | `getData` | 读取存储的配置，携带 `key` |
-| 宿主 → 插件 | `data` | 返回配置数据，携带 `key` 和 `value` |
-| 插件 → 宿主 | `setData` | 保存配置，携带 `key` 和 `value` |
-| 宿主 → 插件 | `saved` | 保存成功确认 |
-| 宿主 → 插件 | `error` | 错误信息，携带 `message` |
+| `text` | 单行文本输入 | — |
+| `password` | 密码输入（掩码） | — |
+| `number` | 数字输入 | `min`、`max` |
+| `textarea` | 多行文本输入 | — |
+| `switch` | 开关（布尔） | 存 `"true"` / `"false"` |
+| `select` | 下拉单选 | `options: [{value, label}]` |
+
+### select 示例
+
+```jsonc
+{
+  "key": "protocol",
+  "type": "select",
+  "label": "协议",
+  "default": "https",
+  "options": [
+    { "value": "http", "label": "HTTP" },
+    { "value": "https", "label": "HTTPS" }
+  ]
+}
+```
+
+## 配置面板时序
+
+1. **展开配置面板** → 宿主 GET `plugin_data` 取最新值快照，初始化表单（缺省字段用元件 `default`）。
+2. **用户编辑** → 只改本地 draft，**不落库**。
+3. **点保存** → 一次性 PUT 全部字段。
+4. **关闭面板** → 丢弃 draft。
+
+### 未保存修改提醒
+
+宿主实时比对"当前表单"与"展开时快照"。若有修改，保存按钮旁显示一行「有未保存修改」，**不拦截**、不弹窗、不做退出防护。
+
+## permission：frontend
+
+`permissions` 里的 `frontend` 表示"该插件有声明式配置面板"。保留该标记是为了向后兼容；宿主据此决定是否显示"展开配置面板"按钮。
+
+## 数据读写
+
+插件后端通过 `PluginContext.get_data()/set_data()` 读取配置，与配置面板共享同一份 `plugin_data`（按插件+用户隔离、加密存储）。
