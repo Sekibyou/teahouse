@@ -31,7 +31,7 @@
 
 ```
 沙盒场景 JS
-  await Teahouse.runBatch("settings/scripts/opening.jsonl", {name:"阿悠"})
+  await Teahouse.runBatch(".teahouse/scripts/opening.jsonl", {name:"阿悠"})
     │  callHost('runBatch', [path, args]) → postMessage 宿主
     ▼
 SandboxManager.handleMessage "runBatch" case
@@ -115,7 +115,7 @@ runBatch: function(path, args) { return callHost('runBatch', [path, args]); },
 
 ## 创作者用法示例
 
-- **开场**：`runBatch("settings/scripts/opening.jsonl", {出身:"A"})` → 脚本内 `FileOps move disabled/A.md → floors/floor-1.md` + `Generate` 产第一楼 + `GitCommit`。
+- **开场**：`runBatch(".teahouse/scripts/opening.jsonl", {出身:"A"})` → 脚本内 `FileOps move disabled/A.md → floors/floor-1.md` + `Generate` 产第一楼 + `GitCommit`。
 - **回合推进**（可配 [条件切片](./conditional-slice.md)）：点击选项后 `setVar` 改变量 → `runBatch` 内 `Generate` 按变量选定分支 → `FileOps draft→正式` → `GitCommit`。
 
 ## 边界（明确排除）
@@ -132,4 +132,4 @@ runBatch: function(path, args) { return callHost('runBatch', [path, args]); },
 2. 最小 jsonl（1 条 `{"tool":"Write","args":{"path":"temp/x.txt","content":"hi"}}`）→ 返回 `{ok:true, completed:[...]}`；文件生成；SSE `file_changed` 触发。
 3. 失败即停：第二条给非法路径 → `{ok:false, completed:[首条], failed:{...}}`，后续步骤不执行。
 4. Generate 步：带认证 user_id → 正常产文件（不依赖导演）。
-5. 沙盒：场景 JS `await Teahouse.runBatch("settings/scripts/opening.jsonl")` → 开场就位、floor-1.md 生成、沙盒经 SSE 自动刷新。
+5. 沙盒：场景 JS `await Teahouse.runBatch(".teahouse/scripts/opening.jsonl")` → 开场就位、floor-1.md 生成、沙盒经 SSE 自动刷新。

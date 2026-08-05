@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..state import state
+from ..script import load_batch, BatchError
+from ..tools import execute_tool
 from ..director_system import get_floors_stats
 from ..database.auth import UserInfo, validate_token
 from ..database.users import get_user_by_username
@@ -598,6 +600,43 @@ async def delete_instance_entry(
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class BatchRunRequest(BaseModel):
+    path: str
+    args: Optional[dict] = None
+
+
+@router.post("/instances/{instance_id}/batch/run")
+async def run_instance_batch(
+    instance_id: str,
+    body: BatchRunRequest,
+    user: UserInfo = Depends(require_user),
+):
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    user_id = u["id"]
+    try:
+        steps = load_batch(instance_dir, body.path)
+        results = []
+        for i, step in enumerate(steps, 1):
+            name = step["tool"]
+            cargs = {**step.get("args", {}), **(body.args or {})}
+            res = await execute_tool(name, cargs, instance_dir, user_id, inst["id"])
+            results.append({"index": i, "tool": name, "result": res})
+            if res.startswith("Error"):
+                return {
+                    "ok": False,
+                    "completed": results,
+                    "failed": {"index": i, "tool": name, "result": res},
+                }
+        return {"ok": True, "completed": results}
+    except BatchError as e:
+        raise HTTPException(status_code=400, detail=f"批量脚本错误: {e}")
 
 
 # ===== Skills =====

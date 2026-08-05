@@ -209,6 +209,13 @@ ${bridge}
           }
           break
         }
+        case "runBatch": {
+          if (instanceId && _args[0]) {
+            const res = await instancesApi.runBatch(instanceId, _args[0] as string, _args[1] as Record<string, unknown> | undefined)
+            result = res.ok ? res.data : { ok: false, error: res.error }
+          }
+          break
+        }
         case "getVars": {
           if (instanceId) {
             const names = Array.isArray(_args[0]) ? (_args[0] as string[]) : []

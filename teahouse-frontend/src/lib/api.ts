@@ -163,6 +163,18 @@ export const prototypesApi = {
 }
 
 // Instances API
+export interface BatchRunStepResult {
+  index: number
+  tool: string
+  result: string
+}
+
+export interface BatchRunResult {
+  ok: boolean
+  completed: BatchRunStepResult[]
+  failed?: BatchRunStepResult
+}
+
 export const instancesApi = {
   list: async () => {
     return get<Instance[]>("/api/instances")
@@ -208,6 +220,10 @@ export const instancesApi = {
 
   clearSessionMemory: async (instanceId: string) => {
     return del<{ status: string }>(`/api/instances/${instanceId}/session`)
+  },
+
+  runBatch: async (instanceId: string, path: string, args?: Record<string, unknown>) => {
+    return post<BatchRunResult>(`/api/instances/${instanceId}/batch/run`, { path, args })
   },
 }
 

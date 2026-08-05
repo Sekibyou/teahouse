@@ -213,6 +213,32 @@ Teahouse.send("开始第一章")
 
 这是沙盒与导演交互的唯一方式。用户选择选项、点击按钮等场景可用此方法驱动剧情。
 
+### 预设脚本流水线：`Teahouse.runBatch`
+
+#### runBatch(path, args?) → Promise<{ok, completed, failed?}>
+
+执行一条**预设 JSONL 脚本**（声明式流水线），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：脚本内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接依次执行，各自 SSE 广播。
+
+`path` 为脚本相对实例根的路径（如 `".teahouse/scripts/opening.jsonl"`），支持 `:start-end` 行切片（如 `"opening.jsonl:1-3"`）。`args` 可选，是脚本级入参，会并入每一步的 args（步骤自身的 args 优先生效），通常用于传当前回合的变量/选择。
+
+**存放位置约定**：脚本放在 `.teahouse/scripts/`。该目录与 `.teahouse/output/sandbox/`（渲染代码）、`.teahouse/runtime_vars.jsonl`（状态）同属引擎内部 + 沙盒运行时；runBatch 脚本是运行时驱动的声明式流程，放这里既不混入 `settings/`（那是 yaml 内容设定），也避开 `sandbox/` 的渲染分派规则（bootstrap.js / *.css / *.js 三类才被注入 srcdoc）。`temp/` 是导演侧草稿目录，不要作为脚本正式落点。
+
+返回汇总：`{ok: boolean, completed: [{index, tool, result}], failed?: {index, tool, result}}`——**任一步失败即停**，`ok:false` 并携带失败步；全部成功则 `ok:true`。**不流式，一次性返回全量结果**。
+
+**创作重点**：脚本是**上下文自维持**的静态 JSONL——每一步自带全部所需参数（路径、内容、generate 用的 yaml 源等），不依赖导演拍板。脚本内 `Generate` 步可指定正文产出，`GitCommit` 步可落盘提交。
+
+```js
+// 开场流水线：产第一楼 + 提交
+const res = await Teahouse.runBatch(".teahouse/scripts/opening.jsonl", { user_name: "LowStar" })
+if (res.ok) {
+  reloadFloors()  // SSE 已自动广播，落盘完成后重拉楼层重渲染
+} else {
+  console.error("流水线停在", res.failed)
+}
+```
+
+与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runBatch()`**。
+
 ### 事件监听
 
 #### `Teahouse.on(event, callback)` / `Teahouse.off(event, callback)`
@@ -274,7 +300,7 @@ Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
 如果 `.teahouse/output/sandbox/` 目录下没有 `bootstrap.js`，需要先创建。核心职责：
 
 1. 实现 `callHost()` — postMessage 通信层
-2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本（含 `listFloors`、`readFile`、`writeFile`、`renderRichText`、`send`）
+2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本（含 `listFloors`、`readFile`、`writeFile`、`setVar`、`getVars`、`renderRichText`、`send`、`runBatch`）
 3. 监听宿主推送事件 — `output.refresh`
 4. UI 组件管理 — `registerUI()`
 5. 默认渲染逻辑 — `listFloors()` + `readFile()` + `renderRichText()` 按楼层渲染

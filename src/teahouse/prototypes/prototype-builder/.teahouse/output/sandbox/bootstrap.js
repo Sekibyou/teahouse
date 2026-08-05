@@ -46,6 +46,10 @@
     readFile: function(path) { return callHost('readFile', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
+    // 预设脚本流水线（无导演独立执行，一次性返回汇总 + 失败即停）
+    //   runBatch(path, args?) — 执行 settings/ 等处的 jsonl 脚本；args 并入每一步
+    runBatch: function(path, args) { return callHost('runBatch', [path, args]); },
+
     // 实例变量（setVar 落盘到 .teahouse/runtime_vars.jsonl，文件即状态）
     //   setVar(updates)              — {name:value} 合并写；返回写后全部变量 [{name,value,note?,change_log?}]
     //   setVar({updates,note,change_log,delete}) — 可带元数据：note 覆盖、change_log 追加、delete 删名
