@@ -3,6 +3,7 @@ import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { renderText } from "@/lib/htmlSanitizer"
 import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi } from "@/lib/api"
+import type { ToolsRunStep } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 
 // ============================================================
@@ -219,9 +220,9 @@ ${bridge}
           }
           break
         }
-        case "runBatch": {
-          if (instanceId && _args[0]) {
-            const res = await instancesApi.runBatch(instanceId, _args[0] as string, _args[1] as Record<string, unknown> | undefined)
+        case "runTools": {
+          if (instanceId && Array.isArray(_args[0])) {
+            const res = await instancesApi.runTools(instanceId, _args[0] as unknown as ToolsRunStep[])
             result = res.ok ? res.data : { ok: false, error: res.error }
           }
           break

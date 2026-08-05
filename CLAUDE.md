@@ -44,7 +44,7 @@
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
 | **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
-| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码、`scripts/` 沙盒触发脚本 runBatch.jsonl）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `settings/`（yaml 内容设定，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。运行时脚本（runBatch）放 `.teahouse/scripts/`，不要放进 `sandbox/`（其渲染分派只认 bootstrap.js / \*.css / \*.js 三类）。 |
+| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `settings/`（yaml 内容设定，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。沙盒「确定批处理」用 `runTool(steps)`（内联工具数组，见 sandbox-builder SKILL），不依赖脚本文件；导演侧若要引用 `.jsonl` 流程可用 `BatchExecute`。 |
 
 ## 占位符语法
 
@@ -250,7 +250,6 @@ skills/              Skill 包，每个子目录一个 Skill
     scripts/          可选，可执行脚本
 .teahouse/            引擎内部目录
   runtime_vars.jsonl   变量系统（文件即状态，SetRuntimeVar/GetRuntimeVars，一变量一行 jsonl，可带 note/change_log）
-  scripts/             沙盒触发脚本（runBatch 执行的预设 JSONL 流水线，相对实例根路径引用）
   output/
     floors/           正文历史（floor-N.md 定稿 / floor-N-draft.md 半正式稿）
     sandbox/          沙盒渲染资源

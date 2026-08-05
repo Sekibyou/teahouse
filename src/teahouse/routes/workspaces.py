@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..state import state
-from ..script import load_batch, BatchError
 from ..tools import execute_tool
 from ..director_system import get_floors_stats
 from ..database.auth import UserInfo, validate_token
@@ -652,41 +651,51 @@ async def delete_instance_entry(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-class BatchRunRequest(BaseModel):
-    path: str
+class ToolsRunStep(BaseModel):
+    tool: str
     args: Optional[dict] = None
+    """A single tool call that the sandbox composes inline (runTool)."""
 
 
-@router.post("/instances/{instance_id}/batch/run")
-async def run_instance_batch(
+class ToolsRunRequest(BaseModel):
+    steps: list[ToolsRunStep]
+
+
+_MAX_INLINE_STEPS = 50
+
+
+@router.post("/instances/{instance_id}/tools/run")
+async def run_instance_tools(
     instance_id: str,
-    body: BatchRunRequest,
+    body: ToolsRunRequest,
     user: UserInfo = Depends(require_user),
 ):
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
+    if not body.steps:
+        raise HTTPException(status_code=400, detail="steps 不能为空")
+    if len(body.steps) > _MAX_INLINE_STEPS:
+        raise HTTPException(
+            status_code=400, detail=f"单次内联工具调用最多 {_MAX_INLINE_STEPS} 步"
+        )
 
     instance_dir = _resolve_instance_dir(inst)
     user_id = u["id"]
-    try:
-        steps = load_batch(instance_dir, body.path)
-        results = []
-        for i, step in enumerate(steps, 1):
-            name = step["tool"]
-            cargs = {**step.get("args", {}), **(body.args or {})}
-            res = await execute_tool(name, cargs, instance_dir, user_id, inst["id"])
-            results.append({"index": i, "tool": name, "result": res})
-            if res.startswith("Error"):
-                return {
-                    "ok": False,
-                    "completed": results,
-                    "failed": {"index": i, "tool": name, "result": res},
-                }
-        return {"ok": True, "completed": results}
-    except BatchError as e:
-        raise HTTPException(status_code=400, detail=f"批量脚本错误: {e}")
+    results = []
+    for i, step in enumerate(body.steps, 1):
+        name = step.tool
+        cargs = step.args or {}
+        res = await execute_tool(name, cargs, instance_dir, user_id, inst["id"])
+        results.append({"index": i, "tool": name, "result": res})
+        if res.startswith("Error"):
+            return {
+                "ok": False,
+                "completed": results,
+                "failed": {"index": i, "tool": name, "result": res},
+            }
+    return {"ok": True, "completed": results}
 
 
 # ===== Skills =====

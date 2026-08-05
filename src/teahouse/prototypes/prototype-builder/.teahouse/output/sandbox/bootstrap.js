@@ -50,9 +50,11 @@
     readAsset: function(path) { return callHost('readAsset', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
-    // 预设脚本流水线（无导演独立执行，一次性返回汇总 + 失败即停）
-    //   runBatch(path, args?) — 执行 settings/ 等处的 jsonl 脚本；args 并入每一步
-    runBatch: function(path, args) { return callHost('runBatch', [path, args]); },
+    // 内联工具流水线（无导演独立执行，一次性返回汇总 + 失败即停）
+    //   runTool(steps) — steps 是 [{tool, args}, ...]，由沙盒代码用真实 js 值现场组装
+    //   在宿主侧逐名执行（与导演工具同一 execute_tool 通道）。需要运行时变量时先用
+    //   getVars + js 拼接，不要依赖脚本侧占位符解析。
+    runTool: function(steps) { return callHost('runTools', [steps]); },
 
     // 实例变量（setVar 落盘到 .teahouse/runtime_vars.jsonl，文件即状态）
     //   setVar(updates)              — {name:value} 合并写；返回写后全部变量 [{name,value,note?,change_log?}]
