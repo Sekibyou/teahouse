@@ -42,6 +42,7 @@ from ..database.workspaces import (
     delete_sandbox_vars,
 )
 from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
+from ..placeholder import validate_var_name
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +541,20 @@ async def set_runtime_vars(
         raise HTTPException(status_code=404, detail="Instance not found")
 
     instance_dir = _resolve_instance_dir(inst)
+    # Whitespace in a variable name makes it unusable as a Python identifier in
+    # ${ ... } conditional-slice code blocks — reject before writing.
+    bad_names: set[str] = set()
+    for mapping in (body.updates, body.note, body.change_log):
+        for k in mapping:
+            if validate_var_name(k):
+                bad_names.add(str(k))
+    for k in body.delete:
+        if validate_var_name(k):
+            bad_names.add(str(k))
+    if bad_names:
+        detail = "; ".join(validate_var_name(k) for k in sorted(bad_names))
+        raise HTTPException(status_code=400, detail=detail + "。变量名禁止空白字符。")
+
     try:
         if body.updates:
             write_sandbox_vars(instance_dir, body.updates, note=body.note, change_log=body.change_log)

@@ -21,7 +21,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .placeholder import resolve_placeholders, resolve_variables
+from .placeholder import resolve_placeholders, resolve_variables, validate_var_name
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars
@@ -260,6 +260,25 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
         return "Error: 'change_log' must be an object of {name: entry}"
     if not updates and not note and not change_log and not delete:
         return "Error: provide at least one of updates / note / change_log / delete"
+
+    # Whitespace in a variable name makes it unusable as a Python identifier inside
+    # ${ ... } conditional-slice code blocks — reject up front rather than silently.
+    bad_names: set[str] = set()
+    for mapping in (updates, note, change_log):
+        if not mapping:
+            continue
+        for k in mapping:
+            err = validate_var_name(k)
+            if err:
+                bad_names.add(str(k))
+    for k in delete:
+        err = validate_var_name(k)
+        if err:
+            bad_names.add(str(k))
+    if bad_names:
+        return "Error: " + "; ".join(
+            validate_var_name(k) for k in sorted(bad_names)
+        ) + "。变量名禁止空白字符。"
 
     # Reserved namespace guard across every name-bearing arg
     prefix_warn = ""

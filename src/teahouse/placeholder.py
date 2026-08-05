@@ -30,7 +30,12 @@ Note: use | as the anchor separator, : for the line range.
 """
 from __future__ import annotations
 
+import ast
+import io
+import random
 import re
+import token
+import tokenize
 from pathlib import Path
 from typing import Optional
 
@@ -80,6 +85,421 @@ def _substitute_variable_literals(text: str, var_map: dict) -> str:
     return _VARIABLE_RE.sub(_replacer, text)
 
 
+# =====================================================================
+# 条件切片 — 变量驱动的 `${ if ...: return ... }` 多行代码块
+# =====================================================================
+#
+# A multi-line `${ ... }` block is a conditional slice: it selects one string to
+# inline based on sandbox vars, evaluated at resolve time. A block whose content
+# (after strip) contains `return ` (followed by a space) is treated as a **code
+# block**: its content is parsed via a whitelist AST interpreter, the single
+# matched `return <value>` branch is materialized, and that value is returned for
+# the outer resolve loop to continue expanding (it may itself contain `{{...}}`
+# or `${...}`). A block with no `return ` is an ordinary variable block reused
+# from the standard lookup (read var_map; missing → literal).
+#
+# All failures (syntax error, non-whitelisted node, unknown name) degrade to the
+# literal block text — never raise, so a bad block can't blow up assembly.
+
+# Test trigger: a block is a code block iff `return ` appears inside it.
+_CODE_BLOCK_TRIGGER = "return "
+
+# Whitelist functions callable from inside a code block. Mapped to safe impls
+# so arbitrary calls are never executed.
+
+# --- Simple dice roller (RPG-style syntax), adapted from the reference. ---
+# Supported: "1d6", "2d10+5", "4d6k3" (keep highest 3), "4d6d1" (drop lowest 1),
+# "1d6r1" (reroll 1s), "1d6ro1" (reroll once), "1d6e" / "1d6!" (exploding),
+# "1d6p" (penetrating). Returns an int total. Runs only inside the code-block
+# whitelist via WHITELIST_FUNCS["roll"], still getting a plain string constant.
+_ROLL_PATTERN = re.compile(
+    r"^(\d+)?d(\d+)((?:[kdlrop!e]+\d*)*)?([+-]\d+)?$", re.IGNORECASE
+)
+_ROLL_KEEP = re.compile(r"k(\d+)", re.IGNORECASE)
+_ROLL_DROP = re.compile(r"dl(\d+)", re.IGNORECASE)
+_ROLL_REROLL = re.compile(r"r(\d+)", re.IGNORECASE)
+_ROLL_REROLL_ONCE = re.compile(r"ro(\d+)", re.IGNORECASE)
+_ROLL_EXPLODE = re.compile(r"[e!]", re.IGNORECASE)
+_ROLL_PENETRATE = re.compile(r"p(?!\d)", re.IGNORECASE)
+
+
+def _apply_explode(values: list[int], kept: list[bool], sides: int, explode: bool) -> None:
+    """Append extra rolls for max-face dice, in place on values/kept.
+    explode=True → exploding (extra added as-is); explode=False → penetrating
+    (extra -1, min 1). A hard cap prevents runaway on degenerate dice (sides==1)."""
+    cap = 100
+    extra_added = 0
+    i = 0
+    while i < len(values) and extra_added < cap:
+        if values[i] == sides:
+            extra = random.randint(1, sides)
+            if not explode:
+                extra = max(1, extra - 1)
+            values.append(extra)
+            kept.append(True)
+            extra_added += 1
+        i += 1
+
+
+def _roll(expression) -> int:
+    """Roll `expression` (e.g. "2d6+1", "4d6k3") and return the int total.
+
+    Supported grammar is a subset of the reference dice roller: XdN with optional
+    keep (kN), drop-lowest (dlN), reroll (rN), reroll-once (roN), exploding (e/!),
+    penetrating (p), and a trailing +/- modifier. Unknown syntax raises ValueError
+    which the code-block evaluator catches → falls back to the literal block.
+    """
+    expr = str(expression).strip().lower()
+    m = _ROLL_PATTERN.match(expr)
+    if not m:
+        raise ValueError(f"invalid dice expression: {expr}")
+    count = int(m.group(1)) if m.group(1) else 1
+    sides = int(m.group(2))
+    mods = m.group(3) or ""
+    bonus = int(m.group(4)) if m.group(4) else 0
+    if count <= 0 or sides <= 0:
+        raise ValueError(f"invalid dice expression: {expr}")
+
+    values = [random.randint(1, sides) for _ in range(count)]
+    kept = [True] * count
+
+    reroll_once_threshold = None
+    km = _ROLL_REROLL_ONCE.search(mods)
+    if km:
+        reroll_once_threshold = int(km.group(1))
+    elif (rm := _ROLL_REROLL.search(mods)):
+        threshold = int(rm.group(1))
+        for i, v in enumerate(values):
+            while v <= threshold:
+                v = random.randint(1, sides)
+            values[i] = v
+
+    if reroll_once_threshold is not None:
+        for i, v in enumerate(values):
+            if v <= reroll_once_threshold:
+                values[i] = random.randint(1, sides)
+
+    explode = _ROLL_EXPLODE.search(mods) is not None
+    penetrate = _ROLL_PENETRATE.search(mods) is not None
+    if explode or penetrate:
+        _apply_explode(values, kept, sides, explode)
+
+    if (km := _ROLL_KEEP.search(mods)):
+        keep_n = int(km.group(1))
+        drop_these = count - keep_n
+        if drop_these > 0:
+            lowest = sorted(range(len(values)), key=lambda i: values[i])[: min(drop_these, len(values))]
+            for i in lowest:
+                kept[i] = False
+    if (dm := _ROLL_DROP.search(mods)):
+        drop_n = int(dm.group(1))
+        if drop_n > 0:
+            lowest = sorted(range(len(values)), key=lambda i: values[i])[: min(drop_n, len(values))]
+            for i in lowest:
+                kept[i] = False
+
+    total = sum(v for v, ok in zip(values, kept) if ok) + bonus
+    return int(total)
+
+
+WHITELIST_FUNCS = {
+    "roll": _roll,
+    "random": lambda lo, hi: random.randint(int(lo), int(hi)),
+    "str": str,
+}
+
+
+# AST node types a code block may use. Anything else (Import, Attribute, Exec,
+# global/del, non-simple assignment targets, non-whitelisted Call, ...) is
+# rejected and the block falls back literal.
+_ALLOWED_NODES = {
+    ast.Module, ast.Expr, ast.If, ast.IfExp, ast.Return, ast.Assign,
+    ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+    ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.USub, ast.UAdd,
+    ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod,
+    ast.Constant, ast.Name, ast.Load, ast.Store, ast.List, ast.Tuple,
+    ast.Call, ast.keyword, ast.NameConstant,
+    ast.JoinedStr, ast.FormattedValue,
+}
+
+# Sentinel: the block text ran to completion without hitting a return branch.
+_NO_RETURN = object()
+
+
+class _BlockEvalError(Exception):
+    """Raised when a code block cannot be safely evaluated. Degrades to literal."""
+
+
+def _truthy(v) -> bool:
+    return bool(v)
+
+
+def _check_whitelist(tree: ast.AST) -> None:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if not (
+                isinstance(node.func, ast.Name)
+                and node.func.id in WHITELIST_FUNCS
+            ):
+                raise _BlockEvalError(f"call to non-whitelisted function: {ast.dump(node.func)}")
+        elif type(node) not in _ALLOWED_NODES:
+            raise _BlockEvalError(f"node type not allowed: {type(node).__name__}")
+    # Name used in a non-Load context must be the target of a simple `x = value`
+    # assignment. Attribute/subscript/unpack/global/del/aug-assign targets are all
+    # already rejected by the node-type whitelist above (ast.Attribute, ast.Subscript,
+    # ast.Tuple-store, ast.Global, ast.Delete, ast.AugAssign are not in _ALLOWED_NODES).
+    # Here we only relax Store so that `_exec_block` can bind a local var.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, (ast.Load, ast.Store)):
+            raise _BlockEvalError("name used in unsupported context")
+
+
+def _eval_expr(node: ast.AST, env: dict):
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in env:
+            return env[node.id]
+        raise _BlockEvalError(f"unknown variable referenced in code block: '{node.id}'")
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in WHITELIST_FUNCS:
+            args = [_eval_expr(a, env) for a in node.args]
+            return WHITELIST_FUNCS[node.func.id](*args)
+        raise _BlockEvalError("non-whitelisted call")
+    if isinstance(node, ast.BinOp):
+        left = _eval_expr(node.left, env)
+        right = _eval_expr(node.right, env)
+        binop = type(node.op)
+        if binop is ast.Add:
+            return left + right
+        if binop is ast.Sub:
+            return left - right
+        if binop is ast.Mult:
+            return left * right
+        if binop is ast.Div:
+            return left / right
+        if binop is ast.Mod:
+            return left % right
+        raise _BlockEvalError(f"unsupported binary op: {binop.__name__}")
+    if isinstance(node, ast.Compare):
+        left = _eval_expr(node.left, env)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _eval_expr(comparator, env)
+            cmpop = type(op)
+            if cmpop is ast.Eq:
+                ok = left == right
+            elif cmpop is ast.NotEq:
+                ok = left != right
+            elif cmpop is ast.Lt:
+                ok = left < right
+            elif cmpop is ast.LtE:
+                ok = left <= right
+            elif cmpop is ast.Gt:
+                ok = left > right
+            elif cmpop is ast.GtE:
+                ok = left >= right
+            else:
+                raise _BlockEvalError(f"unsupported comparison op: {cmpop.__name__}")
+            if not ok:
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            return all(_truthy(_eval_expr(v, env)) for v in node.values)
+        # ast.Or
+        return any(_truthy(_eval_expr(v, env)) for v in node.values)
+    if isinstance(node, ast.UnaryOp):
+        val = _eval_expr(node.operand, env)
+        if isinstance(node.op, ast.Not):
+            return not _truthy(val)
+        if isinstance(node.op, ast.USub):
+            return -val
+        if isinstance(node.op, ast.UAdd):
+            return val
+        raise _BlockEvalError(f"unsupported unary op: {type(node.op).__name__}")
+    if isinstance(node, ast.IfExp):
+        if _truthy(_eval_expr(node.test, env)):
+            return _eval_expr(node.body, env)
+        return _eval_expr(node.orelse, env)
+    if isinstance(node, ast.List):
+        return [_eval_expr(e, env) for e in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_expr(e, env) for e in node.elts)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_eval_expr(v, env) for v in node.values)
+    if isinstance(node, ast.FormattedValue):
+        value = _eval_expr(node.value, env)
+        conversion = node.conversion
+        if conversion == 114:      # !r
+            text = repr(value)
+        elif conversion == 115:    # !s
+            text = str(value)
+        elif conversion == 97:     # !a
+            text = ascii(value)
+        else:
+            text = str(value)
+        if node.format_spec is not None:
+            spec = _eval_expr(node.format_spec, env)
+            text = format_text(value, spec, text)
+        return text
+    raise _BlockEvalError(f"unsupported expression node: {type(node).__name__}")
+
+
+def format_text(value, spec: str, fallback: str) -> str:
+    """Apply a Python format spec (e.g. '03d', '>5') to `value`. Falls back to
+    `fallback` if the spec isn't applicable to the value's type (non-fatal)."""
+    try:
+        return format(value, spec)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _exec_block(stmts: list[ast.stmt], env: dict):
+    """Execute a code block's statements. Returns (value, has_return in this branch).
+    Unmatched branches fall through to sibling statements; overall no return → _NO_RETURN."""
+    for stmt in stmts:
+        if isinstance(stmt, ast.Return):
+            return _eval_expr(stmt.value, env)
+        if isinstance(stmt, ast.If):
+            branch = stmt.body if _truthy(_eval_expr(stmt.test, env)) else stmt.orelse
+            v = _exec_block(branch, env)
+            if v is not _NO_RETURN:
+                return v
+            continue
+        if isinstance(stmt, ast.Expr):
+            # Evaluate for allowed side-effect-free expressions (e.g. nothing meaningful)
+            _eval_expr(stmt.value, env)
+            continue
+        if isinstance(stmt, ast.Assign):
+            if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+                raise _BlockEvalError("assignment must target a single simple name")
+            env[stmt.targets[0].id] = _eval_expr(stmt.value, env)
+            continue
+        raise _BlockEvalError(f"unsupported statement node: {type(stmt).__name__}")
+    return _NO_RETURN
+
+
+_SINGLE_LINE_BRANCH_KEYWORDS = {"elif", "else"}
+
+
+def _rebuild_single_line_if(code: str) -> str:
+    """Rewrite a single-line `if C: return A elif C2: return B else: return D`
+    chain (invalid as inline Python) into an equivalent valid multi-line block.
+
+    Token-driven so `:` / keywords inside the quoted return values are never split.
+    The DSL restricts suites to `return <expr>`, so every top-level `:` is a header
+    terminator and every top-level elif/else begins a new branch line.
+    """
+    toks = [
+        t for t in tokenize.generate_tokens(io.StringIO(code).readline)
+        if t.type not in (tokenize.NEWLINE, tokenize.ENDMARKER,
+                          tokenize.INDENT, tokenize.DEDENT, tokenize.NL)
+    ]
+    parts: list[str] = []
+    for t in toks:
+        s = t.string
+        if t.type == token.OP and s == ":":
+            parts.append(" :")
+            parts.append("\n    ")
+        elif t.type == token.NAME and s in _SINGLE_LINE_BRANCH_KEYWORDS:
+            parts.append("\n")
+            parts.append(s)
+        elif s == "return":
+            parts.append("return")
+        else:
+            parts.append(" " + s)
+    return "".join(parts).lstrip("\n ")
+
+
+def _parse_code_block(code: str) -> ast.Module:
+    """Parse a code block, falling back to a single-line if/elif/else rebuild
+    when the raw text is inline Python (which does not compile as-is)."""
+    try:
+        return ast.parse(code, mode="exec")
+    except SyntaxError:
+        if "\n" not in code.strip():
+            return ast.parse(_rebuild_single_line_if(code), mode="exec")
+        raise
+
+
+def _eval_code_block(code: str, var_map: dict) -> str:
+    """Evaluate a code block's content to the materialized return value. Always
+    returns a string — on any failure, the original literal block text."""
+    literal = "${" + code + "}"
+    try:
+        tree = _parse_code_block(code)
+        _check_whitelist(tree)
+        env = dict(var_map) if isinstance(var_map, dict) else {}
+        value = _exec_block(tree.body, env)
+    except (_BlockEvalError, SyntaxError, TypeError, ValueError, ZeroDivisionError):
+        return literal
+    if value is _NO_RETURN:
+        return literal
+    return _stringify(value)
+
+
+def _resolve_one_block(inner: str, var_map: dict) -> str:
+    """Resolve a single `${...}` block's content. Returns the replacement string."""
+    stripped = inner.strip()
+    if _CODE_BLOCK_TRIGGER in stripped:
+        return _eval_code_block(stripped, var_map)
+    # Ordinary variable block — reuse standard lookup, missing → literal.
+    if stripped in var_map:
+        return _stringify(var_map[stripped])
+    return "${" + inner + "}"  # 原样显示
+
+
+def resolve_conditional_slices(text: str, var_map: dict) -> str:
+    """Replace every multi-line `${ ... }` conditional-slice block in `text`.
+
+    Balanced-brace scan (nested `{}` supported), independent of _VARIABLE_RE so a
+    multi-line block isn't truncated at the first `}`. Returns text with matched
+    code/variable blocks materialized (or kept literal on failure); ${name} and
+    {{path}} placeholders produced here are expanded by the caller's next pass.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
+            depth = 0
+            k = i + 1
+            closed = False
+            while k < n:
+                if text[k] == "{":
+                    depth += 1
+                elif text[k] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        closed = True
+                        break
+                k += 1
+            if not closed:
+                # Unbalanced — leave the brace group untouched, resume after `{`.
+                out.append(text[i])
+                i += 1
+                continue
+            inner = text[i + 2:k]
+            out.append(_resolve_one_block(inner, var_map))
+            i = k + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def validate_var_name(name) -> Optional[str]:
+    """Return an error string if `name` is invalid as a sandbox variable name, else None.
+
+    Names must not contain whitespace: they are referenced from `${...}` code blocks
+    as Python identifiers (e.g. `if dice == 6`), and a spacey name can't be a Name.
+    """
+    if any(ch.isspace() for ch in str(name)):
+        return f"变量名不能包含空白字符: '{name}'（它会作为 Python 标识符被 ${...} 条件切片代码块引用）"
+    return None
+
+
 def substitute_variables(text: str, var_map: dict) -> str:
     """Resolve ${name} variables ONLY (single pass, no {{}}). Missing → literal."""
     return _substitute_variable_literals(text, var_map)
@@ -93,12 +513,17 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     past the limit, remaining placeholders are left literal (no hard error), so a
     variable whose value (transitively) references itself degrades gracefully.
 
+    Also resolves multi-line ${ ... } conditional-slice blocks (see
+    resolve_conditional_slices): an `if ...: return ...` block selects one string to
+    inline based on var_map, substituted ahead of the single-line variable pass.
+
     Missing variables render literally; a bare `$` is never touched. File slices
     are lenient (strict=False): unresolvable `{{...}}` (a doc example) stays literal
     rather than raising.
     """
     for _ in range(max_depth):
         before = text
+        text = resolve_conditional_slices(text, var_map)
         text = _substitute_variable_literals(text, var_map)
         if "{{" in text:
             text = resolve_placeholders(text, instance_dir, strict=strict)
