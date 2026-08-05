@@ -44,8 +44,7 @@
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
 | **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
-| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码、`scripts/` 沙盒触发脚本 runBatch.jsonl）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `settings/`（yaml 内容设定，非代码）、`floors/`（已提交正文归档）。运行时脚本（runBatch）放 `.teahouse/scripts/`，不要放进 `sandbox/`（其渲染分派只认 bootstrap.js / \*.css / \*.js 三类）。 |
-| **fc("输出")** | 输出 fc，指定文件内容作为玩家可见的输出 |
+| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码、`scripts/` 沙盒触发脚本 runBatch.jsonl）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `settings/`（yaml 内容设定，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。运行时脚本（runBatch）放 `.teahouse/scripts/`，不要放进 `sandbox/`（其渲染分派只认 bootstrap.js / \*.css / \*.js 三类）。 |
 
 ## 占位符语法
 
@@ -88,10 +87,10 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 [正文 skill 创建/编辑楼层文件]
         │
         ▼
-[导演调用 fc("输出") 输出楼层内容]
+[导演写入 output/floors / output/sandbox 触发渲染]
         │
         ▼
-[前端渲染输出内容]
+[前端渲染 output/ 内容]
         │
         ▼
 用户选择:
@@ -99,7 +98,7 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
   │     ├─ 用户提出调整要求（补全、修复、重写）
   │     ├─ 导演重新调用正文 skill + 附上要求
   │     ├─ 正文 skill 对当前楼层文件执行 Edit
-  │     ├─ 导演再次 fc("输出") 新内容
+  │     └─ 导演再次写入 output/ 触发新内容渲染
   │     └─ 前端重新渲染
   │     └─ 可循环多次，直到用户满意
   │
@@ -113,22 +112,22 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
         └─ ...
 ```
 
-## fc("输出") 机制
+## 输出机制（文件即状态）
 
-所有 function call 都会通过 SSE 广播给前端。前端决定显示策略：
+玩家可见的输出**放入实例的 `.teahouse/output/` 目录，文件即状态**：
 
-- **游玩模式**：只处理 `fc("输出")`，渲染其指定的文件内容（纯文本，不特殊渲染）
-- **调试模式**：显示所有 fc——Read 了什么文件、Edit 了什么文件、Write 了什么文件、fc("输出") 了什么内容，以及 LLM 思考过程等
+- `output/sandbox/`（bootstrap.js / \*.css / \*.js）—— 沙盒渲染，放进去即生效
+- `output/floors/`（floor-N.md 等）—— 正文历史
 
-第三方前端可通过 API 自由选择显示策略（比如 QQ 桥接只转发输出内容，游戏引擎接入则可能处理富文本）。
+第三方前端可通过 API 自由选择显示策略（比如 QQ 桥接只转发 floor 文本，游戏引擎接入则处理 `output/sandbox/` 的沙盒渲染）。
 
 ## 前端
 
 自带 React + Vite 前端，提供：
 - API key / secret key / LLM models 管理
 - 原型和实例管理
-- 游玩界面 —— 只处理 `fc("输出")`，显示原始文本
-- 调试界面 —— 显示所有 fc 详情、LLM 思考过程（类似 Claude Code CLI 的 VSCode 插件模式）
+- 游玩界面 —— 只渲染 `output/`（沙盒/正文）内容，显示原始或渲染后文本
+- 调试界面 —— 显示工具调用详情与 LLM 思考过程（类似 Claude Code CLI 的 VSCode 插件模式）
 - "修改此楼" / "下一楼层" 按钮，明确指示导演当前意图
 
 第三方可通过 API 自行编写前端（QQ 桥接、Web 前端、游戏引擎接入等）。
