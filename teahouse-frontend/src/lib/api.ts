@@ -193,8 +193,12 @@ export const instancesApi = {
     return get<FileTreeNode[]>(`/api/instances/${instanceId}/files`)
   },
 
-  readFile: async (instanceId: string, path: string) => {
+  readText: async (instanceId: string, path: string) => {
     return get<{ path: string; content: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(path)}`)
+  },
+
+  readAsset: async (instanceId: string, path: string) => {
+    return get<{ path: string; mime: string; data: string }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(path)}`)
   },
 
   writeFile: async (instanceId: string, path: string, content: string) => {

@@ -30,7 +30,7 @@ Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离�
 | `*.css` | 注入 iframe `<head>` 的 `<style>` | 全局样式表、主题变量 |
 | 其余 `*.js` | 按文件名排序追加挂载 | UI 组件、场景脚本、交互逻辑；每个文件独立，可单独编辑 |
 
-**正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`（上下文引擎专属），渲染器**不读**它；沙盒通过 `Teahouse.readFile()` 自行读取楼层文件来渲染正文。
+**正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`（上下文引擎专属），渲染器**不读**它；沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
 
 ### 子目录仅做管理归类
 
@@ -89,7 +89,7 @@ const latest = floors.filter(f => f.draft)[floors.length - 1]  // 最近一个�
 要读取某楼层正文、并经宿主渲染为 HTML：
 
 ```js
-const markdown = await Teahouse.readFile(floor.path)
+const markdown = await Teahouse.readText(floor.path)
 const html = await Teahouse.renderRichText(markdown)
 container.innerHTML = html
 ```
@@ -101,7 +101,7 @@ container.innerHTML = html
 将正文文本交由宿主层解析为 HTML 字符串。解析在宿主层执行（BBCode → 样式着色 → Markdown），沙盒拿到 HTML 后自由组织渲染位置和方式。
 
 ```js
-const markdown = await Teahouse.readFile(floor.path)
+const markdown = await Teahouse.readText(floor.path)
 const html = await Teahouse.renderRichText(markdown)
 container.innerHTML = html
 ```
@@ -110,13 +110,35 @@ container.innerHTML = html
 
 ### 文件操作
 
-#### `Teahouse.readFile(path) → Promise<string | null>`
+#### `Teahouse.readText(path) → Promise<string | null>`
 
-读取实例文件内容。path 相对于实例根目录，如 `"settings/characters.yaml"`、`".teahouse/output/floors/floor-001.md"`。
+读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"settings/characters.yaml"`、`".teahouse/output/floors/floor-001.md"`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
 
 ```js
-const yaml = await Teahouse.readFile("settings/world.yaml")
+const yaml = await Teahouse.readText("settings/world.yaml")
 ```
+
+#### `Teahouse.readAsset(path) → Promise<string | null>`
+
+读取实例内的**二进制资源**（图片 / GIF / 音频 / 字体等），返回**可直接用作 `src` 的 data URL**（如 `data:image/png;base64,....`）。path 相对于实例根目录，如 `"assets/bg.png"`、`"assets/theme.woff2"`。
+
+```js
+// 图片
+const bg = await Teahouse.readAsset("assets/bg.png")
+img.src = bg
+
+// 字体（@font-face 动态注入）
+const font = await Teahouse.readAsset("assets/px.woff2")
+var face = document.createElement('style')
+face.textContent = "@font-face{font-family:'px';src:url(" + font + ");}"
+document.head.appendChild(face)
+
+// 音频
+var audio = new Audio(await Teahouse.readAsset("assets/bgm.mp3"))
+```
+
+MIME 后端按文件头（magic bytes）探测，任何文件类型都接受，无需按扩展名约定。
+**体积引导**：资产经 base64（约放大 4/3）经 postMessage 传进 iframe 再入 DOM，单文件建议控制在 **10MB 以内**（图片、BGM 都够用）。超大资产会拖慢沙盒渲染甚至卡顿——搭建前**主动提醒用户压缩/分包**，不要自行塞大资源。（后端不设硬门槛，这是创作侧约定。）
 
 #### `Teahouse.writeFile(path, content) → Promise<boolean>`
 
@@ -256,7 +278,7 @@ if (res.ok) {
 ```js
 Teahouse.on("output.refresh", function(data) {
   console.log("instance files changed:", data.path)
-  reloadFloors()  // 重新 listFloors + readFile + render
+  reloadFloors()  // 重新 listFloors + readText + render
 })
 ```
 
@@ -300,10 +322,10 @@ Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
 如果 `.teahouse/output/sandbox/` 目录下没有 `bootstrap.js`，需要先创建。核心职责：
 
 1. 实现 `callHost()` — postMessage 通信层
-2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本（含 `listFloors`、`readFile`、`writeFile`、`setVar`、`getVars`、`renderRichText`、`send`、`runBatch`）
+2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本（含 `listFloors`、`readText`、`readAsset`、`writeFile`、`setVar`、`getVars`、`renderRichText`、`send`、`runBatch`）
 3. 监听宿主推送事件 — `output.refresh`
 4. UI 组件管理 — `registerUI()`
-5. 默认渲染逻辑 — `listFloors()` + `readFile()` + `renderRichText()` 按楼层渲染
+5. 默认渲染逻辑 — `listFloors()` + `readText()` + `renderRichText()` 按楼层渲染
 6. 初始化 — 创建 `#teahouse-content` 和 `#teahouse-ui-layer` 容器，发送 `{ _type: "ready" }` 通知宿主
 
 编写时使用普通 function 和 var（兼容旧浏览器，因为 iframe 无 transpiler）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
@@ -374,7 +396,7 @@ FileOps move .teahouse/output/sandbox/bootstrap.js .teahouse/output_disabled/boo
 2. **IIFE 包裹每个文件**：避免全局变量污染
 3. **共享状态通过 `window.Teahouse` 暴露**：`window.Teahouse._colorState`、`window.Teahouse._pageState` 等
 4. **跨组件通信通过事件**：`window.Teahouse._emit('color.change', data)` + `window.Teahouse.on('color.change', callback)`
-5. **正文渲染靠 `listFloors()` + `readFile()` + `renderRichText()`**：不要假设正文会被推送进来
+5. **正文渲染靠 `listFloors()` + `readText()` + `renderRichText()`**：不要假设正文会被推送进来
 6. **fixed 定位的 UI 组件 z-index 分层次**：topbar ~200、UI 层 ~100、panel ~200、input ~300
 7. **不要在沙盒内写 ES6+ 语法**：`let`、`const`、`=>`、模板字符串、async/await 都不安全（用 var + 普通 function + Promise 链）
 8. **CSS 中用 `rgba()` 而非 `oklch()`**：iframe 内没有 Tailwind 的 oklch polyfill
@@ -389,6 +411,6 @@ FileOps move .teahouse/output/sandbox/bootstrap.js .teahouse/output_disabled/boo
 - **沙盒不直接访问后端 API**：所有请求由宿主代理。不要写 `fetch()` 或 `XMLHttpRequest`
 - **iframe sandbox="allow-scripts"** 不允许 `allow-same-origin`、`allow-forms`、`allow-popups`。沙盒内无法访问 localStorage、Cookie、或宿主 DOM
 - **BBCode 渲染在宿主层**：沙盒代码中不要手动解析 BBCode，调用 `Teahouse.renderRichText()`
-- **文件操作有权限**：`readFile` / `writeFile` 受当前用户 JWT 权限限制
+- **文件操作有权限**：`readText` / `readAsset` / `writeFile` 受当前用户 JWT 权限限制
 - **正文楼层在 `.teahouse/output/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
 - **不确定时参考原型模板**：prototype 自带 `.teahouse/output/sandbox/` 的实现参考

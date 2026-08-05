@@ -32,7 +32,9 @@ from ..database.workspaces import (
     ensure_user_dirs,
     instantiate_prototype,
     list_file_tree,
-    read_file,
+    read_text,
+    read_asset,
+    TextDecodeError,
     write_file,
     delete_file_or_dir,
     create_file_or_dir,
@@ -478,8 +480,41 @@ async def get_instance_file(
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        content = read_file(instance_dir, path)
+        content = read_text(instance_dir, path)
         return {"path": path, "content": content}
+    except (FileNotFoundError, IsADirectoryError):
+        raise HTTPException(status_code=404, detail="File not found")
+    except TextDecodeError:
+        raise HTTPException(
+            status_code=415,
+            detail=f"'{path}' is a binary asset, not UTF-8 text. Use GET /files/asset instead.",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/files/asset")
+async def get_instance_asset(
+    instance_id: str,
+    path: str = Query(..., description="Binary asset path relative to instance root"),
+    user: UserInfo = Depends(require_user),
+):
+    """Read a binary resource (image/audio/font/…) and return it as base64.
+
+    Response: {"path", "mime", "data"} where `data` is a bare base64 payload;
+    callers build `data:{mime};base64,{data}`. MIME is detected from magic
+    bytes, so any file type is accepted. No size limit here — oversized assets
+    are a creator choice managed via sandbox-builder guidance.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        mime, data = read_asset(instance_dir, path)
+        return {"path": path, "mime": mime, "data": data}
     except (FileNotFoundError, IsADirectoryError):
         raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:

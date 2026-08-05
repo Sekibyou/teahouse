@@ -86,7 +86,7 @@ export function useWorkspaceRefresh({
     const currentFile = selectedFileRef.current
     if (editor && currentFile) {
       const [fileRes, headRes] = await Promise.all([
-        instancesApi.readFile(id, currentFile),
+        instancesApi.readText(id, currentFile),
         gitApi.showFile(id, currentFile),
       ])
       if (fileRes.ok) {

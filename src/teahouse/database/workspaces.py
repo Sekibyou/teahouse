@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import os
 import json
+import base64
 import shutil
 import stat
 import zipfile
 import hashlib
+import mimetypes
 from pathlib import Path
 from typing import Optional
 
@@ -249,12 +251,76 @@ def list_file_tree(instance_dir: Path) -> list[dict]:
     return walk(instance_dir, instance_dir)
 
 
-def read_file(instance_dir: Path, file_path: str) -> str:
-    """Read a file's contents. Raises FileNotFoundError or IsADirectoryError."""
+def _resolve_full(instance_dir: Path, file_path: str) -> Path:
+    """Resolve a instance-relative path with traversal protection."""
     full = (instance_dir / file_path).resolve()
     if not str(full).startswith(str(instance_dir.resolve())):
         raise ValueError("Path traversal detected")
-    return full.read_text(encoding="utf-8")
+    return full
+
+
+class TextDecodeError(ValueError):
+    """The target file is not valid UTF-8 text; it should be read via read_asset."""
+
+
+def read_text(instance_dir: Path, file_path: str) -> str:
+    """Read a UTF-8 text file's contents.
+
+    Raises FileNotFoundError / IsADirectoryError, or TextDecodeError when the
+    file is not valid UTF-8 (i.e. it's a binary asset — use read_asset instead).
+    """
+    full = _resolve_full(instance_dir, file_path)
+    try:
+        return full.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise TextDecodeError(
+            f"'{file_path}' is not UTF-8 text (binary asset). Use the asset "
+            f"reader for images/audio/fonts."
+        ) from e
+
+
+# Magic-byte signature → MIME type. Checked before mimetypes.guess_type falls
+# back to the file extension; order matters (longer, more specific sigs first).
+_MIME_BY_SIGNATURE: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"<svg", "image/svg+xml"),
+    (b"wOFF2", "font/woff2"),
+    (b"wOFF", "font/woff"),
+    (b"\x00\x01\x00\x00\x00", "font/ttf"),  # TrueType
+    (b"OTTO", "font/otf"),
+    (b"\x00\x00\x01\x00", "font/ttc"),  # TrueType collection
+    (b"ID3", "audio/mpeg"),
+    (b"\xff\xfb", "audio/mpeg"),  # MPEG frame sync (ISO 13818-3)
+    (b"OggS", "audio/ogg"),
+    (b"fLaC", "audio/flac"),
+    (b"PK\x03\x04", "application/zip"),  # also covers .docx/.epub/.teabrew
+)
+
+
+def _detect_mime(raw: bytes, filename: str) -> str:
+    """Detect a file's MIME from magic bytes, falling back to the extension."""
+    if raw.startswith(b"RIFF") and len(raw) >= 12 and raw[8:12] == b"WEBP":
+        return "image/webp"
+    for sig, mime in _MIME_BY_SIGNATURE:
+        if raw.startswith(sig):
+            return mime
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or "application/octet-stream"
+
+
+def read_asset(instance_dir: Path, file_path: str) -> tuple[str, str]:
+    """Read a binary asset's contents.
+
+    Returns (mime, base64_data) where base64_data has no prefix; callers build
+    `data:{mime};base64,{data}`. Any file type is accepted — MIME is detected
+    from magic bytes, so the caller's extension is not trusted/required.
+    """
+    full = _resolve_full(instance_dir, file_path)
+    raw = full.read_bytes()
+    return _detect_mime(raw, full.name), base64.b64encode(raw).decode("ascii")
 
 
 def write_file(instance_dir: Path, file_path: str, content: str) -> None:

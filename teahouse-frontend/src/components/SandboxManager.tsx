@@ -12,7 +12,7 @@ import { useSSERefresh } from "@/hooks/useSSERefresh"
 //   - .teahouse/output/sandbox/  → bootstrap.js (first), *.css (inject <head>),
 //                                  other *.js (append). Read via sandboxSrcApi.
 //   - .teahouse/output/floors/   → prose history the sandbox reads at runtime
-//                                  via listFloors + readFile.
+//                                  via listFloors + readText.
 // No output blocks / content_type. The host watches file_changed SSE:
 //   - sandbox file changed → rebuild srcdoc
 //   - floors/style changed → postMessage output.refresh so the sandbox re-reads
@@ -177,10 +177,20 @@ ${bridge}
           if (text) result = renderText(text, textStyleRules)
           break
         }
-        case "readFile": {
+        case "readText": {
           if (instanceId && _args[0]) {
-            const res = await instancesApi.readFile(instanceId, _args[0] as string)
+            const res = await instancesApi.readText(instanceId, _args[0] as string)
             result = res.ok ? res.data?.content : null
+          }
+          break
+        }
+        case "readAsset": {
+          if (instanceId && _args[0]) {
+            const res = await instancesApi.readAsset(instanceId, _args[0] as string)
+            // return a ready-to-use data URL: data:{mime};base64,{data}
+            result = res.ok && res.data
+              ? `data:${res.data.mime};base64,${res.data.data}`
+              : null
           }
           break
         }

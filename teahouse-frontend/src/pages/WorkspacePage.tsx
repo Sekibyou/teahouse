@@ -148,7 +148,7 @@ export function WorkspacePage() {
     }
     ;(async () => {
       const [fileRes, headRes] = await Promise.all([
-        instancesApi.readFile(instId, selectedFile),
+        instancesApi.readText(instId, selectedFile),
         gitApi.showFile(instId, selectedFile),
       ])
       if (fileRes.ok) {
@@ -292,7 +292,7 @@ export function WorkspacePage() {
       refresh({ editor: false })
       if (currentFile && path === currentFile) {
         // Update editor content in-place without unmounting Monaco.
-        instancesApi.readFile(instId!, currentFile).then(fileRes => {
+        instancesApi.readText(instId!, currentFile).then(fileRes => {
           if (fileRes.ok) {
             setFileContent(fileRes.data!.content)
             setEditedContent(fileRes.data!.content)
@@ -321,7 +321,7 @@ export function WorkspacePage() {
       refresh({ editor: false })
       const currentFile = selectedFileRef.current
       if (currentFile && instId) {
-        instancesApi.readFile(instId, currentFile).then(fileRes => {
+        instancesApi.readText(instId, currentFile).then(fileRes => {
           if (fileRes.ok) {
             setFileContent(fileRes.data!.content)
             setEditedContent(fileRes.data!.content)

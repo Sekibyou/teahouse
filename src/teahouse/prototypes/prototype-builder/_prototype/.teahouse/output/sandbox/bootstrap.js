@@ -8,7 +8,7 @@
   // 文件系统驱动的展示模型：
   //   - 正文历史位于 .teahouse/output/floors/，靠文件名中间数字排序
   //     （floor-5.md / floor-5-draft.md），由 Teahouse.listFloors() 提供
-  //   - 沙盒通过 Teahouse.readFile(path) + Teahouse.renderRichText() 渲染正文
+  //   - 沙盒通过 Teahouse.readText(path) + Teahouse.renderRichText() 渲染正文
   //   - 宿主在楼上文件变更时推送 'output.refresh'，沙盒据此重读刷新
   // ============================================================
 
@@ -43,7 +43,11 @@
     listFloors: function() { return callHost('listFloors', []); },
 
     // 文件操作
-    readFile: function(path) { return callHost('readFile', [path]); },
+    //   readText(path)                — 读 UTF-8 文本（floors/设定/配置），返回 string；二进制文件请用 readAsset
+    //   readAsset(path)               — 读二进制资源（图片/gif/音频/字体…），返回可直接用作 src 的 data URL
+    //   writeFile(path, content)      — 写文本文件
+    readText: function(path) { return callHost('readText', [path]); },
+    readAsset: function(path) { return callHost('readAsset', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
     // 预设脚本流水线（无导演独立执行，一次性返回汇总 + 失败即停）
@@ -193,7 +197,7 @@
     for (var i = 0; i < floors.length; i++) {
       (function(floor) {
         pending++;
-        window.Teahouse.readFile(floor.path).then(function(markdown) {
+        window.Teahouse.readText(floor.path).then(function(markdown) {
           if (markdown) floor.title = titleOf(markdown, floor);
         }).catch(function() {}).then(function() { pending--; return null; });
       })(floors[i]);
@@ -221,7 +225,7 @@
     var container = document.getElementById('teahouse-content');
     if (!container) return;
 
-    window.Teahouse.readFile(floor.path).then(function(markdown) {
+    window.Teahouse.readText(floor.path).then(function(markdown) {
       if (markdown === null || markdown === undefined) {
         // 半正式稿刚被删除/迁移——回退显示空
         container.innerHTML = '<p style="opacity:.5;text-align:center;padding:3rem 0;">（楼层内容暂不可用）</p>';
