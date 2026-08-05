@@ -535,7 +535,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
 
     1. Read and parse YAML source_file into messages array
     2. Resolve {{path}} placeholders in messages
-    3. Optionally dump resolved payload to JSON (debug only)
+    3. Optionally dry-run: if dump_payload_path set, dump resolved payload JSON and return WITHOUT calling the model
     4. Call the writer slot LLM (non-streaming)
     5. Write generated text to the specified output path
     6. Return summary with file path, word count, and first 50 chars preview
@@ -587,7 +587,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     # Step 2: Resolve ${variables} + {{path}} file slices before sending to the writer LLM.
     resolved = _resolve_messages_vars(messages, instance_dir)
 
-    # Step 3: Optionally dump resolved payload (debug only)
+    # Step 3: dry-run — dump resolved payload and return WITHOUT calling the writer model
     if dump_payload_str:
         try:
             payload_full = _validate_path(instance_dir, dump_payload_str)
@@ -598,6 +598,7 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
             return f"Error: dump_payload_path 路径无效: {e}"
         except Exception as e:
             return f"Error: 写入 dump_payload_path 失败: {e}"
+        return f"Dry-run: payload 已写出到 {dump_payload_str}，未调用正文模型"
 
     # Step 4: Resolve writer slot LLM client
     if not user_id:

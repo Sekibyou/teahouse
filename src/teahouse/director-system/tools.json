@@ -139,7 +139,7 @@
   {
     "name": "Generate",
     "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",
-    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `dump_payload_path`（可选）：展开占位符后的实际 Payload JSON 输出路径（调试用）。不写就不输出，写了才输出。不建议主动调用此参数，除非用户明确要求调试\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      {{settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  {{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
+    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `dump_payload_path`（可选，dry-run）：填入路径后，把展开占位符后的完整 Payload JSON 写入该路径并**立即返回**，不调用正文模型。用于调试时查看实际发给模型的 payload 内容\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      {{settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  {{path}}                                    引用整个文件\n  {{path:10-30}}                              引用文件的第 10~30 行\n  {{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  {{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  {{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  {{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  {{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  {{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -151,7 +151,7 @@
         },
         "dump_payload_path": {
           "type": "string",
-          "description": "可选调试参数：展开占位符后的完整 Payload JSON 输出路径。不写就不输出，写了才输出。"
+          "description": "可选 dry-run 参数：填入路径后把展开占位符后的完整 Payload JSON 写入该路径并立即返回，不调用正文模型。用于调试 payload 内容。"
         }
       },
       "required": [
