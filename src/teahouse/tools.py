@@ -586,8 +586,8 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     1. Read and parse YAML source_file into messages array
     2. Resolve {{path}} placeholders in messages
     3. Optionally dry-run: if dump_payload_path set, dump resolved payload JSON and return WITHOUT calling the model
-    4. Call the writer slot LLM (non-streaming)
-    5. Write generated text to the specified output path
+    4. Call the writer slot LLM (streaming, flushed to output ~200ms per flush)
+    5. Write the (incrementally accumulated) generated text to the output path
     6. Return summary with file path, word count, and first 50 chars preview
     """
     import json
@@ -698,24 +698,72 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
 
-    # Step 5: Call writer LLM (non-streaming)
+    # Step 5: Call writer LLM — streaming, flushed to output ~每 200ms 覆写一次。
+    # 依赖 file_changed 已有广播机制：每次落盘即广播，前端 output.refresh 刷新，
+    # 沙盒能看到正文"长出来"。分流式 vs 导演 tool 与沙盒 runTool 走同一 execute_generate。
+    flash_interval = 0.2  # 200ms
+    last_flash = time.monotonic()
+    buffered = ""          # 已累积正文（仅 text chunk，不含 reasoning/thinking）
+    got_text = False       # 是否收到过任一正文 chunk（gate：无正文则不产出文件）
+
+    stream = writer_client.send_message_stream(resolved)
+
+    async def _flush(final: bool = False) -> None:
+        nonlocal last_flash, buffered
+        try:
+            output_full.write_text(buffered, encoding="utf-8")
+        except Exception as e:
+            raise RuntimeError(f"写入输出文件失败: {e}") from e
+        state.broadcast(
+            "file_changed",
+            {"path": output_path_str, "tool": "Generate", "instance_id": instance_dir.name},
+        )
+        if final:
+            buffered = ""
+
     try:
-        generated_text = await writer_client.send_message(resolved)
+        async for chunk in stream:
+            if chunk.get("type") == "text" and chunk.get("text"):
+                if not got_text:
+                    got_text = True
+                buffered += chunk["text"]
+                now = time.monotonic()
+                if now - last_flash >= flash_interval:
+                    await _flush()
+                    last_flash = now
     except LLMError as e:
+        # 流中途失败：首 chunk 前失败 → 不产出文件；已有正文 → 留下半成品供续写。
+        if got_text:
+            try:
+                await _flush(final=True)
+            except Exception:
+                pass
+            return (
+                f"Generate 部分完成（流式中断，已留半成品供续写）\n"
+                f"  输出文件：{output_path_str}\n"
+                f"  文件非空：{output_full.exists() and output_full.stat().st_size > 0}\n"
+                f"  已产出字数：{len(buffered)}\n"
+                f"  中断原因：{e}"
+            )
         return (
-            f"Error: 正文模型 API 调用失败: {e}\n"
+            f"Error: 正文模型 API 调用失败（未产生任何输出）: {e}\n"
             f"请检查 writer slot 的 API key 和网络连接后重试。"
         )
     except Exception as e:
-        return f"Error: 调用正文模型时发生意外错误: {e}"
+        if got_text:
+            try:
+                await _flush(final=True)
+            except Exception:
+                pass
+            return f"Generate 部分完成（流式中断，已留半成品）\n  输出文件：{output_path_str}\n  已产出字数：{len(buffered)}\n  意外错误：{e}"
+        return f"Error: 调用正文模型时发生意外错误（未产生任何输出）: {e}"
 
-    # Step 6: Write generated text to output file
-    try:
-        output_full.write_text(generated_text, encoding="utf-8")
-    except Exception as e:
-        return f"Error: 写入输出文件失败: {e}"
+    # Step 6: 流正常结束 — 若从未收到正文，不产出文件报错；否则最终覆写 + 广播
+    if not got_text:
+        return "Error: 正文模型返回为空（未生成任何正文）"
 
-    state.broadcast("file_changed", {"path": output_path_str, "tool": "Generate", "instance_id": instance_dir.name})
+    generated_text = buffered
+    await _flush(final=True)
 
     # Build summary
     char_count = len(generated_text)
