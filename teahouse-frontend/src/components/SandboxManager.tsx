@@ -79,6 +79,10 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
       // 透传 runTool 后台任务的单步结果给沙盒（组件按 run_uuid 筛选/数 index）
       sendToSandbox("tool_run", payload)
     }, [sendToSandbox]),
+    onGenerateProgress: useCallback((payload: Record<string, unknown>) => {
+      // 透传 Generate 流式进度（含 diff）给沙盒，供"生成中"缓冲渲染/打字机
+      sendToSandbox("generate_progress", payload)
+    }, [sendToSandbox]),
   })
 
   // ---- Build srcdoc from .teahouse/output/sandbox/ (feeds iframe via srcDoc) ----

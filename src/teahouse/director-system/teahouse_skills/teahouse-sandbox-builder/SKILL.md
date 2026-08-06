@@ -284,15 +284,29 @@ if (!res.ok) { console.error("提交失败", res) }
 |---|---|---|
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
 | `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条（含成败）—— 组件按 `run_uuid` 筛选、数 `index` 判定整批完成/失败 |
+| `generate_progress` | `{ run_uuid, path, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每 ~200ms 广播一条；`accumulated_text` 是**当前完整文本**（非 diff），前端直接覆盖缓冲渲染（幂等，不怕乱序/漏条）；`done:false` 表示生成中，`done:true` 表示已结束落盘 — 组件用它做"生成中"缓冲渲染 |
 
 宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
 
-`tool_run` 走同一条桥（宿主把后端 `tool_run` SSE 透传给沙盒），**不需要沙盒自己连 SSE**。用于 `runTool` 这类即发即返的批量路径反馈结果，见上文 runTool 章节。
+`tool_run` / `generate_progress` 走同一条桥（宿主把后端对应 SSE 透传给沙盒），**不需要沙盒自己连 SSE**。用于 `runTool` 即发即返 + `Generate` 流式的批内反馈，见上文 runTool 章节。
+
+**Generate 流式（档1）**：生成进行中**不落盘**，仅每 ~200ms 广播 `generate_progress`（携带 `run_uuid`、`path`、`accumulated_text` 当前全文）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`**。组件据此：
+- 开始 generate（`runTool` 首响应拿到 `run_uuid`）→ 建"生成中"缓冲，按 `run_uuid`+`path` 绑定，用 `accumulated_text` 覆盖渲染（标题标"生成中"）
+- 结束判定用 **And**：同 `run_uuid` 的 `tool_run`（完成/失败）+ 同 `path` 的 `file_changed` 都到，才判定真正结束 → 读文件刷新（只改文字不重渲染）
+- 中间态仅在内存，重启/退出后干净；重开时自动回退到"读文件渲染"（半成品或完整草稿）
 
 ```js
 Teahouse.on("output.refresh", function(data) {
   console.log("instance files changed:", data.path)
   reloadFloors()  // 重新 listFloors + readText + render
+})
+
+// 生成中缓冲：accumulated_text 是当前全文，直接覆盖渲染（幂等）；
+// 结束以 file_changed/tool_run 双确认后切到文件渲染
+Teahouse.on("generate_progress", function(data) {
+  if (data.run_uuid !== pendingBuffer.run_uuid) return
+  pendingBuffer.text = data.accumulated_text   // 覆盖，而非追加
+  renderPendingBuffer()                        // 标题"第 N 章（生成中）"
 })
 ```
 

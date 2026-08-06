@@ -707,7 +707,7 @@ async def _run_steps(
     for i, step in enumerate(steps, 1):
         name = step.tool
         cargs = step.args or {}
-        result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name))
+        result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name), run_uuid)
         ok = not result.startswith("Error")
         state.broadcast(
             "tool_run",

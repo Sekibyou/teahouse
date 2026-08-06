@@ -580,15 +580,21 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: str | None = None) -> str:
+async def execute_generate(
+    instance_dir: Path,
+    args: dict[str, Any],
+    user_id: str | None = None,
+    run_uuid: str | None = None,
+) -> str:
     """Generate tool — reads YAML config, resolves placeholders, calls writer LLM, writes result to file.
 
     1. Read and parse YAML source_file into messages array
     2. Resolve {{path}} placeholders in messages
     3. Optionally dry-run: if dump_payload_path set, dump resolved payload JSON and return WITHOUT calling the model
-    4. Call the writer slot LLM (streaming, flushed to output ~200ms per flush)
-    5. Write the (incrementally accumulated) generated text to the output path
-    6. Return summary with file path, word count, and first 50 chars preview
+    4. Call the writer slot LLM (streaming)
+    5. Stream text in memory + broadcast generate_progress (~200ms, carries diff),
+       do NOT write file until the stream ends (complete / interrupted / errored)
+    6. On end: write the accumulated text + broadcast file_changed once; return summary
     """
     import json
 
@@ -698,18 +704,40 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
 
-    # Step 5: Call writer LLM — streaming, flushed to output ~每 200ms 覆写一次。
-    # 依赖 file_changed 已有广播机制：每次落盘即广播，前端 output.refresh 刷新，
-    # 沙盒能看到正文"长出来"。分流式 vs 导演 tool 与沙盒 runTool 走同一 execute_generate。
-    flash_interval = 0.2  # 200ms
-    last_flash = time.monotonic()
-    buffered = ""          # 已累积正文（仅 text chunk，不含 reasoning/thinking）
-    got_text = False       # 是否收到过任一正文 chunk（gate：无正文则不产出文件）
+    # Step 5/6: Call writer LLM — streaming, keep text in memory, broadcast the
+    # full accumulated text every ~200ms via generate_progress, but do NOT write
+    # the file or broadcast file_changed until the stream ends
+    # (completed / interrupted / errored). This keeps the file system clean during
+    # generation and avoids the file_changed → git/refresh noise per frame (档1).
+    #
+    # Frontend overwrites its pending buffer from accumulated_text (idempotent),
+    # binds to run_uuid + path; on end it syncs to the file via the single
+    # file_changed broadcast. Mid-stream there is no file at all.
+    progress_interval = 0.2  # 200ms
+    last_progress = time.monotonic()
+    buffered = ""            # 已累积正文（仅 text chunk，不含 reasoning/thinking）
+    got_text = False         # 是否收到过任一正文 chunk（gate：无正文则不产出文件）
 
     stream = writer_client.send_message_stream(resolved)
 
-    async def _flush(final: bool = False) -> None:
-        nonlocal last_flash, buffered
+    def _progress(done: bool) -> None:
+        # 推送当前全文（accumulated_text），前端直接覆盖缓冲渲染——幂等，不怕
+        # 乱序/漏条（最后到达的全文即完备内容，最终形态还能以 file_changed 读文件校准）。
+        state.broadcast(
+            "generate_progress",
+            {
+                "run_uuid": run_uuid,
+                "path": output_path_str,
+                "instance_id": instance_dir.name,
+                "accumulated_len": len(buffered),
+                "accumulated_text": buffered,
+                "done": done,
+            },
+        )
+
+    async def _finalize_write() -> None:
+        """Interrupt/error/complete path: write whatever has accumulated, broadcast
+        file_changed once. Mid-stream there was no file, so this is the sole flush."""
         try:
             output_full.write_text(buffered, encoding="utf-8")
         except Exception as e:
@@ -718,8 +746,6 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
             "file_changed",
             {"path": output_path_str, "tool": "Generate", "instance_id": instance_dir.name},
         )
-        if final:
-            buffered = ""
 
     try:
         async for chunk in stream:
@@ -728,20 +754,20 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
                     got_text = True
                 buffered += chunk["text"]
                 now = time.monotonic()
-                if now - last_flash >= flash_interval:
-                    await _flush()
-                    last_flash = now
+                if now - last_progress >= progress_interval:
+                    _progress(done=False)
+                    last_progress = now
     except LLMError as e:
         # 流中途失败：首 chunk 前失败 → 不产出文件；已有正文 → 留下半成品供续写。
         if got_text:
             try:
-                await _flush(final=True)
+                await _finalize_write()
             except Exception:
                 pass
+            _progress(done=True)
             return (
-                f"Generate 部分完成（流式中断，已留半成品供续写）\n"
+                f"Generate 部分完成（生成中断，已落盘半成品供续写）\n"
                 f"  输出文件：{output_path_str}\n"
-                f"  文件非空：{output_full.exists() and output_full.stat().st_size > 0}\n"
                 f"  已产出字数：{len(buffered)}\n"
                 f"  中断原因：{e}"
             )
@@ -752,20 +778,22 @@ async def execute_generate(instance_dir: Path, args: dict[str, Any], user_id: st
     except Exception as e:
         if got_text:
             try:
-                await _flush(final=True)
+                await _finalize_write()
             except Exception:
                 pass
-            return f"Generate 部分完成（流式中断，已留半成品）\n  输出文件：{output_path_str}\n  已产出字数：{len(buffered)}\n  意外错误：{e}"
+            _progress(done=True)
+            return f"Generate 部分完成（生成中断，已落盘半成品）\n  输出文件：{output_path_str}\n  已产出字数：{len(buffered)}\n  意外错误：{e}"
         return f"Error: 调用正文模型时发生意外错误（未产生任何输出）: {e}"
 
-    # Step 6: 流正常结束 — 若从未收到正文，不产出文件报错；否则最终覆写 + 广播
+    # 流正常结束 — 若从未收到正文，不产出文件报错；否则最终落盘 + file_changed
     if not got_text:
         return "Error: 正文模型返回为空（未生成任何正文）"
 
-    generated_text = buffered
-    await _flush(final=True)
+    await _finalize_write()
+    _progress(done=True)
 
     # Build summary
+    generated_text = buffered
     char_count = len(generated_text)
     # Rough word count for Chinese text (characters ≈ words)
     word_count = char_count
@@ -1195,17 +1223,26 @@ TOOL_EXECUTORS = {
 }
 
 
-async def execute_tool(name: str, args: dict[str, Any], instance_dir: Path, user_id: str | None = None, instance_id: str | None = None) -> str:
+async def execute_tool(
+    name: str,
+    args: dict[str, Any],
+    instance_dir: Path,
+    user_id: str | None = None,
+    instance_id: str | None = None,
+    run_uuid: str | None = None,
+) -> str:
     """Execute a tool by name with the given args. Returns the result text.
 
     instance_id is the DB UUID — used for SSE broadcast filtering on the frontend.
+    run_uuid (runTool batch id) is threaded to tools that emit progress events
+    (Generate → generate_progress) so viewers can bind the buffer to a batch.
     Falls back to plugin tool executors if the tool is not built-in.
     """
     executor = TOOL_EXECUTORS.get(name)
     if executor:
         try:
             if name == "Generate":
-                result = await executor(instance_dir, args, user_id)
+                result = await executor(instance_dir, args, user_id, run_uuid)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
             else:

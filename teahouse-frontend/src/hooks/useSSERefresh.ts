@@ -9,6 +9,8 @@ interface SSERefreshOptions {
   onWorkspaceChanged: () => void
   /** Called when a runTool background step broadcast a result (success or failure). */
   onToolRun?: (payload: Record<string, unknown>) => void
+  /** Called when a streaming Generate broadcasts a progress tick (~200ms, carries diff). */
+  onGenerateProgress?: (payload: Record<string, unknown>) => void
   /** The instance ID (UUID) to scope events to. */
   instanceId: string | undefined
   /** The instance name (directory name) as fallback match for tool-executor broadcasts. */
@@ -37,6 +39,7 @@ export function useSSERefresh({
   onFileChanged,
   onWorkspaceChanged,
   onToolRun,
+  onGenerateProgress,
   instanceId,
   instanceName,
 }: SSERefreshOptions) {
@@ -112,6 +115,17 @@ export function useSSERefresh({
         }
       })
 
+      es.addEventListener("generate_progress", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data)
+          const id = data.instance_id
+          if (id && id !== instanceId && id !== instanceName) return
+          onGenerateProgress?.(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
       es.onerror = () => {
         es.close()
         esRef.current = null
@@ -139,5 +153,5 @@ export function useSSERefresh({
         wsTimerRef.current = null
       }
     }
-  }, [instanceId, instanceName, onToolRun])
+  }, [instanceId, instanceName, onToolRun, onGenerateProgress])
 }
