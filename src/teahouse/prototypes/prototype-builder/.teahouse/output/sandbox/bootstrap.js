@@ -257,15 +257,59 @@
   }
 
   // ---- 宿主推送事件处理 ----
-  // output.refresh：.teahouse 下文件变更（含 floors、sandbox、样式），重新拉楼层并刷新展示
+  // output.refresh：.teahouse 下文件变更（含 floors、sandbox、样式）。
+  // 变更携带 path —— 据此精准刷新，避免全量重拉/重渲染导致的卡顿与 log 刷屏。
   window.Teahouse.on('output.refresh', function(data) {
-    if (data && data.path && data.path.indexOf('.teahouse/output/sandbox/') === 0) {
-      // 沙盒代码变了会触发宿主重建 iframe（本实例直接销毁重建），无需处理
-      return;
+    var path = data && data.path;
+    if (path) {
+      if (path.indexOf('.teahouse/output/sandbox/') === 0) {
+        // 沙盒代码变了会触发宿主重建 iframe（本实例直接销毁重建），无需处理
+        return;
+      }
+      // 精准刷新：只重读/重渲染那个变更的楼层文件，跳过 listFloors 全量重拉
+      if (path.indexOf('.teahouse/output/floors/') === 0) {
+        refreshFloorByPath(path);
+        return;
+      }
+      // 其他引擎文件（runtime_vars.jsonl / 样式等）——全量兜底
     }
     reloadAndRender();
   });
 
+  // 精准刷新单个楼层——generate 流式每 200ms 落盘同一个 draft，命中当前展示楼层时
+  // 只重读该文件、重渲染，避免全量 listFloors + prefetchTitles + DOM 重建的卡顿。
+  // 列表与渲染分离：文件命中当前列表 → 精准渲染；未命中（新楼层，列表过期）→
+  // 先刷新列表找到该 path，仍只精准渲染它；彻底找不到才回退全量。
+  function findFloorByPath(path) {
+    for (var i = 0; i < pageState.floors.length; i++) {
+      if (pageState.floors[i].path === path) return pageState.floors[i];
+    }
+    return null;
+  }
+
+  function refreshFloorByPath(path) {
+    var found = findFloorByPath(path);
+    if (found) { renderFloor(found); return; }
+
+    // 列表过期（generate 首次产新楼层时 pageState 还停留在旧列表）：
+    // 刷新楼层列表后再匹配，命中则只精准渲染该文件，避免全量渲染其他楼层。
+    window.Teahouse.listFloors().then(function(floors) {
+      if (floors && floors.length > 0) {
+        pageState.floors = floors.slice().sort(function(a, b) { return a.num - b.num; });
+      }
+      var found2 = findFloorByPath(path);
+      if (found2) {
+        renderFloor(found2);
+      } else {
+        console.warn('[Teahouse Bootstrap] refreshFloorByPath 刷新列表后仍未命中:', path);
+        reloadAndRender();
+      }
+    }).catch(function() {
+      reloadAndRender();
+    });
+  }
+
+  // 全量重拉楼层列表 + 重渲染当前楼层（低频兜底：新增/删除/重命名楼层、切分支等）
   function reloadAndRender() {
     window.Teahouse.listFloors().then(function(floors) {
       if (floors && floors.length > 0) {
