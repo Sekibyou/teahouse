@@ -122,19 +122,18 @@
   };
 
   // ---- 监听宿主推送的事件 ----
+  // 注意：'_teahouse_event'（含 generate_progress/output.refresh 等宿主透传事件）
+  // 由宿主 host bridge 统一转发并 _emit，bootstrap 此处若再监听会双发、造成
+  // generate_progress 增量 delta 重复附加（"她她"）。这里只处理旧式 tool 事件。
   window.addEventListener('message', function(e) {
     var d = e.data;
     if (!d || !d._type) return;
-    if (d._type === '_teahouse_event') {
-      window.Teahouse._emit(d._event, d._data);
-    } else {
-      switch (d._type) {
-        case 'tool_call':
-        case 'tool_result':
-        case 'thinking':
-          window.Teahouse._emit(d._type, d._payload);
-          break;
-      }
+    switch (d._type) {
+      case 'tool_call':
+      case 'tool_result':
+      case 'thinking':
+        window.Teahouse._emit(d._type, d._payload);
+        break;
     }
   });
 

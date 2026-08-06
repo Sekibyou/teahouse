@@ -592,8 +592,8 @@ async def execute_generate(
     2. Resolve {{path}} placeholders in messages
     3. Optionally dry-run: if dump_payload_path set, dump resolved payload JSON and return WITHOUT calling the model
     4. Call the writer slot LLM (streaming)
-    5. Stream text in memory + broadcast generate_progress (~200ms, carries diff),
-       do NOT write file until the stream ends (complete / interrupted / errored)
+    5. Stream text in memory + forward each text chunk as an incremental delta
+       via generate_progress (no throttling), do NOT write file until stream ends
     6. On end: write the accumulated text + broadcast file_changed once; return summary
     """
     import json
@@ -704,33 +704,35 @@ async def execute_generate(
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
 
-    # Step 5/6: Call writer LLM — streaming, keep text in memory, broadcast the
-    # full accumulated text every ~200ms via generate_progress, but do NOT write
-    # the file or broadcast file_changed until the stream ends
+    # Step 5/6: Call writer LLM — stream and forward each text chunk to the
+    # frontend as an incremental delta via generate_progress (no throttling), but
+    # do NOT write the file or broadcast file_changed until the stream ends
     # (completed / interrupted / errored). This keeps the file system clean during
     # generation and avoids the file_changed → git/refresh noise per frame (档1).
     #
-    # Frontend overwrites its pending buffer from accumulated_text (idempotent),
-    # binds to run_uuid + path; on end it syncs to the file via the single
-    # file_changed broadcast. Mid-stream there is no file at all.
-    progress_interval = 0.2  # 200ms
-    last_progress = time.monotonic()
+    # The delta is a pure typewriter effect for the frontend: within a single SSE
+    # connection the server emits chunks in order the LLM produced them, so the
+    # browser appends in arrival order and the result equals the full text. Any
+    # drift from a lost tail is reconciled by the single `done` broadcast, which
+    # carries the full accumulated_text, and by the file_changed→read-file path.
     buffered = ""            # 已累积正文（仅 text chunk，不含 reasoning/thinking）
     got_text = False         # 是否收到过任一正文 chunk（gate：无正文则不产出文件）
 
     stream = writer_client.send_message_stream(resolved)
 
-    def _progress(done: bool) -> None:
-        # 推送当前全文（accumulated_text），前端直接覆盖缓冲渲染——幂等，不怕
-        # 乱序/漏条（最后到达的全文即完备内容，最终形态还能以 file_changed 读文件校准）。
+    def _progress(done: bool, delta: str = "") -> None:
+        # done=false: forward just this chunk's delta (append on the frontend).
+        # done=true: carry the full accumulated_text so the frontend can reconcile
+        # any gap from a lost tail and switch to the persisted file.
         state.broadcast(
             "generate_progress",
             {
                 "run_uuid": run_uuid,
                 "path": output_path_str,
                 "instance_id": instance_dir.name,
+                "delta": delta if not done else "",
                 "accumulated_len": len(buffered),
-                "accumulated_text": buffered,
+                "accumulated_text": buffered if done else "",
                 "done": done,
             },
         )
@@ -752,11 +754,8 @@ async def execute_generate(
             if chunk.get("type") == "text" and chunk.get("text"):
                 if not got_text:
                     got_text = True
+                _progress(done=False, delta=chunk["text"])
                 buffered += chunk["text"]
-                now = time.monotonic()
-                if now - last_progress >= progress_interval:
-                    _progress(done=False)
-                    last_progress = now
     except LLMError as e:
         # 流中途失败：首 chunk 前失败 → 不产出文件；已有正文 → 留下半成品供续写。
         if got_text:

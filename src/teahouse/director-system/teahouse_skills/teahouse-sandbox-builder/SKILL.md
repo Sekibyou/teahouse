@@ -284,14 +284,16 @@ if (!res.ok) { console.error("提交失败", res) }
 |---|---|---|
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
 | `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条（含成败）—— 组件按 `run_uuid` 筛选、数 `index` 判定整批完成/失败 |
-| `generate_progress` | `{ run_uuid, path, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每 ~200ms 广播一条；`accumulated_text` 是**当前完整文本**（非 diff），前端直接覆盖缓冲渲染（幂等，不怕乱序/漏条）；`done:false` 表示生成中，`done:true` 表示已结束落盘 — 组件用它做"生成中"缓冲渲染 |
+| `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式**每收到一个正文 chunk 立即广播一条**；`delta` 是本帧新增文本（**追加而非覆盖**，走同一条 SSE 连接按序到达，顺序=LLM 产出顺序，可直接 append）；`done:false` 表示生成中。**`done:true` 才带 `accumulated_text` 当前全文**（含 `delta:""`），前端用它做最终校准/切文件 — 组件用它做"生成中"缓冲渲染 |
 
 宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
 
 `tool_run` / `generate_progress` 走同一条桥（宿主把后端对应 SSE 透传给沙盒），**不需要沙盒自己连 SSE**。用于 `runTool` 即发即返 + `Generate` 流式的批内反馈，见上文 runTool 章节。
 
-**Generate 流式（档1）**：生成进行中**不落盘**，仅每 ~200ms 广播 `generate_progress`（携带 `run_uuid`、`path`、`accumulated_text` 当前全文）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`**。组件据此：
-- 开始 generate（`runTool` 首响应拿到 `run_uuid`）→ 建"生成中"缓冲，按 `run_uuid`+`path` 绑定，用 `accumulated_text` 覆盖渲染（标题标"生成中"）
+**⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。**bootstrap 自身不得再监听 `window message` 里的 `_teahouse_event` 并 `_emit`**——否则同一事件会被转发两次，`generate_progress` 的增量 `delta` 若消费端用追加拼接就会把每个 delta 拼两遍（打字出现"她她转转身身"式重复）。bootstrap 若要收旧式 `tool_call`/`tool_result`/`thinking` 事件，可只留这些分支。消费 `generate_progress`/`output.refresh` 一律用 `Teahouse.on(...)`，事件已由 host bridge 送达。
+
+**Generate 流式（档1）**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**。组件据此：
+- 开始 generate（`runTool` 首响应拿到 `run_uuid`）→ 建"生成中"缓冲，按 `run_uuid`+`path` 绑定，用 `delta` **追加**渲染（标题标"生成中"）
 - 结束判定用 **And**：同 `run_uuid` 的 `tool_run`（完成/失败）+ 同 `path` 的 `file_changed` 都到，才判定真正结束 → 读文件刷新（只改文字不重渲染）
 - 中间态仅在内存，重启/退出后干净；重开时自动回退到"读文件渲染"（半成品或完整草稿）
 
@@ -301,12 +303,16 @@ Teahouse.on("output.refresh", function(data) {
   reloadFloors()  // 重新 listFloors + readText + render
 })
 
-// 生成中缓冲：accumulated_text 是当前全文，直接覆盖渲染（幂等）；
-// 结束以 file_changed/tool_run 双确认后切到文件渲染
+// 生成中缓冲：delta 是新增文本，按到达序追加（同一条 SSE 连接，顺序=产出顺序）；
+// done=true 时带全文 accumulated_text，可覆盖校准一次，然后等 file_changed 切文件
 Teahouse.on("generate_progress", function(data) {
   if (data.run_uuid !== pendingBuffer.run_uuid) return
-  pendingBuffer.text = data.accumulated_text   // 覆盖，而非追加
-  renderPendingBuffer()                        // 标题"第 N 章（生成中）"
+  if (data.done && data.accumulated_text) {
+    pendingBuffer.text = data.accumulated_text   // 最终校准（全文覆盖）
+  } else if (data.delta) {
+    pendingBuffer.text += data.delta             // 追加，而非覆盖
+  }
+  renderPendingBuffer()                          // 标题"第 N 章（生成中）"
 })
 ```
 

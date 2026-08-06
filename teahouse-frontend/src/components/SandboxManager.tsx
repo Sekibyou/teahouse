@@ -107,6 +107,9 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
         .sort()
 
       const bridge = `(function() {
+  // host → sandbox 事件桥（宿主硬编码，任何 bootstrap 都收得到）。这是
+  // '_teahouse_event' 的唯一合法转发入口——bootstrap 自带代码不得再监听同名
+  // message 并 _emit，否则同一事件（如 generate_progress）会双发、增量追加重复。
   window.addEventListener('message', function(e) {
     var d = e.data;
     if (d && d._type === '_teahouse_event' && window.Teahouse && window.Teahouse._emit) {
