@@ -439,10 +439,10 @@ export const textStyleRulesApi = {
   },
 }
 
-// Sandbox source API — reads .teahouse/output/sandbox/ (file-system driven)
+// Sandbox source API — engine built-in bootstrap + instance UI files
 export const sandboxSrcApi = {
   get: async (instanceId: string) => {
-    return get<{ files: Record<string, string> }>(
+    return get<{ bootstrap: string[]; files: Record<string, string> }>(
       `/api/instances/${instanceId}/sandbox-src`
     )
   },

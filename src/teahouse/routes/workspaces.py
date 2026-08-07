@@ -1104,7 +1104,8 @@ def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
     """Read all files under .teahouse/output/sandbox/, keyed by relative path.
 
     The sandbox renderer owns this directory exclusively — it is the single
-    content source for bootstrap.js / *.css / *.js scripts.
+    content source for *.css / *.js UI component scripts.
+    bootstrap.js is excluded — it's engine-built and served via _read_bootstrap_scripts().
     """
     sandbox_dir = instance_dir / ".teahouse" / "output" / "sandbox"
     files: dict[str, str] = {}
@@ -1112,12 +1113,35 @@ def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
         return files
     for p in sorted(sandbox_dir.rglob("*")):
         if p.is_file():
+            # 引擎内置 bootstrap，实例中的 bootstrap.js 忽略
+            if p.name == "bootstrap.js":
+                continue
             rel = str(p.relative_to(instance_dir)).replace("\\", "/")
             try:
                 files[rel] = p.read_text(encoding="utf-8")
             except Exception:
                 continue
     return files
+
+
+def _read_bootstrap_scripts() -> list[str]:
+    """Read engine built-in sandbox bootstrap scripts in injection order.
+
+    Scripts are read from the sandbox-bootstrap/ directory under
+    director-system/. They are sorted by filename and returned as a list
+    of source strings. bootstrap.js always comes first.
+    """
+    from ..director_system import TEMPLATE_DIR
+    bootstrap_dir = TEMPLATE_DIR / "sandbox-bootstrap"
+    if not bootstrap_dir.is_dir():
+        return []
+    scripts: list[str] = []
+    for p in sorted(bootstrap_dir.glob("*.js")):
+        try:
+            scripts.append(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return scripts
 
 
 def _list_floors(instance_dir: Path) -> list[dict]:
@@ -1149,13 +1173,16 @@ def _list_floors(instance_dir: Path) -> list[dict]:
 
 @router.get("/instances/{instance_id}/sandbox-src")
 async def get_sandbox_src(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Get all sandbox source files (bootstrap.js + *.css + *.js) content."""
+    """Get sandbox source: engine built-in bootstrap + instance UI files."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
-    return {"files": _list_sandbox_files(instance_dir)}
+    return {
+        "bootstrap": _read_bootstrap_scripts(),
+        "files": _list_sandbox_files(instance_dir),
+    }
 
 
 @router.get("/instances/{instance_id}/floors")

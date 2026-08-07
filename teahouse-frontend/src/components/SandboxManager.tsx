@@ -90,7 +90,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
     }, [sendToSandbox]),
   })
 
-  // ---- Build srcdoc from .teahouse/output/sandbox/ (feeds iframe via srcDoc) ----
+  // ---- Build srcdoc from engine bootstrap + instance UI files ----
   useEffect(() => {
     if (!instanceId) { setHasSandbox(false); setSrcdoc(""); return }
     let cancelled = false
@@ -98,18 +98,18 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
     ;(async () => {
       const res = await sandboxSrcApi.get(instanceId)
       if (cancelled || !res.ok || !res.data) return
+      const bootstrapScripts = res.data.bootstrap || []
       const files = res.data.files || {}
       const rels = Object.keys(files)
-      setHasSandbox(rels.length > 0)
-      if (rels.length === 0) { setSrcdoc(""); return }
+      // hasSandbox = true if there are bootstrap scripts OR user UI files
+      setHasSandbox(bootstrapScripts.length > 0 || rels.length > 0)
+      if (bootstrapScripts.length === 0 && rels.length === 0) { setSrcdoc(""); return }
 
       // Dispatch by filename/extension:
-      //   bootstrap.js first, *.css → <style>, other *.js → appended <script>
-      const bootstrap = rels.find((r) => r.endsWith("/bootstrap.js") || r === "bootstrap.js")
+      //   Engine bootstrap scripts first (from API bootstrap[]),
+      //   *.css → <style>, user *.js → appended <script>
       const cssFiles = rels.filter((r) => r.endsWith(".css")).sort()
-      const jsFiles = rels
-        .filter((r) => r.endsWith(".js") && r !== bootstrap)
-        .sort()
+      const jsFiles = rels.filter((r) => r.endsWith(".js")).sort()
 
       const bridge = `(function() {
   // host → sandbox 事件桥（宿主硬编码，任何 bootstrap 都收得到）。这是
@@ -123,10 +123,12 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
   });
 })();`
 
+      // Engine bootstrap scripts first, then user UI components
       const scriptTags = [
-        bootstrap ? files[bootstrap] : "",
-        ...jsFiles.map((r) => files[r]),
-      ].filter(Boolean).map((s) => `<script>${s}</script>`).join("\n")
+        ...bootstrapScripts.map((s) => `<script>${s}</script>`),
+        `<script>${bridge}</script>`,
+        ...jsFiles.map((r) => files[r]).map((s) => `<script>${s}</script>`),
+      ].join("\n")
 
       // tip 气泡驱动脚本：随 srcdoc 注入沙盒 document，正文里的 [tip] 即可智能定位
       const tipScriptTag = `<script>${getBBCodeTooltipScript()}</script>`
@@ -151,11 +153,8 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
   ${styleTags}
 </head>
 <body>
-  <script>
-${bridge}
-  </script>
-  ${tipScriptTag}
   ${scriptTags}
+  ${tipScriptTag}
 </body>
 </html>`
 

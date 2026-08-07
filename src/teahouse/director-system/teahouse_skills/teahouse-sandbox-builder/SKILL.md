@@ -1,6 +1,6 @@
 ---
 name: teahouse-sandbox-builder
-description: 教导导演如何设计和构建前端沙盒代码（bootstrap.js、场景脚本、UI 组件、CSS 主题），包括完整的沙盒 API 参考和最佳实践。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
+description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
 ---
 
 # Sandbox Builder Skill
@@ -20,35 +20,39 @@ description: 教导导演如何设计和构建前端沙盒代码（bootstrap.js�
 
 ## 沙盒架构概览
 
-Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离的独立运行环境。**沙盒代码是文件系统驱动的**，唯一来源是 `.teahouse/output/sandbox/` 目录。前端渲染器（SandboxManager）遍历该目录构建 srcdoc，**无需任何推送工具**——你只需 Write 文件，前端自动读取并重建 iframe。
+Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离的独立运行环境。沙盒分为两层：
+
+- **基础设施层（引擎内置，不出现于实例）**：`bootstrap.js` — postMessage 通信桥、Teahouse API、runTool 封装、流式草稿管理、事件系统、UI 组件管理、DOM 容器创建。由引擎提供，随引擎升级自动更新。
+- **UI 组件层（实例 `.teahouse/output/sandbox/`）**：用户的 `*.js` / `*.css` 文件 — 正文渲染器、翻页器、变量面板、生成按钮、主题样式等。热重载热插拔，写文件即生效。
+
+**沙盒代码是文件系统驱动的**，UI 组件唯一来源是 `.teahouse/output/sandbox/` 目录。前端渲染器（SandboxManager）遍历该目录构建 srcdoc，**无需任何推送工具**——你只需 Write 文件，前端自动读取并重建 iframe。
 
 ### 文件分派规则（由文件名/扩展名决定，无 content_type 概念）
 
 | 文件 | 注入方式 | 用途 |
 |---|---|---|
-| `bootstrap.js` | 最先执行（srcdoc 第一个 `<script>`） | 沙盒基础设施：事件监听、渲染循环、Teahouse API、容器创建 |
 | `*.css` | 注入 iframe `<head>` 的 `<style>` | 全局样式表、主题变量 |
-| 其余 `*.js` | 按文件名排序追加挂载 | UI 组件、场景脚本、交互逻辑；每个文件独立，可单独编辑 |
+| `*.js` | 按文件名排序追加挂载 | UI 组件、场景脚本、交互逻辑；每个文件独立，可单独编辑 |
 
-**正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`（上下文引擎专属），渲染器**不读**它；沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
+**注意**：`bootstrap.js` 是引擎内置的，不在实例目录中。不要创建 `bootstrap.js`——即使创建了也会被忽略。
+
+**正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`。沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
 
 ### 子目录仅做管理归类
 
 sandbox 下可建子目录归类（如 `ui/`、`scenes/`），但渲染规则**只按文件名/扩展名分派**，不做跨目录排除。
 
-### 脚本执行顺序（关键陷阱）
+### 脚本执行顺序
 
 srcdoc 中的 `<script>` 标签按出现顺序同步执行：
 
 ```
-<script>bridge</script>          ← 0. 宿主内联的 postMessage 桥
-<script>bootstrap.js</script>    ← 1. 先执行：注册 DOMContentLoaded 回调，暴露 window.Teahouse
-<script>color-button.js</script>  ← 2. 最后执行：其余 js，此时 #teahouse-ui-layer 可能还不存在！
+<script>引擎内置 bootstrap.js</script>   ← 0. 基础设施：注册 DOMContentLoaded 回调，暴露 window.Teahouse
+<script>bridge</script>                  ← 1. 宿主内联的 postMessage 事件桥
+<script>用户 UI 组件 *.js</script>       ← 2. 按文件名排序：正文渲染器、翻页器、按钮等
 ```
 
-**核心问题**：`#teahouse-content` 和 `#teahouse-ui-layer` 两个容器由 bootstrap 在 `DOMContentLoaded` 回调（或 readyState 检查）中创建。但 `<script>` 标签在 `<body>` 标签内，可能在 `DOMContentLoaded` 之前就解析并执行了。
-
-**结论**：`*.js` 必须使用 `window.registerUI()` 挂载元素，不能直接操作 `#teahouse-ui-layer`。`registerUI` 内部有排队机制——如果 UI 层还没创建，它会先把元素放入 `uiQueue`，等 `DOMContentLoaded` 触发后再 flush。
+**核心要点**：`#teahouse-content` 和 `#teahouse-ui-layer` 两个容器由引擎内置的 bootstrap 在 `DOMContentLoaded` 回调（或 readyState 检查）中创建。用户 `*.js` 应使用 `window.registerUI()` 挂载 fixed 定位元素，`registerUI` 内部有排队机制——如果 UI 层还没创建，它会先把元素放入 `uiQueue`，等容器就绪后再 flush。
 
 ### 运行时通信模型
 
@@ -237,37 +241,31 @@ Teahouse.send("开始第一章")
 
 ### 内联工具流水线：`Teahouse.runTool`
 
-#### runTool(steps) → Promise<{ok, accepted, run_uuid, steps}>
+#### runTool(steps) → Promise<{ok, results}>
 
 依次执行一段**内联工具调用数组**（`[{tool, args}, ...]`），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：数组内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接按序执行。
 
 `steps` 元素形如 `{tool: "Write", args: {...}}`，与导演同名工具一致（同一 `execute_tool` 通道）。**不解析任何占位符**：需要运行时变量时，先用 `getVars()` 取到真实 js 值并在组装 `args` 时拼接，不要指望沙盒侧 `${{...}}` 占位符解析。
 
-**即发即返（fire-and-forget）**：本调用**只确认后端已受理**，立即返回 `{ok, accepted, run_uuid, steps}`，**不阻塞等待执行结果**。因为内联流水线里的 `Generate` 等步骤可能跑几十秒（调正文模型），同步等待会撞上前端 fetch 超时。各步骤在**后台串行执行**，**每完成一步广播一条 `tool_run` 事件**。产出落地后另有 `file_changed` SSE 驱动 `output.refresh` 刷新楼层/沙盒。
+**封装后的 Promise 接口**：bootstrap 内部自动管理 `run_uuid` 登记、`tool_run` 事件分拣、完成判定。返回的 Promise 在**整批完成或失败时 resolve**，UI 组件无需手动管理 pendingRuns 或订阅 tool_run 事件。
 
-**完成判定（关键）**：`run_uuid` 唯一标识"这一批调用"。沙盒组件应订阅 `tool_run` 事件，**按 `run_uuid` 筛选出本批、数 `index` 判定完成/失败**——任一步 `ok:false` 即整批失败（后端失败即停）；`index` 收齐到 `steps` 总数即整批完成。`run_uuid` 用于隔离同一沙盒里多个组件、甚至多个实例并发跑批。
-
-**创作重点**：runTool 把"流程"收进按钮对应的 js 里——脚本与触发器不分家，路径/命名不再隐形耦合。每步自带全部所需参数（路径、内容、generate 用的 yaml 源等），不依赖导演拍板。`Generate` 步可指定正文产出，`GitCommit` 步可落盘提交。
+- 成功：`{ok: true, results: [{tool, result, ok}, ...]}` — results 数组按步骤顺序排列
+- 失败：Promise reject，错误信息包含失败步骤和原因
+- 超时保护：5 分钟无响应自动 reject
 
 ```js
-// 开场流水线：产第一楼 + 提交（newest_floor 用 js 运行时取值）
-const vs = await Teahouse.getVars()
-const floor = vs.newest_floor ?? "1"
+// 开场流水线：产第一楼 + 提交
+var floorNum = 1;
 
-// 订阅本批结果
-const onRun = (data) => {
-  if (data.run_uuid !== res.run_uuid) return   // 只认本批
-  if (!data.ok) { console.error("流水线停在", data.index, data.result); return }
-  if (data.index >= res.steps) { console.log("全部完成"); reloadFloors() }
-}
-Teahouse.on("tool_run", onRun)
-
-const res = await Teahouse.runTool([
+Teahouse.runTool([
   { tool: "Generate", args: { source_file: "temp/opening.yaml",
-                              path: `.teahouse/output/floors/floor-${floor}-draft.md` }},
-  { tool: "GitCommit", args: { message: `floor-${floor}: 开场` } },
-])
-if (!res.ok) { console.error("提交失败", res) }
+                              path: ".teahouse/output/floors/floor-" + floorNum + "-draft.md" }},
+  { tool: "GitCommit", args: { message: "floor-" + floorNum + ": 开场" } },
+]).then(function(result) {
+  console.log("流水线完成", result.results);
+}).catch(function(err) {
+  console.error("流水线失败", err);
+});
 ```
 
 与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runTool()`**。
@@ -315,40 +313,44 @@ API：
 | 事件 | payload | 触发时机 |
 |---|---|---|
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
-| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条（含成败）—— 组件按 `run_uuid` 筛选、数 `index` 判定整批完成/失败 |
-| `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式**每收到一个正文 chunk 立即广播一条**；`delta` 是本帧新增文本（**追加而非覆盖**，走同一条 SSE 连接按序到达，顺序=LLM 产出顺序，可直接 append）；`done:false` 表示生成中。**`done:true` 才带 `accumulated_text` 当前全文**（含 `delta:""`），前端用它做最终校准/切文件 — 组件用它做"生成中"缓冲渲染 |
-| `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定。沙盒用 `Teahouse.on('session_done', ...)` 订阅后自行决定下一步（如 `sessionDestroy(session_id)` 回收） |
+| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条。**bootstrap 内部已封装完成判定**，UI 组件通常不需要直接订阅此事件——使用 `Teahouse.runTool()` 的 Promise 接口即可 |
+| `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
+| `draft.change` | `{ path, text, accumulated_len }` | bootstrap 收到 `generate_progress` 后更新 `currentDraft` 并广播此事件。UI 组件（如正文渲染器）订阅此事件即可实现生成中的打字机效果 |
+| `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
+| `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
+
+### 流式草稿（`Teahouse.currentDraft`）
+
+bootstrap 内部集中订阅 `generate_progress`，维护流式草稿缓冲区。UI 组件可以直接读取：
+
+- **`Teahouse.currentDraft`** — `{ path, text, accumulated_len }` 或 `null`。生成中实时更新（delta 追加），生成结束清空
+- **`Teahouse.generationStatus`** — `'idle'` / `'generating'` / `'done'`
+
+正文渲染器可以这样实现打字机效果：
+
+```js
+Teahouse.on("draft.change", function(draft) {
+  // draft = { path, text, accumulated_len }
+  // 用 requestAnimationFrame 节流渲染，避免高频 DOM 操作
+  scheduleRender(draft);
+});
+
+Teahouse.on("generation.status", function(status) {
+  if (status === "done") {
+    // 生成结束，等 output.refresh 触发文件渲染接管
+  }
+});
+```
 
 宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
 
-`tool_run` / `generate_progress` 走同一条桥（宿主把后端对应 SSE 透传给沙盒），**不需要沙盒自己连 SSE**。用于 `runTool` 即发即返 + `Generate` 流式的批内反馈，见上文 runTool 章节。
+**⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。bootstrap 内部订阅 `generate_progress` 和 `tool_run` 维护 currentDraft 和 runTool 封装。用户代码不应再直接监听 `generate_progress` 或自行管理 `tool_run` 完成判定，应使用 `Teahouse.runTool()` Promise 和 `draft.change` 事件。
 
-**⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。**bootstrap 自身不得再监听 `window message` 里的 `_teahouse_event` 并 `_emit`**——否则同一事件会被转发两次，`generate_progress` 的增量 `delta` 若消费端用追加拼接就会把每个 delta 拼两遍（打字出现"她她转转身身"式重复）。bootstrap 若要收旧式 `tool_call`/`tool_result`/`thinking` 事件，可只留这些分支。消费 `generate_progress`/`output.refresh` 一律用 `Teahouse.on(...)`，事件已由 host bridge 送达。
-
-**Generate 流式（档1）**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**。组件据此：
-- 开始 generate（`runTool` 首响应拿到 `run_uuid`）→ 建"生成中"缓冲，按 `run_uuid`+`path` 绑定，用 `delta` **追加**渲染（标题标"生成中"）
-- 结束判定用 **And**：同 `run_uuid` 的 `tool_run`（完成/失败）+ 同 `path` 的 `file_changed` 都到，才判定真正结束 → 读文件刷新（只改文字不重渲染）
-- 中间态仅在内存，重启/退出后干净；重开时自动回退到"读文件渲染"（半成品或完整草稿）
-
-```js
-Teahouse.on("output.refresh", function(data) {
-  console.log("instance files changed:", data.path)
-  reloadFloors()  // 重新 listFloors + readText + render
-})
-
-// 生成中缓冲：delta 是新增文本，按到达序追加（同一条 SSE 连接，顺序=产出顺序）；
-// done=true 时带全文 accumulated_text，可覆盖校准一次，然后等 file_changed 切文件
-Teahouse.on("generate_progress", function(data) {
-  if (data.run_uuid !== pendingBuffer.run_uuid) return
-  if (data.done && data.accumulated_text) {
-    pendingBuffer.text = data.accumulated_text   // 最终校准（全文覆盖）
-  } else if (data.delta) {
-    pendingBuffer.text += data.delta             // 追加，而非覆盖
-  }
-  renderPendingBuffer()                          // 标题"第 N 章（生成中）"
-})
-```
+**Generate 流式**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**。bootstrap 据此：
+- 开始 generate → `generationStatus = 'generating'`，`currentDraft` 建立，`draft.change` 广播
+- 每个 delta → 追加到 `currentDraft.text`，`draft.change` 广播 → 正文渲染器 rAF 节流刷新
+- 结束 → `currentDraft = null`，`generationStatus = 'done'`，等 `file_changed` → `output.refresh` → 文件渲染接管
 
 ### UI 组件管理
 
@@ -383,24 +385,20 @@ window.registerUI("statusbar", bar)
 Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
 ```
 
-确认实例是否已有沙盒代码。如果没有 `bootstrap.js`，则需要从零开始（步骤 2）；如果已有，则在其基础上增改。
+确认实例已有哪些 UI 组件。bootstrap 是引擎内置的，不需要也不应该创建。
 
-### 步骤 2（仅全新沙盒）：创建 bootstrap.js
+### 步骤 2：确保正文渲染器存在
 
-如果 `.teahouse/output/sandbox/` 目录下没有 `bootstrap.js`，需要先创建。核心职责：
-
-1. 实现 `callHost()` — postMessage 通信层
-2. 定义 `window.Teahouse` API — 暴露给所有沙盒脚本（含 `listFloors`、`readText`、`readAsset`、`writeFile`、`setVar`、`getVars`、`renderRichText`、`send`、`runTool`）
-3. 监听宿主推送事件 — `output.refresh`
-4. UI 组件管理 — `registerUI()`
-5. 默认渲染逻辑 — `listFloors()` + `readText()` + `renderRichText()` 按楼层渲染
-6. 初始化 — 创建 `#teahouse-content` 和 `#teahouse-ui-layer` 容器，发送 `{ _type: "ready" }` 通知宿主
+如果实例没有正文渲染器，需要创建一个。引擎提供了默认的 `teahouse-maintext-renderer.js` 作为模板。核心职责：
+- 版面管理：`Teahouse._pageState`（floors 数组 + currentIndex）
+- 正文渲染：`listFloors()` + `readText()` + `renderRichText()` → DOM
+- 流式草稿：订阅 `draft.change` 事件实现打字机效果
+- 翻页：`goToPage(index)` / `renderCurrent()`
+- `output.refresh` 精准刷新
 
 编写时使用普通 function 和 var（兼容旧浏览器，因为 iframe 无 transpiler）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
 
-bootstrap.js 编写完成后，**直接 Write 到 `.teahouse/output/sandbox/bootstrap.js`**，前端自动重建 iframe srcdoc，沙盒重新初始化（无需任何推送）。
-
-写完后前端会收到 `file_changed` 并重建沙盒。
+Write 到 `.teahouse/output/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
 
 ### 步骤 3：编写 CSS 主题
 
@@ -439,21 +437,21 @@ UI 组件是固定定位的悬浮元素。模式：
 
 先创建文件，再 Write 到 `.teahouse/output/sandbox/`：
 
-1. **bootstrap.js**：必须最先（前端识别 bootstrap.js 最先执行）
+1. **teahouse-maintext-renderer.js**：正文渲染器（最先执行，建立 _pageState 和渲染逻辑）
 2. **theme.css**：主题样式
-3. **其余 *.js**：UI 组件（可一次写多个）
+3. **其余 *.js**：UI 组件（翻页器、按钮等）
 
 #### 迭代修改
 
-- **修改代码文件 → 直接 Edit `.teahouse/output/sandbox/` 下对应文件**。前端监听到 `file_changed` 后重建 iframe srcdoc。
-- 修改 bootstrap.js → iframe 全重建，DOM 状态全丢。只在必须修改基础设施时动它。
+- **修改代码文件 → 直接 Edit `.teahouse/output/sandbox/` 下对应文件**。前端监听到 `file_changed` 后重建 iframe srcdoc（热重载）。
+- 修改正文渲染器 → iframe 全重建，DOM 状态全丢。
 
 #### 沙盒代码整体禁用
 
 如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `.teahouse/output/sandbox/` 下的代码**移动到 `.teahouse/output_disabled/`**：
 
 ```
-FileOps move .teahouse/output/sandbox/bootstrap.js .teahouse/output_disabled/bootstrap.js
+FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/output_disabled/teahouse-maintext-renderer.js
 ```
 
 `.teahouse/output_disabled/` 无子结构，目录本身即禁用标记——渲染器**不读它**，故移入即从沙盒移除；需要恢复时移回 `.teahouse/output/sandbox/`。只服务沙盒代码，正文楼层无此需求。
@@ -472,13 +470,16 @@ FileOps move .teahouse/output/sandbox/bootstrap.js .teahouse/output_disabled/boo
 10. **一个文件一个组件**：分开后更容易独立替换和迭代
 11. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`，因 DOM 未就绪会静默丢失
 12. **共享状态挂载到 `window.Teahouse` 并带事件通知**：状态变更方 `_emit`，订阅方 `on`
+13. **runTool 用 Promise 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定
+14. **流式生成用 `draft.change` 事件，不要直接监听 `generate_progress`**：bootstrap 已集中处理
 
 ## 注意事项
 
-- **修改 bootstrap.js 触发 iframe 重建**：所有沙盒内 DOM 状态和运行时变量都会丢失。只在必须修改基础设施时更新它
+- **不要创建 bootstrap.js**：bootstrap 是引擎内置的，实例 sandbox 目录下创建它会被忽略
+- **修改正文渲染器触发 iframe 重建**：所有沙盒内 DOM 状态和运行时变量都会丢失
 - **沙盒不直接访问后端 API**：所有请求由宿主代理。不要写 `fetch()` 或 `XMLHttpRequest`
 - **iframe sandbox="allow-scripts"** 不允许 `allow-same-origin`、`allow-forms`、`allow-popups`。沙盒内无法访问 localStorage、Cookie、或宿主 DOM
 - **BBCode 渲染在宿主层**：沙盒代码中不要手动解析 BBCode，调用 `Teahouse.renderRichText()`
 - **文件操作有权限**：`readText` / `readAsset` / `writeFile` 受当前用户 JWT 权限限制
 - **正文楼层在 `.teahouse/output/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
-- **不确定时参考原型模板**：prototype 自带 `.teahouse/output/sandbox/` 的实现参考
+- **不确定时参考 sandbox 实例**：`data/lowstar/instances/sandbox/` 下有完整的 UI 组件参考
