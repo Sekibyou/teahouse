@@ -83,7 +83,7 @@
       for (var i = 1; i <= r.total; i++) {
         results.push(r.results[i] || null);
       }
-      r.resolve({ ok: true, results: results });
+      r.resolve({ ok: true, results: results, run_uuid: data.run_uuid });
     }
   }
 
