@@ -19,17 +19,45 @@ All events are broadcast via ``state.broadcast("session_event", ...)`` with the
 exact same shape as ``_tool_use_loop`` yield events, plus ``instance_id``,
 ``session_id``, and ``running`` snapshot. The frontend consumes these events
 uniformly — there is no separate "direct SSE" vs "background _drain" path.
+
+Diagnostic event log
+--------------------
+When ``TEHOUSE_EVENT_LOG=1`` is set in the environment, every broadcast event
+is appended to ``<instance_dir>/.teahouse/event_log.jsonl`` so the developer
+can cross-reference backend events with frontend-side observations.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from . import sessions
 from .session_tracker import task_tracker
 from .state import state
+
+_EVENT_LOG_ENABLED = os.environ.get("TEHOUSE_EVENT_LOG") == "1"
+
+
+def _event_log(instance_dir: Path, session_id: str, event_type: str, data: dict) -> None:
+    """Append a structured diagnostic record to the instance's event log."""
+    if not _EVENT_LOG_ENABLED:
+        return
+    try:
+        log_path = instance_dir / ".teahouse" / "event_log.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": asyncio.get_event_loop().time(),
+            "session_id": session_id,
+            "event_type": event_type,
+            "data": data,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class SessionLoop:
@@ -70,6 +98,7 @@ class SessionLoop:
         if not content:
             return
         sessions.append_user(self.instance_dir, content, session_id=self.session_id)
+        _event_log(self.instance_dir, self.session_id, "enqueue", {"content": content[:200]})
         self._broadcast_user_msg(content)
         self._queue.put_nowait(content)
 
@@ -118,10 +147,12 @@ class SessionLoop:
 
     async def run(self) -> None:
         """Main execution loop. Blocks until queue is empty and no interrupt pending."""
+        _event_log(self.instance_dir, self.session_id, "loop_start", {"qsize": self._queue.qsize()})
         while True:
             # 1. Handle interruption
             if self._interrupted:
                 self._interrupted = False
+                _event_log(self.instance_dir, self.session_id, "loop_interrupted", {})
                 sessions.append_user(
                     self.instance_dir,
                     "[auto] user interrupted",
@@ -134,11 +165,15 @@ class SessionLoop:
             #    we just need to consume them to know there's work to do.
             msgs = self._drain_queue()
             if not msgs:
+                _event_log(self.instance_dir, self.session_id, "loop_idle_exit", {})
                 break  # session idle — loop exits
+
+            _event_log(self.instance_dir, self.session_id, "loop_drain", {"count": len(msgs), "preview": [m[:100] for m in msgs]})
 
             # 3. Resolve LLM client
             client = await self._resolve_client()
             if client is None:
+                _event_log(self.instance_dir, self.session_id, "loop_no_client", {})
                 break
 
             # 5. Load tool permissions
@@ -167,6 +202,8 @@ class SessionLoop:
         """Consume _tool_use_loop generator, broadcasting every event as session_event."""
         from .app import _tool_use_loop
 
+        _event_log(self.instance_dir, self.session_id, "tool_loop_start", {"enabled_tools": enabled_tools})
+        event_count = 0
         async for event in _tool_use_loop(
             client,
             [],  # no new input — context rebuilt from jsonl
@@ -180,9 +217,19 @@ class SessionLoop:
             ev["instance_id"] = self.instance_dir.name
             ev["session_id"] = self.session_id
             ev["running"] = task_tracker.running_sessions(self.instance_dir.name)
+            event_count += 1
+            _event_log(self.instance_dir, self.session_id, "broadcast", {
+                "seq": event_count,
+                "type": ev.get("type"),
+                "name": ev.get("name", ""),
+                "id": ev.get("id", ""),
+                "text_len": len(ev.get("text") or ""),
+                "running": ev["running"],
+            })
             state.broadcast("session_event", ev)
 
         # Final done event so the frontend knows the run completed.
+        _event_log(self.instance_dir, self.session_id, "tool_loop_done", {"total_events": event_count})
         self._broadcast_done()
 
     async def _resolve_client(self):

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, memo } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2, Puzzle } from "lucide-react"
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2, Puzzle, Stethoscope } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
+import { useDiagnosticLog, DiagnosticPanel } from "@/components/DiagnosticPanel"
 
 type MsgStatus = "pending" | "reasoning" | "streaming" | "done" | "queued"
 
@@ -82,6 +83,8 @@ function updateMessage(
 
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
+  const [showDiag, setShowDiag] = useState(false)
+  const diag = useDiagnosticLog()
 
   // Multi-session director panel: the main session plus sandbox/sub-agent child
   // sessions. `messages` always reflects the *active* session; messagesBySidRef
@@ -245,18 +248,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           instancesApi.listSessions(instId!).then(res => {
             if (res.ok) setSessionList(prev => mergeServerSessions(prev, res.data?.sessions || []))
           }).catch(() => {})
-          // 唤醒已由后端完成（它 append 了 [auto] 消息并 kick 父会话后台跑，前端无需注入）。
-          // 这里只需把父会话标为新消息 + 刷新列表，让用户切过去能看到；不抢当前聚焦。
+          // 唤醒已由后端完成（enqueue 入队 + broadcast session_user_msg）。前端
+          // session_user_msg 处理器已负责追加 user 气泡 + pending assistant。
+          // 这里只需确保父会话在 sessionList 里且标"有新消息"，不抢当前聚焦。
           if (data.parent_session_id) {
             const parent = data.parent_session_id as string
             setSessionList(prev => prev.some(s => s.session_id === parent)
               ? prev
               : [...prev, { session_id: parent, record_count: 0 }])
             markSessionNew(parent)
-            // 父会话正在被后端唤醒（新增了 user 消息），若当前正看它，刷新出该消息。
-            if (activeSidRef.current === parent) {
-              loadHistoryRef.current(true, parent)
-            }
           }
         } catch {
           // ignore malformed events
@@ -272,16 +272,21 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          // Invalidate cache so next switchSession re-pulls from backend.
-          delete messagesBySidRef.current[sid]
+          window.__TEAHOUSE_LOG__?.("session_user_msg", `sid=${sid} active=${activeSidRef.current} content=${data.content ? JSON.stringify((data.content as string).slice(0, 80)) : "NONE"}`)
           if (activeSidRef.current === sid && data.content) {
-            // Append the user message and a fresh pending assistant bubble
-            // so session_event streaming can fill it in.
+            // Append the user message and a fresh pending assistant bubble so
+            // session_event streaming can fill it in. SetMessagesFor reads from
+            // the cache (which has the currently visible messages) — do NOT delete
+            // it first, or the base will be [] and all prior messages lost.
             const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done" }
             const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+            window.__TEAHOUSE_LOG__?.("session_user_msg", `APPENDING userMsg.id=${userMsg.id} pendingAsst.id=${pendingAsst.id}`)
             setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
             scrollToBottom()
-          } else if (activeSidRef.current !== sid) {
+          } else {
+            // Not viewing, or no content: invalidate cache so next switchSession
+            // re-pulls from backend (which now has the new records).
+            delete messagesBySidRef.current[sid]
             markSessionNew(sid)
           }
         } catch {
@@ -332,6 +337,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
           if (activeSidRef.current === sid) {
             // ---- Currently viewing this session: real-time streaming ----
+            window.__TEAHOUSE_LOG__?.("session_event", `type=${t} sid=${sid} ${t === "text" ? `text_len=${(data.text as string)?.length || 0}` : t === "tool_call" ? `name=${data.name}` : t === "tool_result" ? `name=${data.name} id=${data.id}` : ""}`)
             if (t === "done") {
               // Stream finished. Close any open streaming assistant bubble.
               setMessagesFor(sid, (prev) => {
@@ -427,6 +433,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
             const chunkText = (data.text as string) || ""
             if (t === "text" || t === "reasoning") {
+              // Defensive: skip tool_args text fragments (OpenAI tool-call arg
+              // deltas). The backend also filters these now, but keeping this
+              // guard ensures stale backends or edge cases don't flash JSON.
+              if (data.tool_args) return
               if (t === "reasoning") {
                 setMessagesFor(sid, (prev) => {
                   const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
@@ -734,6 +744,19 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const isStreaming = statusMap[activeSid] === true
   const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
 
+  // 后端 SessionLoop 驱动的事件不会调用 startGenerating()。当 statusMap
+  // 首次标记某会话为 running 时，手动启动计时器，让 elapsed 从 0 开始计数。
+  const prevStreamingRef = useRef(false)
+  useEffect(() => {
+    if (isStreaming && !prevStreamingRef.current) {
+      useGenerationStore.getState().startGenerating()
+    }
+    if (!isStreaming && prevStreamingRef.current) {
+      useGenerationStore.getState().finishGenerating()
+    }
+    prevStreamingRef.current = isStreaming
+  }, [isStreaming])
+
   // 供 AssistantBubble 使用：反映当前查看会话的前端流状态
   const isGlobalGenerating = isStreaming
   const isIdle = !isStreaming
@@ -843,6 +866,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
   const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
     const sid = targetSid || activeSid
+    window.__TEAHOUSE_LOG__?.("_doSend", `sid=${sid} useTools=${useTools} text=${JSON.stringify(text.slice(0, 80))}`)
 
     // /clear command
     if (text === "/clear") {
@@ -862,25 +886,23 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
     if (!text.trim()) return
 
-    // Build the user message for immediate display (optimistic).
-    const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-    const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+    const activeInst = getActiveInstance()
+    const shouldUseTools = useTools && activeInst !== null
 
-    // Append to the message array immediately so the user sees their message
-    // and an empty "waiting..." bubble. The backend session_event will fill
-    // in the assistant bubble with streaming content.
-    setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
+    // For the tools path, the backend broadcasts session_user_msg synchronously
+    // during enqueue() inside the POST handler. Let that SSE event create both
+    // the user bubble and the pending assistant bubble — do NOT optimistically
+    // append here, or the message will appear twice.
+
     setInput("")
     setError("")
     scrollToBottom()
 
     try {
-      const activeInst = getActiveInstance()
-      const shouldUseTools = useTools && activeInst !== null
-
       if (shouldUseTools) {
         // Enqueue into backend session loop. The backend persists it, starts
-        // processing, and broadcasts all events via session_event SSE.
+        // processing, and broadcasts session_user_msg (which creates the user
+        // bubble + pending assistant) then session_event (streaming).
         await chatApi.sendDirectorMessage(
           [{ role: "user", content: text }],
           activeInst!.id,
@@ -888,6 +910,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         )
       } else {
         // Writer path (non-tools): still uses direct SSE streaming.
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
+        const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+        setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
         const mergedMessages = mergeConsecutiveSameRole([...messages, userMsg, pendingAssistant])
         const apiMessages = mergedMessages.map((m) => {
           const msg: Record<string, unknown> = { role: m.role, content: m.content || "" }
@@ -1027,12 +1052,31 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
+      <DiagnosticPanel
+        open={showDiag}
+        onClose={() => setShowDiag(false)}
+        entries={diag.entries}
+        enabled={diag.enabled}
+        onEnable={diag.enable}
+        onDisable={diag.disable}
+        onClear={diag.clear}
+        onCopy={diag.copy}
+      />
       {/* Header */}
       <div className="p-3 border-b border-border shrink-0 space-y-2">
-        {/* Row 1: 导演 + enabled plugin count + model names */}
+        {/* Row 1: 导演 + enabled plugin count + model names + diag */}
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">导演</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">导演</h3>
+            <button
+              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setShowDiag(v => !v)}
+              title={showDiag ? "关闭诊断日志" : (diag.enabled ? "诊断日志（录制中）" : "诊断日志")}
+            >
+              <Stethoscope className={`h-3.5 w-3.5 ${diag.enabled ? "text-green-500" : ""}`} />
+            </button>
+          </div>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
             <button
               className="flex items-center gap-1 hover:text-foreground transition-colors"

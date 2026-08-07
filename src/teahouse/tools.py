@@ -605,13 +605,6 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
     if parent:
         loop = SessionLoop.get_or_create(instance_dir, parent, instance_id=instance_id, user_id=user_id)
         loop.enqueue(f"[auto] 你委派的子会话 {sid} 已完成（它调用了 EndSession）。请读取它落盘到 temp/ 的结论并收尾本轮。")
-        # Tell the frontend "the parent session gained a new user message" so it can
-        # drop that session's messages cache and re-pull when the user switches to it.
-        state.broadcast("session_user_msg", {
-            "instance_id": instance_id or instance_dir.name,
-            "session_id": parent,
-            "count": _session_record_count(instance_dir, parent),
-        })
 
     payload = {
         "instance_id": instance_id or instance_dir.name,
