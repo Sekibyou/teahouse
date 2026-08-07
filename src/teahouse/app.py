@@ -793,8 +793,6 @@ async def _tool_use_loop(
 
 @app.post("/v1/chat")
 async def chat(body: ChatRequest, request: Request):
-    client = await _chat_common(body, request)
-
     if body.tools:
         if not body.instance_id:
             raise HTTPException(status_code=400, detail="instance_id required when tools=True")
@@ -816,63 +814,20 @@ async def chat(body: ChatRequest, request: Request):
 
         instance_dir = Path(inst["dir_path"])
 
-        # Load the session's tool allow-list from its metadata.
-        # enabled_tools=None means unrestricted (main session has empty meta → None).
         from . import sessions as _sessions
+        from .session_loop import SessionLoop
         sid = (body.session_id or _sessions.MAIN_SESSION_ID)
-        meta = _sessions.load_meta(instance_dir, sid)
-        enabled_tools = meta.get("enabled_tools") or None
 
-        async def sse_tool_stream():
-            import asyncio as _aio
-            from .session_tracker import task_tracker
-            from .state import state as _state
-            task = _aio.current_task()
-            if task is not None:
-                task_tracker.register(instance_dir.name, sid, task)
-            try:
-                async for event in _tool_use_loop(
-                    client, body.messages, instance_dir, user_id, body.instance_id,
-                    session_id=sid, enabled_tools=enabled_tools,
-                ):
-                    event_type = event.get("type", "tool_call")
-                    # Always include session_id in every event for unified handling.
-                    event = dict(event)
-                    event.setdefault("session_id", sid)
-                    # Broadcast session_event for ALL sessions (not just main).
-                    t = event.get("type", "tool_call")
-                    token = 0
-                    if t == "text":
-                        token = (len(event.get("text") or "") + 3) // 4
-                    elif t == "reasoning":
-                        token = (len(event.get("text") or "") + 3) // 4
-                    elif t == "tool_call":
-                        token = (len(event.get("name") or "") + len(str(event.get("args") or "")) + 3) // 4
-                    elif t == "tool_result":
-                        token = (len(event.get("result") or "") + 3) // 4
-                    _state.broadcast("session_event", {
-                        "instance_id": instance_dir.name,
-                        "session_id": sid,
-                        "type": t,
-                        "delta": event.get("text", "") if t in ("text", "reasoning") else None,
-                        "token_est": token,
-                        "running": task_tracker.running_sessions(instance_dir.name),
-                    })
-                    yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
-                yield "event: done\ndata: {}\n\n"
-            finally:
-                if task is not None:
-                    task_tracker.unregister(instance_dir.name, sid)
+        # Extract user content from frontend messages and enqueue.
+        new_inputs = [m for m in body.messages if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")]
+        if new_inputs:
+            loop = SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id)
+            loop.enqueue(new_inputs[-1]["content"])
+            return {"queued": True, "session_id": sid, "count": len(new_inputs)}
+        # No user input — return ok (frontend may send empty round to wake an idle session)
+        return {"queued": False, "session_id": sid}
 
-        return StreamingResponse(
-            sse_tool_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+    client = await _chat_common(body, request)
 
     if not body.stream:
         msgs = _preprocess_frontend_blocks(list(body.messages), client.api_style)

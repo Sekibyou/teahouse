@@ -257,6 +257,12 @@ export const instancesApi = {
     )
   },
 
+  interruptSession: async (instanceId: string, sessionId: string) => {
+    return post<{ status: string; session_id: string }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}/interrupt`,
+    )
+  },
+
   runTools: async (instanceId: string, steps: ToolsRunStep[]) => {
     return post<ToolsRunResult>(`/api/instances/${instanceId}/tools/run`, { steps })
   },
@@ -326,10 +332,10 @@ export const chatApi = {
     return response.body!
   },
 
-  /** Streaming chat with tool use: like sendStream but with tools + instance_id.
-   *  Events can include tool_call, tool_result, text, reasoning.
-   *  sessionId selects a child sub-session (default main). */
-  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string, signal?: AbortSignal, sessionId?: string) => {
+  /** Send a director message: POSTs to /v1/chat which enqueues the message
+   *  into the backend session loop. The backend persists it and streams results
+   *  via session_event SSE broadcast. */
+  sendDirectorMessage: async (messages: { role: string; content: string }[], instanceId: string, sessionId?: string) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -337,7 +343,6 @@ export const chatApi = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      signal,
       body: JSON.stringify({
         messages,
         stream: true,
@@ -350,7 +355,8 @@ export const chatApi = {
       const err = await response.json().catch(() => ({ detail: "请求失败" }))
       throw new Error(err.detail || `HTTP ${response.status}`)
     }
-    return response.body!
+    const data = await response.json()
+    return data as { queued: boolean; session_id: string; count?: number }
   },
 }
 

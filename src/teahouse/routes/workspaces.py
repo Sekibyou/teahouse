@@ -973,7 +973,26 @@ async def create_session(
     return {"session_id": session_id, "enabled_tools": enabled}
 
 
-@router.get("/instances/{instance_id}/sessions/status")
+@router.post("/instances/{instance_id}/sessions/{session_id}/interrupt")
+async def interrupt_session(
+    instance_id: str,
+    session_id: str,
+    user: UserInfo = Depends(require_user),
+):
+    """Interrupt a session's in-flight tool loop (ESC / stop button).
+
+    Sets the interrupt flag and cancels the asyncio task. The session loop
+    picks up the flag, persists an interruption record, and drains the queue.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..session_loop import SessionLoop
+    SessionLoop.interrupt_session(instance_dir.name, session_id)
+    return {"status": "ok", "session_id": session_id}
 async def sessions_status(instance_id: str, user: UserInfo = Depends(require_user)):
     """Authoritative per-session "is its director loop running right now?" map.
 

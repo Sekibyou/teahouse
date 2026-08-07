@@ -544,13 +544,13 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
     }
     _write_meta(instance_dir, child, meta)
 
-    # Seed the child's context with the delegated task, so a background run — or a
-    # later user click-in — has an actual instruction to act on (not just the role
-    # intro from the system prompt).
-    from . import sessions
+    # Enqueue the task into the child's session loop. The loop persists it to
+    # jsonl and starts processing immediately.
+    from .session_loop import SessionLoop
     from .session_tracker import task_tracker
     if task:
-        sessions.append_user(instance_dir, task, session_id=child)
+        loop = SessionLoop.get_or_create(instance_dir, child, instance_id=instance_id, user_id=user_id)
+        loop.enqueue(task)
 
     state.broadcast("session_created", {
         "instance_id": instance_id or instance_dir.name,
@@ -559,10 +559,6 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
         "parent_await_result": await_result,
         "running": task_tracker.running_sessions(instance_dir.name),
     })
-
-    # Kick the child to start working right away (fire-and-forget background run).
-    from .session_bg import kick_session_run
-    kick_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
 
     if await_result:
         return (f"Created sub-session {child} and delegated task. AWAITING_RESULT — stop this round now and do not issue further "
@@ -580,13 +576,11 @@ async def execute_send_to_sub_session(instance_dir: Path, args: dict[str, Any], 
     if not child or not message:
         return "Error: SendToSubSession requires both session_id and message."
 
-    # Append the message as a user record to the child session file.
-    from . import sessions
-    sessions.append_user(instance_dir, f"[director@{session_id or 'main'}] {message}", session_id=child)
-
-    # Kick the child session to process it in the background if it isn't already running.
-    from .session_bg import kick_session_run
-    kick_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
+    # Enqueue the message into the child's session loop.
+    # The loop will persist it to jsonl and process it.
+    from .session_loop import SessionLoop
+    loop = SessionLoop.get_or_create(instance_dir, child, instance_id=instance_id, user_id=user_id)
+    loop.enqueue(f"[director@{session_id or 'main'}] {message}")
 
     return f"Message delivered to sub-session {child}. It will process this in its next turn (or when it next runs)."
 
@@ -604,18 +598,13 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
     parent = meta.get("parent_session_id")
 
     from .session_tracker import task_tracker
-    from . import sessions
-    from .session_bg import kick_session_run
+    from .session_loop import SessionLoop
 
-    # Wake the parent in-backend: append a user message + kick it to run and wrap up.
+    # Wake the parent by enqueuing an auto wake message. The parent's loop will
+    # persist it and start processing.
     if parent:
-        sessions.append_user(
-            instance_dir,
-            f"[auto] 你委派的子会话 {sid} 已完成（它调用了 EndSession）。请读取它落盘到 temp/ 的结论并收尾本轮。",
-            session_id=parent,
-        )
-        # Kick the parent to run and wrap up (enabled_tools auto-loaded from meta).
-        kick_session_run(instance_dir, parent, instance_id=instance_id, user_id=user_id)
+        loop = SessionLoop.get_or_create(instance_dir, parent, instance_id=instance_id, user_id=user_id)
+        loop.enqueue(f"[auto] 你委派的子会话 {sid} 已完成（它调用了 EndSession）。请读取它落盘到 temp/ 的结论并收尾本轮。")
         # Tell the frontend "the parent session gained a new user message" so it can
         # drop that session's messages cache and re-pull when the user switches to it.
         state.broadcast("session_user_msg", {

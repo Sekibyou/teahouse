@@ -109,6 +109,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }, [])
   const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number }[]>([])
   const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
+  // Track the active streaming assistant per session for session_event-based real-time
+  // rendering. When the frontend sends directly via /v1/chat, `assistantMsg` (let in
+  // _doSend) handles it. When a session is running in background (_drain path) and the
+  // user is watching it, the session_event handler updates this message.
+  const streamingAssistantRef = useRef<Record<string, RichMessage>>({})
   // "有新消息" 标志：后台会话有产出时需要提示，切过去即清。
   const [newMsgMap, setNewMsgMap] = useState<Record<string, boolean>>({})
   const newMsgMapRef = useRef<Record<string, boolean>>({})
@@ -304,31 +309,153 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       })
 
       es.addEventListener("session_event", (e: MessageEvent) => {
-        // A background sub-session emitted a real director event (text/tool_call/
-        // tool_result/assistant_done). Track its running state + token count, and
-        // refresh the view if we're looking at it; otherwise mark "有新消息".
+        // All director events now arrive via this single SSE path.
+        // When viewing the session, we render streaming updates in real-time
+        // (typing effect, tool calls, tool results, tool-round boundaries).
+        // When not viewing, we mark as new and invalidate cache on boundaries.
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
           const t = data.type as string
-          // 状态完全由后端权威提供：每个事件都附带 running 快照，直接覆盖即可。
+
+          // Update running status from backend-authoritative snapshot.
           if (data.running && typeof data.running === "object") {
             statusMapRef.current = data.running as Record<string, boolean>
             setStatusMap(data.running as Record<string, boolean>)
           }
-          if (data.token_est) addSessionTokens(sid, Number(data.token_est) || 0)
+
           if (activeSidRef.current === sid) {
-            // 正在看它：后台流在跑不要每次全量重拉（中断体验），只在关键边界刷新。
-            // done 表示该会话后台 run 已结束，重拉以补出末尾的纯 text（最终汇报）。
-            if (t === "assistant_done" || t === "tool_result" || t === "done") {
-              loadHistoryRef.current(true, sid)
+            // ---- Currently viewing this session: real-time streaming ----
+            if (t === "done") {
+              // Stream finished. Close any open streaming assistant bubble.
+              setMessagesFor(sid, (prev) => {
+                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                if (!lastAsst) return prev
+                // Drop empty bubble
+                if (!lastAsst.content && !lastAsst.reasoning && (!lastAsst.blocks || lastAsst.blocks.length === 0)) {
+                  return prev.filter((m) => m.id !== lastAsst.id)
+                }
+                return updateMessage(prev, lastAsst.id, (m) => ({ ...m, status: "done" })) || prev
+              })
+              return
+            }
+
+            if (t === "assistant_done") {
+              // Tool-round boundary: close current bubble, start a fresh one.
+              setMessagesFor(sid, (prev) => {
+                const closed = prev.map((m) =>
+                  m.role === "assistant" && m.status !== "done"
+                    ? { ...m, status: "done" as MsgStatus }
+                    : m
+                )
+                const nextAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+                return [...closed, nextAssistant]
+              })
+              return
+            }
+
+            if (t === "tool_call") {
+              setMessagesFor(sid, (prev) => {
+                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                if (!lastAsst) return prev
+                return updateMessage(prev, lastAsst.id, (m) => ({
+                  ...m,
+                  status: "streaming",
+                  blocks: [
+                    ...(m.blocks || []),
+                    {
+                      type: "tool_call" as const,
+                      id: data.id as string,
+                      name: data.name as string,
+                      args: data.args as Record<string, unknown>,
+                      ...(data._batch_meta ? { batch: data._batch_meta as { path: string; index: number; total: number } } : {}),
+                    },
+                  ],
+                })) || prev
+              })
+              return
+            }
+
+            if (t === "tool_result") {
+              setMessagesFor(sid, (prev) => {
+                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                if (!lastAsst) return prev
+                return updateMessage(prev, lastAsst.id, (m) => ({
+                  ...m,
+                  blocks: (m.blocks || []).map((b) =>
+                    b.type === "tool_call" && b.id === data.id ? { ...b, result: data.result as string } : b
+                  ),
+                })) || prev
+              })
+              return
+            }
+
+            if (t === "approval_required") {
+              if (autoApproveCommitRef.current) {
+                const inst = getActiveInstance()
+                if (inst) {
+                  gitApi.approveTool(inst.id, data.id as string, data.args as Record<string, unknown>).then(res => {
+                    if (res.ok) {
+                      setMessagesFor(sid, (prev) => {
+                        const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                        if (!lastAsst) return prev
+                        return updateMessage(prev, lastAsst.id, (m) => ({
+                          ...m,
+                          blocks: (m.blocks || []).map((b) =>
+                            b.type === "tool_call" && b.id === data.id ? { ...b, result: "（自动批准）" } : b
+                          ),
+                        })) || prev
+                      })
+                    }
+                  }).catch(() => {})
+                  return
+                }
+              }
+              useGenerationStore.getState().waitForApproval({
+                id: data.id as string,
+                name: data.name as string,
+                args: data.args as Record<string, unknown>,
+              })
+              return
+            }
+
+            const chunkText = (data.text as string) || ""
+            if (t === "text" || t === "reasoning") {
+              if (t === "reasoning") {
+                setMessagesFor(sid, (prev) => {
+                  const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                  if (!lastAsst) return prev
+                  return updateMessage(prev, lastAsst.id, (m) => ({
+                    ...m,
+                    status: "reasoning",
+                    reasoning: m.reasoning + chunkText,
+                  })) || prev
+                })
+              } else if (chunkText) {
+                setMessagesFor(sid, (prev) => {
+                  const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+                  if (!lastAsst) return prev
+                  const blocks = [...(lastAsst.blocks || [])]
+                  const last = blocks[blocks.length - 1]
+                  if (last && last.type === "text") {
+                    blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
+                  } else {
+                    blocks.push({ type: "text", text: chunkText })
+                  }
+                  return updateMessage(prev, lastAsst.id, (m) => ({
+                    ...m,
+                    blocks,
+                    content: m.content + chunkText,
+                    status: "streaming",
+                  })) || prev
+                })
+              }
+              return
             }
           } else {
-            // 没在看他：标红点，并**失效该会话缓存**——否则切过去时 switchSession
-            // 命中旧缓存会丢后台期间新增的记录（如最终汇报）。done/tool_result/
-            // assistant_done 都意味着它的 jsonl 有实质变化，缓存不可再信。
+            // ---- Not viewing: track for later ----
             markSessionNew(sid)
             if (t === "assistant_done" || t === "tool_result" || t === "done") {
               delete messagesBySidRef.current[sid]
@@ -593,7 +720,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     else if (st === "D") changeCounts.deleted++
   }
   const scrollRef = useRef<HTMLDivElement>(null)
-  const aborterRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
 
@@ -609,25 +735,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const isIdle = !isStreaming
   const elapsed = useGenerationStore((s) => s.elapsed)
   const tokenCount = useGenerationStore((s) => s.tokenCount)
-
-  // Refresh git + drain queued messages when generation ends
-  const prevGenPhaseRef = useRef(genPhase)
-  const messagesRef = useRef(messages)
-  messagesRef.current = messages
-  useEffect(() => {
-    const prev = prevGenPhaseRef.current
-    prevGenPhaseRef.current = genPhase
-    if ((prev === "generating" || prev === "waiting_approval") && genPhase === "idle") {
-      if (instId) {
-        useGitStore.getState().fetchGitStatus(instId)
-      }
-      // 消费排队消息：生成结束后如果有排队消息，自动发起新请求
-      const hasQueued = messagesRef.current.some(m => m.role === "user" && m.status === "queued")
-      if (hasQueued) {
-        _doSend("", true)
-      }
-    }
-  }, [genPhase, instId])
 
   // Available commands for autocomplete
   const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
@@ -680,10 +787,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }, [isStreaming])
 
   const handleStop = useCallback(() => {
-    aborterRef.current?.abort()
-    useGenerationStore.getState().abort("user_interrupted")
-    // 不在这里清空排队消息——_doSend 的 setTimeout 检查会消费它们
-  }, [])
+    const inst = getActiveInstance()
+    if (inst) {
+      instancesApi.interruptSession(inst.id, activeSid).catch(() => {})
+    }
+  }, [activeSid])
 
   // 当 phase 变为 idle 时，将所有未收到结果的 tool_call block 标记为"(interrupted)"
   // 同时将该 assistant 消息的 status 标记为 done，防止下一轮被当作中断上下文重复注入
@@ -730,18 +838,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
   const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
-    // The session this send targets. Stream updates route here so a background
-    // sub-session stream never corrupts the panel's active session array.
     const sid = targetSid || activeSid
 
-    // /clear 命令：清空当前对话（作用于当前查看的会话本）
+    // /clear command
     if (text === "/clear") {
       setMessages([])
       messagesBySidRef.current[sid] = []
       setInput("")
       historyCursorRef.current = null
       historyLoadedRef.current = true
-      // 清空后端对应会话的持久化记忆（.sessions/<sid>.jsonl）
       const inst = getActiveInstance()
       if (inst) {
         instancesApi.clearSessionMemory(inst.id, sid).catch(() => {})
@@ -751,365 +856,131 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       return
     }
 
-    // 消费排队消息：读取当前 messages，将 queued → done，构建 sendMessages
-    const currentMessages = messages
-    const queuedMsgs = currentMessages.filter(m => m.role === "user" && m.status === "queued")
-    const hasQueued = queuedMsgs.length > 0
+    if (!text.trim()) return
 
-    // 没有排队消息且 text 为空 → 无需发送
-    if (!hasQueued && !text.trim()) return
+    // Build the user message for immediate display (optimistic).
+    const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
+    const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
 
-    // 构建发送用的消息数组（queued → done）
-    const sendMessages: RichMessage[] = currentMessages.map(m =>
-      (m.role === "user" && m.status === "queued") ? { ...m, status: "done" as MsgStatus } : m
-    )
-
-    // 如果有排队消息，它们作为 user 输入（不再新建 userMsg）
-    // 如果没有排队消息，用 text 参数新建 userMsg
-    const userMsg: RichMessage | null = hasQueued
-      ? null
-      : { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-    // `let` so the SSE loop can close this turn and open a fresh assistant bubble
-    // when the backend signals a tool-round boundary (assistant_done).
-    let assistantMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-
-    // 中断上下文注入：找到最后一条未完成的 assistant，在其后插入 [system] 消息
-    const lastAssistantIndex = (() => {
-      for (let i = sendMessages.length - 1; i >= 0; i--) {
-        if (sendMessages[i].role === "assistant" && sendMessages[i].status !== "done") return i
-      }
-      return -1
-    })()
-    if (lastAssistantIndex !== -1) {
-      const reason = useGenerationStore.getState().consumeAbortReason()
-      if (reason === "user_interrupted") {
-        sendMessages.splice(lastAssistantIndex + 1, 0, { id: nextId(), role: "user", content: "[system] user interrupted", reasoning: "", status: "done" } as RichMessage)
-      }
-    }
-    if (userMsg) sendMessages.push(userMsg)
-    sendMessages.push(assistantMsg)
-
-    // 合并连续相同 role 的消息（兼容 Anthropic / 严格 OpenAI 提供商）
-    const mergedMessages = mergeConsecutiveSameRole(sendMessages)
-
-    messagesBySidRef.current[sid] = mergedMessages
-    setMessagesFor(sid, () => mergedMessages)
+    // Append to the message array immediately so the user sees their message
+    // and an empty "waiting..." bubble. The backend session_event will fill
+    // in the assistant bubble with streaming content.
+    setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
     setInput("")
     setError("")
-    useGenerationStore.getState().startGenerating()
-    refreshSessionsStatus()
     scrollToBottom()
-
-    const abortController = new AbortController()
-    aborterRef.current = abortController
 
     try {
       const activeInst = getActiveInstance()
       const shouldUseTools = useTools && activeInst !== null
 
-      // Phase 2: the backend owns conversation memory (.sessions/). For the
-      // director (tools path) we send only this round's new input; the backend
-      // rebuilds full context from its own session store. The non-tools writer
-      // path still sends the assembled history (its context isn't session-based).
-      let apiMessages: Record<string, unknown>[] = []
       if (shouldUseTools) {
-        const queuedUserMsgs = currentMessages.filter(m => m.role === "user" && m.status === "queued")
-        const pendingContent = hasQueued
-          ? (queuedUserMsgs[queuedUserMsgs.length - 1]?.content || text)
-          : text
-        apiMessages = pendingContent ? [{ role: "user", content: pendingContent }] : []
+        // Enqueue into backend session loop. The backend persists it, starts
+        // processing, and broadcasts all events via session_event SSE.
+        await chatApi.sendDirectorMessage(
+          [{ role: "user", content: text }],
+          activeInst!.id,
+          sid,
+        )
       } else {
-        apiMessages = mergedMessages.map((m) => {
+        // Writer path (non-tools): still uses direct SSE streaming.
+        const mergedMessages = mergeConsecutiveSameRole([...messages, userMsg, pendingAssistant])
+        const apiMessages = mergedMessages.map((m) => {
           const msg: Record<string, unknown> = { role: m.role, content: m.content || "" }
-          if (m.blocks && m.blocks.length > 0) {
-            msg.blocks = m.blocks
-          }
-          if (m.reasoning) {
-            msg.reasoning = m.reasoning
-          }
+          if (m.blocks && m.blocks.length > 0) msg.blocks = m.blocks
+          if (m.reasoning) msg.reasoning = m.reasoning
           return msg
         })
-      }
+        const stream = await chatApi.sendStream(apiMessages, undefined, "writer")
+        const reader = stream.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
+        let currentType: string | null = null
+        let writerMsg = pendingAssistant
 
-      let stream: ReadableStream<Uint8Array>
-      if (shouldUseTools) {
-        stream = await chatApi.sendToolStream(
-          apiMessages,
-          activeInst!.id,
-          abortController.signal,
-          activeSid,
-        )
-      } else {
-        stream = await chatApi.sendStream(
-          apiMessages,
-          abortController.signal,
-          "writer",
-        )
-      }
-
-      const reader = stream.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      let currentType: string | null = null
-
-      const processLine = async (line: string) => {
-        if (line.startsWith("event: ")) {
-          currentType = line.slice(7).trim()
-          return
-        }
-        if (line.startsWith("data: ")) {
+        const processLine = async (line: string) => {
+          if (line.startsWith("event: ")) { currentType = line.slice(7).trim(); return }
+          if (!line.startsWith("data: ")) return
           const dataStr = line.slice(6).trim()
           if (!dataStr) return
-
           if (currentType === "done") {
-            setMessagesFor(sid, (prev) => {
-              const target = prev.find((m) => m.id === assistantMsg.id)
-              // A bubble opened by assistant_done but that never received any
-              // content/reasoning is a spurious empty turn (e.g. the last tool
-              // round had no trailing text). Drop it instead of leaving an empty bubble.
-              if (target && target.status !== "done" && !target.content && !target.reasoning && (!target.blocks || target.blocks.length === 0)) {
-                return prev.filter((m) => m.id !== assistantMsg.id)
-              }
-              return (
-                updateMessage(prev, assistantMsg.id, (m) =>
-                  m.status === "done" ? m : { ...m, status: "done" }
-                ) || prev
-              )
-            })
+            setMessagesFor(sid, (prev) =>
+              updateMessage(prev, writerMsg.id, (m) => m.status === "done" ? m : { ...m, status: "done" }) || prev
+            )
             return
           }
-
           try {
             const data = JSON.parse(dataStr)
-
-            if (currentType === "assistant_done") {
-              // Tool-round boundary: close the current bubble as a completed turn
-              // and start a fresh assistant message. Mirrors how the same data is
-              // replayed from .sessions/ (one record per tool round), so realtime
-              // and refresh render the chain-of-thought spread across turns.
-              setMessagesFor(sid, (prev) => {
-                const closed = prev.map((m) =>
-                  m.id === assistantMsg.id && m.status !== "done"
-                    ? { ...m, status: "done" as MsgStatus }
-                    : m
-                )
-                const nextAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-                assistantMsg = nextAssistant
-                return [...closed, nextAssistant]
-              })
-              return
-            }
-
-            if (currentType === "tool_call") {
-              // 首次事件：从"等待中"切换到活跃
-              setMessagesFor(sid, (prev) =>
-                updateMessage(prev, assistantMsg.id, (m) =>
-                  m.status === "pending" ? { ...m, status: "streaming" } : m
-                ) || prev
-              )
-              // 估算 token 数
-              useGenerationStore.getState().addTokens(
-                Math.ceil((data.name + JSON.stringify(data.args || {})).length / 4)
-              )
-              // 追加 tool_call block
-              setMessagesFor(sid, (prev) =>
-                updateMessage(prev, assistantMsg.id, (m) => ({
-                  ...m,
-                  blocks: [
-                    ...(m.blocks || []),
-                    {
-                      type: "tool_call" as const,
-                      id: data.id,
-                      name: data.name,
-                      args: data.args,
-                      ...(data._batch_meta ? { batch: data._batch_meta } : {}),
-                    },
-                  ],
-                })) || prev
-              )
-              return
-            }
-
-            if (currentType === "tool_result") {
-              // 估算 tool result 的 token 数
-              useGenerationStore.getState().addTokens(
-                Math.ceil((data.result || "").length / 4)
-              )
-              // 更新对应 tool_call block 的 result
-              setMessagesFor(sid, (prev) =>
-                updateMessage(prev, assistantMsg.id, (m) => ({
-                  ...m,
-                  blocks: (m.blocks || []).map((b) =>
-                    b.type === "tool_call" && b.id === data.id ? { ...b, result: data.result } : b
-                  ),
-                })) || prev
-              )
-              return
-            }
-
-            if (currentType === "approval_required") {
-              if (autoApproveCommitRef.current) {
-                const inst = getActiveInstance()
-                if (inst) {
-                  try {
-                    const res = await gitApi.approveTool(inst.id, data.id, data.args)
-                    if (res.ok) {
-                      // 标记对应 block result
-                      setMessagesFor(sid, (prev) =>
-                        updateMessage(prev, assistantMsg.id, (m) => ({
-                          ...m,
-                          blocks: (m.blocks || []).map((b) =>
-                            b.type === "tool_call" && b.id === data.id
-                              ? { ...b, result: "（自动批准）" }
-                              : b
-                          ),
-                        })) || prev
-                      )
-                      return
-                    }
-                  } catch { /* network error — fall through to manual approval */ }
-                }
-                // Auto-approve failed — fall through to manual approval
-                toast.error("自动提交失败，请手动确认")
-              }
-              useGenerationStore.getState().waitForApproval({
-                id: data.id,
-                name: data.name,
-                args: data.args,
-              })
-              return
-            }
-
             const chunkText = data.text || ""
-            // Empty chunk or tool_args (hidden): transition off "pending" + count tokens
-            if (!chunkText || data.tool_args) {
-              if (chunkText) {
-                useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
-              }
-              setMessagesFor(sid, (prev) =>
-                updateMessage(prev, assistantMsg.id, (m) =>
-                  m.status === "pending" ? { ...m, status: "streaming" } : m
-                ) || prev
-              )
-              if (data.tool_args) return
-              if (!chunkText) return
-            }
-
             if (data.type === "reasoning") {
               setMessagesFor(sid, (prev) =>
-                updateMessage(prev, assistantMsg.id, (m) => ({
-                  ...m,
-                  status: "reasoning",
-                  reasoning: m.reasoning + chunkText,
-                })) || prev
+                updateMessage(prev, writerMsg.id, (m) => ({ ...m, status: "reasoning", reasoning: m.reasoning + chunkText })) || prev
               )
-            } else {
-              useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
-              setMessagesFor(sid, (prev) => {
-                const target = prev.find((m) => m.id === assistantMsg.id)
-                if (!target) return prev
-                const blocks = [...(target.blocks || [])]
-                // 如果最后一块是 text，追加到它；否则新建 text block
-                const last = blocks[blocks.length - 1]
-                if (last && last.type === "text") {
-                  blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
-                } else {
-                  blocks.push({ type: "text", text: chunkText })
-                }
-                return updateMessage(prev, assistantMsg.id, (m) => ({
-                  ...m,
-                  blocks,
-                  content: m.content + chunkText,
-                  status: "streaming",
-                })) || prev
-              })
+            } else if (chunkText) {
+              setMessagesFor(sid, (prev) =>
+                updateMessage(prev, writerMsg.id, (m) => ({ ...m, status: "streaming", content: m.content + chunkText })) || prev
+              )
             }
-          } catch {
-            // skip malformed JSON
-          }
+          } catch { /* skip malformed */ }
         }
-      }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() || ""
-        for (const line of lines) {
-          await processLine(line)
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split("\n")
+          buffer = lines.pop() || ""
+          for (const line of lines) await processLine(line)
         }
-      }
-      // Process remaining buffer
-      if (buffer.trim()) {
-        for (const line of buffer.split("\n")) {
-          await processLine(line)
+        if (buffer.trim()) {
+          for (const line of buffer.split("\n")) await processLine(line)
         }
-      }
-
-      // Mark done
-      setMessagesFor(sid, (prev) =>
-        updateMessage(prev, assistantMsg.id, (m) =>
-          m.status !== "done" ? { ...m, status: "done" } : m
-        ) || prev
-      )
-    } catch (err) {
-      // Ignore abort errors (user clicked stop)
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return
-      }
-      setMessagesFor(sid, (prev) =>
-        prev.map((m) =>
-          m.id === assistantMsg.id
-            ? { ...m, status: "done" as MsgStatus }
-            : m
+        setMessagesFor(sid, (prev) =>
+          updateMessage(prev, writerMsg.id, (m) => m.status === "done" ? m : { ...m, status: "done" }) || prev
         )
-      )
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return
       setError(err instanceof Error ? err.message : "请求失败")
-    } finally {
-      useGenerationStore.getState().finishGenerating()
-      refreshSessionsStatus()
-      aborterRef.current = null
     }
   }
 
-  // 监听沙盒 Teahouse.send() 消息，自动发送到导演
+  // 沙盒 Teahouse.send() 消息 → 入队列 (no polling, fire-and-forget)
+  const handleSandboxSend = useCallback((msg: string, targetSid?: string) => {
+    const sid = targetSid || activeSid
+    const inst = getActiveInstance()
+    if (!inst) return
+    chatApi.sendDirectorMessage([{ role: "user", content: msg }], inst.id, sid).catch(() => {})
+  }, [activeSid])
+
+  // Check sessionStore for pending sandbox messages (polled lightly)
   useEffect(() => {
     const interval = setInterval(() => {
-      // (1) Sandbox sub-session sends: switch to that session and send there.
       const bSess = useSessionStore.getState().pendingSessionSend
       if (bSess) {
         useSessionStore.getState().setPendingSessionSend(null)
         const sid = bSess.sessionId
-        // Add to the session list if unknown.
         setSessionList(prev => {
           if (prev.some(s => s.session_id === sid)) return prev
           return [...prev, { session_id: sid, record_count: 0 }]
         })
-        // focus=false means "background wake / no focus steal": send to the target
-        // session without switching the panel away from whatever the user is viewing.
         if (bSess.focus !== false) {
           if (activeSidRef.current !== sid) {
             switchSession(sid)
             activeSidRef.current = sid
           }
         }
-        if (!isStreaming) {
-          _doSend(bSess.message, true, sid)
-        }
+        handleSandboxSend(bSess.message, sid)
         return
       }
-      // (2) Plain sandbox sends go to the active session (legacy /main behavior).
       const msg = useSessionStore.getState().pendingMessage
-      if (msg && !isStreaming) {
+      if (msg) {
         useSessionStore.getState().setPendingMessage(null)
-        setInput(msg)
-        // 同步触发发送
-        _doSend(msg, true)
+        handleSandboxSend(msg)
       }
     }, 300)
     return () => clearInterval(interval)
-  }, [isStreaming])
+  }, [activeSid, switchSession, handleSandboxSend])
 
   // 普通模式下输入框随输入自动变高（有上限）；大输入框模式下交给 flex 拉伸填满，须清掉内联高度让其生效
   useEffect(() => {
@@ -1145,14 +1016,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      if (isStreaming && input.trim()) {
-        // 生成期间：排队消息，灰色气泡显示，等生成结束后自动发送
-        const userMsg: RichMessage = { id: nextId(), role: "user", content: input.trim(), reasoning: "", status: "queued" }
-        setMessages(prev => [...prev, userMsg])
-        setInput("")
-        setExpandedInput(false)
-        scrollToBottom()
-      } else {
+      if (input.trim()) {
         handleSend()
       }
     }
@@ -1297,10 +1161,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 elapsed={msg.id === lastAssistantId ? elapsed : 0}
                 tokenCount={msg.id === lastAssistantId ? (tokenMap[activeSid] || tokenCount) : 0}
               />
-            ) : msg.status === "queued" ? (
-              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted/50 text-muted-foreground border border-dashed border-border">
-                {msg.content}
-              </div>
             ) : (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                 {msg.content}
