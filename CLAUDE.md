@@ -36,8 +36,9 @@
 
 | 概念 | 说明 |
 |---|---|
-| **原型 (Prototype)** | 创作者设计的 `.teabrew` 包，本质是zip压缩文件，类似酒馆的角色卡 |
+| **原型 (Prototype)** | 创作者设计的 `.teabrew` 包，本质是zip压缩文件，类似酒馆的角色卡。**导出源 = 实例根本身**：在实例上就地清理测试数据后打包（自动排除 `building/`、`.git/`、`sessions/` 等内部目录），而非维护某个 `_prototype/` 镜像目录 |
 | **实例 (Instance)** | 原型解压后独立运行的存档 |
+| **building/** | 实例内的**打包期元工作区**（讨论点子、checklist、设计笔记）。导出自动排除、不进原型包；目录树中默认隐藏。首页「复制实例」可生成完整快照副本，用作就地清理打包前的保底 |
 | **Skill** | 提示词包（方法论），引用 teahouse.md 的配置 |
 | **楼层 (Floor)** | 独立内容单元，对应 `.md` 文件，完成后 git commit |
 | **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层 |
@@ -242,6 +243,7 @@ teahouse.md          实例配置文件，始终实时注入导演上下文
 settings/            设定文件夹（角色、世界观等）
   characters.yaml
   world.yaml
+building/            打包期元工作区（讨论点子、checklist、设计笔记）——永不进原型包
 skills/              Skill 包，每个子目录一个 Skill
   <skill-name>/
     SKILL.md          Skill 元数据 + 完整指令（Load 阶段读取）
@@ -265,6 +267,8 @@ temp/                临时文件夹，存放草稿等中间文件
 assets/              静态资源（图片、字体、音频等）
 ```
 
+**导出为原型 = 打包实例根本身**：导出前在实例上就地清理测试数据（楼层只留开场楼、变量裁成开局子集、泛化 teahouse.md），后端打包时自动排除 `building/`、`.git/`、`sessions/` 等内部目录。这是**业务判断**，不由代码自动过滤。若想把当前进展留作可继续玩的存档，先在首页对实例点「复制」生成完整快照副本，再在副本上清理打包。
+
 ### 目录树显示规则
 
 系统提示词中通过 `_scan_tree()` 动态注入目录树，规则如下：
@@ -272,6 +276,6 @@ assets/              静态资源（图片、字体、音频等）
 - 所有目录都**只显示一行目录名**（不展开），如 `├── settings/`、`├── skills/`
 - `floors/` 显示特殊统计信息，如 `floors/  (Latest floor: 009 (9 floors); Last summary covered floors 1~5; 4 floors unsummarized)`
 - 根目录文件逐行列出
-- 排除 `.git`、`__pycache__`、`sessions` 等内部目录
+- 排除 `.git`、`__pycache__`、`sessions`、`building` 等内部/元工作目录
 
 需要深入探索时通过 Glob 工具按需查看。

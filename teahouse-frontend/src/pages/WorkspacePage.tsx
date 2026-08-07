@@ -233,7 +233,7 @@ export function WorkspacePage() {
     setExportLoading(true)
     setExportError("")
     const res = await prototypesApi.create(
-      instId, "_prototype", exportName.trim(), exportDescription.trim(),
+      instId, exportName.trim(), exportDescription.trim(),
       exportAuthor.trim(), exportVersion.trim() || "1.0.0",
     )
     if (res.ok) {
@@ -649,7 +649,7 @@ export function WorkspacePage() {
             <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
               <h3 className="font-semibold">导出为原型</h3>
               <p className="text-xs text-muted-foreground">
-                将实例的 <code className="bg-muted px-1 rounded">_prototype/</code> 目录打包为可复用的原型。请先使用导演构建该目录。
+                将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
               </p>
               <div className="space-y-1">
                 <label className="text-sm font-medium">原型名称</label>
@@ -916,7 +916,7 @@ export function WorkspacePage() {
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="font-semibold">导出为原型</h3>
             <p className="text-xs text-muted-foreground">
-              将实例的 <code className="bg-muted px-1 rounded">_prototype/</code> 目录打包为可复用的原型。请先使用导演构建该目录。
+              将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
             </p>
             <div className="space-y-1">
               <label className="text-sm font-medium">原型名称</label>

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
-import { Play, Loader2, X, Download, Upload, Trash2, Clock, Hash, Info, Sun, Moon, LogOut, Settings, User, ArrowLeft } from "lucide-react"
+import { Play, Loader2, X, Download, Upload, Trash2, Clock, Hash, Info, Sun, Moon, LogOut, Settings, User, ArrowLeft, Copy } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -170,6 +170,33 @@ export function SessionSelectPage() {
     await loadData()
   }
 
+  // Copy instance
+  const [instanceToCopy, setInstanceToCopy] = useState<Instance | null>(null)
+  const [copyName, setCopyName] = useState("")
+  const [copyError, setCopyError] = useState("")
+  const [copying, setCopying] = useState(false)
+
+  const openCopyDialog = (inst: Instance) => {
+    setInstanceToCopy(inst)
+    setCopyName(`${inst.name} 副本`)
+    setCopyError("")
+  }
+
+  const confirmCopyInstance = async () => {
+    if (!instanceToCopy || !copyName.trim()) return
+    setCopying(true)
+    setCopyError("")
+    const res = await instancesApi.copy(instanceToCopy.id, copyName.trim())
+    if (res.ok && res.data) {
+      toast.success(`已复制为新实例「${res.data.name}」`)
+      setInstanceToCopy(null)
+      await loadData()
+    } else {
+      setCopyError(res.error || "复制失败")
+    }
+    setCopying(false)
+  }
+
   const handleDownload = () => {
     if (!selectedProto || selectedProto.is_builtin) return
     const url = prototypesApi.downloadUrl(selectedProto.id)
@@ -258,6 +285,7 @@ export function SessionSelectPage() {
           onDelete={async () => {
             setInstanceToDelete(mobileDetailInstance)
           }}
+          onCopy={() => openCopyDialog(mobileDetailInstance)}
           onBack={backToList}
         />
       )
@@ -512,6 +540,7 @@ export function SessionSelectPage() {
               actionLoading={actionLoading}
               onContinue={() => handleContinue(selectedInstance)}
               onDelete={() => setInstanceToDelete(selectedInstance)}
+              onCopy={() => openCopyDialog(selectedInstance)}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -545,6 +574,35 @@ export function SessionSelectPage() {
         onConfirm={confirmDeleteInstance}
         onCancel={() => setInstanceToDelete(null)}
       />
+
+      {/* Copy instance dialog */}
+      {instanceToCopy && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
+          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold">复制实例</h3>
+            <p className="text-xs text-muted-foreground">
+              将「{instanceToCopy.name}」复制为一个完整快照副本（新实例、独立 git）。常用于打包原型前保留试玩数据。
+            </p>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">新实例名称</label>
+              <Input
+                value={copyName}
+                onChange={(e) => { setCopyName(e.target.value); setCopyError("") }}
+                placeholder="为副本命名"
+                autoFocus
+              />
+            </div>
+            {copyError && <p className="text-xs text-red-500">{copyError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setInstanceToCopy(null)} disabled={copying}>取消</Button>
+              <Button size="sm" onClick={confirmCopyInstance} disabled={!copyName.trim() || copying}>
+                {copying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                复制
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -750,7 +808,7 @@ function ProtoDetail({
           <div className="text-center py-12 text-muted-foreground text-sm">
             {proto.is_builtin
               ? "暂无详细介绍。"
-              : "暂无 README。可在 _prototype/ 目录下创建 README.md 后重新打包。"}
+              : "暂无 README。可在实例根目录创建 README.md 后重新打包。"}
           </div>
         )}
       </div>
@@ -762,12 +820,13 @@ function ProtoDetail({
 // InstanceDetail — right panel when an instance is selected
 // ============================================================================
 function InstanceDetail({
-  instance, actionLoading, onContinue, onDelete,
+  instance, actionLoading, onContinue, onDelete, onCopy,
 }: {
   instance: Instance
   actionLoading: boolean
   onContinue: () => void
   onDelete: () => void
+  onCopy: () => void
 }) {
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -783,6 +842,9 @@ function InstanceDetail({
             <Play className="h-3.5 w-3.5" />
             继续会话
           </Button>
+          <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onCopy} title="复制实例">
+            <Copy className="h-4 w-4" />
+          </button>
           <button className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500" onClick={onDelete} title="删除">
             <Trash2 className="h-4 w-4" />
           </button>
@@ -924,7 +986,7 @@ function MobileProtoDetail({
           <div className="text-center py-12 text-muted-foreground text-sm">
             {proto.is_builtin
               ? "暂无详细介绍。"
-              : "暂无 README。可在 _prototype/ 目录下创建 README.md 后重新打包。"}
+              : "暂无 README。可在实例根目录创建 README.md 后重新打包。"}
           </div>
         )}
       </div>
@@ -964,12 +1026,13 @@ function MobileProtoDetail({
 // MobileInstanceDetail — fullscreen detail for mobile
 // ============================================================================
 function MobileInstanceDetail({
-  instance, actionLoading, onContinue, onDelete, onBack,
+  instance, actionLoading, onContinue, onDelete, onCopy, onBack,
 }: {
   instance: Instance
   actionLoading: boolean
   onContinue: () => void
   onDelete: () => void
+  onCopy: () => void
   onBack: () => void
 }) {
   return (
@@ -985,6 +1048,9 @@ function MobileInstanceDetail({
             <p className="text-xs text-muted-foreground truncate">来源：{instance.prototype_name}</p>
           )}
         </div>
+        <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onCopy} title="复制实例">
+          <Copy className="h-4 w-4" />
+        </button>
         <button className="p-1.5 rounded hover:bg-muted text-red-500" onClick={onDelete} title="删除">
           <Trash2 className="h-4 w-4" />
         </button>
@@ -1011,10 +1077,14 @@ function MobileInstanceDetail({
         </div>
       </div>
 
-      <div className="border-t border-border p-3 shrink-0">
+      <div className="border-t border-border p-3 shrink-0 space-y-2">
         <Button className="w-full gap-2" size="lg" onClick={onContinue} disabled={actionLoading}>
           <Play className="h-4 w-4" />
           继续会话
+        </Button>
+        <Button className="w-full gap-2" variant="outline" size="lg" onClick={onCopy} disabled={actionLoading}>
+          <Copy className="h-4 w-4" />
+          复制实例
         </Button>
       </div>
     </div>

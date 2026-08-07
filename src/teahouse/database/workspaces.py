@@ -106,7 +106,7 @@ async def find_prototype_by_hash(content_hash: str, user_id: str) -> Optional[di
 # ---------------------------------------------------------------------------
 
 async def list_instances(user_id: str) -> list[dict]:
-    return await fetch_all(
+    rows = await fetch_all(
         """SELECT i.*, p.name AS prototype_name
            FROM instances i
            LEFT JOIN prototypes p ON i.prototype_id = p.id
@@ -114,6 +114,17 @@ async def list_instances(user_id: str) -> list[dict]:
            ORDER BY i.created_at DESC""",
         (user_id,),
     )
+    # Override the stale DB floor_count with a live count from the working
+    # floor history (.teahouse/output/floors/). Lazy import to avoid a cycle.
+    from ..director_system import get_floors_stats
+    for inst in rows:
+        dir_path = inst.get("dir_path")
+        if not dir_path:
+            inst["floor_count"] = 0
+            continue
+        stats = get_floors_stats(Path(dir_path))
+        inst["floor_count"] = stats["total_floors"] if stats else 0
+    return rows
 
 
 async def get_instance(instance_id: str) -> Optional[dict]:
@@ -164,6 +175,36 @@ async def update_floor_count(instance_id: str, count: int) -> None:
         "UPDATE instances SET floor_count = ?, updated_at = ? WHERE id = ?",
         (count, current_timestamp(), instance_id),
     )
+
+
+def copy_instance(
+    source_inst: dict,
+    target_dir: Path,
+) -> str:
+    """Snapshot-copy the full source instance dir to target_dir (new instance).
+
+    Copies everything (floors, .teahouse/, settings/, skills/, assets/,
+    building/, ...) and re-initializes git, mirroring instantiate_prototype's
+    commit behavior. Returns the new dir_path (target_dir)."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = Path(source_inst["dir_path"])
+
+    # Full snapshot copy
+    shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+
+    # Drop the copied history so the copy becomes a fresh independent repo
+    _git_dir = target_dir / ".git"
+    if _git_dir.exists():
+        shutil.rmtree(_git_dir, ignore_errors=True)
+
+    # Re-init git so the copy has a clean initial commit
+    try:
+        git_init(target_dir)
+        git_initial_commit(target_dir)
+    except Exception:
+        pass  # git not available — instance works without version control
+
+    return str(target_dir.resolve())
 
 
 # ---------------------------------------------------------------------------

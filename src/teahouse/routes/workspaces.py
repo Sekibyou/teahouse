@@ -29,6 +29,7 @@ from ..database.workspaces import (
     list_instances,
     get_instance,
     create_instance,
+    copy_instance,
     delete_instance,
     ensure_user_dirs,
     instantiate_prototype,
@@ -46,6 +47,12 @@ from ..database.workspaces import (
 )
 from ..git_utils import git_commit, git_branch, git_log, git_status_porcelain, git_branch_rename, git_reset_hard, git_delete_branch, git_rev_parse, git_discard_changes, git_restore_file, git_show_file, _git_run, GitError
 from ..placeholder import validate_var_name
+
+# Directories never included when packing an instance as a prototype.
+# building/ is the creator's meta-workspace (notes/checklists); the rest are
+# internals. Business-level cleanup (which floors/vars to keep) is not judged here.
+PACK_EXCLUDE_DIRS = {"building", "sessions", ".git", "__pycache__", "node_modules", ".DS_Store", ".sessions"}
+
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +87,6 @@ def _get_base_path() -> Path:
 
 class CreatePrototypeRequest(BaseModel):
     instance_id: str
-    source_subpath: str = "_prototype"
     name: str
     description: str = ""
     author: str = ""
@@ -89,6 +95,10 @@ class CreatePrototypeRequest(BaseModel):
 
 class StartInstanceRequest(BaseModel):
     prototype_id: str
+    name: str
+
+
+class CopyInstanceRequest(BaseModel):
     name: str
 
 
@@ -129,7 +139,13 @@ async def create_prototype_from_instance(
     body: CreatePrototypeRequest,
     user: UserInfo = Depends(require_user)
 ):
-    """Create a new prototype from an instance's _prototype/ directory."""
+    """Create a new prototype by packing the instance root.
+
+    The whole instance is the prototype source. Internal/meta dirs that must
+    never ship (building/, .git/, sessions/, etc.) are excluded at pack time.
+    Business-level cleanup (which floors/vars to keep, generalizing teahouse.md)
+    is done manually on the instance before packing — not judged here.
+    """
     u = await require_user_info(user)
     base = _get_base_path()
     safe_name = u["safe_name"] or user.username.lower().replace(" ", "_")
@@ -140,32 +156,22 @@ async def create_prototype_from_instance(
     if inst["user_id"] != u["id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    instance_dir = Path(inst["dir_path"])
-    source_dir = (instance_dir / body.source_subpath).resolve()
-    if str(source_dir) != str(instance_dir.resolve() / body.source_subpath):
-        raise HTTPException(status_code=400, detail="Invalid source path")
-
-    if not source_dir.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Source directory not found: {body.source_subpath}. "
-                   f"Use the teahouse-export-prototype skill to build it first."
-        )
-
-    # Check directory is not empty
-    contents = list(source_dir.iterdir())
-    if not contents:
-        raise HTTPException(status_code=400, detail="Source directory is empty")
+    source_dir = Path(inst["dir_path"]).resolve()
 
     import uuid as _uuid
     import zipfile as _zipfile
     import hashlib
     import json
 
-    # Compute content hash from all files (before adding metadata)
+    def _is_excluded(rel_path: Path) -> bool:
+        # Skip any file whose ancestor path-component is an excluded dir
+        return bool(set(rel_path.parts[:-1]) & PACK_EXCLUDE_DIRS)
+
+    # Compute content hash from packable files (before adding metadata)
     file_list = sorted(
         str(f.relative_to(source_dir)).replace("\\", "/")
-        for f in source_dir.rglob("*") if f.is_file()
+        for f in source_dir.rglob("*")
+        if f.is_file() and not _is_excluded(f.relative_to(source_dir))
     )
     sha = hashlib.sha256()
     for rel in file_list:
@@ -196,7 +202,7 @@ async def create_prototype_from_instance(
 
     with _zipfile.ZipFile(zip_path, "w", _zipfile.ZIP_DEFLATED) as zf:
         for f in source_dir.rglob("*"):
-            if f.is_file():
+            if f.is_file() and not _is_excluded(f.relative_to(source_dir)):
                 arcname = str(f.relative_to(source_dir)).replace("\\", "/")
                 zf.write(f, arcname)
 
@@ -449,6 +455,35 @@ async def delete_my_instance(instance_id: str, user: UserInfo = Depends(require_
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to delete instance")
     return {"status": "ok"}
+
+
+@router.post("/instances/{instance_id}/copy")
+async def copy_my_instance(
+    instance_id: str,
+    body: CopyInstanceRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Create a full snapshot copy of an instance (new id, independent git repo)."""
+    u = await require_user_info(user)
+    base = _get_base_path()
+    safe_name = u["safe_name"] or user.username.lower().replace(" ", "_")
+
+    inst = await get_instance(instance_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    if inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    instances_dir, _ = ensure_user_dirs(safe_name, base)
+
+    safe_inst = body.name.lower().replace(" ", "_").replace("/", "_")
+    target_dir = instances_dir / safe_inst
+    if target_dir.exists():
+        raise HTTPException(status_code=409, detail="An instance with this name already exists")
+
+    dir_path = copy_instance(inst, target_dir)
+
+    return await create_instance(u["id"], inst["prototype_id"], body.name, dir_path)
 
 
 # ===== File operations =====

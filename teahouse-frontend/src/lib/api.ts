@@ -115,10 +115,9 @@ export const prototypesApi = {
     return get<Prototype[]>("/api/prototypes")
   },
 
-  create: async (instanceId: string, sourceSubpath: string, name: string, description: string, author: string, version: string) => {
+  create: async (instanceId: string, name: string, description: string, author: string, version: string) => {
     return post<Prototype>("/api/prototypes", {
       instance_id: instanceId,
-      source_subpath: sourceSubpath,
       name,
       description,
       author,
@@ -186,6 +185,10 @@ export const instancesApi = {
 
   delete: async (id: string) => {
     return del<{ status: string }>(`/api/instances/${id}`)
+  },
+
+  copy: async (id: string, name: string) => {
+    return post<Instance>(`/api/instances/${id}/copy`, { name })
   },
 
   // File operations
