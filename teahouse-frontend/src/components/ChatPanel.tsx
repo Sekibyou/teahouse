@@ -264,22 +264,26 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       })
 
       es.addEventListener("session_user_msg", (e: MessageEvent) => {
-        // 后端给某会话追加了一条 user 消息（如子会话结束唤醒父会话）。这可能是
-        // 前端未参与的追加，必须使该会话的消息缓存失效，否则 switchSession 命中
-        // 旧缓存看不到新消息（之前的 bug）。收到后删除缓存 → 下次切换全量重拉。
+        // The backend persisted a user message that the frontend did not send
+        // (e.g. sub-session wake-up, interrupt auto-message). Add it to the
+        // displayed messages if viewing this session; otherwise invalidate cache.
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
+          // Invalidate cache so next switchSession re-pulls from backend.
           delete messagesBySidRef.current[sid]
-          if (activeSidRef.current === sid) {
-            // 正在看它：直接重拉出这条新消息。
-            loadHistoryRef.current(true, sid)
-          } else {
+          if (activeSidRef.current === sid && data.content) {
+            // Append the user message and a fresh pending assistant bubble
+            // so session_event streaming can fill it in.
+            const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done" }
+            const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+            setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
+            scrollToBottom()
+          } else if (activeSidRef.current !== sid) {
             markSessionNew(sid)
           }
-          refreshSessionsStatus()
         } catch {
           // ignore malformed events
         }
