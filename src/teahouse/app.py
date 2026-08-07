@@ -649,9 +649,10 @@ async def _tool_use_loop(
 
         # ── Phase 2: If no tool calls, done ──
         if not all_tool_calls:
-            # If there was text but no separate text event yielded, yield it now
             # Persist the plain-text assistant reply (no tool blocks).
             _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None)
+            # Signal the frontend to close this bubble (mirrors Phase 4's assistant_done).
+            yield {"type": "assistant_done"}
             return
 
         # ── Phase 3: Add assistant message with tool_calls ──
