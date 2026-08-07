@@ -1,116 +1,77 @@
-import { useState, useRef, useEffect, useCallback, memo } from "react"
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Brain, Terminal, CheckCircle2, XCircle, Circle, CircleDot, CheckCheck, GitBranch as GitBranchIcon, Edit3, Maximize2, Minimize2, Puzzle, Stethoscope } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { Loader2 } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import type { FloorsStats } from "@/lib/types"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import { useDiagnosticLog, DiagnosticPanel } from "@/components/DiagnosticPanel"
-
-type MsgStatus = "pending" | "reasoning" | "streaming" | "done" | "queued"
-
-interface ContentBlock {
-  type: "text" | "tool_call"
-  text?: string                // type=text 时的文字片段
-  id?: string                  // type=tool_call 时的 call id
-  name?: string                // type=tool_call 时的工具名
-  args?: Record<string, unknown>
-  result?: string
-  /** BatchExecute 展开显示元数据：{path, index, total}（仅用于标注，不进 LLM） */
-  batch?: { path: string; index: number; total: number }
-}
-
-interface RichMessage {
-  id: string
-  role: "user" | "assistant"
-  content: string              // 完整文字内容（向后兼容）
-  reasoning: string
-  status: MsgStatus
-  /** 交错的内容块：text + tool_call 按生成顺序排列 */
-  blocks?: ContentBlock[]
-  /** 后端队列 ID，用于 queued→done 升级匹配 */
-  _queue_id?: string
-}
-
-let msgIdCounter = 0
-function nextId() {
-  return `msg-${++msgIdCounter}`
-}
-
-/**
- * 合并连续相同 role 的消息为单条（用换行分隔）。
- * Anthropic API 会在服务端自动合并；OpenAI 原生不强制交替；
- * 但严格第三方提供商（Kimi、Qwen 等）要求严格交替，合并后满足所有 API。
- */
-function mergeConsecutiveSameRole(msgs: RichMessage[]): RichMessage[] {
-  const result: RichMessage[] = []
-  for (const m of msgs) {
-    const last = result[result.length - 1]
-    const lastHasBlocks = last?.blocks && last.blocks.length > 0
-    const curHasBlocks = m.blocks && m.blocks.length > 0
-    if (last && last.role === m.role && !lastHasBlocks && !curHasBlocks) {
-      last.content = last.content ? last.content + "\n" + m.content : m.content
-    } else {
-      result.push({ ...m })
-    }
-  }
-  return result
-}
-
-/**
- * 更新单条消息：只替换目标索引那条（保持其它引用不变），
- * 配合 AssistantBubble 的 memo 让无关消息跳过重渲染。
- */
-function updateMessage(
-  prev: RichMessage[],
-  id: string,
-  updater: (m: RichMessage) => RichMessage
-): RichMessage[] | null {
-  const idx = prev.findIndex((m) => m.id === id)
-  if (idx === -1) return null
-  const target = prev[idx]
-  const nextMsg = updater(target)
-  if (nextMsg === target) return null
-  const next = prev.slice()
-  next[idx] = nextMsg
-  return next
-}
+import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview } from "./ChatPanelComps/utils"
+import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
+import { ChatHeader } from "./ChatPanelComps/ChatHeader"
+import { ChatInput } from "./ChatPanelComps/ChatInput"
 
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
   const [showDiag, setShowDiag] = useState(false)
   const diag = useDiagnosticLog()
 
-  // Multi-session director panel: the main session plus sandbox/sub-agent child
-  // sessions. `messages` always reflects the *active* session; messagesBySidRef
-  // caches each session's array so switching back-and-forth is lossless.
+  // ── Per-session UI state ─────────────────────────────────────────
+  // running / elapsed / tokenCount come from the BACKEND (session_tracker).
+  // waiting / waitingSince are frontend-local (one-shot, cleared on first
+  // session_event).  Together they drive the submit/stop button and the
+  // "等待中…" / "生成中…" indicator bubble without any global timer.
+  interface SessionUIState {
+    running: boolean
+    elapsed: number
+    tokenCount: number
+    waiting: boolean
+    waitingSince: number   // Date.now() when enqueue was sent
+  }
+  const [sessionStateMap, setSessionStateMap] = useState<Record<string, SessionUIState>>({})
+  const sessionStateRef = useRef<Record<string, SessionUIState>>({})
+  sessionStateRef.current = sessionStateMap
+
   const MAIN_SID = "main"
   const [activeSid, setActiveSid] = useState(MAIN_SID)
-  // Per-session "is this session's director running right now" — render-only state,
-  // sourced from the BACKEND (which tracks the live tool-loop task per session).
-  // The submit/stop button and "生成中" state reflect the CURRENTLY VIEWED session's
-  // entry. We do NOT guess this client-side (that raced when switching between main
-  // and background child sessions).
-  const [statusMap, setStatusMap] = useState<Record<string, boolean>>({})
-  const statusMapRef = useRef<Record<string, boolean>>({})
-  statusMapRef.current = statusMap
-  // refreshSessionsStatus is defined AFTER instId (see below) since it reads instId.
-  // Per-session estimated token count (from background child events or frontend).
-  const [tokenMap, setTokenMap] = useState<Record<string, number>>({})
-  const tokenMapRef = useRef<Record<string, number>>({})
-  tokenMapRef.current = tokenMap
-  const addSessionTokens = useCallback((sid: string, n: number) => {
-    if (!n) return
-    const next = { ...tokenMapRef.current, [sid]: (tokenMapRef.current[sid] || 0) + n }
-    tokenMapRef.current = next
-    setTokenMap(next)
+
+  // Convenience getter/setter for the currently-viewed session
+  const activeState: SessionUIState = sessionStateMap[activeSid] ?? {
+    running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+  }
+  const isStreaming = activeState.running
+  const isWaiting = activeState.waiting && !activeState.running
+
+  const patchSessionState = useCallback((sid: string, patch: Partial<SessionUIState>) => {
+    const prev = sessionStateRef.current[sid] ?? {
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+    }
+    const next = { ...sessionStateRef.current, [sid]: { ...prev, ...patch } }
+    sessionStateRef.current = next
+    setSessionStateMap(next)
+  }, [])
+
+  // Update running+stats from backend-authoritative sources (SSE / API)
+  const applyBackendState = useCallback((sid: string, running: boolean, stats?: { elapsed?: number; token_count?: number }) => {
+    const prev = sessionStateRef.current[sid] ?? {
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+    }
+    // If backend says running, clear any stale waiting flag
+    const next: SessionUIState = {
+      ...prev,
+      running,
+      waiting: running ? false : prev.waiting,  // transition waiting→running
+      elapsed: running ? (stats?.elapsed ?? prev.elapsed) : 0,
+      tokenCount: running ? (stats?.token_count ?? prev.tokenCount) : 0,
+    }
+    if (prev.running === next.running && prev.elapsed === next.elapsed && prev.tokenCount === next.tokenCount && prev.waiting === next.waiting) return
+    const map = { ...sessionStateRef.current, [sid]: next }
+    sessionStateRef.current = map
+    setSessionStateMap(map)
   }, [])
   const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number }[]>([])
   const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
@@ -146,16 +107,34 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const activeInst = useSessionStore((s) => s.activeInstance)
   const instId = activeInst?.id
   const instName = activeInst?.name
-  const chatKey = instId ? `chat-messages-${instId}` : null
 
   // Chatpan must define refreshSessionsStatus AFTER instId (it reads it).
   const refreshSessionsStatus = useCallback(() => {
     if (instId) {
       instancesApi.getSessionsStatus(instId).then(res => {
         if (res.ok) {
-          const next = res.data?.sessions || {}
-          statusMapRef.current = next
-          setStatusMap(next)
+          const running = res.data?.sessions || {}
+          const stats = res.data?.stats || {}
+          const map: Record<string, SessionUIState> = {}
+          for (const [sid, isRunning] of Object.entries(running)) {
+            const s = stats[sid]
+            map[sid] = {
+              running: isRunning === true,
+              elapsed: s?.elapsed ?? 0,
+              tokenCount: s?.token_count ?? 0,
+              waiting: false,
+              waitingSince: 0,
+            }
+          }
+          // Merge with any local waiting state (API doesn't know about waiting)
+          const cur = sessionStateRef.current
+          for (const [sid, st] of Object.entries(cur)) {
+            if (st.waiting && !map[sid]) {
+              map[sid] = st
+            }
+          }
+          sessionStateRef.current = map
+          setSessionStateMap(map)
         }
       }).catch(() => {})
     }
@@ -242,8 +221,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           markSessionNew(data.session_id)
           // 结束后立即用后端附带的状态快照更新 running（该会话已从 running 消失）
           if (data.running && typeof data.running === "object") {
-            statusMapRef.current = data.running as Record<string, boolean>
-            setStatusMap(data.running as Record<string, boolean>)
+            const rMap = data.running as Record<string, boolean>
+            for (const [s, r] of Object.entries(rMap)) {
+              applyBackendState(s, r === true)
+            }
           } else {
             refreshSessionsStatus()
           }
@@ -377,15 +358,31 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (!sid) return
           const t = data.type as string
 
-          // Update running status from backend-authoritative snapshot.
+          // Update running + stats from backend-authoritative sources.
           if (data.running && typeof data.running === "object") {
-            statusMapRef.current = data.running as Record<string, boolean>
-            setStatusMap(data.running as Record<string, boolean>)
+            // data.running is a {sid: bool} map across all sessions
+            const rMap = data.running as Record<string, boolean>
+            const rawStats = data.stats as { elapsed: number; token_count: number } | undefined
+            for (const [s, r] of Object.entries(rMap)) {
+              applyBackendState(s, r === true, s === sid ? rawStats : undefined)
+            }
           }
 
           if (activeSidRef.current === sid) {
             // ---- Currently viewing this session: real-time streaming ----
             window.__TEAHOUSE_LOG__?.("session_event", `type=${t} sid=${sid} ${t === "text" ? `text_len=${(data.text as string)?.length || 0}` : t === "tool_call" ? `name=${data.name}` : t === "tool_result" ? `name=${data.name} id=${data.id}` : ""}`)
+
+            // Helper: find or create a pending assistant to stream into.
+            // When the user switches back to a running session mid-stream,
+            // the history loaded from jsonl only contains done records, so
+            // we synthesise a fresh "生成中…" bubble for the in-flight round.
+            const findOrCreatePending = (prev: RichMessage[]): { list: RichMessage[]; msg: RichMessage } => {
+              const existing = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
+              if (existing) return { list: prev, msg: existing }
+              const newMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+              return { list: [...prev, newMsg], msg: newMsg }
+            }
+
             if (t === "done") {
               // Stream finished. Close any open streaming assistant bubble.
               setMessagesFor(sid, (prev) => {
@@ -416,9 +413,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
             if (t === "tool_call") {
               setMessagesFor(sid, (prev) => {
-                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                if (!lastAsst) return prev
-                return updateMessage(prev, lastAsst.id, (m) => ({
+                const { list, msg } = findOrCreatePending(prev)
+                return updateMessage(list, msg.id, (m) => ({
                   ...m,
                   status: "streaming",
                   blocks: [
@@ -438,9 +434,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
             if (t === "tool_result") {
               setMessagesFor(sid, (prev) => {
-                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                if (!lastAsst) return prev
-                return updateMessage(prev, lastAsst.id, (m) => ({
+                const { list, msg } = findOrCreatePending(prev)
+                return updateMessage(list, msg.id, (m) => ({
                   ...m,
                   blocks: (m.blocks || []).map((b) =>
                     b.type === "tool_call" && b.id === data.id ? { ...b, result: data.result as string } : b
@@ -457,9 +452,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                   gitApi.approveTool(inst.id, data.id as string, data.args as Record<string, unknown>).then(res => {
                     if (res.ok) {
                       setMessagesFor(sid, (prev) => {
-                        const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                        if (!lastAsst) return prev
-                        return updateMessage(prev, lastAsst.id, (m) => ({
+                        const { list, msg: target } = findOrCreatePending(prev)
+                        return updateMessage(list, target.id, (m) => ({
                           ...m,
                           blocks: (m.blocks || []).map((b) =>
                             b.type === "tool_call" && b.id === data.id ? { ...b, result: "（自动批准）" } : b
@@ -487,9 +481,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               if (data.tool_args) return
               if (t === "reasoning") {
                 setMessagesFor(sid, (prev) => {
-                  const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                  if (!lastAsst) return prev
-                  return updateMessage(prev, lastAsst.id, (m) => ({
+                  const { list, msg } = findOrCreatePending(prev)
+                  return updateMessage(list, msg.id, (m) => ({
                     ...m,
                     status: "reasoning",
                     reasoning: m.reasoning + chunkText,
@@ -497,16 +490,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 })
               } else if (chunkText) {
                 setMessagesFor(sid, (prev) => {
-                  const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                  if (!lastAsst) return prev
-                  const blocks = [...(lastAsst.blocks || [])]
+                  const { list, msg } = findOrCreatePending(prev)
+                  const blocks = [...(msg.blocks || [])]
                   const last = blocks[blocks.length - 1]
                   if (last && last.type === "text") {
                     blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
                   } else {
                     blocks.push({ type: "text", text: chunkText })
                   }
-                  return updateMessage(prev, lastAsst.id, (m) => ({
+                  return updateMessage(list, msg.id, (m) => ({
                     ...m,
                     blocks,
                     content: m.content + chunkText,
@@ -519,7 +511,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           } else {
             // ---- Not viewing: track for later ----
             markSessionNew(sid)
-            if (t === "assistant_done" || t === "tool_result" || t === "done") {
+            // Only invalidate the cache when the ENTIRE tool_loop finishes.
+            // If we delete on tool_result or assistant_done, subsequent SSE
+            // events from the same loop will rebuild incomplete messages on
+            // an empty slot — and when the user switches back, the stale
+            // cached partial list masks the authoritative jsonl history.
+            if (t === "done") {
               delete messagesBySidRef.current[sid]
             }
           }
@@ -531,7 +528,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       es.onerror = () => {
         es.close()
         floorsESRef.current = null
-        if (!stopped) setTimeout(connect, 3000)
+        if (!stopped) {
+          // On reconnect, pull fresh backend state so elapsed/token/running
+          // are immediately correct (no stale states from missed events).
+          refreshSessionsStatus()
+          setTimeout(connect, 3000)
+        }
       }
     }
 
@@ -614,9 +616,14 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       const total = res.data?.total ?? 0
       if (replace) {
         const first = recs.map(r => recordToRichMessage(r as any))
-        // loadHistory is only ever called for the active session; cache it there.
-        messagesBySidRef.current[targetSid] = first
-        setMessages(first)
+        // SSE events may have already appended an in-flight pending assistant
+        // to the cache slot while the http fetch was in flight.  Preserve it
+        // so the "生成中…" bubble and streamed chunks aren't wiped.
+        const tail = messagesBySidRef.current[targetSid] || []
+        const sseOnly = tail.filter(m => m.role === "assistant" && m.status !== "done")
+        const merged = sseOnly.length > 0 ? [...first, ...sseOnly] : first
+        messagesBySidRef.current[targetSid] = merged
+        setMessages(merged)
         historyCursorRef.current = first.length
         historyLoadedRef.current = first.length >= total
       } else if (recs.length > 0) {
@@ -690,10 +697,17 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     setActiveSid(sid)
     clearSessionNew(sid)
     // 查询通道：切换会话时拉一次后端权威的 running 初始状态。
+    // This populates sessionStateMap so isStreaming / elapsed / tokenCount are
+    // correct immediately for the target session.
     refreshSessionsStatus()
     historyCursorRef.current = null
     historyLoadedRef.current = false
-    const cached = messagesBySidRef.current[sid]
+    // If the session is running, always rebuild from jsonl rather than trusting
+    // the cache.  Background SSE events from a multi-round tool_loop may have
+    // partially overwritten the cached messagesBySidRef slot (see the "done"-only
+    // invalidation rule in the session_event handler), so the cache is stale.
+    const isRunning = sessionStateRef.current[sid]?.running === true
+    const cached = isRunning ? undefined : messagesBySidRef.current[sid]
     if (cached) {
       setMessages(cached)
       historyLoadedRef.current = true
@@ -785,31 +799,39 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
 
-  // 全局生成状态（单数据源）—— genPhase 仍是全局的（审批/提交等跨会话逻辑），
-  // 但"是否在生成"用于按钮/气泡的判断改为会话感知：当前查看的会话是否在跑。
-  const genPhase = useGenerationStore((s) => s.phase)
+  // ── Generation state (minimal — backend is authoritative) ──
+  // approvalData is the only remaining global generation-level state;
+  // running / elapsed / tokenCount come from sessionStateMap per-session.
   const genApprovalData = useGenerationStore((s) => s.approvalData)
-  const isStreaming = statusMap[activeSid] === true
-  const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
+  const pendingApproval = genApprovalData
 
-  // 后端 SessionLoop 驱动的事件不会调用 startGenerating()。当 statusMap
-  // 首次标记某会话为 running 时，手动启动计时器，让 elapsed 从 0 开始计数。
-  const prevStreamingRef = useRef(false)
-  useEffect(() => {
-    if (isStreaming && !prevStreamingRef.current) {
-      useGenerationStore.getState().startGenerating()
-    }
-    if (!isStreaming && prevStreamingRef.current) {
-      useGenerationStore.getState().finishGenerating()
-    }
-    prevStreamingRef.current = isStreaming
-  }, [isStreaming])
-
-  // 供 AssistantBubble 使用：反映当前查看会话的前端流状态
+  // Convenience aliases for the currently-viewed session
   const isGlobalGenerating = isStreaming
   const isIdle = !isStreaming
-  const elapsed = useGenerationStore((s) => s.elapsed)
-  const tokenCount = useGenerationStore((s) => s.tokenCount)
+  const elapsed = activeState.elapsed
+  const tokenCount = activeState.tokenCount
+
+  // ── Waiting timer (frontend-local, one-shot per session) ──
+  // Each session with waiting=true ticks its own "等待中 Ns" counter.
+  // Running elapsed is pushed by the backend via SSE stats.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const cur = sessionStateRef.current
+      let changed = false
+      const next = { ...cur }
+      for (const [s, st] of Object.entries(cur)) {
+        if (st.waiting && st.waitingSince > 0) {
+          next[s] = { ...st, elapsed: Math.floor((Date.now() - st.waitingSince) / 1000) }
+          changed = true
+        }
+      }
+      if (changed) {
+        sessionStateRef.current = next
+        setSessionStateMap(next)
+      }
+    }, 250)
+    return () => clearInterval(timer)
+  }, [])
 
   // Available commands for autocomplete
   const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
@@ -852,15 +874,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     return () => observer.disconnect()
   }, [isStreaming])
 
-  // 生成计时器：每秒 tick
-  useEffect(() => {
-    if (!isStreaming) return
-    const timer = setInterval(() => {
-      useGenerationStore.getState().tickElapsed()
-    }, 250)
-    return () => clearInterval(timer)
-  }, [isStreaming])
-
   const handleStop = useCallback(() => {
     const inst = getActiveInstance()
     if (inst) {
@@ -868,10 +881,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     }
   }, [activeSid])
 
-  // 当 phase 变为 idle 时，将所有未收到结果的 tool_call block 标记为"(interrupted)"
-  // 同时将该 assistant 消息的 status 标记为 done，防止下一轮被当作中断上下文重复注入
+  // When the active session transitions from running → idle, mark any
+  // incomplete tool_call blocks as "(interrupted)" and close the bubble.
+  const prevStreamingRef = useRef(false)
   useEffect(() => {
-    if (genPhase === "idle") {
+    if (!isStreaming && prevStreamingRef.current) {
       setMessages(prev => {
         let changed = false
         const next = prev.map(m => {
@@ -888,14 +902,14 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         return changed ? next : prev
       })
     }
-  }, [genPhase])
+    prevStreamingRef.current = isStreaming
+  }, [isStreaming])
 
   // ESC 快捷键：停止生成
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      const phase = useGenerationStore.getState().phase
-      if (phase !== "generating") return
+      if (!isStreaming) return
       e.preventDefault()
       handleStop()
     }
@@ -948,9 +962,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
     try {
       if (shouldUseTools) {
-        // Enqueue into backend session loop. The backend persists it, starts
-        // processing, and broadcasts session_user_msg (which creates the user
-        // bubble + pending assistant) then session_event (streaming).
+        // Enter waiting state for this session BEFORE the backend responds.
+        // The backend broadcasts session_user_queued (creates grey bubble) and
+        // session_user_msg (upgrades to white). The first session_event will
+        // transition waiting→running via applyBackendState.
+        patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
         await chatApi.sendDirectorMessage(
           [{ role: "user", content: text }],
           activeInst!.id,
@@ -973,7 +989,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         const decoder = new TextDecoder()
         let buffer = ""
         let currentType: string | null = null
-        let writerMsg = pendingAssistant
+        const writerMsg = pendingAssistant
 
         const processLine = async (line: string) => {
           if (line.startsWith("event: ")) { currentType = line.slice(7).trim(); return }
@@ -1112,126 +1128,30 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         onCopy={diag.copy}
       />
       {/* Header */}
-      <div className="p-3 border-b border-border shrink-0 space-y-2">
-        {/* Row 1: 导演 + enabled plugin count + model names + diag */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">导演</h3>
-            <button
-              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setShowDiag(v => !v)}
-              title={showDiag ? "关闭诊断日志" : (diag.enabled ? "诊断日志（录制中）" : "诊断日志")}
-            >
-              <Stethoscope className={`h-3.5 w-3.5 ${diag.enabled ? "text-green-500" : ""}`} />
-            </button>
-          </div>
-          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-            <button
-              className="flex items-center gap-1 hover:text-foreground transition-colors"
-              onClick={() => openSettings("plugins")}
-              title="打开设置→插件管理"
-            >
-              <Puzzle className="h-3 w-3" />
-              <span className="text-foreground font-medium">{enabledPluginCount}</span>
-            </button>
-            <button
-              className="flex items-center gap-1 hover:text-foreground transition-colors"
-              onClick={() => openSettings("slots")}
-              title="打开设置→槽位指定"
-            >
-              导演：<span className="text-foreground font-medium">{slotModels.director || "未设置"}</span>
-            </button>
-            <button
-              className="flex items-center gap-1 hover:text-foreground transition-colors"
-              onClick={() => openSettings("slots")}
-              title="打开设置→槽位指定"
-            >
-              正文：<span className="text-foreground font-medium">{slotModels.writer || "未设置"}</span>
-            </button>
-          </div>
-        </div>
-        {/* Session strip: main + child sub-sessions. Click to switch the panel. */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {sessionList.map((s) => {
-            const active = s.session_id === activeSid
-            const hasNew = !!newMsgMap[s.session_id]
-            const isMain = s.session_id === MAIN_SID
-            const label = isMain ? "主会话" : `会话·${s.session_id.replace("session-", "").slice(0, 6)}`
-            return (
-              <button
-                key={s.session_id}
-                onClick={() => switchSession(s.session_id)}
-                className={`relative px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                  active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
-                }`}
-                title={isMain ? "主会话（持续对话）" : `会话 ${s.session_id} · ${s.record_count} 条记录`}
-              >
-                {label}{isMain ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
-                {/* 有新消息 → 右上角小圆圈 */}
-                {hasNew && !active && (
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
-                )}
-              </button>
-            )
-          })}
-          {!instId ? null : (
-            <button
-              className="ml-auto px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
-              onClick={refreshSessionList}
-              title="刷新会话列表"
-            >
-              刷新
-            </button>
-          )}
-        </div>
-        {/* Row 2: git info + auto-commit switch */}
-        <div className="flex items-center justify-between">
-          <div
-            className="flex items-center gap-1.5 cursor-pointer hover:bg-muted/50 rounded px-1.5 py-0.5 -ml-1.5 transition-colors flex-1 min-w-0 mr-4"
-            onClick={() => setShowGitDialog(true)}
-            title="打开版本控制"
-          >
-            <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
-              {currentBranch}
-            </span>
-            {latestCommitMsg && (
-              <span className="text-[10px] text-muted-foreground truncate">
-                {latestCommitMsg.length > 30 ? latestCommitMsg.slice(0, 30) + "…" : latestCommitMsg}
-              </span>
-            )}
-            {changeCounts.deleted > 0 && (
-              <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-                -{changeCounts.deleted}
-              </span>
-            )}
-            {changeCounts.modified > 0 && (
-              <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-                ~{changeCounts.modified}
-              </span>
-            )}
-            {changeCounts.added > 0 && (
-              <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-                +{changeCounts.added}
-              </span>
-            )}
-            <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] text-muted-foreground">自动提交</span>
-            <Switch
-              checked={autoApproveCommit}
-              onCheckedChange={(checked) => {
-                setAutoApproveCommit(checked)
-                localStorage.setItem("teahouse_auto_approve_commit", String(checked))
-              }}
-            />
-            <span className="text-[10px] text-muted-foreground w-5 text-right">
-              {autoApproveCommit ? "ON" : "OFF"}
-            </span>
-          </div>
-        </div>
-      </div>
+      <ChatHeader
+        showDiag={showDiag}
+        onToggleDiag={() => setShowDiag(v => !v)}
+        diagEnabled={diag.enabled}
+        slotModels={slotModels}
+        enabledPluginCount={enabledPluginCount}
+        onOpenSettings={openSettings}
+        MAIN_SID={MAIN_SID}
+        sessionList={sessionList}
+        activeSid={activeSid}
+        newMsgMap={newMsgMap}
+        onSwitchSession={switchSession}
+        onRefreshSessionList={refreshSessionList}
+        instId={instId}
+        currentBranch={currentBranch}
+        latestCommitMsg={latestCommitMsg}
+        changeCounts={changeCounts}
+        onOpenGitDialog={() => setShowGitDialog(true)}
+        autoApproveCommit={autoApproveCommit}
+        onAutoApproveChange={(checked) => {
+          setAutoApproveCommit(checked)
+          localStorage.setItem("teahouse_auto_approve_commit", String(checked))
+        }}
+      />
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleHistoryScroll} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
@@ -1252,10 +1172,10 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 isLatest={msg.id === lastAssistantId}
                 isGlobalGenerating={isGlobalGenerating}
                 isIdle={isIdle}
-                // 时钟/token 只传给最新气泡：其它气泡靠 memo 跳过重渲染，
-                // 即使已订阅的 elapsed/tokenCount 每秒在变也不牵连它们。
+                isWaiting={isWaiting}
+                // 时钟/token 只传给最新气泡：其它气泡靠 memo 跳过重渲染
                 elapsed={msg.id === lastAssistantId ? elapsed : 0}
-                tokenCount={msg.id === lastAssistantId ? (tokenMap[activeSid] || tokenCount) : 0}
+                tokenCount={msg.id === lastAssistantId ? tokenCount : 0}
               />
             ) : msg.status === "queued" ? (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
@@ -1279,120 +1199,54 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       </div>
 
       {/* Input */}
-      <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
-        {filteredCommands.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
-            {filteredCommands.map((cmd, i) => (
-              <button
-                key={cmd.name}
-                className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors ${
-                  i === commandIndex ? "bg-accent text-accent-foreground" : "text-popover-foreground"
-                }`}
-                onMouseEnter={() => setCommandIndex(i)}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  setInput(cmd.name + " ")
-                  setCommandIndex(0)
-                  inputRef.current?.focus()
-                }}
-              >
-                <span className="font-mono text-primary">{cmd.name}</span>
-                <span className="text-xs text-muted-foreground">{cmd.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {pendingApproval ? (
-          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-semibold flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-purple-500" />
-                确认 Git 提交
-              </h4>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              <span className="font-mono text-foreground text-sm">{formatCommitPreview(pendingApproval.args)}</span>
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={approving}
-                onClick={async () => {
-                  const data = pendingApproval
-                  setApproving(true)
-                  const inst = getActiveInstance()
-                  if (!inst) { setApproving(false); return }
-                  const res = await gitApi.rejectTool(inst.id, data.id, "")
-                  setApproving(false)
-                  if (!res.ok) {
-                    toast.error("拒绝请求失败")
-                    return
-                  }
-                  useGenerationStore.getState().resolveApproval(false)
-                }}
-              >
-                拒绝
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                disabled={approving}
-                onClick={async () => {
-                  const data = pendingApproval
-                  setApproving(true)
-                  const inst = getActiveInstance()
-                  if (!inst) { setApproving(false); return }
-                  const res = await gitApi.approveTool(inst.id, data.id, data.args)
-                  setApproving(false)
-                  if (!res.ok) {
-                    toast.error("批准提交失败")
-                    return
-                  }
-                  useGenerationStore.getState().resolveApproval(true)
-                }}
-              >
-                {approving ? "提交中..." : "确认提交"}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className={`flex gap-2 ${expandedInput ? "flex-1 min-h-0" : "items-end"}`}>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
-              onClick={() => setExpandedInput(v => !v)}
-              title={expandedInput ? "收起小输入框" : "展开大输入框（占高度 80%）"}
-            >
-              {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </Button>
-            <textarea
-              ref={inputRef}
-              className={`flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring ${
-                expandedInput
-                  ? "min-h-0 resize-y"
-                  : "resize-none min-h-[40px] max-h-[120px]"
-              }`}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
-            />
-            <Button
-              size="icon"
-              className="shrink-0 self-end h-10 w-10"
-              onClick={isStreaming ? handleStop : handleSend}
-              disabled={!isStreaming && !input.trim()}
-              variant={isStreaming ? "destructive" : "default"}
-              title={isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
-            >
-            {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-          </Button>
-          </div>
-        )}
-      </div>
+      <ChatInput
+        input={input}
+        onInputChange={setInput}
+        onKeyDown={handleKeyDown}
+        inputRef={inputRef}
+        isStreaming={isStreaming}
+        expandedInput={expandedInput}
+        onToggleExpand={() => setExpandedInput(v => !v)}
+        onSend={handleSend}
+        onStop={handleStop}
+        filteredCommands={filteredCommands}
+        commandIndex={commandIndex}
+        onCommandHover={setCommandIndex}
+        onCommandSelect={(name) => {
+          setInput(name + " ")
+          setCommandIndex(0)
+          inputRef.current?.focus()
+        }}
+        pendingApproval={pendingApproval}
+        approving={approving}
+        commitPreview={pendingApproval ? formatCommitPreview(pendingApproval.args) : ""}
+        onApprove={async () => {
+          const data = pendingApproval!
+          setApproving(true)
+          const inst = getActiveInstance()
+          if (!inst) { setApproving(false); return }
+          const res = await gitApi.approveTool(inst.id, data.id, data.args)
+          setApproving(false)
+          if (!res.ok) {
+            toast.error("批准提交失败")
+            return
+          }
+          useGenerationStore.getState().resolveApproval()
+        }}
+        onReject={async () => {
+          const data = pendingApproval!
+          setApproving(true)
+          const inst = getActiveInstance()
+          if (!inst) { setApproving(false); return }
+          const res = await gitApi.rejectTool(inst.id, data.id, "")
+          setApproving(false)
+          if (!res.ok) {
+            toast.error("拒绝请求失败")
+            return
+          }
+          useGenerationStore.getState().resolveApproval()
+        }}
+      />
 
       {/* Floor stats footer */}
       {floorsStats && floorsStats.latest_floor != null && (
@@ -1430,252 +1284,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           onGitRefresh?.()
         }}
       />
-    </div>
-  )
-}
-
-// ---- Assistant message bubble with thinking block ----
-// memo + 自定义浅比较：消息对象引用不变或 isLatest 不变时跳过重渲染，
-// 配合 updateMessage 只替换单条，让流式更新不再触发全列表重建。
-const AssistantBubble = memo(function AssistantBubble({
-  message,
-  isLatest,
-  isGlobalGenerating,
-  isIdle,
-  elapsed,
-  tokenCount,
-}: {
-  message: RichMessage
-  isLatest: boolean
-  isGlobalGenerating: boolean
-  isIdle: boolean
-  elapsed: number
-  tokenCount: number
-}) {
-  const [thinkingOpen, setThinkingOpen] = useState(false)
-
-  const { status, reasoning, content, blocks } = message
-  const hasBlocks = blocks && blocks.length > 0
-
-  // 此消息是当前正在生成的最新 assistant（非 done 非 pending，全局 streaming，且是最后一个 assistant）
-  const isActiveMessage = isLatest && status !== "done" && status !== "pending" && isGlobalGenerating
-
-  return (
-    <div className="max-w-[85%] space-y-1">
-      {/* Pending: waiting — no events received yet */}
-      {status === "pending" && isGlobalGenerating && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          等待中...
-        </div>
-      )}
-
-      {/* Thinking / reasoning block */}
-      {(status === "reasoning" || (reasoning && status !== "pending")) && (
-        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-          <button
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
-            onClick={() => setThinkingOpen(!thinkingOpen)}
-          >
-            {thinkingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Brain className="h-3 w-3" />
-            <span>思维链</span>
-            {status === "reasoning" && (
-              <span className="flex items-center gap-1 ml-auto">
-                {isIdle || !isLatest ? (
-                  <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" />
-                ) : (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                )}
-                {isIdle || !isLatest ? "已中断" : "思考中..."}
-              </span>
-            )}
-          </button>
-          {thinkingOpen && reasoning && (
-            <div className="px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap border-t border-border max-h-48 overflow-y-auto scrollbar-thin">
-              {reasoning}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Blocks: text + tool_call interleaved in generation order */}
-      {hasBlocks && (
-        <>
-          {blocks!.map((block, i) => {
-            if (block.type === "text" && block.text) {
-              return (
-                <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert prose-chat max-w-none break-words">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {block.text!}
-                  </ReactMarkdown>
-                </div>
-              )
-            }
-            if (block.type === "tool_call") {
-              return (
-                <div key={`tc-${i}`} className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-                  <div className="px-3 py-2 text-xs space-y-1">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Terminal className="h-3 w-3 shrink-0" />
-                      <span className="font-mono font-medium text-foreground">{block.name}</span>
-                      <span className="font-mono opacity-60 truncate">{formatBlockArgs(block)}</span>
-                      {block.batch && (
-                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">
-                          BatchExecute {block.batch.index}/{block.batch.total}
-                        </span>
-                      )}
-                    </div>
-                    {block.result === "(interrupted)" ? (
-                      <div className="flex items-start gap-1.5 text-muted-foreground/50">
-                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                        <span>已中断</span>
-                      </div>
-                    ) : block.result !== undefined ? (
-                      <div className="mt-1">
-                        {block.name === "TodoWrite" ? (
-                          <TodoWriteResult args={block.args || {}} result={block.result} />
-                        ) : block.result.startsWith("Error") ? (
-                          <div className="flex items-start gap-1.5 text-red-500">
-                            <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                            <span className="font-mono whitespace-pre-wrap">{block.result}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-1.5 text-muted-foreground">
-                            <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
-                            <span className="font-mono whitespace-pre-wrap line-clamp-3">{block.result}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        {isIdle || !isLatest ? (
-                          <>
-                            <XCircle className="h-3 w-3 text-muted-foreground/50" />
-                            <span>已中断</span>
-                          </>
-                        ) : (
-                          <>
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>等待中...</span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            }
-            return null
-          })}
-        </>
-      )}
-
-      {/* Active generating indicator — at end of current assistant bubble */}
-      {isActiveMessage && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>生成中...</span>
-          <span className="text-[10px] text-muted-foreground/60">
-            {elapsed > 0 && `${elapsed}s`}
-            {tokenCount > 0 && `, ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + "k" : tokenCount} tokens`}
-          </span>
-          <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
-        </div>
-      )}
-    </div>
-  )
-}, (prevProps, nextProps) =>
-  prevProps.message === nextProps.message &&
-  prevProps.isLatest === nextProps.isLatest &&
-  prevProps.isGlobalGenerating === nextProps.isGlobalGenerating &&
-  prevProps.isIdle === nextProps.isIdle
-)
-
-function formatCommitPreview(args: Record<string, unknown>): string {
-  const type = args.type as string
-  const msg = args.message as string
-  if (type === "floor") return `[楼层] 第 ${args.number} 层：${msg}`
-  if (type === "summary") {
-    if (args.start === args.end) return `[总结] 第 ${args.start} 层：${msg}`
-    return `[总结] 第 ${args.start}~${args.end} 层：${msg}`
-  }
-  return `[其他] ${msg}`
-}
-
-/** Format tool call args for compact display */
-function formatBlockArgs(block: { args?: Record<string, unknown>; name?: string }): string {
-  const args = block.args || {}
-  const name = block.name || ""
-  if (name === "Read") return args.path as string
-  if (name === "Write") return args.path as string
-  if (name === "Edit") return args.path as string
-  if (name === "WriteLine") return args.path as string
-  if (name === "Glob") return args.pattern as string
-  if (name === "TodoWrite") {
-    const todos = (args.todos as Array<{ status: string }>) || []
-    if (todos.length === 0) return "（空清单）"
-    const done = todos.filter((t) => t.status === "completed").length
-    const active = todos.find((t) => t.status === "in_progress")
-    const parts = [`${todos.length} 项`]
-    if (done > 0) parts.push(`${done} 项已完成`)
-    if (active) parts.push(`进行中: ${(active as { activeForm: string }).activeForm}`)
-    return parts.join("，")
-  }
-  return JSON.stringify(args)
-}
-
-/** Render a TodoWrite result as a visual task list */
-function TodoWriteResult({ args, result }: { args: Record<string, unknown>; result: string }) {
-  if (result.startsWith("Error")) {
-    return (
-      <div className="flex items-start gap-1.5 text-red-500">
-        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-        <span className="font-mono whitespace-pre-wrap">{result}</span>
-      </div>
-    )
-  }
-  const todos = (args.todos as Array<{ content: string; status: string }>) || []
-  if (todos.length === 0) {
-    return (
-      <div className="flex items-start gap-1.5 text-green-600 dark:text-green-400">
-        <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
-        <span className="font-mono whitespace-pre-wrap line-clamp-3">{result}</span>
-      </div>
-    )
-  }
-  return (
-    <div>
-      <div className="space-y-0.5">
-        {todos.map((t, i) => {
-          const icon =
-            t.status === "completed" ? (
-              <CheckCheck className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
-            ) : t.status === "in_progress" ? (
-              <CircleDot className="h-3 w-3 text-amber-500 shrink-0 mt-0.5" />
-            ) : (
-              <Circle className="h-3 w-3 text-muted-foreground/40 shrink-0 mt-0.5" />
-            )
-          return (
-            <div
-              key={i}
-              className={`flex items-start gap-1.5 ${
-                t.status === "completed"
-                  ? "text-muted-foreground/50 line-through"
-                  : t.status === "in_progress"
-                    ? "text-foreground font-medium"
-                    : "text-muted-foreground"
-              }`}
-            >
-              {icon}
-              <span>{t.content}</span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-1.5 pt-1.5 border-t border-border/50 text-[10px] text-muted-foreground font-mono">
-        {result}
-      </div>
     </div>
   )
 }

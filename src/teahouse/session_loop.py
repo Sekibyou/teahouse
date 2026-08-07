@@ -198,6 +198,7 @@ class SessionLoop:
             enabled_tools = meta.get("enabled_tools") or None
 
             # 6. Run tool loop
+            task_tracker.stats_start(self.instance_dir.name, self.session_id)
             self._task = asyncio.create_task(
                 self._run_tool_loop(client, enabled_tools)
             )
@@ -209,6 +210,7 @@ class SessionLoop:
                 # loop back to step 1
             finally:
                 task_tracker.unregister(self.instance_dir.name, self.session_id)
+                task_tracker.stats_clear(self.instance_dir.name, self.session_id)
                 self._task = None
 
     # ------------------------------------------------------------------
@@ -230,10 +232,16 @@ class SessionLoop:
             session_id=self.session_id,
             enabled_tools=enabled_tools,
         ):
+            task_tracker.stats_tick(self.instance_dir.name, self.session_id)
+            stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
             ev = dict(event)
             ev["instance_id"] = self.instance_dir.name
             ev["session_id"] = self.session_id
             ev["running"] = task_tracker.running_sessions(self.instance_dir.name)
+            ev["stats"] = {
+                "elapsed": stats.elapsed if stats else 0,
+                "token_count": stats.token_count if stats else 0,
+            }
             event_count += 1
             _event_log(self.instance_dir, self.session_id, "broadcast", {
                 "seq": event_count,
@@ -274,11 +282,16 @@ class SessionLoop:
         return msgs
 
     def _broadcast_done(self) -> None:
+        stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
         state.broadcast("session_event", {
             "instance_id": self.instance_dir.name,
             "session_id": self.session_id,
             "type": "done",
             "running": task_tracker.running_sessions(self.instance_dir.name),
+            "stats": {
+                "elapsed": stats.elapsed if stats else 0,
+                "token_count": stats.token_count if stats else 0,
+            },
         })
 
     def _broadcast_user_msg(self, queue_id: str | None, content: str) -> None:

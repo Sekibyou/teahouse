@@ -52,6 +52,7 @@ from .routes.settings import router as settings_router
 from .plugins import load_all_enabled_plugins
 from .database.plugins import configure_plugin_crypto
 from .state import state
+from .session_tracker import task_tracker
 
 
 # ---------------------------------------------------------------------------
@@ -622,8 +623,15 @@ async def _tool_use_loop(
                         collected_text += event["text"]
                         _pending["content"] = collected_text
                         yield event
+                    else:
+                        # tool-call arg fragment → count for stats, skip frontend
+                        task_tracker.stats_add_tokens(
+                            instance_dir.name, sid, len(event["text"])
+                        )
                 elif event["type"] == "reasoning":
-                    _pending["reasoning"] += event.get("text", "")
+                    chunk = event.get("text", "")
+                    _pending["reasoning"] += chunk
+                    task_tracker.stats_add_tokens(instance_dir.name, sid, len(chunk))
                     yield event
                 elif event["type"] == "tool_calls":
                     all_tool_calls = event["calls"]

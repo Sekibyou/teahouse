@@ -993,12 +993,19 @@ async def interrupt_session(
     from ..session_loop import SessionLoop
     SessionLoop.interrupt_session(instance_dir.name, session_id)
     return {"status": "ok", "session_id": session_id}
+
+
+@router.get("/instances/{instance_id}/sessions/status")
 async def sessions_status(instance_id: str, user: UserInfo = Depends(require_user)):
     """Authoritative per-session "is its director loop running right now?" map.
 
     The frontend renders the submit/stop button and token state from this, rather
     than guessing from its own stream bookkeeping (which races when switching
     between main and background child sessions).
+
+    Returns ``{sessions: {sid: bool}, stats: {sid: {elapsed, token_count}}}`` so
+    the frontend can restore the running/elapsed/token state for every session
+    in a single request (e.g. after page refresh or SSE reconnect).
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -1008,7 +1015,8 @@ async def sessions_status(instance_id: str, user: UserInfo = Depends(require_use
 
     from ..session_tracker import task_tracker
     running = task_tracker.running_sessions(instance_dir.name)
-    return {"sessions": running}
+    stats = task_tracker.get_stats_map(instance_dir.name)
+    return {"sessions": running, "stats": stats}
 
 
 @router.get("/instances/{instance_id}/sessions")

@@ -248,7 +248,7 @@ export const instancesApi = {
   },
 
   getSessionsStatus: async (instanceId: string) => {
-    return get<{ sessions: Record<string, boolean> }>(`/api/instances/${instanceId}/sessions/status`)
+    return get<{ sessions: Record<string, boolean>; stats: Record<string, { elapsed: number; token_count: number }> }>(`/api/instances/${instanceId}/sessions/status`)
   },
 
   destroySession: async (instanceId: string, sessionId: string, abort = false) => {
