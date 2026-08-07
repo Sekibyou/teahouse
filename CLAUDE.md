@@ -41,7 +41,7 @@
 | **building/** | 实例内的**打包期元工作区**（讨论点子、checklist、设计笔记）。导出自动排除、不进原型包；目录树中默认隐藏。首页「复制实例」可生成完整快照副本，用作就地清理打包前的保底 |
 | **Skill** | 提示词包（方法论），引用 teahouse.md 的配置 |
 | **楼层 (Floor)** | 独立内容单元，对应 `.md` 文件，完成后 git commit |
-| **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层 |
+| **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层。产出：更新 `settings/` 设定 + `runtime_vars.jsonl` 变量 + 根 `summary/sum-N-M.md` 流水账（导演回溯用，不进正文 Bot 上下文）。**归档界（已总结到第几章）由后端在 `GitCommit(type="summary", start, end)` 时自动写入根 `summary/index.json` 的 `summarized_through`**，导演无需手改 `teahouse.md` |
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
 | **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
@@ -261,7 +261,10 @@ skills/              Skill 包，每个子目录一个 Skill
   text-style-rules.yaml  文本样式着色规则
 floors/              正文楼层 + 总结（归档，commit 后不可变）
   floor-001.md        正文楼层，编号递增
-  sum-001.md          总结，编号递增（与楼层编号独立）
+  sum-001.md          总结归档（与楼层编号独立）
+summary/             汇总流水账（导演回溯参考，不进正文 Bot 上下文）
+  sum-1-7.md          覆盖第 1~7 章的流水账（覆盖 x~y 章 → sum-x-y.md；单章 → sum-x.md）
+  index.json          归档界索引（代码自动维护：summarized_through + entries）
 temp/                临时文件夹，存放草稿等中间文件
   draft.md            未完成草稿（续写用）
 assets/              静态资源（图片、字体、音频等）

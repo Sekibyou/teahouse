@@ -220,7 +220,7 @@
   {
     "name": "GitCommit",
     "description": "执行 git 提交，锁定实例文件状态。必须指定提交类型（楼层/总结/其他）。",
-    "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `type`（必填）：提交类型 — \"floor\"（楼层）、\"summary\"（总结）、\"other\"（其他）\n- `number`（floor 时必填）：楼层编号，如 5\n- `start`（summary 时必填）：总结覆盖的起始楼层编号\n- `end`（summary 时必填）：总结覆盖的结束楼层编号（与 start 相同时表示单层总结）\n- `message`（必填）：提交描述（不含前缀，工具会自动拼接）\n\n调用时机：\n- 楼层完成时：type=\"floor\"，number=楼层号\n- 总结完成时：type=\"summary\"，start/end=总结范围\n- 其他变更（配置修改、资源更新等）：type=\"other\"\n\n生成的 git 消息格式：\n- floor: \"floor-5: 抵达王都\"\n- summary: \"summary-15-20: 总结十五楼到二十楼\"（start==end 时退化为 \"summary-5: 第五楼总结\"）\n- other: \"other: 初始化实例\"\n\n⚠️ 重要：调用此工具前，必须先向用户确认是否满意当前内容（如\"已完成楼层创作，请确认后提交\"）。不要自行决定提交时机。此工具调用时会触发前端确认弹窗，用户可拒绝。",
+    "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `type`（必填）：提交类型 — \"floor\"（楼层）、\"summary\"（总结）、\"other\"（其他）\n- `number`（floor 时必填）：楼层编号，如 5\n- `start`（summary 时必填）：总结覆盖的起始楼层编号\n- `end`（summary 时必填）：总结覆盖的结束楼层编号（与 start 相同时表示单层总结）\n- `message`（必填）：提交描述（不含前缀，工具会自动拼接）\n\n调用 type=summary 时，后端会自动把归档界（`summary/index.json` 的 `summarized_through`）推进到你上报的 end，无需手动维护。\n\n调用时机：\n- 楼层完成时：type=\"floor\"，number=楼层号\n- 总结完成时：type=\"summary\"，start/end=总结范围\n- 其他变更（配置修改、资源更新等）：type=\"other\"\n\n生成的 git 消息格式：\n- floor: \"floor-5: 抵达王都\"\n- summary: \"summary-15-20: 总结十五楼到二十楼\"（start==end 时退化为 \"summary-5: 第五楼总结\"）\n- other: \"other: 初始化实例\"\n\n⚠️ 重要：调用此工具前，必须先向用户确认是否满意当前内容（如\"已完成楼层创作，请确认后提交\"）。不要自行决定提交时机。此工具调用时会触发前端确认弹窗，用户可拒绝。",
     "parameters": {
       "type": "object",
       "properties": {

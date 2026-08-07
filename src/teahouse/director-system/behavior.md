@@ -46,7 +46,7 @@
 | `.teahouse/output/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
 | `.teahouse/output_disabled/` | 可选 | 沙盒代码整体禁用开关（无子结构，移入即禁用） |
 | `.teahouse/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
-| `summary/` | 必需 | 总结摘要文本（导演参考，不进正文 Bot 上下文） |
+| `summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
 | `settings/` | 推荐 | 故事设定（角色、世界观等） |
 | `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md） |
 

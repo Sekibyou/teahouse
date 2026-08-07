@@ -41,6 +41,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
     update_floor_count,
+    update_summary_index,
     read_sandbox_vars,
     write_sandbox_vars,
     delete_sandbox_vars,
@@ -1134,6 +1135,12 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
         git_message = f"other: {body.message}"
 
     instance_dir = _resolve_instance_dir(inst)
+    # For summary commits, advance the archive boundary in summary/index.json
+    # BEFORE git_commit so the index is captured by `git add -A` in this commit.
+    if body.type == "summary":
+        if body.start is None or body.end is None:
+            raise HTTPException(status_code=400, detail="summary 类型需要 start 和 end 参数")
+        update_summary_index(instance_dir, body.start, body.end)
     try:
         result = git_commit(instance_dir, git_message)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})

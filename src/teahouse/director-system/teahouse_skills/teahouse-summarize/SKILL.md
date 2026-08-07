@@ -1,11 +1,11 @@
 ---
 name: teahouse-summarize
-description: 教导导演如何执行总结流程，包括上下文压缩、设定更新、变量更新、摘要落盘与归档界推进。当满足总结触发条件时（建议每 7 层一次），或用户手动要求总结时触发。
+description: 教导导演如何执行总结流程，包括上下文压缩、设定更新、变量更新、流水账落盘。归档界由后端在 GitCommit(type=summary) 时自动维护于 summary/index.json。当满足总结触发条件时（建议每 7 层一次），或用户手动要求总结时触发。
 ---
 
 # 总结归纳 Skill
 
-教导导演如何执行总结流程。总结通过**更新设定与变量**完成上下文压缩，并把**摘要文本**落在根 `summary/` 供导演参考。
+教导导演如何执行总结流程。总结通过**更新设定与变量**完成上下文压缩，并把**流水账文本**落在根 `summary/` 供导演回溯深挖设定用。
 
 ## 适用时机
 
@@ -16,16 +16,17 @@ description: 教导导演如何执行总结流程，包括上下文压缩、设�
 总结的核心目标：**压缩旧内容，为后续剧情保持连贯性**，同时推进「归档界」让 `{{glob:...:lastN}}` 上下文窗口随之缩小。
 
 **关键原则**：
-- 总结的**产物**（改设定 + 改变量 + 摘要文本）——设定/变量持续影响后续生成，摘要文本只作导演参考。
-- 总结的**结果**（摘要文本）**不入正文 Bot 上下文**。正文模型不靠总结文本，而是靠**设定切片**（`{{settings/...}}` 锚点）承载对过去的记忆，由提示词层弥合。
-- **归档界**（已总结到哪一层）记在 `teahouse.md` 的**全局变量区**（如 `summarized_to: 7`）。导演每次生成前必见，据此填 `lastN` 窗口——窗口只回溯未总结的楼层。
+- 总结的**产物**（改设定 + 改变量 + 流水账）——设定/变量持续影响后续生成，流水账只作导演回溯参考。
+- 总结的**结果**（流水账文本）**不入正文 Bot 上下文**。正文模型不靠总结文本，而是靠**设定切片**（`{{settings/...}}` 锚点）承载对过去的记忆，由提示词层弥合。正文可见性由创作者用 yaml 配置决定，引擎不强制。
+- **归档界**（已总结到哪一层）由后端在每次 `GitCommit(type="summary", start, end)` 时自动写入根 `summary/index.json` 的 `summarized_through`，导演无需手改。窗口只回溯未总结楼层。
 
 ## 文件命名规范
 
-摘要文本存放于根 `summary/` 目录下，命名格式为 `sum-A-B.md`。
+流水账存放于根 `summary/` 目录下，命名格式为 `sum-A-B.md`；归档界索引 `summary/index.json` 由后端自动维护（`summarized_through` + entries）。
 
-- `summary/sum-1-7.md` — 覆盖第 1 到第 7 层的总结
-- `summary/sum-8.md` — 仅覆盖第 8 层的总结（A == B 时简写为单数字）
+- `summary/sum-1-7.md` — 覆盖第 1 到第 7 层的流水账
+- `summary/sum-8.md` — 仅覆盖第 8 层的流水账（A == B 时简写为单数字）
+- `summary/index.json` — 代码维护的归档界索引，不要手改
 
 ## SOP
 
@@ -34,20 +35,19 @@ description: 教导导演如何执行总结流程，包括上下文压缩、设�
 `teahouse.md` 已注入系统提示词。关注其中：
 - 建议总结频率、最大不总结层数
 - 是否有自定义的总结模板/规范（如有则优先使用）
-- 全局变量区当前的「归档界」（`summarized_to`）
 
 ### 步骤 2：确定总结范围
 
 ```
-Glob summary/sum-*.md             → 查看上次总结的位置（文件名中的数字）
+Read summary/index.json            → 权威归档界（summarized_through）+ 已有流水账索引
 Glob .teahouse/output/floors/floor-*.md   → 列出所有楼层/草稿
 ```
 
-从 `summary/sum-*.md` 文件名解析上次总结的结束楼层，结合最新楼层编号与 teahouse.md 归档界确定本次需要总结的范围。
+从 `summary/index.json` 的 `summarized_through` 读上次总结的结束楼层（代码在每次 GitCommit(type=summary) 时自动维护），结合最新楼层编号确定本次总结范围（上次 end + 1 起）。旧的 `sum-*.md` 文件名数字不再作为归档界来源。
 
 **重要规则**：
 - **每一次总结最多覆盖 10 章**。如果用户要求一次性总结超过 10 章，应拆分为多个总结文件，每个覆盖不超过 10 章
-- 例如：要求总结 1~23 章 → 创建 `summary/sum-1-10.md`、`summary/sum-11-20.md`、`summary/sum-21-23.md`
+- 例如：要求总结 1~23 章 → 创建 `summary/sum-1-10.md`、`summary/sum-11-20.md`、`summary/sum-21-23.md`，并分别 `GitCommit(type="summary", ...)`
 
 ### 步骤 3：阅读待总结的楼层
 
@@ -117,43 +117,39 @@ SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层", "主线进度": 
 
 用 `GetRuntimeVars()` 读全部变量，结合对故事的理解清理明显过期、不再有影响的数值变量：确实过期则 `SetRuntimeVar` 覆盖为合理值或删除键；不确定时保留，宁可多留也不要误删。
 
-### 步骤 6：写入摘要文本（导演参考）
+### 步骤 6：写入流水账（导演回溯参考）
 
 ```
 FileOps mkdir summary/                 → 确保存在
-Write summary/sum-A-B.md               → 写入摘要文本
+Write summary/sum-A-B.md               → 写入流水账文本
 ```
 
 如果拆分为多个摘要，每个写入独立文件。
 
-> ⚠️ 摘要文本仅供导演参考，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `settings/` 设定与 `.teahouse/runtime_vars.jsonl` 变量。
+> ⚠️ 流水账仅供导演回溯深挖设定用，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `settings/` 设定与 `.teahouse/runtime_vars.jsonl` 变量。正文 Bot 看「最近 N 章正文 + settings + 变量」即可；若创作者想在自己的 yaml 配置里引用 summary 也行——正文可见性由创作者自己决定，引擎不强制。
 
-### 步骤 7：推进归档界
-
-在 `teahouse.md` 的**全局变量区**更新归档界，让上下文窗口随之缩小：
-
-```
-Edit teahouse.md：
-  <旧> summarized_to: <A-1>
-  <新> summarized_to: <B>
-```
-
-归档界表示「已总结到第 B 层」。后续 `{{glob:output/floors/floor-*.md:lastN}}` 的窗口只需回溯未总结楼层，N 可用总结层数以上（如未总结楼层数 + 余量）。
-
-### 步骤 8：Git 提交
+### 步骤 7：Git 提交（归档界由后端自动维护）
 
 ```
 GitCommit(type="summary", start=A, end=B, message="简短描述")
 ```
 
-提交将锁定本次总结对 `settings/`、`.teahouse/runtime_vars.jsonl`、`summary/`、`teahouse.md` 的全部变更。如果有多个摘要范围，每个单独一次 GitCommit。
+提交时后端会自动执行两件事：
+1. 把 `summary/index.json` 的 `summarized_through` 推进到 **B**（覆盖楼层含端点），
+2. 追加一条流水账索引 entry `{start, end, file}`。
+
+你无需手改 `teahouse.md` 里的归档界——它已经由代码自动维护。**唯一要保证的是 start/end 填对**（与 `sum-N-M.md` 覆盖范围一致），因为后端信任你上报的 `end`。后续 `{{glob:output/floors/floor-*.md:lastN}}` 的窗口计算会自动读该索引只回溯未总结楼层。
+
+如果有多个摘要范围，每个单独一次 GitCommit。总结不是楼层，不增加楼层计数。
 
 ## 注意事项
 
+- **归档界在 `summary/index.json`，由代码自动推进**，不要手改 `teahouse.md` 的 `summarized_to`（已退役）。
+- `sum-*.md` 名字里的数字现在**只作文档/文件名**，后端统计不再靠它推导归档界——所以名字可稍随意，但仍建议按规范命名便于人读。
+
 - 总结不是楼层，不增加楼层计数
-- **总结产物是「改设定+改变量+摘要」三件事**——摘要文本不进正文 Bot 上下文，别指望它直接喂给正文模型
+- **总结产物是「改设定+改变量+流水账」三件事**——流水账不进正文 Bot 上下文，别指望它直接喂给正文模型
 - 不要在总结中遗漏重要变量/设定变更——宁可多记也不要漏记
 - 如果某个变量在本轮总结中没有变化，保持原值不变
 - 变量值是自然语言描述，不追求结构化，但要准确
 - 清理变量时务必谨慎：阅读变量的作用域和相关章节，确认已失效才清理；不确定时保留
-- 归档界推进后，`teahouse.md` 全局变量区的 `summarized_to` 必须与实际落盘的摘要范围一致，否则上下文窗口会错

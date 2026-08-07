@@ -45,31 +45,43 @@ def get_floors_stats(dir_path: Path) -> dict | None:
     that dir directly (already a "floors" dir), or an instance root — in which
     case the canonical location is resolved.
     """
-    # If given the floors dir itself (name == "floors"), use it directly;
-    # otherwise treat it as an instance root and resolve the working location.
-    if dir_path.name != "floors":
+    # If given the floors dir itself (name == "floors"), use it directly and
+    # derive the instance root; otherwise treat it as an instance root and
+    # resolve the working floors location.
+    if dir_path.name == "floors":
+        canonical = dir_path
+        instance_dir = dir_path.parents[2]  # floors -> output -> .teahouse -> instance root
+    else:
+        instance_dir = dir_path
         canonical = dir_path / ".teahouse" / "output" / "floors"
-        dir_path = canonical if canonical.is_dir() else dir_path / "floors"
-    if not dir_path.is_dir():
+        if not canonical.is_dir():
+            canonical = dir_path / "floors"
+    if not canonical.is_dir():
         return None
 
-    files = sorted([f for f in dir_path.iterdir() if f.is_file() and not f.name.startswith(".")])
+    files = sorted([f for f in canonical.iterdir() if f.is_file() and not f.name.startswith(".")])
     floors = sorted([f for f in files if re.match(r"^floor-\d+\.md$", f.name)])
-    sums = sorted([f for f in files if re.match(r"^sum-\d+(-\d+)?\.md$", f.name)])
 
     newest_floor_num = int(floors[-1].stem.split("-")[1]) if floors else None
     total_floors = len(floors)
 
+    # Archive boundary ("summarized to floor N") is maintained by the backend in
+    # root summary/index.json on GitCommit(type=summary) — not derived from file
+    # names. Falls back to "nothing summarized" for older instances.
     last_sum_start = None
     last_sum_end = None
-    if sums:
-        newest_sum = sums[-1]
-        sum_parts = newest_sum.stem.split("-")[1:]
-        if len(sum_parts) == 2:
-            last_sum_start = int(sum_parts[0])
-            last_sum_end = int(sum_parts[1])
-        elif len(sum_parts) == 1:
-            last_sum_start = last_sum_end = int(sum_parts[0])
+    index_path = instance_dir / "summary" / "index.json"
+    if index_path.is_file():
+        try:
+            idx = json.loads(index_path.read_text(encoding="utf-8"))
+            last_sum_end = idx.get("summarized_through")
+            entries = idx.get("entries") or []
+            if entries:
+                last_sum_start = entries[-1].get("start")
+            if last_sum_start is None:
+                last_sum_start = last_sum_end
+        except Exception:
+            last_sum_start = last_sum_end = None
 
     unsummarized = 0
     if newest_floor_num and last_sum_end is not None:

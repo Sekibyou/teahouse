@@ -177,6 +177,41 @@ async def update_floor_count(instance_id: str, count: int) -> None:
     )
 
 
+def summary_file_name(start: int, end: int) -> str:
+    """Return the summary ledger file name for covering floors start..end (inclusive).
+
+    Naming rule: floors x..y (inclusive) -> sum-x-y.md; a single floor x -> sum-x.md.
+    """
+    return f"sum-{start}.md" if start == end else f"sum-{start}-{end}.md"
+
+
+def update_summary_index(instance_dir: Path, start: int, end: int) -> str:
+    """Record a summary range in summary/index.json (authoritative archive boundary).
+
+    Called by the backend on GitCommit(type="summary", start, end). Appends one
+    entry per call (deduped by exact range) and advances summarized_through to the
+    reported `end`. Returns the ledger file path written for reference.
+    """
+    idx_path = instance_dir / "summary" / "index.json"
+    if idx_path.exists():
+        data = json.loads(idx_path.read_text(encoding="utf-8"))
+    else:
+        data = {"summarized_through": None, "entries": []}
+
+    entries = data.setdefault("entries", [])
+    if not any(e.get("start") == start and e.get("end") == end for e in entries):
+        file = summary_file_name(start, end)
+        entries.append({"start": start, "end": end, "file": file})
+
+    data["summarized_through"] = max(
+        (data.get("summarized_through") or 0), end
+    )
+
+    idx_path.parent.mkdir(parents=True, exist_ok=True)
+    idx_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str((idx_path.parent / summary_file_name(start, end)).as_posix())
+
+
 def copy_instance(
     source_inst: dict,
     target_dir: Path,

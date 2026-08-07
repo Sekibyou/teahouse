@@ -63,7 +63,8 @@ Glob building/**/*                                → 了解创建者的元工�
 
 - **楼层**：`.teahouse/output/floors/` 是新实例初始楼层的来源。通常只保留开场楼（如 `floor-001.md`）作为新实例的初始页面，删除测试过程的楼。若根级 `floors/` 归档里有不需要的测试楼，一并清理。
 - **变量**：`.teahouse/runtime_vars.jsonl` 裁剪为「开局变量」子集——删除只跟测试进度相关的运行时变量，保留设定/框架类变量（角色、世界观、初始状态）。
-- **`teahouse.md`**：泛化实例特有的进度引用——清空归档界（如 `summarized_to`）为初始值、去掉对"当前楼层"的具体引用。
+- **`summary/`**：流水账是进度，不属于原型——删除 `summary/sum-*.md` 及 `summary/index.json`（归档界），让新实例从零开始。若想保留开场楼的"开篇设定"，体现在 settings/ 里而非流水账。
+- **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界已由 `summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需再写 `summarized_to`。
 - **settings/**：适度泛化。保留角色基础设定与世界观框架，去掉"当前正在发生"的临时状态。
 - **skills/**：保留该原型要复用的 skill。若某 skill 的 SKILL.md 含过于具体的故事信息，用 Edit 泛化。
 - **temp/**：删除未完成草稿（`draft.md` 等）。

@@ -1039,6 +1039,11 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
         git_message = f"other: {message}"
 
     try:
+        # For summary commits, advance the archive boundary in summary/index.json
+        # BEFORE commit so `git add -A` captures it in this commit.
+        if commit_type == "summary":
+            from .database.workspaces import update_summary_index
+            update_summary_index(instance_dir, start, end)
         result = _git_commit(instance_dir, git_message)
         files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_dir.name})
