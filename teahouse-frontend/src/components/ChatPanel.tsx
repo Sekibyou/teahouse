@@ -83,11 +83,73 @@ function updateMessage(
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
 
+  // Multi-session director panel: the main session plus sandbox/sub-agent child
+  // sessions. `messages` always reflects the *active* session; messagesBySidRef
+  // caches each session's array so switching back-and-forth is lossless.
+  const MAIN_SID = "main"
+  const [activeSid, setActiveSid] = useState(MAIN_SID)
+  // Per-session "is this session's director running right now" — render-only state,
+  // sourced from the BACKEND (which tracks the live tool-loop task per session).
+  // The submit/stop button and "生成中" state reflect the CURRENTLY VIEWED session's
+  // entry. We do NOT guess this client-side (that raced when switching between main
+  // and background child sessions).
+  const [statusMap, setStatusMap] = useState<Record<string, boolean>>({})
+  const statusMapRef = useRef<Record<string, boolean>>({})
+  statusMapRef.current = statusMap
+  // refreshSessionsStatus is defined AFTER instId (see below) since it reads instId.
+  // Per-session estimated token count (from background child events or frontend).
+  const [tokenMap, setTokenMap] = useState<Record<string, number>>({})
+  const tokenMapRef = useRef<Record<string, number>>({})
+  tokenMapRef.current = tokenMap
+  const addSessionTokens = useCallback((sid: string, n: number) => {
+    if (!n) return
+    const next = { ...tokenMapRef.current, [sid]: (tokenMapRef.current[sid] || 0) + n }
+    tokenMapRef.current = next
+    setTokenMap(next)
+  }, [])
+  const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number; is_main: boolean }[]>([])
+  const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
+  // "有新消息" 标志：后台会话有产出时需要提示，切过去即清。
+  const [newMsgMap, setNewMsgMap] = useState<Record<string, boolean>>({})
+  const newMsgMapRef = useRef<Record<string, boolean>>({})
+  newMsgMapRef.current = newMsgMap
+  const sessionListRef = useRef<typeof sessionList>([])
+  sessionListRef.current = sessionList
+  const activeSidNewRef = useRef(MAIN_SID)
+  activeSidNewRef.current = activeSid
+  const markSessionNew = useCallback((sid: string) => {
+    if (activeSidNewRef.current === sid) return // 正在看的会话不需要新消息标注
+    const next = { ...newMsgMapRef.current, [sid]: true }
+    newMsgMapRef.current = next
+    setNewMsgMap(next)
+  }, [])
+  const clearSessionNew = useCallback((sid: string) => {
+    const cur = newMsgMapRef.current
+    if (!cur[sid]) return
+    const next = { ...cur }
+    delete next[sid]
+    newMsgMapRef.current = next
+    setNewMsgMap(next)
+  }, [])
+
   // 每个实例独立的 localStorage key
   const activeInst = useSessionStore((s) => s.activeInstance)
   const instId = activeInst?.id
   const instName = activeInst?.name
   const chatKey = instId ? `chat-messages-${instId}` : null
+
+  // Chatpan must define refreshSessionsStatus AFTER instId (it reads it).
+  const refreshSessionsStatus = useCallback(() => {
+    if (instId) {
+      instancesApi.getSessionsStatus(instId).then(res => {
+        if (res.ok) {
+          const next = res.data?.sessions || {}
+          statusMapRef.current = next
+          setStatusMap(next)
+        }
+      }).catch(() => {})
+    }
+  }, [instId])
 
   // 楼层元数据
   const [floorsStats, setFloorsStats] = useState<FloorsStats | null>(null)
@@ -115,6 +177,163 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           const data = JSON.parse(e.data)
           if (data.instance_id && data.instance_id !== instId && data.instance_id !== instName) return
           setFloorsStats(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_destroyed", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId) return
+          // Refresh the session list (merge, keep others) and if the destroyed
+          // session was active, fall back to main. The destroyed sid is dropped.
+          instancesApi.listSessions(instId!).then(res => {
+            if (res.ok) {
+              setSessionList(prev => mergeServerSessions(prev, (res.data?.sessions || []).filter(s => s.session_id !== data.session_id)).filter(s => s.session_id !== data.session_id))
+            }
+          }).catch(() => {})
+          refreshSessionsStatus()
+          if (activeSidRef.current === data.session_id) {
+            setActiveSid(MAIN_SID)
+          }
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_created", (e: MessageEvent) => {
+        // A new sub-session appeared (created by the director via StartSubSession,
+        // or by the sandbox). Add it to the panel's session strip so the user can
+        // click in to watch / interact with it.
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId) return
+          if (!data.session_id) return
+          setSessionList(prev => {
+            if (prev.some(s => s.session_id === data.session_id)) return prev
+            return [...prev, { session_id: data.session_id, record_count: 0, is_main: false }]
+          })
+          refreshSessionsStatus()
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_done", (e: MessageEvent) => {
+        // Child session finished its work (EndSession). We keep it listed. If this
+        // child was created by a director session that awaited its result, wake that
+        // parent by injecting a message so its round reopens (the "await_result" flow).
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId) return
+          if (!data.session_id) return
+          // 后台会话完成 → 标"有新消息"（除非正在看它）
+          markSessionNew(data.session_id)
+          // 结束后立即用后端附带的状态快照更新 running（该会话已从 running 消失）
+          if (data.running && typeof data.running === "object") {
+            statusMapRef.current = data.running as Record<string, boolean>
+            setStatusMap(data.running as Record<string, boolean>)
+          } else {
+            refreshSessionsStatus()
+          }
+          instancesApi.listSessions(instId!).then(res => {
+            if (res.ok) setSessionList(prev => mergeServerSessions(prev, res.data?.sessions || []))
+          }).catch(() => {})
+          // 唤醒已由后端完成（它 append 了 [auto] 消息并 kick 父会话后台跑，前端无需注入）。
+          // 这里只需把父会话标为新消息 + 刷新列表，让用户切过去能看到；不抢当前聚焦。
+          if (data.parent_session_id) {
+            const parent = data.parent_session_id as string
+            setSessionList(prev => prev.some(s => s.session_id === parent)
+              ? prev
+              : [...prev, { session_id: parent, record_count: 0, is_main: parent === MAIN_SID }])
+            markSessionNew(parent)
+            // 父会话正在被后端唤醒（新增了 user 消息），若当前正看它，刷新出该消息。
+            if (activeSidRef.current === parent) {
+              loadHistoryRef.current(true, parent)
+            }
+          }
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_user_msg", (e: MessageEvent) => {
+        // 后端给某会话追加了一条 user 消息（如子会话结束唤醒父会话）。这可能是
+        // 前端未参与的追加，必须使该会话的消息缓存失效，否则 switchSession 命中
+        // 旧缓存看不到新消息（之前的 bug）。收到后删除缓存 → 下次切换全量重拉。
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId && data.instance_id !== instName) return
+          const sid = data.session_id
+          if (!sid) return
+          delete messagesBySidRef.current[sid]
+          if (activeSidRef.current === sid) {
+            // 正在看它：直接重拉出这条新消息。
+            loadHistoryRef.current(true, sid)
+          } else {
+            markSessionNew(sid)
+          }
+          refreshSessionsStatus()
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("file_changed", (e: MessageEvent) => {
+        // 后台子会话只写 temp/（Report）——落 temp 的变更若发生在当前在看会话之外，
+        // 表示有后台子会话在产出，给非当前会话标"有新消息"。
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId && data.instance_id !== instName) return
+          const path = data.path || ""
+          if (!path.startsWith("temp/")) return
+          // Mark all sub-sessions that are not currently active as having new content.
+          setNewMsgMap(prev => {
+            const next = { ...prev }
+            sessionListRef.current.forEach(s => {
+              if (!s.is_main && s.session_id !== activeSidNewRef.current) next[s.session_id] = true
+            })
+            if (JSON.stringify(next) === JSON.stringify(prev)) return prev
+            newMsgMapRef.current = next
+            return next
+          })
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_event", (e: MessageEvent) => {
+        // A background sub-session emitted a real director event (text/tool_call/
+        // tool_result/assistant_done). Track its running state + token count, and
+        // refresh the view if we're looking at it; otherwise mark "有新消息".
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId && data.instance_id !== instName) return
+          const sid = data.session_id
+          if (!sid) return
+          const t = data.type as string
+          // 状态完全由后端权威提供：每个事件都附带 running 快照，直接覆盖即可。
+          if (data.running && typeof data.running === "object") {
+            statusMapRef.current = data.running as Record<string, boolean>
+            setStatusMap(data.running as Record<string, boolean>)
+          }
+          if (data.token_est) addSessionTokens(sid, Number(data.token_est) || 0)
+          if (activeSidRef.current === sid) {
+            // 正在看它：后台流在跑不要每次全量重拉（中断体验），只在关键边界刷新。
+            // done 表示该会话后台 run 已结束，重拉以补出末尾的纯 text（最终汇报）。
+            if (t === "assistant_done" || t === "tool_result" || t === "done") {
+              loadHistoryRef.current(true, sid)
+            }
+          } else {
+            // 没在看他：标红点，并**失效该会话缓存**——否则切过去时 switchSession
+            // 命中旧缓存会丢后台期间新增的记录（如最终汇报）。done/tool_result/
+            // assistant_done 都意味着它的 jsonl 有实质变化，缓存不可再信。
+            markSessionNew(sid)
+            if (t === "assistant_done" || t === "tool_result" || t === "done") {
+              delete messagesBySidRef.current[sid]
+            }
+          }
         } catch {
           // ignore malformed events
         }
@@ -194,22 +413,30 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     }
   }
 
-  const loadHistory = useCallback((replace: boolean) => {
+  const loadHistory = useCallback((replace: boolean, sid?: string) => {
+    const targetSid = sid ?? activeSid
     if (!instId || loadingMoreRef.current) return
     loadingMoreRef.current = true
     const offset = replace ? 0 : (historyCursorRef.current ?? 0)
-    instancesApi.getSessionMemory(instId, { limit: PAGE_SIZE, offset }).then(res => {
+    const fetchHistory = targetSid === MAIN_SID
+      ? instancesApi.getSessionMemory(instId, { limit: PAGE_SIZE, offset })
+      : instancesApi.getSubSessionMemory(instId, targetSid, { limit: PAGE_SIZE, offset })
+    fetchHistory.then(res => {
       if (!res.ok) return
       const recs = res.data?.records || []
       const total = res.data?.total ?? 0
       if (replace) {
         const first = recs.map(r => recordToRichMessage(r as any))
+        // loadHistory is only ever called for the active session; cache it there.
+        messagesBySidRef.current[targetSid] = first
         setMessages(first)
         historyCursorRef.current = first.length
         historyLoadedRef.current = first.length >= total
       } else if (recs.length > 0) {
         const more = recs.map(r => recordToRichMessage(r as any))
-        setMessages(prev => [...more, ...prev])
+        const merged = [...more, ...(messagesBySidRef.current[targetSid] || [])]
+        messagesBySidRef.current[targetSid] = merged
+        setMessages(merged)
         historyCursorRef.current = (historyCursorRef.current ?? 0) + more.length
         if (more.length < PAGE_SIZE || (historyCursorRef.current ?? 0) >= total) {
           historyLoadedRef.current = true
@@ -218,15 +445,40 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         historyLoadedRef.current = true
       }
     }).catch(() => {}).finally(() => { loadingMoreRef.current = false })
-  }, [instId])
+  }, [instId, activeSid])
+
+  // Latest loadHistory, exposed via ref so SSE listeners (created once) can call it
+  // without capturing a stale closure.
+  const loadHistoryRef = useRef(loadHistory)
+  loadHistoryRef.current = loadHistory
 
   // Initial load (on mount / instance change): replace with the latest window.
+  // NOTE: deps are deliberately [instId] only — NOT including loadHistory. If
+  // loadHistory (which depends on activeSid) were a dep, then switching sessions
+  // would rebuild it and re-run this effect, yanking activeSid back to main and
+  // looping every time the user clicks a sub-session (the "main stays lit, child
+  // never lights" bug). We track the previous instId ourselves so the reset-to-main
+  // only fires on a genuine instance change.
+  const prevInstRef = useRef<string | null>(null)
   useEffect(() => {
+    const changed = prevInstRef.current !== instId
+    prevInstRef.current = instId ?? null
+    // Load the session list for the director panel (always refresh on instId change).
+    if (instId) {
+      instancesApi.listSessions(instId).then(res => {
+        if (res.ok) setSessionList(mergeServerSessions([], res.data?.sessions || []))
+      }).catch(() => {})
+    }
+    if (!changed) return
+    // Only reset to main on a true instance change / first mount.
     setMessages([])
+    messagesBySidRef.current = {}
+    setActiveSid(MAIN_SID)
     historyCursorRef.current = null
     historyLoadedRef.current = false
-    loadHistory(true)
-  }, [instId, loadHistory])
+    loadHistory(true, MAIN_SID)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instId])
 
   // Lazy-load earlier history when the user scrolls near the top.
   const handleHistoryScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -235,6 +487,75 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       loadHistory(false)
     }
   }, [loadHistory])
+
+  // Switch the director panel's active session. The current session's messages
+  // are cached; the newly selected session's history is loaded into view.
+  const switchSession = useCallback((sid: string) => {
+    if (sid === activeSid) {
+      // 已是当前会话，仅清"有新消息"标志（若它还在）
+      clearSessionNew(sid)
+      return
+    }
+    // Cache whatever is in view now, under its session key.
+    if (messagesBySidRef.current[activeSid]?.length !== messages.length || activeSid === sid) {
+      messagesBySidRef.current[activeSid] = messages
+    }
+    setActiveSid(sid)
+    clearSessionNew(sid)
+    // 查询通道：切换会话时拉一次后端权威的 running 初始状态。
+    refreshSessionsStatus()
+    historyCursorRef.current = null
+    historyLoadedRef.current = false
+    const cached = messagesBySidRef.current[sid]
+    if (cached) {
+      setMessages(cached)
+      historyLoadedRef.current = true
+    } else {
+      setMessages([])
+      loadHistory(true, sid)
+    }
+  }, [activeSid, messages, loadHistory, clearSessionNew, refreshSessionsStatus])
+
+  /**
+   * Merge a freshly-listed set of server sessions into the current list WITHOUT
+   * dropping entries a transient backend miss or an in-flight event may have
+   * hidden. Server entries update record_count; local-only sessions (e.g. just
+   * created, or broadcast-injected) are kept. Removal happens only explicitly
+   * via session_destroyed.
+   */
+  const mergeServerSessions = useCallback((local: typeof sessionList, server: typeof sessionList) => {
+    const byId = new Map(local.map(s => [s.session_id, s]))
+    for (const s of server) byId.set(s.session_id, s)
+    return [...byId.values()]
+  }, [])
+
+  // Refresh session list when a child session is destroyed remotely.
+  const refreshSessionList = useCallback(() => {
+    if (instId) {
+      instancesApi.listSessions(instId).then(res => {
+        if (res.ok) setSessionList(mergeServerSessions(sessionList, res.data?.sessions || []))
+      }).catch(() => {})
+    }
+  }, [instId, sessionList, mergeServerSessions])
+
+  /**
+   * Session-aware messages setter. Stream closures capture the session that
+   * started them; updates always land in that session's cached array, and only
+   * mirror to the live `messages` state when that session is on screen. This
+   * keeps a sub-session's stream from corrupting another session while the user
+   * switches the panel during generation.
+   */
+  const activeSidRef = useRef(MAIN_SID)
+  activeSidRef.current = activeSid
+  const setMessagesFor = useCallback((sid: string, updater: (prev: RichMessage[]) => RichMessage[]) => {
+    const slot = messagesBySidRef.current[sid]
+    const base = slot || []
+    const next = updater(base)
+    messagesBySidRef.current[sid] = next
+    if (activeSidRef.current === sid) {
+      setMessages(next)
+    }
+  }, [])
 
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
@@ -278,15 +599,16 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
 
-  // 全局生成状态（单数据源）
+  // 全局生成状态（单数据源）—— genPhase 仍是全局的（审批/提交等跨会话逻辑），
+  // 但"是否在生成"用于按钮/气泡的判断改为会话感知：当前查看的会话是否在跑。
   const genPhase = useGenerationStore((s) => s.phase)
   const genApprovalData = useGenerationStore((s) => s.approvalData)
-  const isStreaming = genPhase === "generating"
+  const isStreaming = statusMap[activeSid] === true
   const pendingApproval = genPhase === "waiting_approval" ? genApprovalData : null
 
-  // 供 AssistantBubble 使用：全局布尔稳定，时钟/token 高频抖动但只传给最新活跃气泡
-  const isGlobalGenerating = genPhase === "generating"
-  const isIdle = genPhase === "idle"
+  // 供 AssistantBubble 使用：反映当前查看会话的前端流状态
+  const isGlobalGenerating = isStreaming
+  const isIdle = !isStreaming
   const elapsed = useGenerationStore((s) => s.elapsed)
   const tokenCount = useGenerationStore((s) => s.tokenCount)
 
@@ -409,18 +731,22 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }
 
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
-  const _doSend = async (text: string, useTools: boolean) => {
+  const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
+    // The session this send targets. Stream updates route here so a background
+    // sub-session stream never corrupts the panel's active session array.
+    const sid = targetSid || activeSid
 
-    // /clear 命令：清空当前对话
+    // /clear 命令：清空当前对话（作用于当前查看的会话本）
     if (text === "/clear") {
       setMessages([])
+      messagesBySidRef.current[sid] = []
       setInput("")
       historyCursorRef.current = null
       historyLoadedRef.current = true
-      // 清空后端实例目录里的持久化会话记忆（.sessions/）
+      // 清空后端对应会话的持久化记忆（.sessions/<sid>.jsonl）
       const inst = getActiveInstance()
       if (inst) {
-        instancesApi.clearSessionMemory(inst.id).catch(() => {})
+        instancesApi.clearSessionMemory(inst.id, sid === MAIN_SID ? undefined : sid).catch(() => {})
       }
       toast.success("会话已清空")
       scrollToBottom()
@@ -468,10 +794,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     // 合并连续相同 role 的消息（兼容 Anthropic / 严格 OpenAI 提供商）
     const mergedMessages = mergeConsecutiveSameRole(sendMessages)
 
-    setMessages(mergedMessages)
+    messagesBySidRef.current[sid] = mergedMessages
+    setMessagesFor(sid, () => mergedMessages)
     setInput("")
     setError("")
     useGenerationStore.getState().startGenerating()
+    refreshSessionsStatus()
     scrollToBottom()
 
     const abortController = new AbortController()
@@ -511,6 +839,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           apiMessages,
           activeInst!.id,
           abortController.signal,
+          activeSid,
         )
       } else {
         stream = await chatApi.sendStream(
@@ -535,7 +864,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (!dataStr) return
 
           if (currentType === "done") {
-            setMessages((prev) => {
+            setMessagesFor(sid, (prev) => {
               const target = prev.find((m) => m.id === assistantMsg.id)
               // A bubble opened by assistant_done but that never received any
               // content/reasoning is a spurious empty turn (e.g. the last tool
@@ -560,7 +889,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               // and start a fresh assistant message. Mirrors how the same data is
               // replayed from .sessions/ (one record per tool round), so realtime
               // and refresh render the chain-of-thought spread across turns.
-              setMessages((prev) => {
+              setMessagesFor(sid, (prev) => {
                 const closed = prev.map((m) =>
                   m.id === assistantMsg.id && m.status !== "done"
                     ? { ...m, status: "done" as MsgStatus }
@@ -575,7 +904,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
             if (currentType === "tool_call") {
               // 首次事件：从"等待中"切换到活跃
-              setMessages((prev) =>
+              setMessagesFor(sid, (prev) =>
                 updateMessage(prev, assistantMsg.id, (m) =>
                   m.status === "pending" ? { ...m, status: "streaming" } : m
                 ) || prev
@@ -585,7 +914,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 Math.ceil((data.name + JSON.stringify(data.args || {})).length / 4)
               )
               // 追加 tool_call block
-              setMessages((prev) =>
+              setMessagesFor(sid, (prev) =>
                 updateMessage(prev, assistantMsg.id, (m) => ({
                   ...m,
                   blocks: [
@@ -609,7 +938,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 Math.ceil((data.result || "").length / 4)
               )
               // 更新对应 tool_call block 的 result
-              setMessages((prev) =>
+              setMessagesFor(sid, (prev) =>
                 updateMessage(prev, assistantMsg.id, (m) => ({
                   ...m,
                   blocks: (m.blocks || []).map((b) =>
@@ -628,7 +957,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                     const res = await gitApi.approveTool(inst.id, data.id, data.args)
                     if (res.ok) {
                       // 标记对应 block result
-                      setMessages((prev) =>
+                      setMessagesFor(sid, (prev) =>
                         updateMessage(prev, assistantMsg.id, (m) => ({
                           ...m,
                           blocks: (m.blocks || []).map((b) =>
@@ -659,7 +988,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               if (chunkText) {
                 useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
               }
-              setMessages((prev) =>
+              setMessagesFor(sid, (prev) =>
                 updateMessage(prev, assistantMsg.id, (m) =>
                   m.status === "pending" ? { ...m, status: "streaming" } : m
                 ) || prev
@@ -669,7 +998,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             }
 
             if (data.type === "reasoning") {
-              setMessages((prev) =>
+              setMessagesFor(sid, (prev) =>
                 updateMessage(prev, assistantMsg.id, (m) => ({
                   ...m,
                   status: "reasoning",
@@ -678,7 +1007,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               )
             } else {
               useGenerationStore.getState().addTokens(Math.ceil(chunkText.length / 4))
-              setMessages((prev) => {
+              setMessagesFor(sid, (prev) => {
                 const target = prev.find((m) => m.id === assistantMsg.id)
                 if (!target) return prev
                 const blocks = [...(target.blocks || [])]
@@ -721,7 +1050,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       }
 
       // Mark done
-      setMessages((prev) =>
+      setMessagesFor(sid, (prev) =>
         updateMessage(prev, assistantMsg.id, (m) =>
           m.status !== "done" ? { ...m, status: "done" } : m
         ) || prev
@@ -731,7 +1060,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       if (err instanceof DOMException && err.name === "AbortError") {
         return
       }
-      setMessages((prev) =>
+      setMessagesFor(sid, (prev) =>
         prev.map((m) =>
           m.id === assistantMsg.id
             ? { ...m, status: "done" as MsgStatus }
@@ -741,6 +1070,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       setError(err instanceof Error ? err.message : "请求失败")
     } finally {
       useGenerationStore.getState().finishGenerating()
+      refreshSessionsStatus()
       aborterRef.current = null
     }
   }
@@ -748,6 +1078,30 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   // 监听沙盒 Teahouse.send() 消息，自动发送到导演
   useEffect(() => {
     const interval = setInterval(() => {
+      // (1) Sandbox sub-session sends: switch to that session and send there.
+      const bSess = useSessionStore.getState().pendingSessionSend
+      if (bSess) {
+        useSessionStore.getState().setPendingSessionSend(null)
+        const sid = bSess.sessionId
+        // Add to the session list if unknown.
+        setSessionList(prev => {
+          if (prev.some(s => s.session_id === sid)) return prev
+          return [...prev, { session_id: sid, record_count: 0, is_main: false }]
+        })
+        // focus=false means "background wake / no focus steal": send to the target
+        // session without switching the panel away from whatever the user is viewing.
+        if (bSess.focus !== false) {
+          if (activeSidRef.current !== sid) {
+            switchSession(sid)
+            activeSidRef.current = sid
+          }
+        }
+        if (!isStreaming) {
+          _doSend(bSess.message, true, sid)
+        }
+        return
+      }
+      // (2) Plain sandbox sends go to the active session (legacy /main behavior).
       const msg = useSessionStore.getState().pendingMessage
       if (msg && !isStreaming) {
         useSessionStore.getState().setPendingMessage(null)
@@ -838,6 +1192,39 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             </button>
           </div>
         </div>
+        {/* Session strip: main + child sub-sessions. Click to switch the panel. */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {sessionList.map((s) => {
+            const active = s.session_id === activeSid
+            const hasNew = !!newMsgMap[s.session_id]
+            const label = s.is_main ? "主会话" : `子·${s.session_id.replace("session-", "").slice(0, 6)}`
+            return (
+              <button
+                key={s.session_id}
+                onClick={() => switchSession(s.session_id)}
+                className={`relative px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                  active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
+                }`}
+                title={s.is_main ? "主会话（持续对话）" : `子会话 ${s.session_id} · ${s.record_count} 条记录`}
+              >
+                {label}{s.is_main ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
+                {/* 有新消息 → 右上角小圆圈 */}
+                {hasNew && !active && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
+                )}
+              </button>
+            )
+          })}
+          {!instId ? null : (
+            <button
+              className="ml-auto px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
+              onClick={refreshSessionList}
+              title="刷新会话列表"
+            >
+              刷新
+            </button>
+          )}
+        </div>
         {/* Row 2: git info + auto-commit switch */}
         <div className="flex items-center justify-between">
           <div
@@ -909,7 +1296,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 // 时钟/token 只传给最新气泡：其它气泡靠 memo 跳过重渲染，
                 // 即使已订阅的 elapsed/tokenCount 每秒在变也不牵连它们。
                 elapsed={msg.id === lastAssistantId ? elapsed : 0}
-                tokenCount={msg.id === lastAssistantId ? tokenCount : 0}
+                tokenCount={msg.id === lastAssistantId ? (tokenMap[activeSid] || tokenCount) : 0}
               />
             ) : msg.status === "queued" ? (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted/50 text-muted-foreground border border-dashed border-border">

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 import os
 import re as _re
 import shutil
@@ -467,6 +468,179 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
         full.write_text(new_content, encoding="utf-8")
         state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
         return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
+
+
+async def execute_report(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Write a sub-session / exploration report to temp/ as markdown.
+
+    ``mode="write"`` overwrites (creates or replaces); ``mode="edit"`` appends.
+    Restricted to temp/*.md — reports must never touch formal artifact dirs.
+    The temp/ dir is gitignored, so reports stay out of version control.
+    """
+    mode = args.get("mode", "write")
+    filename = args.get("filename", "")
+    content = args.get("content", "")
+
+    if mode not in ("write", "edit"):
+        return f"Error: mode must be 'write' or 'edit', got {mode!r}"
+    if not filename:
+        return "Error: filename is required"
+
+    rel = f"temp/{filename}"
+    full = _validate_path(instance_dir, rel)
+    # Constrain to temp/ only — reports must not escape the scratch area.
+    temp_root = (instance_dir / "temp").resolve()
+    if not str(full).startswith(str(temp_root)):
+        return f"Error: Report may only write under temp/, got {rel}"
+
+    full.parent.mkdir(parents=True, exist_ok=True)
+    if mode == "edit" and full.exists():
+        full.write_text(full.read_text(encoding="utf-8") + content, encoding="utf-8")
+    else:
+        full.write_text(content, encoding="utf-8")
+    state.broadcast("file_changed", {"path": rel, "tool": "Report", "instance_id": instance_dir.name})
+    return f"Report {mode} to {rel}. File state is now up to date in your context — no need to Read it back."
+
+
+_SUB_META_SUFFIX = ".meta.json"
+
+
+def _read_meta(instance_dir: Path, session_id: str) -> dict:
+    p = instance_dir / ".sessions" / f"{session_id}.meta.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _write_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
+    p = instance_dir / ".sessions" / f"{session_id}.meta.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+def _session_record_count(instance_dir: Path, session_id: str) -> int:
+    """Count records in a session's jsonl (0 if absent)."""
+    p = instance_dir / ".sessions" / f"{session_id}.jsonl"
+    if not p.exists():
+        return 0
+    return sum(1 for line in p.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
+    """Director tool: create a child sub-session to delegate a one-shot task.
+
+    Returns the new ``session_id``. ``await_result=true`` tells the director to
+    end its current round and wait to be woken when the child finishes. Records
+    the calling session as ``parent_session_id`` so EndSession can notify it.
+    """
+    task = args.get("task", "")
+    enabled = args.get("enabled_tools")
+    await_result = bool(args.get("await_result", False))
+    parent = session_id or ""
+
+    child = f"session-{uuid.uuid4().hex[:12]}"
+    tools_list = sorted(set(enabled)) if enabled else sorted(SUB_SESSION_BASE_TOOLS)
+    meta = {
+        "enabled_tools": tools_list,
+        "parent_session_id": parent or None,
+        "await_result": await_result,
+        "created_from": "director",
+    }
+    _write_meta(instance_dir, child, meta)
+
+    # Seed the child's context with the delegated task, so a background run — or a
+    # later user click-in — has an actual instruction to act on (not just the role
+    # intro from the system prompt).
+    from . import sessions
+    from .session_tracker import task_tracker
+    if task:
+        sessions.append_user(instance_dir, task, session_id=child)
+
+    state.broadcast("session_created", {
+        "instance_id": instance_id or instance_dir.name,
+        "session_id": child,
+        "parent_session_id": parent or None,
+        "parent_await_result": await_result,
+        "running": task_tracker.running_sessions(instance_dir.name),
+    })
+
+    # Kick the child to start working right away (fire-and-forget background run).
+    from .session_bg import kick_sub_session_run
+    await kick_sub_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
+
+    if await_result:
+        return (f"Created sub-session {child} and delegated task. AWAITING_RESULT — stop this round now and do not issue further "
+                f"tools; the backend will wake you with a new message when sub-session {child} finishes (it calls EndSession). "
+                f"Then Read its temp/ report to close this work.")
+    return (f"Created sub-session {child}. Task delegated ('{task[:80]}…' if long). It runs in background with a fresh context; "
+            f"it will write its conclusion via Report to temp/ and call EndSession when done. You may continue your current work "
+            f"or Read its temp/ report later. Session list: you can check it at any time.")
+
+
+async def execute_send_to_sub_session(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
+    """Director tool: deliver a follow-up message to a child sub-session (fire-and-forget)."""
+    child = args.get("session_id", "")
+    message = args.get("message", "")
+    if not child or not message:
+        return "Error: SendToSubSession requires both session_id and message."
+
+    # Append the message as a user record to the child session file.
+    from . import sessions
+    sessions.append_user(instance_dir, f"[director@{session_id or 'main'}] {message}", session_id=child)
+
+    # Kick the child session to process it in the background if it isn't already running.
+    from .session_bg import kick_sub_session_run
+    await kick_sub_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
+
+    return f"Message delivered to sub-session {child}. It will process this in its next turn (or when it next runs)."
+
+
+async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
+    """Declare a sub-session's work complete, then wake its parent in-backend.
+
+    Only signals ``session_done`` (does NOT destroy the session — that's the caller's
+    decision). If this child was created by a director session, the backend itself
+    appends a wake-up user message to the parent and kicks the parent to finish in
+    the background — reliable, frontend-independent, works for both await modes.
+    """
+    sid = session_id or ""
+    meta = _read_meta(instance_dir, sid)
+    parent = meta.get("parent_session_id")
+
+    from .session_tracker import task_tracker
+    from . import sessions
+    from .session_bg import kick_session_run
+
+    # Wake the parent in-backend: append a user message + kick it to run and wrap up.
+    if parent:
+        sessions.append_user(
+            instance_dir,
+            f"[auto] 你委派的子会话 {sid} 已完成（它调用了 EndSession）。请读取它落盘到 temp/ 的结论并收尾本轮。",
+            session_id=parent,
+        )
+        # enabled_tools=None → parent (main) is unrestricted when waking.
+        kick_session_run(instance_dir, parent, instance_id=instance_id, user_id=user_id, enabled_tools=None)
+        # Tell the frontend "the parent session gained a new user message" so it can
+        # drop that session's messages cache and re-pull when the user switches to it.
+        state.broadcast("session_user_msg", {
+            "instance_id": instance_id or instance_dir.name,
+            "session_id": parent,
+            "count": _session_record_count(instance_dir, parent),
+        })
+
+    payload = {
+        "instance_id": instance_id or instance_dir.name,
+        "session_id": sid,
+        "parent_session_id": parent or None,
+        "parent_await_result": bool(meta.get("await_result")),
+        # Authoritative per-session running map at completion time.
+        "running": task_tracker.running_sessions(instance_dir.name),
+    }
+    state.broadcast("session_done", payload)
+    return f"Session {sid or '(main)'} marked done and parent notified. The session is NOT destroyed — destroy it explicitly if the caller wants to reclaim it."
 
 
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
@@ -1224,6 +1398,22 @@ TOOL_EXECUTORS = {
     "GitStatus": execute_git_status,
     "GitDiff": execute_git_diff,
     "Wait": execute_wait,
+    "Report": execute_report,
+    "EndSession": execute_end_session,
+    "StartSubSession": execute_start_sub_session,
+    "SendToSubSession": execute_send_to_sub_session,
+}
+
+# Sub-session default tool grants. A child session may only call the tools on
+# its `enabled_tools` list; if the list is absent, these read-only + bookkeeping
+# tools are the baseline. Report is always allowed (its only output is temp/).
+SUB_SESSION_BASE_TOOLS = {
+    "Read",
+    "Glob",
+    "Grep",
+    "GetRuntimeVars",
+    "Report",
+    "EndSession",
 }
 
 
@@ -1234,14 +1424,23 @@ async def execute_tool(
     user_id: str | None = None,
     instance_id: str | None = None,
     run_uuid: str | None = None,
+    session_id: str | None = None,
+    enabled_tools: list[str] | None = None,
 ) -> str:
     """Execute a tool by name with the given args. Returns the result text.
 
     instance_id is the DB UUID — used for SSE broadcast filtering on the frontend.
     run_uuid (runTool batch id) is threaded to tools that emit progress events
     (Generate → generate_progress) so viewers can bind the buffer to a batch.
+    session_id (a non-main child session) restricts which tools may run: the
+    tool must be in `enabled_tools` (defaulting to SUB_SESSION_BASE_TOOLS).
     Falls back to plugin tool executors if the tool is not built-in.
     """
+    # Sub-session permission gate. Main sessions (session_id=None/'main') and
+    # sandbox runTool pass enabled_tools=None → no restriction.
+    if enabled_tools is not None and name not in enabled_tools:
+        return f"Error: tool '{name}' is not enabled in this sub-session. Enabled tools: {sorted(enabled_tools)}."
+
     executor = TOOL_EXECUTORS.get(name)
     if executor:
         try:
@@ -1249,6 +1448,8 @@ async def execute_tool(
                 result = await executor(instance_dir, args, user_id, run_uuid)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
+            elif name in ("EndSession", "StartSubSession", "SendToSubSession"):
+                result = await executor(instance_dir, args, session_id, instance_id, user_id)
             else:
                 result = await executor(instance_dir, args)
             return result

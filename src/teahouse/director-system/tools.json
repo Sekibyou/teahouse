@@ -439,5 +439,95 @@
         "ms"
       ]
     }
+  },
+  {
+    "name": "EndSession",
+    "description": "（子会话专用）声明本次子任务的工作已完成，广播结束信号。只发信号、不销毁会话——是否销毁由调用方（沙盒或用户）决定，会话文件保留直到被显式销毁。",
+    "usage": "当你作为子会话（sub-session）被派发一项独立工作（如总结、改设定、探索某个设定）时，全部工作完成后调用本工具，宣告本次任务结束。\n\n效果：后端广播一条 `session_done` 信号（携带本 session_id），沙盒或用户据此得知任务完成，可决定后续是否销毁本会话。\n\n**注意**：\n- 本工具**不会销毁会话**，也不清空历史——它只是「说完了」。彻底回收由 `sessionDestroy`（沙盒/前端调用）完成。\n- 只应在子会话里调用，且只调一次，放在全部工具产出都已经落盘之后。\n- 主会话（main）不需要也不应该用本工具——主会话是持续对话，没有「结束」一说。",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "Report",
+    "description": "（子会话/探索专用）把一份工作结论或探索结果写入实例的 temp/ 目录（.md 文件）。write 覆盖、edit 追加。reports 供导演回溯参考，不进入正式正文。",
+    "usage": "在子会话/探索任务中，把一段调研结论、设定草稿、批量操作的报告落到 `temp/` 下的 markdown，作为可追溯的中间产物，供后续（或主会话）回溯复用。\n\n参数：\n- `mode`（必填）：`\"write\"` 覆盖写入（新建或整体替换），`\"edit\"` 向文件末尾追加。\n- `filename`（必填）：文件名，不含 `temp/` 前缀，如 `explore-char-秦悠.md`。\n- `content`（必填）：要写入的 markdown 文本。`mode=write` 时整体覆盖；`mode=edit` 时追加到文件末尾。\n\n注意：\n- **只能写 `temp/` 下的 .md 文件**，不能写到其他目录——这是报告区的约束，避免子会话污染正式产物区（floors/、settings/ 等）。\n- `temp/` 不纳入 git 版本控制（GitCommit 不会提交其中的内容），所以用它放探索中间产物是安全的。\n- 想产出供玩家看到的正文或正式设定时，不要用本工具，改由具备写权限的会话用 Write/Edit 落到正确目录。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "write",
+            "edit"
+          ],
+          "description": "write=覆盖写入，edit=追加到文件末尾"
+        },
+        "filename": {
+          "type": "string",
+          "description": "temp/ 下的文件名，不含前缀，如 explore-char.md"
+        },
+        "content": {
+          "type": "string",
+          "description": "要写入的 markdown 文本"
+        }
+      },
+      "required": [
+        "mode",
+        "filename",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "StartSubSession",
+    "description": "（导演专用）开启一个独立的导演子会话（sub-session），委派一次性任务（探索设定、总结、批量改写等）。子会话有独立上下文、受限工具集，不污染主会话历史。可边开边继续主会话工作，或选择等它完成后被唤醒。",
+    "usage": "当你想把一件耗时/会污染注意力的独立工作（如深入某个设定的文件考古、批量改写某几楼、独立总结一段）外包给一个子 agent 时，用本工具开启子会话。\n\n参数：\n- `task`（必填）：给子会话的任务指令，越明确越好。子会话会据此执行，完成后用 `EndSession` 宣告结束。\n- `enabled_tools`（可选）：给子会话的工具白名单。默认只读基础集（Read/Glob/Grep/GetRuntimeVars/Report/EndSession）。若子会话需要写 temp/ 草稿或 Generate 正文，显式传入对应工具。\n- `await_result`（可选，布尔，默认 false）：**等待策略**。\n  - `false`（默认）：发起后立刻返回 `session_id`，你**继续本轮的其它工具调用**，并行推进主会话工作；之后用 `Read` 读子会话落到 `temp/` 的结论（让子会话经 `Report` 写 temp）。\n  - `true`：发起后本轮**就此终止**、等待唤醒——不要再发别的工具调用。子会话结束时后端会向你注入一条消息重新开启新一轮，你再读取结论收尾。\n\n注意：\n- 子会话默认**不能写正式区**（floors/、settings/ 等），探索结论一律经 `Report` 写 `temp/*.md`（不纳入 git 版本控制）。\n- 即使 `await_result:true`，本工具也只返回一个\"已发起等待\"确认，不会真的阻塞——你结束本轮后，唤醒靠子会话结束信号。\n- 每个子会话都是全新上下文，不继承你当前对话的历史，所以 `task` 要自包含（说明它需要读取哪些文件）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "委派给子会话的任务指令（自包含，须说明要读取哪些文件）"
+        },
+        "enabled_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "子会话工具白名单（可选，默认只读基础集）"
+        },
+        "await_result": {
+          "type": "boolean",
+          "description": "true=发起后结束本轮等唤醒；false=发起后继续本轮其它工作（默认）"
+        }
+      },
+      "required": [
+        "task"
+      ]
+    }
+  },
+  {
+    "name": "SendToSubSession",
+    "description": "（导演专用）向一个已存在的子会话补发一条消息（追加指令）或催办。子会话在后台独立运行，此工具只负责把消息投递给它，不等待其响应。",
+    "usage": "启动子会话后，若想追加要求、纠正方向、或补充信息，用本工具向它发一条消息。子会话收到后在其后台流程里处理。\n\n参数：\n- `session_id`（必填）：子会话 id（来自 StartSubSession 的返回值）。\n- `message`（必填）：要投递给它的消息内容。\n\n注意：\n- 异步投递，不阻塞你当前的工作，也不等待子会话立刻回应。子会话当前若在跑一轮生成，会把它排到下一轮处理。\n- 具体子会话结果仍靠它落 temp 的文件 + 你 `Read` 读取。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "目标子会话 id"
+        },
+        "message": {
+          "type": "string",
+          "description": "要投递的消息内容"
+        }
+      },
+      "required": [
+        "session_id",
+        "message"
+      ]
+    }
   }
 ]

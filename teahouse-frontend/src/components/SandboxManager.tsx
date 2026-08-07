@@ -5,6 +5,7 @@ import { renderText } from "@/lib/htmlSanitizer"
 import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi } from "@/lib/api"
 import type { ToolsRunStep } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
+import { useSessionStore } from "@/stores/sessionStore"
 
 // ============================================================
 // SandboxManager — file-system driven sandbox iframe + TeahouseBridge
@@ -82,6 +83,10 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
     onGenerateProgress: useCallback((payload: Record<string, unknown>) => {
       // 透传 Generate 流式进度（含 diff）给沙盒，供"生成中"缓冲渲染/打字机
       sendToSandbox("generate_progress", payload)
+    }, [sendToSandbox]),
+    onSessionEvent: useCallback((event: string, payload: Record<string, unknown>) => {
+      // 透传子会话结束/销毁事件给沙盒（bootstrap 用 Teahouse.on('session_done') 订阅）
+      sendToSandbox(event, payload)
     }, [sendToSandbox]),
   })
 
@@ -248,6 +253,39 @@ ${bridge}
         }
         case "send": {
           if (_args[0] && onSend) { onSend(_args[0] as string); result = true }
+          break
+        }
+        case "sessionCreate": {
+          // { enabled_tools?: string[] } → creates a child sub-session, returns session_id.
+          if (instanceId) {
+            const opts = (_args[0] as { enabled_tools?: string[] } | undefined) || {}
+            const res = await instancesApi.createSession(instanceId, opts.enabled_tools)
+            result = res.ok ? res.data : { ok: false, error: res.error }
+          }
+          break
+        }
+        case "sessionSend": {
+          // { session_id, message } → route a message to a specific sub-session.
+          const p = _args[0] as { session_id?: string; sessionId?: string; message?: string } | undefined
+          const sid = p?.session_id || p?.sessionId
+          if (instanceId && sid && p?.message) {
+            useSessionStore.getState().setPendingSessionSend({ sessionId: sid, message: p.message })
+            result = true
+          } else {
+            result = { ok: false, error: "sessionSend requires {session_id, message}" }
+          }
+          break
+        }
+        case "sessionDestroy": {
+          // { session_id, abort? } → destroy a child session (abort cancels in-flight).
+          const p = _args[0] as { session_id?: string; sessionId?: string; abort?: boolean } | undefined
+          const sid = p?.session_id || p?.sessionId
+          if (instanceId && sid) {
+            const res = await instancesApi.destroySession(instanceId, sid, !!p?.abort)
+            result = res.ok ? true : { ok: false, error: res.error }
+          } else {
+            result = { ok: false, error: "sessionDestroy requires {session_id}" }
+          }
           break
         }
       }

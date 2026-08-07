@@ -272,6 +272,38 @@ if (!res.ok) { console.error("提交失败", res) }
 
 与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runTool()`**。
 
+### 子会话（sub-session）— 一次性导演子任务
+
+适合：一次性的总结、改设定、探索某设定、批量润色。子会话**独立上下文、受限工具**,干完可销毁,**不污染主会话历史**——搭建造型阶段测试子任务不会误伤正在进行的搭建主对话。导演自己也可在子会话里开子 agent 探索。
+
+```js
+// 1. 开启子会话（默认只读基础工具；按任务传更大 enabled_tools）
+const created = await Teahouse.sessionCreate({
+  enabled_tools: ["Read", "Glob", "Grep", "GetRuntimeVars", "SetRuntimeVar", "Report", "Generate", "EndSession"] // e.g. 允许改变量+生成正文
+})
+if (!created.ok) throw new Error(created.error)
+const sid = created.session_id
+
+// 2. 给该子会话补发任务指令（会开启一个导演 SSE 流,期间导演在该会话内工作）
+Teahouse.sessionSend(sid, "把第 3~5 章总结为《宗门势力》设定,结论写入 Report temp/summary-1.md,完成后用 EndSession")
+// 用户可在导演栏切到该子会话看到思考/工具过程,也能直接打字介入
+
+// 3. 订阅结束信号:子会话导演调 EndSession 后触发(只发信号,不销毁)
+Teahouse.on("session_done", async (data) => {
+  if (data.session_id !== sid) return
+  console.log("子会话完成:", sid)
+  await Teahouse.sessionDestroy(sid)   // 干完回收;若 mid-run 想强停,传 true
+})
+```
+
+API：
+- `Teahouse.sessionCreate(opts)` → `Promise<{session_id?, ok, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/GetRuntimeVars/Report/EndSession)。
+- `Teahouse.sessionSend(session_id, message)` → 把消息补发给指定子会话(等价于向该会话发一条 user 消息,但隔离上下文)。
+- `Teahouse.sessionDestroy(session_id, abort?)` → 销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。
+- 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。
+
+**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、settings/ 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
+
 ### 事件监听
 
 #### `Teahouse.on(event, callback)` / `Teahouse.off(event, callback)`
@@ -285,6 +317,8 @@ if (!res.ok) { console.error("提交失败", res) }
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
 | `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条（含成败）—— 组件按 `run_uuid` 筛选、数 `index` 判定整批完成/失败 |
 | `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式**每收到一个正文 chunk 立即广播一条**；`delta` 是本帧新增文本（**追加而非覆盖**，走同一条 SSE 连接按序到达，顺序=LLM 产出顺序，可直接 append）；`done:false` 表示生成中。**`done:true` 才带 `accumulated_text` 当前全文**（含 `delta:""`），前端用它做最终校准/切文件 — 组件用它做"生成中"缓冲渲染 |
+| `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定。沙盒用 `Teahouse.on('session_done', ...)` 订阅后自行决定下一步（如 `sessionDestroy(session_id)` 回收） |
+| `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
 
 宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
 

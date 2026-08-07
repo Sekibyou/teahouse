@@ -36,7 +36,7 @@
 
 | 概念 | 说明 |
 |---|---|
-| **原型 (Prototype)** | 创作者设计的 `.teabrew` 包，本质是zip压缩文件，类似酒馆的角色卡。**导出源 = 实例根本身**：在实例上就地清理测试数据后打包（自动排除 `building/`、`.git/`、`sessions/` 等内部目录） |
+| **原型 (Prototype)** | 创作者设计的 `.teabrew` 包，本质是zip压缩文件，类似酒馆的角色卡。**导出源 = 实例根本身**：在实例上就地清理测试数据后打包（自动排除 `building/`、`.git/`、`.sessions/` 等内部目录） |
 | **实例 (Instance)** | 原型解压后独立运行的存档 |
 | **building/** | 实例内的**打包期元工作区**（讨论点子、checklist、设计笔记）。导出自动排除、不进原型包；目录树中默认隐藏。首页「复制实例」可生成完整快照副本，用作就地清理打包前的保底 |
 | **Skill** | 提示词包（方法论），引用 teahouse.md 的配置 |
@@ -195,7 +195,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 ### 切换分支的特殊说明
 
 `GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`floors/`、`.teahouse/runtime_vars.jsonl`、`settings/` 等）。切换后：
-1. 当前对话的上下文（messages）保留在前端 localStorage 中，导演不会失忆
+1. 对话记忆由后端持久化（基于目标分支重构上下文，见下方"会话记忆"），导演不会失忆
 2. 下一次系统提示词组装时会自动读取目标分支的文件状态
 3. 如需查看旧分支的楼层文件，可用 `Read` 工具加路径前缀（如果能拿到具体路径），或者切回去查看
 
@@ -203,7 +203,18 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 - **依赖 git**：运行环境必须安装 git 并可在 PATH 中访问
 - **不需要 merge**：分支是 AVG 式的剧情分支存档，不做合并
-- **sessions/ 不纳入版本控制**：对话历史由前端 localStorage 管理
+- **`.sessions/` + `temp/` 不纳入版本控制**：对话记忆（每会话一个 `.sessions/<sid>.jsonl`）与草稿区 `temp/` 都不随 GitCommit 提交；导演上下文权威地由后端从对应会话文件重建，前端 localStorage 只存 `activeInstance`
+
+---
+### 会话记忆（多会话 / 子会话）
+
+每个实例一个 `.sessions/` 目录,可容纳**多会话**:主会话固定 `main.jsonl`(持续对话),子会话 `session-<uuid>.jsonl`(一次性导演子任务)。均为 append-only JSONL,由后端维护:
+
+- **权威在后端**：后端 `sessions.py` 的 `append_user`/`append_assistant`/`append_record` 写入,`records_to_context(instance_dir, api_style, session_id)` 把完整历史(含工具结果)重建为 LLM 上下文,`_tool_use_loop` 每次 `/v1/chat` 都从对应会话文件重建,不以前端为权威。`/v1/chat` 的 `ChatRequest.session_id` 选定会话(`None`/`"main"`=主会话)。
+- **前端不持权威历史**:`ChatPanel` 按 `session_id` 拉取窗口渲染(主会话经 `GET /api/instances/{id}/session`,子会话经 `GET /sessions/{sid}`),发送时只传本轮新输入。导演栏是**多 session 模式**,可列出主会话+子会话、切换查看思考/工具过程、并可在任一会话打字介入。
+- **子会话生命周期 API**:`POST /sessions`(创建,可带 `enabled_tools` 权限表,默认只读)、`DELETE /sessions/{sid}?abort=`(销毁,abort 中断进行中的生成)、`GET /sessions`(列表)。沙盒经 `Teahouse.sessionCreate/sessionSend/sessionDestroy` 驱动;后端广播 `session_done`(EndSession 只发信号不销毁)/ `session_destroyed` 事件。
+- **子会话权限**:子会话只能调用其 `enabled_tools` 列表里的工具(默认只读+Report+EndSession),写正式区受限;探索/结论用 `Report` 工具写 `temp/*.md`。
+- **清空主会话**:`DELETE /api/instances/{id}/session` 或导演栏输入 `/clear` 删除 `main.jsonl`(子会话用 `destroy` 单独回收,不碰主会话)。
 
 ## 提示词组装
 
@@ -265,7 +276,7 @@ floors/              正文楼层 + 总结（归档，commit 后不可变）
 summary/             汇总流水账（导演回溯参考，不进正文 Bot 上下文）
   sum-1-7.md          覆盖第 1~7 章的流水账（覆盖 x~y 章 → sum-x-y.md；单章 → sum-x.md）
   index.json          归档界索引（代码自动维护：summarized_through + entries）
-temp/                临时文件夹，存放草稿等中间文件
+temp/                临时文件夹，存放草稿等中间文件（**不纳入 git 版本控制**；子会话 Report 工具只写这里）
   draft.md            未完成草稿（续写用）
 assets/              静态资源（图片、字体、音频等）
 ```

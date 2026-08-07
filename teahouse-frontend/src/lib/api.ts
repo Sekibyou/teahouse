@@ -225,8 +225,43 @@ export const instancesApi = {
     return get<{ records: Record<string, unknown>[]; total: number }>(`/api/instances/${instanceId}/session${qs ? `?${qs}` : ""}`)
   },
 
-  clearSessionMemory: async (instanceId: string) => {
-    return del<{ status: string }>(`/api/instances/${instanceId}/session`)
+  clearSessionMemory: async (instanceId: string, sessionId?: string) => {
+    const qs = sessionId && sessionId !== "main" ? `?session_id=${encodeURIComponent(sessionId)}` : ""
+    return del<{ status: string }>(`/api/instances/${instanceId}/session${qs}`)
+  },
+
+  // Sub-session lifecycle (multi-session director sub-tasks)
+  createSession: async (instanceId: string, enabledTools?: string[]) => {
+    return post<{ session_id: string; enabled_tools: string[]; is_main: boolean }>(
+      `/api/instances/${instanceId}/sessions`,
+      { enabled_tools: enabledTools },
+    )
+  },
+
+  listSessions: async (instanceId: string) => {
+    return get<{ sessions: { session_id: string; record_count: number; is_main: boolean }[] }>(
+      `/api/instances/${instanceId}/sessions`,
+    )
+  },
+
+  getSessionsStatus: async (instanceId: string) => {
+    return get<{ sessions: Record<string, boolean> }>(`/api/instances/${instanceId}/sessions/status`)
+  },
+
+  getSubSessionMemory: async (instanceId: string, sessionId: string, opts?: { limit?: number; offset?: number }) => {
+    const params = new URLSearchParams()
+    if (opts?.limit) params.set("limit", String(opts.limit))
+    if (opts?.offset) params.set("offset", String(opts.offset))
+    const qs = params.toString()
+    return get<{ records: Record<string, unknown>[]; total: number }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}${qs ? `?${qs}` : ""}`,
+    )
+  },
+
+  destroySession: async (instanceId: string, sessionId: string, abort = false) => {
+    return del<{ status: string; session_id: string }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}${abort ? "?abort=true" : ""}`,
+    )
   },
 
   runTools: async (instanceId: string, steps: ToolsRunStep[]) => {
@@ -299,8 +334,9 @@ export const chatApi = {
   },
 
   /** Streaming chat with tool use: like sendStream but with tools + instance_id.
-   *  Events can include tool_call, tool_result, text, reasoning. */
-  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string, signal?: AbortSignal) => {
+   *  Events can include tool_call, tool_result, text, reasoning.
+   *  sessionId selects a child sub-session (default main). */
+  sendToolStream: async (messages: { role: string; content: string }[], instanceId: string, signal?: AbortSignal, sessionId?: string) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -309,7 +345,13 @@ export const chatApi = {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       signal,
-      body: JSON.stringify({ messages, stream: true, tools: true, instance_id: instanceId }),
+      body: JSON.stringify({
+        messages,
+        stream: true,
+        tools: true,
+        instance_id: instanceId,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
     })
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: "请求失败" }))

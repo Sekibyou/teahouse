@@ -4,6 +4,7 @@ Prototype and instance API routes.
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -937,6 +938,144 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
 # ===== Director session memory (.sessions/) =====
 
 
+def _session_meta_path(instance_dir: Path, session_id: str) -> Path:
+    return instance_dir / ".sessions" / f"{session_id}.meta.json"
+
+
+def _save_session_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
+    p = _session_meta_path(instance_dir, session_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_session_meta(instance_dir: Path, session_id: str) -> dict:
+    p = _session_meta_path(instance_dir, session_id)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+class SessionCreateRequest(BaseModel):
+    enabled_tools: list[str] | None = None  # None → default read-only base set
+
+
+@router.post("/instances/{instance_id}/sessions")
+async def create_session(
+    instance_id: str,
+    body: SessionCreateRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Create a child (sub) session for the instance. Returns its session_id.
+
+    ``enabled_tools`` sets the sub-session's tool allow-list. When omitted, the
+    read-only baseline (Read/Glob/Grep/GetRuntimeVars/Report/EndSession) applies.
+    The main session is never affected by child-session lifecycle operations.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..tools import SUB_SESSION_BASE_TOOLS
+    session_id = f"session-{uuid.uuid4().hex[:12]}"
+    enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
+    _save_session_meta(instance_dir, session_id, {"enabled_tools": enabled})
+    state.broadcast("session_created", {
+        "instance_id": instance_id,
+        "session_id": session_id,
+        "parent_session_id": None,
+        "parent_await_result": False,
+    })
+    return {"session_id": session_id, "enabled_tools": enabled, "is_main": False}
+
+
+@router.get("/instances/{instance_id}/sessions/status")
+async def sessions_status(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Authoritative per-session "is its director loop running right now?" map.
+
+    The frontend renders the submit/stop button and token state from this, rather
+    than guessing from its own stream bookkeeping (which races when switching
+    between main and background child sessions).
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..session_tracker import task_tracker
+    running = task_tracker.running_sessions(instance_dir.name)
+    return {"sessions": running}
+
+
+@router.get("/instances/{instance_id}/sessions")
+async def list_sessions(instance_id: str, user: UserInfo = Depends(require_user)):
+    """List all sessions (main + children) for the instance."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..sessions import list_sessions as _list
+    return {"sessions": _list(instance_dir)}
+
+
+@router.get("/instances/{instance_id}/sessions/{session_id}")
+async def get_session_records(
+    instance_id: str,
+    session_id: str,
+    limit: int | None = None,
+    offset: int = 0,
+    user: UserInfo = Depends(require_user),
+):
+    """Read a specific session's memory (main or child) for display."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..sessions import load_records, render_records
+    records, total = load_records(instance_dir, limit=limit, offset=offset, session_id=session_id)
+    return {"records": render_records(records), "total": total}
+
+
+@router.delete("/instances/{instance_id}/sessions/{session_id}")
+async def destroy_session(
+    instance_id: str,
+    session_id: str,
+    abort: bool = False,
+    user: UserInfo = Depends(require_user),
+):
+    """Destroy a child session (delete its JSONL + meta). Refuses the main session.
+
+    ``abort=true`` additionally cancels an in-flight /v1/chat for that session
+    (frontend-disconnect style). Broadcasts ``session_destroyed``.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..sessions import MAIN_SESSION_ID, destroy as _destroy
+    if session_id == MAIN_SESSION_ID:
+        raise HTTPException(status_code=400, detail="Cannot destroy the main session; use /session (clear) to wipe it instead.")
+
+    if abort:
+        from ..session_tracker import abort_session_requests
+        await abort_session_requests(instance_dir.name, session_id)
+
+    _destroy(instance_dir, session_id)
+    state.broadcast("session_destroyed", {"instance_id": instance_id, "session_id": session_id})
+    return {"status": "ok", "session_id": session_id}
+
+
 @router.get("/instances/{instance_id}/session")
 async def get_session(
     instance_id: str,
@@ -944,7 +1083,7 @@ async def get_session(
     offset: int = 0,
     user: UserInfo = Depends(require_user),
 ):
-    """Read the instance's director-session memory for display.
+    """Read the instance's main director-session memory for display.
 
     Returns records newest-last, with tool results clipped to a short preview
     (the renderer never sees the full tool output). ``offset``/``limit`` select
@@ -964,17 +1103,22 @@ async def get_session(
 
 
 @router.delete("/instances/{instance_id}/session")
-async def clear_session(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Wipe the instance's persisted director-session memory (/clear)."""
+async def clear_session(instance_id: str, session_id: str = "main", user: UserInfo = Depends(require_user)):
+    """Wipe a session's persisted memory (/clear). Defaults to the main session."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    from ..sessions import clear
-    clear(instance_dir)
-    return {"status": "ok"}
+    from ..sessions import MAIN_SESSION_ID, clear, destroy
+    if session_id == MAIN_SESSION_ID:
+        clear(instance_dir)
+    else:
+        # A child session/clear should wipe its records and reset it to empty, but keep
+        # it (destroy removes it entirely). clear() wipes the jsonl; that's enough.
+        clear(instance_dir, session_id)
+    return {"status": "ok", "session_id": session_id}
 
 
 # ===== Text style rules =====

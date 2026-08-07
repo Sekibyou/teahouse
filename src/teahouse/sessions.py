@@ -5,8 +5,10 @@ assistant reasoning/text/tool-call result blocks). Written by the backend as
 each block completes; read back later by the frontend for initial render.
 
 Design:
-- One append-only JSONL per instance at ``.sessions/session.jsonl`` (point-prefixed
-  so directory-scoped tool reads skip it; the director cannot see it).
+- One append-only JSONL per (instance, session) at ``.sessions/<session_id>.jsonl``
+  (point-prefixed so directory-scoped tool reads skip it; the director cannot
+  see it). The main conversation lives at ``main.jsonl``; sandbox / sub-agent
+  sub-tasks create extra ``session-<uuid>.jsonl`` child sessions.
 - Append-only, never rewritten wholesale — a conversation grows indefinitely.
 - Each line is a "record" shaped like the frontend ``RichMessage``:
     user:      {role:"user", content}
@@ -23,23 +25,55 @@ import json
 from pathlib import Path
 
 SESSION_DIR = ".sessions"
-SESSION_FILE = "session.jsonl"
+MAIN_SESSION_ID = "main"
 
 
-def _session_path(instance_dir: Path) -> Path:
-    """Get the JSONL path, creating ``.sessions/`` if missing."""
+def resolve_session_path(instance_dir: Path, session_id: str) -> Path:
+    """Get the JSONL path for a session, creating ``.sessions/`` if missing."""
     d = instance_dir / SESSION_DIR
     d.mkdir(parents=True, exist_ok=True)
-    return d / SESSION_FILE
+    return d / f"{session_id}.jsonl"
 
 
-def append_user(instance_dir: Path, content: str) -> None:
+def list_sessions(instance_dir: Path) -> list[dict]:
+    """List existing sessions: ``[{session_id, record_count, is_main}]``.
+
+    The main session is always reported (even when its file is absent), so the
+    frontend director panel always shows a stable main entry.
+    """
+    d = instance_dir / SESSION_DIR
+    out: list[dict] = []
+    if d.is_dir():
+        for p in sorted(d.glob("*.jsonl")):
+            recs = _count_records(p)
+            out.append({
+                "session_id": p.stem,
+                "record_count": recs,
+                "is_main": p.stem == MAIN_SESSION_ID,
+            })
+    if not any(o.get("session_id") == MAIN_SESSION_ID for o in out):
+        out.insert(0, {"session_id": MAIN_SESSION_ID, "record_count": 0, "is_main": True})
+    return out
+
+
+def _count_records(path: Path) -> int:
+    if not path.exists():
+        return 0
+    n = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            n += 1
+    return n
+
+
+def append_user(instance_dir: Path, content: str, session_id: str = MAIN_SESSION_ID) -> None:
     """Persist one real user message."""
     if not content:
         return
     append_record(
         instance_dir,
         {"role": "user", "content": content},
+        session_id=session_id,
     )
 
 
@@ -49,6 +83,7 @@ def append_assistant(
     content: str = "",
     reasoning: str = "",
     blocks: list[dict] | None = None,
+    session_id: str = MAIN_SESSION_ID,
 ) -> None:
     """Persist one finished assistant record (reasoning + interleaved blocks).
 
@@ -62,12 +97,13 @@ def append_assistant(
             "reasoning": reasoning,
             "blocks": blocks or [],
         },
+        session_id=session_id,
     )
 
 
-def append_record(instance_dir: Path, record: dict) -> None:
-    """Append a single JSON line to the session file."""
-    path = _session_path(instance_dir)
+def append_record(instance_dir: Path, record: dict, session_id: str = MAIN_SESSION_ID) -> None:
+    """Append a single JSON line to a session file."""
+    path = resolve_session_path(instance_dir, session_id)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -77,6 +113,7 @@ def load_records(
     *,
     limit: int | None = None,
     offset: int = 0,
+    session_id: str = MAIN_SESSION_ID,
 ) -> tuple[list[dict], int]:
     """Read persisted records, newest last. Malformed lines are skipped.
 
@@ -84,7 +121,7 @@ def load_records(
     from the *newest* record (offset=0 → the most recent ``limit``), for the
     frontend lazy-load path. ``total`` is the full record count.
     """
-    path = instance_dir / SESSION_DIR / SESSION_FILE
+    path = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
     if not path.exists():
         return [], 0
     records: list[dict] = []
@@ -195,7 +232,7 @@ def _api_tool_result(b, api_style: str) -> dict:
     return {"role": "tool", "tool_call_id": b_id, "content": result_msg}
 
 
-def records_to_context(instance_dir: Path, api_style: str) -> list[dict]:
+def records_to_context(instance_dir: Path, api_style: str, session_id: str = MAIN_SESSION_ID) -> list[dict]:
     """Rebuild LLM-context messages from the full persisted history.
 
     Uses the *complete* tool results from storage (never clipped). Every
@@ -204,7 +241,7 @@ def records_to_context(instance_dir: Path, api_style: str) -> list[dict]:
     the director re-gets what tools returned on the previous turns.
     """
     out: list[dict] = []
-    records, _ = load_records(instance_dir)
+    records, _ = load_records(instance_dir, session_id=session_id)
     for rec in records:
         if rec.get("role") == "user":
             out.append({"role": "user", "content": rec.get("content", "")})
@@ -239,8 +276,23 @@ def records_to_context(instance_dir: Path, api_style: str) -> list[dict]:
     return out
 
 
-def clear(instance_dir: Path) -> None:
-    """Wipe the session file. Used by the ``/clear`` command."""
-    path = instance_dir / SESSION_DIR / SESSION_FILE
+def clear(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> None:
+    """Wipe a session file. Used by the ``/clear`` command on the main session."""
+    path = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
     if path.exists():
         path.unlink()
+
+
+def destroy(instance_dir: Path, session_id: str) -> None:
+    """Delete a child session's JSONL (and its metadata file, if any).
+
+    Refuses to touch the main session — child cleanup only. Removing the main
+    session is a ``clear``-style operation instead.
+    """
+    if session_id == MAIN_SESSION_ID:
+        return
+    sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
+    meta = instance_dir / SESSION_DIR / f"{session_id}.meta.json"
+    for p in (sess, meta):
+        if p.exists():
+            p.unlink()

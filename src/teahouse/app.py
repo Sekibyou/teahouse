@@ -193,6 +193,7 @@ class ChatRequest(BaseModel):
     stream: bool = True
     tools: bool = False  # Enable tool use (Director tools)
     instance_id: str | None = None  # Required when tools=True
+    session_id: str | None = None  # None or "main" = main session; else a child sub-session
 
 
 async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
@@ -507,19 +508,25 @@ async def _tool_use_loop(
     instance_dir: Path,
     user_id: str | None = None,
     instance_id: str | None = None,
+    session_id: str | None = None,
+    enabled_tools: list[str] | None = None,
 ):
     """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
     Yields SSE-compatible dict events: text, tool_call, tool_result, approval_required.
+    ``session_id`` selects which .sessions/<sid>.jsonl to read/write (None => main).
+    ``enabled_tools`` (a child session) gates which tools the director may call;
+    None means unrestricted (main session / sandbox runTool).
     """
     api_style = client.api_style
 
     from . import sessions
+    sid = session_id or sessions.MAIN_SESSION_ID
 
     # Authoritative context comes from the persisted session history; the
     # frontend no longer holds it. We rebuild LLM messages from .sessions/ (full,
     # never-clipped tool results) so the director re-gets prior tool outputs.
-    msg = sessions.records_to_context(instance_dir, api_style)
+    msg = sessions.records_to_context(instance_dir, api_style, session_id=sid)
 
     # The frontend sends only this round's new user input (or nothing). Append it
     # as the trailing user message so the assistant replies to it.
@@ -532,7 +539,7 @@ async def _tool_use_loop(
     # are injected into `msg` below and never reach persistence.
     _real_user_content = new_inputs[-1]["content"] if new_inputs else None
     if _real_user_content:
-        sessions.append_user(instance_dir, _real_user_content)
+        sessions.append_user(instance_dir, _real_user_content, session_id=sid)
 
     # Function-scope pending record for interruption fallback. Accumulated as
     # streaming chunks arrive; cleared on each normal flush. If the generator is
@@ -547,6 +554,7 @@ async def _tool_use_loop(
             content=content,
             reasoning=_pending["reasoning"],
             blocks=blocks or [],
+            session_id=sid,
         )
         _pending["content"] = ""
         _pending["reasoning"] = ""
@@ -567,6 +575,18 @@ async def _tool_use_loop(
                 msg = fake_msgs + msg
     if tool_system is None:
         tool_system = assemble_system_prompt(instance_dir, tools_usage)
+
+    # Sub-session framing: tell the child director it is a scoped one-shot task.
+    if sid != sessions.MAIN_SESSION_ID:
+        allowed = ", ".join(sorted(enabled_tools or []))
+        tool_system = (
+            f"{tool_system}\n\n"
+            f"[SUB-SESSION] You are a scoped child task (session {sid}). Complete exactly the "
+            f"work asked below, then call the EndSession tool to declare it finished. "
+            f"Your tool access is restricted to: {allowed}. "
+            f"The Report tool writes conclusions to temp/ for later review. "
+            f"Do not do unrelated work or wait for further instructions — this task is one-shot."
+        )
 
     def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str, batch_meta: dict | None = None):
         # When a call came from a BatchExecute expansion, prepend a batch note so
@@ -718,7 +738,7 @@ async def _tool_use_loop(
                 continue
 
             # Execute
-            result = await execute_tool(name, args, instance_dir, user_id, instance_id)
+            result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools)
             _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result, **({"batch": batch_meta} if batch_meta else {})})
             yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
             _feed_tool_result(msg, api_style, tc_id, name, result, batch_meta)
@@ -795,11 +815,58 @@ async def chat(body: ChatRequest, request: Request):
 
         instance_dir = Path(inst["dir_path"])
 
+        # Child (sub) session: load its tool allow-list from metadata. Main
+        # session (None/"main") is unrestricted.
+        from . import sessions as _sessions
+        from .routes.workspaces import _load_session_meta
+        sid = (body.session_id or _sessions.MAIN_SESSION_ID)
+        enabled_tools = None
+        if sid != _sessions.MAIN_SESSION_ID:
+            meta = _load_session_meta(instance_dir, sid)
+            enabled_tools = meta.get("enabled_tools") or None
+
         async def sse_tool_stream():
-            async for event in _tool_use_loop(client, body.messages, instance_dir, user_id, body.instance_id):
-                event_type = event.get("type", "tool_call")
-                yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
-            yield "event: done\ndata: {}\n\n"
+            import asyncio as _aio
+            from .session_tracker import task_tracker
+            from .state import state as _state
+            task = _aio.current_task()
+            if task is not None:
+                task_tracker.register(instance_dir.name, sid, task)
+            try:
+                async for event in _tool_use_loop(
+                    client, body.messages, instance_dir, user_id, body.instance_id,
+                    session_id=sid, enabled_tools=enabled_tools,
+                ):
+                    event_type = event.get("type", "tool_call")
+                    # Sub-session events are already broadcast by session_bg._drain;
+                    # only the main session needs this live broadcast loop here.
+                    if sid == _sessions.MAIN_SESSION_ID:
+                        t = event.get("type", "tool_call")
+                        token = 0
+                        if t == "text":
+                            token = (len(event.get("text") or "") + 3) // 4
+                        elif t == "reasoning":
+                            token = (len(event.get("text") or "") + 3) // 4
+                        elif t == "tool_call":
+                            token = (len(event.get("name") or "") + len(str(event.get("args") or "")) + 3) // 4
+                        elif t == "tool_result":
+                            token = (len(event.get("result") or "") + 3) // 4
+                        _state.broadcast("session_event", {
+                            "instance_id": instance_dir.name,
+                            "session_id": sid,
+                            "type": t,
+                            "delta": event.get("text", "") if t in ("text", "reasoning") else None,
+                            "token_est": token,
+                            "running": task_tracker.running_sessions(instance_dir.name),
+                        })
+                    else:
+                        event = dict(event)
+                        event.setdefault("session_id", sid)
+                    yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+                yield "event: done\ndata: {}\n\n"
+            finally:
+                if task is not None:
+                    task_tracker.unregister(instance_dir.name, sid)
 
         return StreamingResponse(
             sse_tool_stream(),

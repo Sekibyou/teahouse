@@ -67,8 +67,8 @@ Glob building/**/*                                → 了解创建者的元工�
 - **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界已由 `summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需再写 `summarized_to`。
 - **settings/**：适度泛化。保留角色基础设定与世界观框架，去掉"当前正在发生"的临时状态。
 - **skills/**：保留该原型要复用的 skill。若某 skill 的 SKILL.md 含过于具体的故事信息，用 Edit 泛化。
-- **temp/**：删除未完成草稿（`draft.md` 等）。
-- **sessions/**：后端打包会自动排除，无需手动删（若看到也无需担忧）。
+- **temp/**：删除未完成草稿（`draft.md` 等）。**temp/ 本就纳入 gitignore**（不随 GitCommit 提交、也不进原型包），即使残留下草稿也不污染产物。
+- **sessions/**：后端打包会自动排除，无需手动删（若看到也无需担忧）。**`.sessions/` 已 gitignore**,多会话文件（含临时子会话）不随 `GitCommit` 提交。
 
 ### 步骤 4：确认清单
 
