@@ -283,11 +283,16 @@ class SessionLoop:
 
     def _broadcast_done(self) -> None:
         stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
+        running = task_tracker.running_sessions(self.instance_dir.name)
+        # The final done event must signal this session as idle — the
+        # task_tracker still has it registered until run()'s finally block
+        # fires, so we explicitly flip it here.
+        running[self.session_id] = False
         state.broadcast("session_event", {
             "instance_id": self.instance_dir.name,
             "session_id": self.session_id,
             "type": "done",
-            "running": task_tracker.running_sessions(self.instance_dir.name),
+            "running": running,
             "stats": {
                 "elapsed": stats.elapsed if stats else 0,
                 "token_count": stats.token_count if stats else 0,

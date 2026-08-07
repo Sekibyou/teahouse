@@ -909,7 +909,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      if (!isStreaming) return
+      if (!isStreaming && !isWaiting) return
       e.preventDefault()
       handleStop()
     }
@@ -1164,38 +1164,54 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         {(() => {
           // 找到当前最新的 assistant 消息（只有它应显示"生成中"指示器）
           const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id
-          return messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            {msg.role === "assistant" ? (
-              <AssistantBubble
-                message={msg}
-                isLatest={msg.id === lastAssistantId}
-                isGlobalGenerating={isGlobalGenerating}
-                isIdle={isIdle}
-                isWaiting={isWaiting}
-                // 时钟/token 只传给最新气泡：其它气泡靠 memo 跳过重渲染
-                elapsed={msg.id === lastAssistantId ? elapsed : 0}
-                tokenCount={msg.id === lastAssistantId ? tokenCount : 0}
-              />
-            ) : msg.status === "queued" ? (
-              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                {msg.content}
-              </div>
-            ) : (
-              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
-                {msg.content}
-              </div>
-            )}
+          return (
+            <>
+              {messages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {msg.role === "assistant" ? (
+                    <AssistantBubble
+                      message={msg}
+                      isLatest={msg.id === lastAssistantId}
+                      isGlobalGenerating={isGlobalGenerating}
+                      isIdle={isIdle}
+                    />
+                  ) : msg.status === "queued" ? (
+                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
+                      {msg.content}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+        {/* Standalone 等待中 / 生成中 indicator — always at the bottom
+            of the message list when waiting or generating. */}
+        {(isWaiting || isStreaming) && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>{isWaiting ? "等待中..." : "生成中..."}</span>
+              <span className="text-[10px] text-muted-foreground/60">
+                {elapsed > 0 && `${elapsed}s`}
+                {!isWaiting && tokenCount > 0 && `, ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + "k" : tokenCount} tokens`}
+              </span>
+              {!isWaiting && <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />}
+            </div>
           </div>
-        ))
-        })()}
+        )}
 
         {error && (
           <div className="text-center">
             <p className="text-xs text-red-500">{error}</p>
           </div>
         )}
+            </>
+          )
+        })()}
       </div>
 
       {/* Input */}
@@ -1204,7 +1220,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         onInputChange={setInput}
         onKeyDown={handleKeyDown}
         inputRef={inputRef}
-        isStreaming={isStreaming}
+        isStreaming={isStreaming || isWaiting}
         expandedInput={expandedInput}
         onToggleExpand={() => setExpandedInput(v => !v)}
         onSend={handleSend}

@@ -17,40 +17,19 @@ export const AssistantBubble = memo(function AssistantBubble({
   isLatest,
   isGlobalGenerating,
   isIdle,
-  isWaiting,
-  elapsed,
-  tokenCount,
 }: {
   message: RichMessage
   isLatest: boolean
   isGlobalGenerating: boolean
   isIdle: boolean
-  isWaiting: boolean
-  elapsed: number
-  tokenCount: number
 }) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
 
   const { status, reasoning, content, blocks } = message
   const hasBlocks = blocks && blocks.length > 0
 
-  // 此消息是当前正在生成的最新 assistant（非 done 非 pending，全局 streaming，且是最后一个 assistant）
-  const isActiveMessage = isLatest && status !== "done" && status !== "pending" && isGlobalGenerating
-
   return (
     <div className="max-w-[85%] space-y-1">
-      {/* Pending / Waiting: no events received yet */}
-      {status === "pending" && (isGlobalGenerating || isWaiting) && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {isWaiting
-            ? `等待中...${elapsed > 0 ? ` ${elapsed}s` : ""}`
-            : isGlobalGenerating
-              ? "生成中..."
-              : "等待中..."}
-        </div>
-      )}
-
       {/* Thinking / reasoning block */}
       {(status === "reasoning" || (reasoning && status !== "pending")) && (
         <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
@@ -156,19 +135,6 @@ export const AssistantBubble = memo(function AssistantBubble({
       {!hasBlocks && content && (
         <div className="rounded-lg px-3 py-2 text-sm bg-muted whitespace-pre-wrap break-words">
           {content}
-        </div>
-      )}
-
-      {/* Active generating indicator — at end of current assistant bubble */}
-      {isActiveMessage && (
-        <div className="rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>生成中...</span>
-          <span className="text-[10px] text-muted-foreground/60">
-            {elapsed > 0 && `${elapsed}s`}
-            {tokenCount > 0 && `, ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + "k" : tokenCount} tokens`}
-          </span>
-          <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />
         </div>
       )}
     </div>

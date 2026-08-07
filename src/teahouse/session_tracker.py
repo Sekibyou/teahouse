@@ -116,7 +116,7 @@ class SessionTaskTracker:
         with self._lock:
             s = self._stats.get(key)
             if s is not None:
-                s.elapsed = time.monotonic() - s.started_at
+                s.elapsed = round(time.monotonic() - s.started_at, 1)
 
     def stats_clear(self, instance_dir_basename: str, session_id: str) -> None:
         """Remove stats for a finished session."""
