@@ -63,8 +63,14 @@ class SessionLoop:
     def enqueue(self, content: str) -> None:
         """Push a user message into this session's queue.
 
-        If the loop is idle (no running task), it is started immediately.
+        The message is persisted to jsonl immediately so the correct
+        chronological order is preserved even if the loop is mid-execution.
+        If the loop is idle, it is started.
         """
+        if not content:
+            return
+        sessions.append_user(self.instance_dir, content, session_id=self.session_id)
+        self._broadcast_user_msg(content)
         self._queue.put_nowait(content)
 
     def interrupt(self) -> None:
@@ -124,19 +130,13 @@ class SessionLoop:
                 self._broadcast_user_msg("[auto] user interrupted")
                 self._broadcast_done()
 
-            # 2. Drain queue
+            # 2. Drain queue. Messages are already persisted by enqueue() —
+            #    we just need to consume them to know there's work to do.
             msgs = self._drain_queue()
             if not msgs:
                 break  # session idle — loop exits
 
-            # 3. Persist user messages
-            for msg in msgs:
-                sessions.append_user(
-                    self.instance_dir, msg, session_id=self.session_id
-                )
-                self._broadcast_user_msg(msg)
-
-            # 4. Resolve LLM client
+            # 3. Resolve LLM client
             client = await self._resolve_client()
             if client is None:
                 break
