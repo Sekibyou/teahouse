@@ -216,39 +216,8 @@ export const instancesApi = {
     return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(path)}`)
   },
 
-  // Director session memory (.sessions/)
-  getSessionMemory: async (instanceId: string, opts?: { limit?: number; offset?: number }) => {
-    const params = new URLSearchParams()
-    if (opts?.limit) params.set("limit", String(opts.limit))
-    if (opts?.offset) params.set("offset", String(opts.offset))
-    const qs = params.toString()
-    return get<{ records: Record<string, unknown>[]; total: number }>(`/api/instances/${instanceId}/session${qs ? `?${qs}` : ""}`)
-  },
-
-  clearSessionMemory: async (instanceId: string, sessionId?: string) => {
-    const qs = sessionId && sessionId !== "main" ? `?session_id=${encodeURIComponent(sessionId)}` : ""
-    return del<{ status: string }>(`/api/instances/${instanceId}/session${qs}`)
-  },
-
-  // Sub-session lifecycle (multi-session director sub-tasks)
-  createSession: async (instanceId: string, enabledTools?: string[]) => {
-    return post<{ session_id: string; enabled_tools: string[]; is_main: boolean }>(
-      `/api/instances/${instanceId}/sessions`,
-      { enabled_tools: enabledTools },
-    )
-  },
-
-  listSessions: async (instanceId: string) => {
-    return get<{ sessions: { session_id: string; record_count: number; is_main: boolean }[] }>(
-      `/api/instances/${instanceId}/sessions`,
-    )
-  },
-
-  getSessionsStatus: async (instanceId: string) => {
-    return get<{ sessions: Record<string, boolean> }>(`/api/instances/${instanceId}/sessions/status`)
-  },
-
-  getSubSessionMemory: async (instanceId: string, sessionId: string, opts?: { limit?: number; offset?: number }) => {
+  // Director session memory (.sessions/) — unified for all sessions
+  getSessionMemory: async (instanceId: string, sessionId: string = "main", opts?: { limit?: number; offset?: number }) => {
     const params = new URLSearchParams()
     if (opts?.limit) params.set("limit", String(opts.limit))
     if (opts?.offset) params.set("offset", String(opts.offset))
@@ -256,6 +225,30 @@ export const instancesApi = {
     return get<{ records: Record<string, unknown>[]; total: number }>(
       `/api/instances/${instanceId}/sessions/${sessionId}${qs ? `?${qs}` : ""}`,
     )
+  },
+
+  clearSessionMemory: async (instanceId: string, sessionId: string = "main") => {
+    return del<{ status: string; session_id: string }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}`,
+    )
+  },
+
+  // Session lifecycle (multi-session director tasks)
+  createSession: async (instanceId: string, enabledTools?: string[]) => {
+    return post<{ session_id: string; enabled_tools: string[] }>(
+      `/api/instances/${instanceId}/sessions`,
+      { enabled_tools: enabledTools },
+    )
+  },
+
+  listSessions: async (instanceId: string) => {
+    return get<{ sessions: { session_id: string; record_count: number }[] }>(
+      `/api/instances/${instanceId}/sessions`,
+    )
+  },
+
+  getSessionsStatus: async (instanceId: string) => {
+    return get<{ sessions: Record<string, boolean> }>(`/api/instances/${instanceId}/sessions/status`)
   },
 
   destroySession: async (instanceId: string, sessionId: string, abort = false) => {
@@ -350,7 +343,7 @@ export const chatApi = {
         stream: true,
         tools: true,
         instance_id: instanceId,
-        ...(sessionId ? { session_id: sessionId } : {}),
+        session_id: sessionId || "main",
       }),
     })
     if (!response.ok) {

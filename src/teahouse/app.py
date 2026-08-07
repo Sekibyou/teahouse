@@ -576,12 +576,13 @@ async def _tool_use_loop(
     if tool_system is None:
         tool_system = assemble_system_prompt(instance_dir, tools_usage)
 
-    # Sub-session framing: tell the child director it is a scoped one-shot task.
-    if sid != sessions.MAIN_SESSION_ID:
+    # Scoped session framing: when the session has restricted tool access (enabled_tools
+    # is not None), tell the director it is a scoped one-shot task.
+    if enabled_tools is not None:
         allowed = ", ".join(sorted(enabled_tools or []))
         tool_system = (
             f"{tool_system}\n\n"
-            f"[SUB-SESSION] You are a scoped child task (session {sid}). Complete exactly the "
+            f"[SESSION] You are a scoped task session (session {sid}). Complete exactly the "
             f"work asked below, then call the EndSession tool to declare it finished. "
             f"Your tool access is restricted to: {allowed}. "
             f"The Report tool writes conclusions to temp/ for later review. "
@@ -815,15 +816,12 @@ async def chat(body: ChatRequest, request: Request):
 
         instance_dir = Path(inst["dir_path"])
 
-        # Child (sub) session: load its tool allow-list from metadata. Main
-        # session (None/"main") is unrestricted.
+        # Load the session's tool allow-list from its metadata.
+        # enabled_tools=None means unrestricted (main session has empty meta → None).
         from . import sessions as _sessions
-        from .routes.workspaces import _load_session_meta
         sid = (body.session_id or _sessions.MAIN_SESSION_ID)
-        enabled_tools = None
-        if sid != _sessions.MAIN_SESSION_ID:
-            meta = _load_session_meta(instance_dir, sid)
-            enabled_tools = meta.get("enabled_tools") or None
+        meta = _sessions.load_meta(instance_dir, sid)
+        enabled_tools = meta.get("enabled_tools") or None
 
         async def sse_tool_stream():
             import asyncio as _aio
@@ -838,30 +836,28 @@ async def chat(body: ChatRequest, request: Request):
                     session_id=sid, enabled_tools=enabled_tools,
                 ):
                     event_type = event.get("type", "tool_call")
-                    # Sub-session events are already broadcast by session_bg._drain;
-                    # only the main session needs this live broadcast loop here.
-                    if sid == _sessions.MAIN_SESSION_ID:
-                        t = event.get("type", "tool_call")
-                        token = 0
-                        if t == "text":
-                            token = (len(event.get("text") or "") + 3) // 4
-                        elif t == "reasoning":
-                            token = (len(event.get("text") or "") + 3) // 4
-                        elif t == "tool_call":
-                            token = (len(event.get("name") or "") + len(str(event.get("args") or "")) + 3) // 4
-                        elif t == "tool_result":
-                            token = (len(event.get("result") or "") + 3) // 4
-                        _state.broadcast("session_event", {
-                            "instance_id": instance_dir.name,
-                            "session_id": sid,
-                            "type": t,
-                            "delta": event.get("text", "") if t in ("text", "reasoning") else None,
-                            "token_est": token,
-                            "running": task_tracker.running_sessions(instance_dir.name),
-                        })
-                    else:
-                        event = dict(event)
-                        event.setdefault("session_id", sid)
+                    # Always include session_id in every event for unified handling.
+                    event = dict(event)
+                    event.setdefault("session_id", sid)
+                    # Broadcast session_event for ALL sessions (not just main).
+                    t = event.get("type", "tool_call")
+                    token = 0
+                    if t == "text":
+                        token = (len(event.get("text") or "") + 3) // 4
+                    elif t == "reasoning":
+                        token = (len(event.get("text") or "") + 3) // 4
+                    elif t == "tool_call":
+                        token = (len(event.get("name") or "") + len(str(event.get("args") or "")) + 3) // 4
+                    elif t == "tool_result":
+                        token = (len(event.get("result") or "") + 3) // 4
+                    _state.broadcast("session_event", {
+                        "instance_id": instance_dir.name,
+                        "session_id": sid,
+                        "type": t,
+                        "delta": event.get("text", "") if t in ("text", "reasoning") else None,
+                        "token_est": token,
+                        "running": task_tracker.running_sessions(instance_dir.name),
+                    })
                     yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
                 yield "event: done\ndata: {}\n\n"
             finally:

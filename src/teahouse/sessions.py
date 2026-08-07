@@ -7,8 +7,9 @@ each block completes; read back later by the frontend for initial render.
 Design:
 - One append-only JSONL per (instance, session) at ``.sessions/<session_id>.jsonl``
   (point-prefixed so directory-scoped tool reads skip it; the director cannot
-  see it). The main conversation lives at ``main.jsonl``; sandbox / sub-agent
-  sub-tasks create extra ``session-<uuid>.jsonl`` child sessions.
+  see it). Every session also has an optional ``.sessions/<session_id>.meta.json``
+  for metadata (enabled_tools, etc.). The main conversation lives at ``main.jsonl``;
+  other sessions use ``session-<uuid>.jsonl``.
 - Append-only, never rewritten wholesale — a conversation grows indefinitely.
 - Each line is a "record" shaped like the frontend ``RichMessage``:
     user:      {role:"user", content}
@@ -17,6 +18,11 @@ Design:
   phase-2 replay can rebuild the UI 1:1.
 - Only *real* conversation is persisted. Preset fake messages and the system
   prompt are injected transiently inside the tool-use loop and never reach here.
+
+All sessions (main + child) share the same lifecycle: append, load, destroy.
+There is no special "clear" vs "destroy" distinction — destroy removes both
+the jsonl and the meta file for any session. Main can be destroyed and will
+be lazily recreated on next use.
 """
 
 from __future__ import annotations
@@ -35,24 +41,67 @@ def resolve_session_path(instance_dir: Path, session_id: str) -> Path:
     return d / f"{session_id}.jsonl"
 
 
-def list_sessions(instance_dir: Path) -> list[dict]:
-    """List existing sessions: ``[{session_id, record_count, is_main}]``.
+def _meta_path(instance_dir: Path, session_id: str) -> Path:
+    """Get the metadata path for a session."""
+    return instance_dir / SESSION_DIR / f"{session_id}.meta.json"
 
-    The main session is always reported (even when its file is absent), so the
-    frontend director panel always shows a stable main entry.
+
+def ensure_meta(instance_dir: Path, session_id: str, defaults: dict | None = None) -> dict:
+    """Return the session metadata, creating it with *defaults* if absent.
+
+    Main session defaults to ``{}`` (empty = unrestricted). Callers that need
+    specific defaults (e.g. ``enabled_tools`` for child sessions) pass them in.
+    """
+    p = _meta_path(instance_dir, session_id)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    meta = dict(defaults) if defaults else {}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    return meta
+
+
+def load_meta(instance_dir: Path, session_id: str) -> dict:
+    """Read session metadata. Returns ``{}`` if absent (never creates)."""
+    p = _meta_path(instance_dir, session_id)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
+    """Overwrite the session metadata file."""
+    p = _meta_path(instance_dir, session_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+def list_sessions(instance_dir: Path) -> list[dict]:
+    """List existing sessions: ``[{session_id, record_count}]``.
+
+    Scans ``.sessions/*.jsonl`` on disk. The main session is always included
+    (even before its file exists), so the frontend always shows a stable main entry.
     """
     d = instance_dir / SESSION_DIR
     out: list[dict] = []
+    seen: set[str] = set()
     if d.is_dir():
         for p in sorted(d.glob("*.jsonl")):
-            recs = _count_records(p)
+            sid = p.stem
+            seen.add(sid)
             out.append({
-                "session_id": p.stem,
-                "record_count": recs,
-                "is_main": p.stem == MAIN_SESSION_ID,
+                "session_id": sid,
+                "record_count": _count_records(p),
             })
-    if not any(o.get("session_id") == MAIN_SESSION_ID for o in out):
-        out.insert(0, {"session_id": MAIN_SESSION_ID, "record_count": 0, "is_main": True})
+    # Main session is always reported — even if its file doesn't exist yet.
+    if MAIN_SESSION_ID not in seen:
+        out.insert(0, {"session_id": MAIN_SESSION_ID, "record_count": 0})
     return out
 
 
@@ -276,23 +325,21 @@ def records_to_context(instance_dir: Path, api_style: str, session_id: str = MAI
     return out
 
 
-def clear(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> None:
-    """Wipe a session file. Used by the ``/clear`` command on the main session."""
-    path = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
-    if path.exists():
-        path.unlink()
-
-
 def destroy(instance_dir: Path, session_id: str) -> None:
-    """Delete a child session's JSONL (and its metadata file, if any).
+    """Delete a session's JSONL and metadata file.
 
-    Refuses to touch the main session — child cleanup only. Removing the main
-    session is a ``clear``-style operation instead.
+    Unified lifecycle — works for main and child sessions alike. Main will be
+    lazily recreated on the next write.
     """
-    if session_id == MAIN_SESSION_ID:
-        return
     sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
     meta = instance_dir / SESSION_DIR / f"{session_id}.meta.json"
     for p in (sess, meta):
         if p.exists():
             p.unlink()
+
+
+# -- legacy aliases (kept for backward-compat in routes) --
+
+def clear(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> None:
+    """Wipe a session file. Legacy — delegates to ``destroy``."""
+    destroy(instance_dir, session_id)

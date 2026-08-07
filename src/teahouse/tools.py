@@ -502,23 +502,16 @@ async def execute_report(instance_dir: Path, args: dict[str, Any]) -> str:
     return f"Report {mode} to {rel}. File state is now up to date in your context — no need to Read it back."
 
 
-_SUB_META_SUFFIX = ".meta.json"
 
 
 def _read_meta(instance_dir: Path, session_id: str) -> dict:
-    p = instance_dir / ".sessions" / f"{session_id}.meta.json"
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    from . import sessions
+    return sessions.load_meta(instance_dir, session_id)
 
 
 def _write_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
-    p = instance_dir / ".sessions" / f"{session_id}.meta.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    from . import sessions
+    sessions.save_meta(instance_dir, session_id, meta)
 
 
 def _session_record_count(instance_dir: Path, session_id: str) -> int:
@@ -568,8 +561,8 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
     })
 
     # Kick the child to start working right away (fire-and-forget background run).
-    from .session_bg import kick_sub_session_run
-    await kick_sub_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
+    from .session_bg import kick_session_run
+    kick_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
 
     if await_result:
         return (f"Created sub-session {child} and delegated task. AWAITING_RESULT — stop this round now and do not issue further "
@@ -592,8 +585,8 @@ async def execute_send_to_sub_session(instance_dir: Path, args: dict[str, Any], 
     sessions.append_user(instance_dir, f"[director@{session_id or 'main'}] {message}", session_id=child)
 
     # Kick the child session to process it in the background if it isn't already running.
-    from .session_bg import kick_sub_session_run
-    await kick_sub_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
+    from .session_bg import kick_session_run
+    kick_session_run(instance_dir, child, instance_id=instance_id, user_id=user_id)
 
     return f"Message delivered to sub-session {child}. It will process this in its next turn (or when it next runs)."
 
@@ -621,8 +614,8 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
             f"[auto] 你委派的子会话 {sid} 已完成（它调用了 EndSession）。请读取它落盘到 temp/ 的结论并收尾本轮。",
             session_id=parent,
         )
-        # enabled_tools=None → parent (main) is unrestricted when waking.
-        kick_session_run(instance_dir, parent, instance_id=instance_id, user_id=user_id, enabled_tools=None)
+        # Kick the parent to run and wrap up (enabled_tools auto-loaded from meta).
+        kick_session_run(instance_dir, parent, instance_id=instance_id, user_id=user_id)
         # Tell the frontend "the parent session gained a new user message" so it can
         # drop that session's messages cache and re-pull when the user switches to it.
         state.broadcast("session_user_msg", {

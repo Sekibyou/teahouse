@@ -107,7 +107,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     tokenMapRef.current = next
     setTokenMap(next)
   }, [])
-  const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number; is_main: boolean }[]>([])
+  const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number }[]>([])
   const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
   // "有新消息" 标志：后台会话有产出时需要提示，切过去即清。
   const [newMsgMap, setNewMsgMap] = useState<Record<string, boolean>>({})
@@ -190,7 +190,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           // session was active, fall back to main. The destroyed sid is dropped.
           instancesApi.listSessions(instId!).then(res => {
             if (res.ok) {
-              setSessionList(prev => mergeServerSessions(prev, (res.data?.sessions || []).filter(s => s.session_id !== data.session_id)).filter(s => s.session_id !== data.session_id))
+              setSessionList(prev => mergeServerSessions(prev, res.data?.sessions || []).filter(s => s.session_id !== data.session_id))
             }
           }).catch(() => {})
           refreshSessionsStatus()
@@ -212,7 +212,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (!data.session_id) return
           setSessionList(prev => {
             if (prev.some(s => s.session_id === data.session_id)) return prev
-            return [...prev, { session_id: data.session_id, record_count: 0, is_main: false }]
+            return [...prev, { session_id: data.session_id, record_count: 0 }]
           })
           refreshSessionsStatus()
         } catch {
@@ -246,7 +246,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
             const parent = data.parent_session_id as string
             setSessionList(prev => prev.some(s => s.session_id === parent)
               ? prev
-              : [...prev, { session_id: parent, record_count: 0, is_main: parent === MAIN_SID }])
+              : [...prev, { session_id: parent, record_count: 0 }])
             markSessionNew(parent)
             // 父会话正在被后端唤醒（新增了 user 消息），若当前正看它，刷新出该消息。
             if (activeSidRef.current === parent) {
@@ -288,11 +288,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const path = data.path || ""
           if (!path.startsWith("temp/")) return
-          // Mark all sub-sessions that are not currently active as having new content.
+          // Mark all sessions that are not currently active as having new content.
           setNewMsgMap(prev => {
             const next = { ...prev }
             sessionListRef.current.forEach(s => {
-              if (!s.is_main && s.session_id !== activeSidNewRef.current) next[s.session_id] = true
+              if (s.session_id !== activeSidNewRef.current) next[s.session_id] = true
             })
             if (JSON.stringify(next) === JSON.stringify(prev)) return prev
             newMsgMapRef.current = next
@@ -418,9 +418,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     if (!instId || loadingMoreRef.current) return
     loadingMoreRef.current = true
     const offset = replace ? 0 : (historyCursorRef.current ?? 0)
-    const fetchHistory = targetSid === MAIN_SID
-      ? instancesApi.getSessionMemory(instId, { limit: PAGE_SIZE, offset })
-      : instancesApi.getSubSessionMemory(instId, targetSid, { limit: PAGE_SIZE, offset })
+    const fetchHistory = instancesApi.getSessionMemory(instId, targetSid, { limit: PAGE_SIZE, offset })
     fetchHistory.then(res => {
       if (!res.ok) return
       const recs = res.data?.records || []
@@ -746,7 +744,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       // 清空后端对应会话的持久化记忆（.sessions/<sid>.jsonl）
       const inst = getActiveInstance()
       if (inst) {
-        instancesApi.clearSessionMemory(inst.id, sid === MAIN_SID ? undefined : sid).catch(() => {})
+        instancesApi.clearSessionMemory(inst.id, sid).catch(() => {})
       }
       toast.success("会话已清空")
       scrollToBottom()
@@ -1086,7 +1084,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         // Add to the session list if unknown.
         setSessionList(prev => {
           if (prev.some(s => s.session_id === sid)) return prev
-          return [...prev, { session_id: sid, record_count: 0, is_main: false }]
+          return [...prev, { session_id: sid, record_count: 0 }]
         })
         // focus=false means "background wake / no focus steal": send to the target
         // session without switching the panel away from whatever the user is viewing.
@@ -1197,7 +1195,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           {sessionList.map((s) => {
             const active = s.session_id === activeSid
             const hasNew = !!newMsgMap[s.session_id]
-            const label = s.is_main ? "主会话" : `子·${s.session_id.replace("session-", "").slice(0, 6)}`
+            const isMain = s.session_id === MAIN_SID
+            const label = isMain ? "主会话" : `会话·${s.session_id.replace("session-", "").slice(0, 6)}`
             return (
               <button
                 key={s.session_id}
@@ -1205,9 +1204,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 className={`relative px-2 py-0.5 rounded text-[10px] border transition-colors ${
                   active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
                 }`}
-                title={s.is_main ? "主会话（持续对话）" : `子会话 ${s.session_id} · ${s.record_count} 条记录`}
+                title={isMain ? "主会话（持续对话）" : `会话 ${s.session_id} · ${s.record_count} 条记录`}
               >
-                {label}{s.is_main ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
+                {label}{isMain ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
                 {/* 有新消息 → 右上角小圆圈 */}
                 {hasNew && !active && (
                   <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />

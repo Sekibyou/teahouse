@@ -1,15 +1,18 @@
-"""Run a child session's director loop in the background (no SSE client).
+"""Run a session's director loop in the background (no SSE client).
 
 Director tools ``StartSubSession`` / ``SendToSubSession`` push a message to a
-child (sub) session and want the child to actually process it. This module lets
-a child director run as a fire-and-forget asyncio task — same ``_tool_use_loop``
+child session and want the child to actually process it. This module lets a
+session's director run as a fire-and-forget asyncio task — same ``_tool_use_loop``
 as the SSE path, but with its yielded events drained (gone to nobody) so the
-loop advances and persists assistant records to the child's ``session-<sid>.jsonl``.
+loop advances and persists assistant records to the session's jsonl.
 
 Re-entrancy is guarded per (instance, session): if a background run is already
-active, a new kick is a no-op (the child's pending message will be picked up on
+active, a new kick is a no-op (the session's pending message will be picked up on
 the next poll of its file, or by the next explicit kick). Tasks are tracked in
 ``task_tracker`` so ``sessionDestroy(abort=true)`` can cancel them.
+
+All sessions (main + child) share the same code path. Metadata (enabled_tools)
+is loaded from ``.sessions/<sid>.meta.json`` inside ``kick_session_run``.
 """
 from __future__ import annotations
 
@@ -21,17 +24,15 @@ _active: set[tuple[str, str]] = set()
 _active_lock = Lock()
 
 
-async def _run_child_loop(
+async def _run_session_loop(
     instance_dir: Path,
     session_id: str,
     instance_id: str | None,
     user_id: str | None,
-    enabled_tools: list[str] | None = None,
 ) -> None:
     """Resolve the director client and drain one session's tool loop to completion.
 
-    ``enabled_tools`` gates which tools the director may call (None = unrestricted,
-    used when waking the main session). Child sessions pass their meta allow-list.
+    ``enabled_tools`` is loaded from the session's metadata — None means unrestricted.
     """
     from .session_tracker import task_tracker
     from .app import _tool_use_loop, _resolve_slot_client
@@ -42,6 +43,9 @@ async def _run_child_loop(
         client = await _resolve_slot_client(user_id, "director") if user_id else None
         if client is None:
             return  # no usable director slot binding — nothing to run
+
+        meta = sessions.load_meta(instance_dir, session_id)
+        enabled_tools = meta.get("enabled_tools") or None
 
         task = asyncio.create_task(
             _drain(
@@ -124,33 +128,15 @@ def kick_session_run(
     *,
     instance_id: str | None = None,
     user_id: str | None = None,
-    enabled_tools: list[str] | None = None,
 ) -> None:
     """Start a background director run for a session, if not already running.
 
-    ``enabled_tools=None`` (main session) means unrestricted. Returns a bool-ish
-    indicator via how the schedule goes; used to wake the main session after a
-    child finishes.
+    Loads the session's ``enabled_tools`` from its ``.meta.json``. Main sessions
+    have an empty meta → None (unrestricted). Child sessions have their allow-list.
     """
     key = (instance_dir.name, session_id)
     with _active_lock:
         if key in _active:
             return
         _active.add(key)
-    asyncio.create_task(_run_child_loop(instance_dir, session_id, instance_id, user_id, enabled_tools))
-
-
-async def kick_sub_session_run(
-    instance_dir: Path,
-    session_id: str,
-    instance_id: str | None = None,
-    user_id: str | None = None,
-) -> None:
-    """Start a background director run for a child session (allow-list from its meta)."""
-    from .routes.workspaces import _load_session_meta
-    meta = _load_session_meta(instance_dir, session_id)
-    enabled = meta.get("enabled_tools") or None
-    kick_session_run(
-        instance_dir, session_id,
-        instance_id=instance_id, user_id=user_id, enabled_tools=enabled,
-    )
+    asyncio.create_task(_run_session_loop(instance_dir, session_id, instance_id, user_id))
