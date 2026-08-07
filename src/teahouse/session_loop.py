@@ -9,11 +9,18 @@ Architecture::
     SessionLoop.run()
       while True:
         1. Handle user_interrupted flag → append auto msg to jsonl, broadcast, clear
-        2. Drain message queue → persist each user msg to jsonl, broadcast
+        2. Drain message queue → persist each user msg to jsonl, broadcast upgrade
            → if queue empty: break (session idle)
         3. Run _tool_use_loop → broadcast EVERY event as session_event
            → on completion: loop back to 1
            → on cancel: set _interrupted = True, loop back to 1
+
+    enqueue() only puts messages into the in-memory queue and broadcasts
+    "session_user_queued" (so the frontend shows a grey "waiting" bubble).
+    Persistence to jsonl + "session_user_msg" upgrade happens in run() step 2,
+    AFTER the previous tool_loop has finished — this guarantees correct
+    chronological order in the jsonl even when the user sends a message while
+    the AI is still generating.
 
 All events are broadcast via ``state.broadcast("session_event", ...)`` with the
 exact same shape as ``_tool_use_loop`` yield events, plus ``instance_id``,
@@ -32,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from pathlib import Path
 
 from . import sessions
@@ -80,7 +88,7 @@ class SessionLoop:
         self.session_id = session_id
         self.instance_id = instance_id
         self.user_id = user_id
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
         self._interrupted = False
         self._task: asyncio.Task | None = None
 
@@ -91,16 +99,18 @@ class SessionLoop:
     def enqueue(self, content: str) -> None:
         """Push a user message into this session's queue.
 
-        The message is persisted to jsonl immediately so the correct
-        chronological order is preserved even if the loop is mid-execution.
-        If the loop is idle, it is started.
+        The message is NOT persisted here — it only goes into the in-memory
+        queue and the frontend is notified via ``session_user_queued`` (grey
+        bubble).  Persistence to jsonl + ``session_user_msg`` upgrade happens
+        later, inside ``run()``, after the previous tool_loop has finished.
+        This guarantees correct chronological order in the jsonl.
         """
         if not content:
             return
-        sessions.append_user(self.instance_dir, content, session_id=self.session_id)
-        _event_log(self.instance_dir, self.session_id, "enqueue", {"content": content[:200]})
-        self._broadcast_user_msg(content)
-        self._queue.put_nowait(content)
+        queue_id = uuid.uuid4().hex[:12]
+        _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": content[:200]})
+        self._broadcast_user_queued(queue_id, content)
+        self._queue.put_nowait((queue_id, content))
 
     def interrupt(self) -> None:
         """Set the interrupt flag and cancel the in-flight tool-loop task.
@@ -158,17 +168,24 @@ class SessionLoop:
                     "[auto] user interrupted",
                     session_id=self.session_id,
                 )
-                self._broadcast_user_msg("[auto] user interrupted")
+                self._broadcast_user_msg(None, "[auto] user interrupted")
                 self._broadcast_done()
 
-            # 2. Drain queue. Messages are already persisted by enqueue() —
-            #    we just need to consume them to know there's work to do.
+            # 2. Drain queue. Messages are NOT yet persisted — enqueue() only
+            #    put them in memory.  We persist them here, AFTER any previous
+            #    tool_loop has finished, so chronological jsonl order is correct.
             msgs = self._drain_queue()
             if not msgs:
                 _event_log(self.instance_dir, self.session_id, "loop_idle_exit", {})
                 break  # session idle — loop exits
 
-            _event_log(self.instance_dir, self.session_id, "loop_drain", {"count": len(msgs), "preview": [m[:100] for m in msgs]})
+            _event_log(self.instance_dir, self.session_id, "loop_drain", {"count": len(msgs), "preview": [m[1][:100] for m in msgs]})
+
+            # Persist each message to jsonl now, then broadcast the upgrade
+            # event so the frontend can turn the grey bubble white.
+            for queue_id, content in msgs:
+                sessions.append_user(self.instance_dir, content, session_id=self.session_id)
+                self._broadcast_user_msg(queue_id, content)
 
             # 3. Resolve LLM client
             client = await self._resolve_client()
@@ -243,9 +260,12 @@ class SessionLoop:
         except Exception:
             return None
 
-    def _drain_queue(self) -> list[str]:
-        """Pull all pending messages from the queue (non-blocking)."""
-        msgs: list[str] = []
+    def _drain_queue(self) -> list[tuple[str, str]]:
+        """Pull all pending messages from the queue (non-blocking).
+
+        Returns a list of (queue_id, content) tuples.
+        """
+        msgs: list[tuple[str, str]] = []
         while not self._queue.empty():
             try:
                 msgs.append(self._queue.get_nowait())
@@ -261,8 +281,8 @@ class SessionLoop:
             "running": task_tracker.running_sessions(self.instance_dir.name),
         })
 
-    def _broadcast_user_msg(self, content: str) -> None:
-        """Tell the frontend a user message was persisted (so it can render it)."""
+    def _broadcast_user_msg(self, queue_id: str | None, content: str) -> None:
+        """Tell the frontend a user message was persisted to jsonl (upgrade from queued→done)."""
         from .sessions import _count_records
         count = _count_records(
             self.instance_dir / sessions.SESSION_DIR / f"{self.session_id}.jsonl"
@@ -270,6 +290,16 @@ class SessionLoop:
         state.broadcast("session_user_msg", {
             "instance_id": self.instance_id or self.instance_dir.name,
             "session_id": self.session_id,
+            "queue_id": queue_id,
             "content": content,
             "count": count,
+        })
+
+    def _broadcast_user_queued(self, queue_id: str, content: str) -> None:
+        """Tell the frontend a user message is queued in memory (grey bubble, not yet persisted)."""
+        state.broadcast("session_user_queued", {
+            "instance_id": self.instance_id or self.instance_dir.name,
+            "session_id": self.session_id,
+            "queue_id": queue_id,
+            "content": content,
         })

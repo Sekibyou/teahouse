@@ -35,6 +35,8 @@ interface RichMessage {
   status: MsgStatus
   /** 交错的内容块：text + tool_call 按生成顺序排列 */
   blocks?: ContentBlock[]
+  /** 后端队列 ID，用于 queued→done 升级匹配 */
+  _queue_id?: string
 }
 
 let msgIdCounter = 0
@@ -264,30 +266,76 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       })
 
       es.addEventListener("session_user_msg", (e: MessageEvent) => {
-        // The backend persisted a user message that the frontend did not send
-        // (e.g. sub-session wake-up, interrupt auto-message). Add it to the
-        // displayed messages if viewing this session; otherwise invalidate cache.
+        // The backend persisted a user message to jsonl.  If there is a
+        // queue_id, try to upgrade an existing grey "queued" bubble first;
+        // otherwise append a fresh user bubble (sub-session wake-up,
+        // interrupt auto-message, etc.).
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          window.__TEAHOUSE_LOG__?.("session_user_msg", `sid=${sid} active=${activeSidRef.current} content=${data.content ? JSON.stringify((data.content as string).slice(0, 80)) : "NONE"}`)
+          const qid = data.queue_id as string | undefined
+          window.__TEAHOUSE_LOG__?.("session_user_msg", `sid=${sid} active=${activeSidRef.current} qid=${qid || "NONE"} content=${data.content ? JSON.stringify((data.content as string).slice(0, 80)) : "NONE"}`)
           if (activeSidRef.current === sid && data.content) {
-            // Append the user message and a fresh pending assistant bubble so
-            // session_event streaming can fill it in. SetMessagesFor reads from
-            // the cache (which has the currently visible messages) — do NOT delete
-            // it first, or the base will be [] and all prior messages lost.
-            const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done" }
-            const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-            window.__TEAHOUSE_LOG__?.("session_user_msg", `APPENDING userMsg.id=${userMsg.id} pendingAsst.id=${pendingAsst.id}`)
-            setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
+            // Try to upgrade an existing queued bubble first
+            let upgraded = false
+            if (qid) {
+              setMessagesFor(sid, (prev) => {
+                const idx = prev.findIndex(m => m._queue_id === qid && m.status === "queued")
+                if (idx >= 0) {
+                  const next = [...prev]
+                  next[idx] = { ...next[idx], status: "done" as MsgStatus }
+                  upgraded = true
+                  window.__TEAHOUSE_LOG__?.("session_user_msg", `UPGRADED queued msg idx=${idx} → done`)
+                  return next
+                }
+                return prev
+              })
+            }
+            if (!upgraded) {
+              // No queued bubble to upgrade — append fresh user message +
+              // pending assistant bubble (e.g. interrupt auto-message, sub-session
+              // wake-up that arrived when loop was idle so no queued event fired).
+              const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done", _queue_id: qid }
+              const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+              window.__TEAHOUSE_LOG__?.("session_user_msg", `APPENDING userMsg.id=${userMsg.id} pendingAsst.id=${pendingAsst.id}`)
+              setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
+            }
             scrollToBottom()
           } else {
             // Not viewing, or no content: invalidate cache so next switchSession
             // re-pulls from backend (which now has the new records).
             delete messagesBySidRef.current[sid]
             markSessionNew(sid)
+          }
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      es.addEventListener("session_user_queued", (e: MessageEvent) => {
+        // The backend enqueued a user message into the in-memory queue.
+        // It has NOT been persisted to jsonl yet (the tool_loop may still
+        // be running).  Show a grey "waiting" bubble; it will be upgraded
+        // to white "done" when session_user_msg fires later.
+        try {
+          const data = JSON.parse(e.data)
+          if (instId && data.instance_id !== instId && data.instance_id !== instName) return
+          const sid = data.session_id
+          if (!sid) return
+          window.__TEAHOUSE_LOG__?.("session_user_queued", `sid=${sid} active=${activeSidRef.current} qid=${data.queue_id}`)
+          if (activeSidRef.current === sid && data.content) {
+            const queuedMsg: RichMessage = {
+              id: nextId(),
+              role: "user",
+              content: data.content as string,
+              reasoning: "",
+              status: "queued",
+              _queue_id: data.queue_id as string,
+            }
+            setMessagesFor(sid, (prev) => [...prev, queuedMsg])
+            scrollToBottom()
           }
         } catch {
           // ignore malformed events
@@ -1209,6 +1257,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 elapsed={msg.id === lastAssistantId ? elapsed : 0}
                 tokenCount={msg.id === lastAssistantId ? (tokenMap[activeSid] || tokenCount) : 0}
               />
+            ) : msg.status === "queued" ? (
+              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {msg.content}
+              </div>
             ) : (
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                 {msg.content}
