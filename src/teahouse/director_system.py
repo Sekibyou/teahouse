@@ -108,7 +108,7 @@ def _floors_summary(dir_path: Path) -> str:
         return "floors/"
 
     parts = []
-    parts.append(f"Latest floor: {stats['latest_floor']:03d} ({stats['total_floors']} floors)")
+    parts.append(f"Latest floor: {stats['latest_floor']} ({stats['total_floors']} floors)")
     if stats["last_summary_start"] is not None:
         if stats["last_summary_start"] == stats["last_summary_end"]:
             parts.append(f"Last summary covered floor {stats['last_summary_start']}")
