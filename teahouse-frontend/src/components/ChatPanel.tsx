@@ -1108,6 +1108,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const sid = targetSid || activeSid
     const inst = getActiveInstance()
     if (!inst) return
+    // 与 _doSend 保持一致：发送前进入 waiting，待首个 session_event 转 running 时清掉。
+    patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
     chatApi.sendDirectorMessage([{ role: "user", content: msg }], inst.id, sid).catch(() => {})
   }, [activeSid])
 
