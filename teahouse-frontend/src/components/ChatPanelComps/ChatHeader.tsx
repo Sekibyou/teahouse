@@ -87,7 +87,7 @@ export function ChatHeader({
           const active = s.session_id === activeSid
           const hasNew = !!newMsgMap[s.session_id]
           const isMain = s.session_id === MAIN_SID
-          const label = isMain ? "主会话" : `会话·${s.session_id.replace("session-", "").slice(0, 6)}`
+          const label = isMain ? "主会话" : `会话·${s.session_id.replace("session-", "")}`
           return (
             <button
               key={s.session_id}
@@ -96,7 +96,7 @@ export function ChatHeader({
                 active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
               }`}
             >
-              {label}{isMain ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
+              {label}
               {/* 有新消息 → 右上角小圆圈 */}
               {hasNew && !active && (
                 <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />

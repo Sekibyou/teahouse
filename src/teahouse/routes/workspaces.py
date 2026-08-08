@@ -961,7 +961,7 @@ async def create_session(
 
     from ..tools import SUB_SESSION_BASE_TOOLS
     from ..sessions import MAIN_SESSION_ID, ensure_meta
-    session_id = f"session-{uuid.uuid4().hex[:12]}"
+    session_id = f"session-{uuid.uuid4().hex[:4]}"
     enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
     ensure_meta(instance_dir, session_id, {"enabled_tools": enabled})
     state.broadcast("session_created", {

@@ -1219,7 +1219,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           return (
             <>
               {messages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div key={msg.id} className={`flex ${msg.autoKind ? "justify-center" : (msg.role === "user" ? "justify-end" : "justify-start")}`}>
                   {msg.role === "assistant" ? (
                     <AssistantBubble
                       message={msg}
@@ -1228,16 +1228,16 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                       isIdle={isIdle}
                     />
                   ) : msg.role === "user" && msg.autoKind ? (
-                    <div className="max-w-[85%] rounded-lg px-3 py-1.5 text-xs text-muted-foreground/70 bg-muted/40 border border-border/60 flex items-center gap-1.5">
+                    <div className="max-w-fit rounded-md px-2.5 py-1 text-[11px] text-muted-foreground/70 bg-muted/40 flex items-center gap-1.5">
                       {msg.autoKind === "interrupt" ? (
                         <>
-                          <X className="h-3 w-3 text-muted-foreground/70" />
-                          <span>已中断</span>
+                          <X className="h-3 w-3 text-muted-foreground/60" />
+                          <span>用户中断了生成</span>
                         </>
                       ) : (
                         <>
-                          <CheckCircle2 className="h-3 w-3 text-muted-foreground/70" />
-                          <span className="font-mono">子会话已结束：{msg.autoSid || ""}</span>
+                          <CheckCircle2 className="h-3 w-3 text-muted-foreground/60" />
+                          <span>子会话已结束：<span className="font-mono">{msg.autoSid || ""}</span></span>
                         </>
                       )}
                     </div>

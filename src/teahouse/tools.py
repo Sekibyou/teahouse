@@ -534,7 +534,7 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
     await_result = bool(args.get("await_result", False))
     parent = session_id or ""
 
-    child = f"session-{uuid.uuid4().hex[:12]}"
+    child = f"session-{uuid.uuid4().hex[:4]}"
     tools_list = sorted(set(enabled)) if enabled else sorted(SUB_SESSION_BASE_TOOLS)
     meta = {
         "enabled_tools": tools_list,

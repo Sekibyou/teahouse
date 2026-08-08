@@ -49,7 +49,7 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "s
   if (!content.startsWith("[auto] ")) return null
   const trimmed = content.slice("[auto] ".length)
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
-  const sidMatch = trimmed.match(/session-([0-9a-fA-F]{8,})/)
+  const sidMatch = trimmed.match(/session-([0-9a-fA-F]{4,})/)
   if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
   return null
 }
