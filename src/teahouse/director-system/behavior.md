@@ -34,7 +34,7 @@
 - **正文历史**：写入 `.teahouse/output/floors/` 下的 `floor-N-draft.md`（写稿中）或 `floor-N.md`（定稿）。前端靠**文件名中间数字**排序展示。
 - **沙盒代码**：写入 `.teahouse/output/sandbox/*.js` / `*.css`。渲染器按文件名分派——`bootstrap.js` 最先执行、`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
 - 调用 Generate 生成正文前，须先构建对应的 YAML 配置文件（`source_file`）组织消息结构；在配置文件内需引用历史楼层入上下文时，用 `{{glob:output/floors/floor-*.md:lastN}}` 占位符自动按楼层数字取最近 N 层窗口。
-- 沙盒代码需整体禁用时，把 `.teahouse/output/sandbox/` 下的文件移到 `.teahouse/output_disabled/`（无子结构，目录本身即禁用标记）。
+- 沙盒代码需整体禁用时，把 `.teahouse/output/sandbox/` 下的文件移到 `.teahouse/output/sandbox/disabled/`（除 `disabled/` 外均启用；此子目录内文件渲染器不读，移入即禁用）。
 
 ## 实例目录结构
 
@@ -43,11 +43,13 @@
 | 目录 | 性质 | 用途 |
 |---|---|---|
 | `.teahouse/output/sandbox/` | 必需 | 沙盒渲染代码（bootstrap.js 最先、*.css、其余 *.js） |
+| `.teahouse/output/sandbox/disabled/` | 可选 | 沙盒代码禁用区（除本子目录外均启用；移入即禁用，渲染器不读） |
 | `.teahouse/output/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
-| `.teahouse/output_disabled/` | 可选 | 沙盒代码整体禁用开关（无子结构，移入即禁用） |
 | `.teahouse/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
-| `summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
-| `settings/` | 推荐 | 故事设定（角色、世界观等） |
+| `.teahouse/dyn_settings/` | 推荐 | 动态设定（关系、所在地、任务进展等可变状态，总结产出，入 git） |
+| `.teahouse/dyn_settings/summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
+| `.teahouse/generate-config/` | 推荐 | Generate 配置模板（引用 dyn_settings/static_settings 切片，更新跟随总结） |
+| `static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，gitignore，只读引用） |
 | `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md） |
 
 ## 建议设定格式

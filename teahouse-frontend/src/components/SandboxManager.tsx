@@ -62,7 +62,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
       if (!path) return
       // srcdoc is built solely from .teahouse/output/sandbox/. Any change under
       // .teahouse/output/ that is NOT floors/ (sandbox code moved/edited/written,
-      // or moved to/from output_disabled) can alter that directory's contents,
+      // or moved to/from output/sandbox/disabled) can alter that directory's contents,
       // so rebuild the iframe. Only floor changes are handled in-sandbox.
       const isFloors = path.includes(".teahouse/output/floors/")
       const isOutput = path.includes(".teahouse/output")

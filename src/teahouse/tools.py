@@ -1155,9 +1155,12 @@ async def execute_git_status(instance_dir: Path, args: dict[str, Any]) -> str:
 async def execute_git_diff(instance_dir: Path, args: dict[str, Any]) -> str:
     """Execute git diff."""
     path = args.get("path")
+    staged = args.get("staged", False)
     try:
-        diff_output = git_diff(instance_dir, path)
+        diff_output = git_diff(instance_dir, path, staged=staged)
         if not diff_output.strip():
+            if staged:
+                return "没有已暂存的差异（index 与 HEAD 相同）。"
             return "没有差异（工作区与 HEAD 相同）。"
         return diff_output
     except Exception as e:
@@ -1165,9 +1168,20 @@ async def execute_git_diff(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
-    """Execute git add -A + git commit with semantic type."""
+    """Execute git add + git commit with semantic type.
+
+    If ``paths`` is provided, only those paths are staged (into this commit),
+    leaving other uncommitted changes untouched — this is what lets a background
+    summary sub-session commit .teahouse/dyn_settings while the main session is
+    mid-floor without their changes bleeding into each other.
+    """
     commit_type = args["type"]
     message = args["message"]
+    paths = args.get("paths")
+    if isinstance(paths, (list, tuple)) and len(paths) > 0:
+        paths = [str(p) for p in paths]
+    else:
+        paths = None
 
     # Build git message
     if commit_type == "floor":
@@ -1193,7 +1207,7 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
         if commit_type == "summary":
             from .database.workspaces import update_summary_index
             update_summary_index(instance_dir, start, end)
-        result = _git_commit(instance_dir, git_message)
+        result = _git_commit(instance_dir, git_message, paths=paths)
         files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_dir.name})
 
@@ -1202,10 +1216,12 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
             from .database.workspaces import update_floor_count
             await update_floor_count(instance_id, number)
 
+        path_scope = ", ".join(paths) if paths else "全部（git add -A）"
         return (
             f"提交成功\n"
             f"  Commit: {result['commit_hash']}\n"
             f"  Branch: {result['branch']}\n"
+            f"  范围: {path_scope}\n"
             f"  文件: {files_str}"
         )
     except Exception as e:

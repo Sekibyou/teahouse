@@ -41,11 +41,12 @@
 | **building/** | 实例内的**打包期元工作区**（讨论点子、checklist、设计笔记）。导出自动排除、不进原型包；目录树中默认隐藏。首页「复制实例」可生成完整快照副本，用作就地清理打包前的保底 |
 | **Skill** | 提示词包（方法论），引用 teahouse.md 的配置 |
 | **楼层 (Floor)** | 独立内容单元，对应 `.md` 文件，完成后 git commit |
-| **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层。产出：更新 `settings/` 设定 + `runtime_vars.jsonl` 变量 + 根 `summary/sum-N-M.md` 流水账（导演回溯用，不进正文 Bot 上下文）。**归档界（已总结到第几章）由后端在 `GitCommit(type="summary", start, end)` 时自动写入根 `summary/index.json` 的 `summarized_through`**，导演无需手改 `teahouse.md` |
+| **总结 (Summary)** | 触发 git commit + 上下文重组，不计入楼层。产出：更新 `.teahouse/dyn_settings/` 动态设定 + `runtime_vars.jsonl` 变量 + `.teahouse/dyn_settings/summary/sum-N-M.md` 流水账（导演回溯用，不进正文 Bot 上下文）。**归档界（已总结到第几章）由后端在 `GitCommit(type="summary", start, end)` 时自动写入 `.teahouse/dyn_settings/summary/index.json` 的 `summarized_through`**，导演无需手改 `teahouse.md`。总结提交用 `paths=[".teahouse/dyn_settings"]` 只提交自己的改动，可与前台游玩并行 |
+| **静态设定 (static_settings/)** | 根目录，**长期稳定、不入 git**（已 gitignore）的背景设定——时代特征、修为分段、各大势力、背景板等。只读引用（`{{static_settings/...}}` 切片），不建议修改，无版本历史、不受分支切换影响 |
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
 | **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
-| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `settings/`（yaml 内容设定，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。沙盒「确定批处理」用 `runTool(steps)`——内联工具数组、**即发即返**（返回 `run_uuid`，在后台串行执行，每步经 `tool_run` 事件广播结果与成败，组件按 `run_uuid` 数 `index` 判完成），不依赖脚本文件；产出落地经 `file_changed` → `output.refresh` 刷新楼层。**`Generate` 流式在生成中不落盘**，仅经 `generate_progress` 事件广播累计进度（含 diff），结束/中断/报错才落盘并广播一次 `file_changed`。导演侧若要引用 `.jsonl` 流程可用 `BatchExecute`。 |
+| **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码）、`dyn_settings/`（动态设定 + 总结流水账 + 归档界）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `static_settings/`（根，不入 git 的长期背景，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。沙盒「确定批处理」用 `runTool(steps)`——内联工具数组、**即发即返**（返回 `run_uuid`，在后台串行执行，每步经 `tool_run` 事件广播结果与成败，组件按 `run_uuid` 数 `index` 判完成），不依赖脚本文件；产出落地经 `file_changed` → `output.refresh` 刷新楼层。**`Generate` 流式在生成中不落盘**，仅经 `generate_progress` 事件广播累计进度（含 diff），结束/中断/报错才落盘并广播一次 `file_changed`。导演侧若要引用 `.jsonl` 流程可用 `BatchExecute`。 |
 
 ## 占位符语法
 
@@ -53,7 +54,7 @@
 
 | 语法 | 含义 | 在哪里解析为值 |
 |---|---|---|
-| `{{path\|切片}}` | **文件切片**（复制/搬运，不修改内容），如 `{{settings/characters.yaml\|from="## 秦悠"}}`、`{{glob:output/floors/floor-*.md:last30}}` | Write/Edit/WriteLine 显式 `resolve_placeholders=true`；系统提示词/预设模板（lenient，文档示例保持字面量） |
+| `{{path\|切片}}` | **文件切片**（复制/搬运，不修改内容），如 `{{static_settings/characters.yaml\|from="## 秦悠"}}`、`{{glob:output/floors/floor-*.md:last30}}` | Write/Edit/WriteLine 显式 `resolve_placeholders=true`；系统提示词/预设模板（lenient，文档示例保持字面量） |
 | `${name}` | **普通变量引用**（沙盒变量），如 `${金币}`、`${user_name}` | 导演系统提示词组装 + Generate 发送给正文 AI 前（酒馆式展开为值）；沙盒内手动 `Teahouse.replacePlaceholders()` 替换 |
 | `${ if...: return... }` | **条件切片**（代码块），按变量值就地选一段返回，如 `${ if dice == 6: return "{{room1}}" else: return "{{room2}}" }` | 所有 AI 表面（导演系统提示词组装 + Generate），解析阶段就地选分支；块内可用白名单函数 `roll("1d6")` / `random(lo, hi)`；坏块回退字面量不报错 |
 | `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词预设模板组装时临时注入；其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
@@ -182,7 +183,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 导演可通过 `GitCommit` 和 `GitBranch` 两个工具操作版本控制：
 
-- **GitCommit(message)**：`git add -A && git commit`，锁定实例所有文件状态。楼层完成/总结结束时自动调用（通过提示词约定）。
+- **GitCommit(message, paths?)**：`git commit` 锁定实例文件状态。**`paths`（可选）**：传入时只提交这些路径（`git add <paths...>`），其余未提交改动保持不动——这是总结子会话与前台游玩**并行提交互不污染**的机制（总结提交 `paths=[".teahouse/dyn_settings"]`，游玩提交 `.teahouse/output/floors/` + `runtime_vars.jsonl`）。不传 `paths` 则回退 `git add -A` 全量提交（other 兜底）。楼层完成/总结结束时自动调用（通过提示词约定）。可用 `GitDiff(staged=true)` 在提交前自查本次 stage 的内容。
 - **GitBranch(action, name?)**：分支管理。`list` 列出所有分支，`create` 创建新分支，`switch` 切换分支，`delete` 删除分支。
 
 ### 调用时机
@@ -194,7 +195,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 ### 切换分支的特殊说明
 
-`GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`floors/`、`.teahouse/runtime_vars.jsonl`、`settings/` 等）。切换后：
+`GitBranch switch` 切换分支时会改变实例目录下所有被 git 追踪的文件（`.teahouse/output/floors/`、`.teahouse/runtime_vars.jsonl`、`.teahouse/dyn_settings/` 等；`static_settings/` 因被 gitignore、不属于 git 追踪，切换分支不受影响）。切换后：
 1. 对话记忆由后端持久化（基于目标分支重构上下文，见下方"会话记忆"），导演不会失忆
 2. 下一次系统提示词组装时会自动读取目标分支的文件状态
 3. 如需查看旧分支的楼层文件，可用 `Read` 工具加路径前缀（如果能拿到具体路径），或者切回去查看
@@ -203,7 +204,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 - **依赖 git**：运行环境必须安装 git 并可在 PATH 中访问
 - **不需要 merge**：分支是 AVG 式的剧情分支存档，不做合并
-- **`.sessions/` + `temp/` 不纳入版本控制**：对话记忆（每会话一个 `.sessions/<sid>.jsonl`）与草稿区 `temp/` 都不随 GitCommit 提交；导演上下文权威地由后端从对应会话文件重建，前端 localStorage 只存 `activeInstance`
+- **`.sessions/` + `temp/` + `static_settings/` 不纳入版本控制**：对话记忆（每会话一个 `.sessions/<sid>.jsonl`）、草稿区 `temp/`、长期静态设定 `static_settings/` 都不随 GitCommit 提交；导演上下文权威地由后端从对应会话文件重建，前端 localStorage 只存 `activeInstance`
 
 ---
 ### 会话记忆（多会话 / 子会话）
@@ -224,7 +225,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 1. 实例 teahouse.md               — 直接注入（角色定义、配置、Skill 路由）
 2. director-system/behavior.md   — 行为准则
 3. tools.json usage 文本          — 由调用方从 tools.json 生成后传入
-4. 实例目录树                      — 动态扫描，所有目录只显示一行（不展开），floors/ 有特殊统计信息
+4. 实例目录树                      — 动态扫描，所有目录只显示一行（不展开），output/floors/ 有特殊统计信息
 5. Skill 列表                      — 扫描系统 skills + 实例 skills，解析每个 SKILL.md 的 name + description；实例 skills 可覆盖同名系统 skill
 ```
 
@@ -251,10 +252,9 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 ```
 teahouse.md          实例配置文件，始终实时注入导演上下文
-settings/            设定文件夹（角色、世界观等）
-  characters.yaml
-  world.yaml
-building/            打包期元工作区（讨论点子、checklist、设计笔记）——永不进原型包
+static_settings/     长期静态设定（gitignore，不入 git）——背景板、修为分段、势力、时代特征。只读引用，不建议修改
+  world.md
+  characters.md
 skills/              Skill 包，每个子目录一个 Skill
   <skill-name>/
     SKILL.md          Skill 元数据 + 完整指令（Load 阶段读取）
@@ -263,21 +263,23 @@ skills/              Skill 包，每个子目录一个 Skill
     scripts/          可选，可执行脚本
 .teahouse/            引擎内部目录
   runtime_vars.jsonl   变量系统（文件即状态，SetRuntimeVar/GetRuntimeVars，一变量一行 jsonl，可带 note/change_log）
+  dyn_settings/        动态设定（入 git，总结产出）——关系、当前所在地、任务进展等可变状态
+    characters.md
+    <其他动态设定文件>
+    summary/           总结流水账 + 归档界（导演回溯参考，不进正文 Bot 上下文）
+      sum-1-7.md       覆盖第 1~7 章的流水账（覆盖 x~y 章 → sum-x-y.md；单章 → sum-x.md）
+      index.json       归档界索引（代码自动维护：summarized_through + entries）
   output/
     floors/           正文历史（floor-N.md 定稿 / floor-N-draft.md 半正式稿）
     sandbox/          沙盒渲染资源
       bootstrap.js    沙盒基础设施脚本
       *.js            场景/UI 脚本
       *.css           样式文件
+      disabled/       禁用沙盒脚本（除本子目录外都是启用）
   text-style-rules.yaml  文本样式着色规则
-floors/              正文楼层 + 总结（归档，commit 后不可变）
-  floor-001.md        正文楼层，编号递增
-  sum-001.md          总结归档（与楼层编号独立）
-summary/             汇总流水账（导演回溯参考，不进正文 Bot 上下文）
-  sum-1-7.md          覆盖第 1~7 章的流水账（覆盖 x~y 章 → sum-x-y.md；单章 → sum-x.md）
-  index.json          归档界索引（代码自动维护：summarized_through + entries）
 temp/                临时文件夹，存放草稿等中间文件（**不纳入 git 版本控制**；子会话 Report 工具只写这里）
   draft.md            未完成草稿（续写用）
+building/            打包期元工作区（讨论点子、checklist、设计笔记）——永不进原型包
 assets/              静态资源（图片、字体、音频等）
 ```
 
@@ -287,8 +289,8 @@ assets/              静态资源（图片、字体、音频等）
 
 系统提示词中通过 `_scan_tree()` 动态注入目录树，规则如下：
 
-- 所有目录都**只显示一行目录名**（不展开），如 `├── settings/`、`├── skills/`
-- `floors/` 显示特殊统计信息，如 `floors/  (Latest floor: 009 (9 floors); Last summary covered floors 1~5; 4 floors unsummarized)`
+- 所有目录都**只显示一行目录名**（不展开），如 `├── static_settings/`、`├── skills/`
+- `output/floors/` 显示特殊统计信息，如 `output/floors/  (Latest floor: 009 (9 floors); Last summary covered floors 1~5; 4 floors unsummarized)`
 - 根目录文件逐行列出
 - 排除 `.git`、`__pycache__`、`sessions`、`building` 等内部/元工作目录
 

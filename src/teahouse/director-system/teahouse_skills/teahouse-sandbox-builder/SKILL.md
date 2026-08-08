@@ -116,10 +116,10 @@ container.innerHTML = html
 
 #### `Teahouse.readText(path) → Promise<string | null>`
 
-读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"settings/characters.yaml"`、`".teahouse/output/floors/floor-001.md"`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
+读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"static_settings/world.yaml"`、`.teahouse/output/floors/floor-001.md`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
 
 ```js
-const yaml = await Teahouse.readText("settings/world.yaml")
+const yaml = await Teahouse.readText("static_settings/world.yaml")
 ```
 
 #### `Teahouse.readAsset(path) → Promise<string | null>`
@@ -167,7 +167,7 @@ await Teahouse.setVar({
 })
 ```
 
-**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetRuntimeVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `settings/` 设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
+**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetRuntimeVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `.teahouse/dyn_settings/` 动态设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
 
 #### `Teahouse.getVars(names) → Promise<{name,value}[]>`
 
@@ -300,7 +300,7 @@ API：
 - `Teahouse.sessionDestroy(session_id, abort?)` → 销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。
 - 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。
 
-**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、settings/ 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
+**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、`.teahouse/dyn_settings/` 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
 
 ### 事件监听
 
@@ -448,13 +448,13 @@ UI 组件是固定定位的悬浮元素。模式：
 
 #### 沙盒代码整体禁用
 
-如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `.teahouse/output/sandbox/` 下的代码**移动到 `.teahouse/output_disabled/`**：
+如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `.teahouse/output/sandbox/` 下的代码**移动到 `.teahouse/output/sandbox/disabled/`**：
 
 ```
-FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/output_disabled/teahouse-maintext-renderer.js
+FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/output/sandbox/disabled/teahouse-maintext-renderer.js
 ```
 
-`.teahouse/output_disabled/` 无子结构，目录本身即禁用标记——渲染器**不读它**，故移入即从沙盒移除；需要恢复时移回 `.teahouse/output/sandbox/`。只服务沙盒代码，正文楼层无此需求。
+`.teahouse/output/sandbox/disabled/` 内的文件渲染器**不读取**（除 `disabled/` 外均启用），故移入即从沙盒移除、但仍保留在该子目录（git 追踪、可恢复）；需要恢复时移回 `.teahouse/output/sandbox/`。只服务沙盒代码，正文楼层无此需求。
 
 ## 最佳实践
 

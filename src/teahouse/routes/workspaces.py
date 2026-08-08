@@ -1114,15 +1114,21 @@ def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
     """Read all files under .teahouse/output/sandbox/, keyed by relative path.
 
     The sandbox renderer owns this directory exclusively — it is the single
-    content source for *.css / *.js UI component scripts.
+    content source for *.css / *.js UI component scripts. Files under the
+    ``disabled/`` subfolder are NOT served — moving a script into
+    output/sandbox/disabled/ disables it while keeping it versioned in place.
     bootstrap.js is excluded — it's engine-built and served via _read_bootstrap_scripts().
     """
     sandbox_dir = instance_dir / ".teahouse" / "output" / "sandbox"
     files: dict[str, str] = {}
     if not sandbox_dir.is_dir():
         return files
+    disabled_dir = sandbox_dir / "disabled"
     for p in sorted(sandbox_dir.rglob("*")):
         if p.is_file():
+            # Files under disabled/ are not served (deactivated but kept in place)
+            if disabled_dir in p.parents:
+                continue
             # 引擎内置 bootstrap，实例中的 bootstrap.js 忽略
             if p.name == "bootstrap.js":
                 continue
@@ -1214,6 +1220,7 @@ class GitCommitRequest(BaseModel):
     start: int | None = None
     end: int | None = None
     message: str
+    paths: list[str] | None = None  # optional: only commit these paths
 
 
 class GitBranchRequest(BaseModel):
@@ -1283,7 +1290,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
             raise HTTPException(status_code=400, detail="summary 类型需要 start 和 end 参数")
         update_summary_index(instance_dir, body.start, body.end)
     try:
-        result = git_commit(instance_dir, git_message)
+        result = git_commit(instance_dir, git_message, paths=body.paths)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
         _broadcast_floors(instance_dir)
 

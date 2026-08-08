@@ -16,8 +16,18 @@ class GitError(Exception):
     pass
 
 
+_INDEX_LOCK_RETRIES = 10
+_INDEX_LOCK_INITIAL_DELAY = 0.05
+
+
 def _git_run(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout. Raises GitError on failure."""
+    """Run a git command and return stdout. Raises GitError on failure.
+
+    Writes that touch the index (git add/commit/status) can transiently fail
+    with an index.lock conflict when another git process (e.g. a background
+    summary sub-session) holds the lock. We back off and retry briefly so
+    concurrent floor + summary commits don't race each other.
+    """
     try:
         import os
         env = os.environ.copy()
@@ -25,25 +35,32 @@ def _git_run(args: list[str], cwd: Path) -> str:
         env["GIT_TERMINAL_PROMPT"] = "0"
         # Disable path quoting so CJK filenames don't get octal-escaped
         args = ["-c", "core.quotepath=false"] + args
-        result = subprocess.run(
-            ["git"] + args,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            env=env,
-            timeout=30,
-        )
+        import time
+        delay = _INDEX_LOCK_INITIAL_DELAY
+        for attempt in range(_INDEX_LOCK_RETRIES):
+            result = subprocess.run(
+                ["git"] + args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=env,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            if b"index.lock" not in (result.stderr or "").encode("utf-8", "replace"):
+                break
+            # index.lock contention — back off and retry
+            time.sleep(delay)
+            delay *= 2
+        stderr = result.stderr or ""
     except FileNotFoundError:
         raise GitError("git 命令未找到，请确保 git 已安装并可在 PATH 中使用")
     except subprocess.TimeoutExpired:
         raise GitError("git 命令执行超时")
 
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        raise GitError(stderr or f"git 命令失败 (exit code {result.returncode})")
-
-    return result.stdout.strip()
+    raise GitError(stderr.strip() or f"git 命令失败 (exit code {result.returncode})")
 
 
 def git_init(instance_dir: Path) -> str:
@@ -57,9 +74,19 @@ def git_initial_commit(instance_dir: Path) -> str:
     return _git_run(["commit", "-m", "other: 初始化实例"], instance_dir)
 
 
-def git_commit(instance_dir: Path, message: str) -> dict:
-    """Stage all changes and commit. Returns {commit_hash, branch, files_changed}."""
-    _git_run(["add", "-A"], instance_dir)
+def git_commit(instance_dir: Path, message: str, paths: list[str] | None = None) -> dict:
+    """Stage changes and commit. Returns {commit_hash, branch, files_changed}.
+
+    When ``paths`` is given, only those paths are staged (``git add <paths...>``),
+    leaving the rest of the working tree uncommitted — so concurrent work in a
+    different subtree (e.g. a background summary touching dyn_settings while
+    the main session touches floors) stays isolated. Without ``paths``, behaves as
+    before: ``git add -A`` (stage everything).
+    """
+    if paths:
+        _git_run(["add", "--", *paths], instance_dir)
+    else:
+        _git_run(["add", "-A"], instance_dir)
     hash_out = _git_run(["commit", "-m", message], instance_dir)
 
     branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
@@ -323,9 +350,16 @@ def git_show_file(instance_dir: Path, file_path: str) -> str | None:
         return None
 
 
-def git_diff(instance_dir: Path, path: str | None = None) -> str:
-    """Return git diff for uncommitted changes. If path is given, diff only that file."""
+def git_diff(instance_dir: Path, path: str | None = None, staged: bool = False) -> str:
+    """Return git diff for uncommitted changes.
+
+    ``staged=True`` shows the staged view (``git diff --cached``) — what is in
+    the index ready to be committed. ``staged=False`` (default) shows the
+    working-tree view vs HEAD. If ``path`` is given, only diff that file/dir.
+    """
     args = ["diff"]
+    if staged:
+        args.append("--cached")
     if path:
         args.extend(["--", path])
     return _git_run(args, instance_dir)

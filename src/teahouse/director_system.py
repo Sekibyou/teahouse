@@ -163,7 +163,7 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str) -> None:
     """Recursively scan .teahouse/ directory, fully expanding all subdirectories.
 
     output/floors/ is summarized via get_floors_stats; output/sandbox/ is expanded
-    as normal files; output_disabled/ is shown collapsed as a disable toggle.
+    as normal files; output/sandbox/disabled/ is shown collapsed as a disable toggle.
     """
     entries = sorted(
         [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
@@ -177,10 +177,10 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str) -> None:
         if entry.is_dir() and entry.name == "floors" and dir_path.name == "output":
             # .teahouse/output/floors/ — the context-engine's floor history
             lines.append(f"{indent}{connector}{_floors_summary(entry)}")
-        elif entry.is_dir() and entry.name == "output_disabled":
-            # sandbox disable toggle — collapsed, shows only a file count
+        elif entry.is_dir() and entry.name == "disabled" and dir_path.name == "sandbox":
+            # .teahouse/output/sandbox/disabled/ — collapsed disable toggle
             count = sum(1 for f in entry.rglob("*") if f.is_file())
-            lines.append(f"{indent}{connector}output_disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
+            lines.append(f"{indent}{connector}disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
         elif entry.is_dir():
             lines.append(f"{indent}{connector}{entry.name}/")
             _scan_teahouse_dir(entry, lines, indent + "    ")

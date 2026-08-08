@@ -41,12 +41,12 @@ Generate 的 `path` 落在哪个目录，决定沙盒是否流式渲染，须按
 检查以下目录和文件，如果不存在则创建：
 
 ```
-FileOps mkdir settings/
+FileOps mkdir .teahouse/dyn_settings/
 FileOps mkdir temp/
 FileOps mkdir .teahouse/output/floors/
 ```
 
-**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetRuntimeVar` 工具写、`GetRuntimeVars` 读），是实例内唯一的变量载体（文件即状态）。设定（含中短期动态设定）放在 `settings/` 下。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
+**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetRuntimeVar` 工具写、`GetRuntimeVars` 读），是实例内唯一的变量载体（文件即状态）。设定分两类：**长期静态设定**在根 `static_settings/`（gitignore，只读引用，不修改）；**中短期动态设定**在 `.teahouse/dyn_settings/`（入 git，总结产出）。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
 
 ### 步骤 1：理解楼层配置
 
@@ -62,13 +62,13 @@ FileOps mkdir .teahouse/output/floors/
 
 ```
 Glob .teahouse/output/floors/floor-*.md   → 列出所有楼层/草稿
-Glob summary/sum-*.md                     → 列出所有总结
+Glob .teahouse/dyn_settings/summary/sum-*.md                     → 列出所有总结
 ```
 
 **阅读策略：**
 
 - **最近楼层**：优先用 `{{glob:output/floors/floor-*.md:last10}}` 一次性注入最近 10 层正文（按楼层数字自动升序、正式稿优先于草稿）。如需精读某层，用 Read 直接读文件。
-- **更早楼层（已被总结覆盖）**：阅读 `summary/sum-*.md` 总结，不必逐层读原文。
+- **更早楼层（已被总结覆盖）**：阅读 `.teahouse/dyn_settings/summary/sum-*.md` 总结，不必逐层读原文。
 - 归档界标记在 `teahouse.md` 全局变量区——超过归档界、未被总结覆盖的楼层，正文必须进上下文；被总结覆盖的楼层看总结即可。
 
 充分理解用户的创作意图、叙事风格和当前剧情走向。
@@ -89,14 +89,15 @@ GetRuntimeVars(names=["金币", "修为", "主角名"])
 SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层"})
 ```
 
-记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。
+记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `.teahouse/dyn_settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。
 
 ### 步骤 5：阅读相关设定
 
-基于前文和用户的意图，从 `settings/` 文件夹里阅读可能与这段剧情有关联的设定。使用 Glob 探索设定文件：
+基于前文和用户的意图，从设定文件夹里阅读可能与这段剧情有关联的设定。**长期背景**（时代特征、势力、修为分段等）在根 `static_settings/`；**中短期动态**（关系、当前所在地、任务进展）在 `.teahouse/dyn_settings/`。使用 Glob 探索设定文件：
 
 ```
-Glob settings/**/*
+Glob static_settings/**/*
+Glob .teahouse/dyn_settings/**/*
 ```
 
 在摘抄设定时：
@@ -123,16 +124,16 @@ Glob .teahouse/output/floors/floor-*.md
 **工作流**：
 
 1. **复制配置模板**（每章一份 `generate-config-{{N}}.yaml`，就地覆盖、不做多版本）：
-   - 如果是首次创作：复制 `settings/generate-config-default.yaml` → `temp/generate-config-{{N}}.yaml`
+   - 如果是首次创作：复制 `.teahouse/generate-config/generate-config.yaml` → `temp/generate-config-{{N}}.yaml`
    - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}.yaml`）→ `temp/generate-config-{{N}}.yaml`
 
 2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
-   - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{summary/sum-*.md}}` 而非逐层）
+   - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{.teahouse/dyn_settings/summary/sum-*.md}}` 而非逐层）
    - 更新设定引用范围（基于当前变量值调整锚点/行号）
-   - 在 user 消息中用 `${name}` 变量字面量引用当前变量值（如 `${金币}`、`${主角名}`、`${修为}`），Generate 发送给正文 AI 前会统一展开为值；也可用 `{{settings/xxx.yaml|...}}` 切片注入相关设定
+   - 在 user 消息中用 `${name}` 变量字面量引用当前变量值（如 `${金币}`、`${主角名}`、`${修为}`），Generate 发送给正文 AI 前会统一展开为值；也可用 `{{.teahouse/dyn_settings/xxx.yaml|...}}` 切片注入相关动态设定
    - **进阶：条件切片**——当需要"按变量值从几段里就地选一段灌给正文"（如骰子分档、好感度阶梯提示词）时，用 `${ if ...: return ... }` 代码块在解析阶段命中一段，未命中的分支不进入上下文。只命中当前档位即可，不必把整段阶梯规则全发给正文。示例（每档一份独立设定文件，命中即物化整段）：
      ```
-     ${ if 好感度 >= 80: return "{{settings/heartful-zhongqing.md}}" elif 好感度 >= 50: return "{{settings/heartful-xindong.md}}" else: return "{{settings/heartful-chujian.md}}" }
+     ${ if 好感度 >= 80: return "{{.teahouse/dyn_settings/heartful-zhongqing.md}}" elif 好感度 >= 50: return "{{.teahouse/dyn_settings/heartful-xindong.md}}" else: return "{{.teahouse/dyn_settings/heartful-chujian.md}}" }
      ```
      `return` 的值也可以是别的占位符（`{{file:line}}`、`${变量}`），会继续被后续解析展开。也可写成多行块：
      ```
@@ -156,7 +157,7 @@ Glob .teahouse/output/floors/floor-*.md
      ${
      result = roll("1d6")
      if result >= 5:
-         return f"当前骰子结果是{result}。" + "{{settings/encounter.md}}"
+         return f"当前骰子结果是{result}。" + "{{.teahouse/dyn_settings/encounter.md}}"
      else:
          return "未触发特殊遭遇"
      }

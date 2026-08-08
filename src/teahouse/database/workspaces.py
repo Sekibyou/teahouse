@@ -185,14 +185,20 @@ def summary_file_name(start: int, end: int) -> str:
     return f"sum-{start}.md" if start == end else f"sum-{start}-{end}.md"
 
 
+# Dynamic settings dir: mutable settings + summary ledgers + archive index.
+# Lives under .teahouse/ so it is internal (not player-rendered) and git-tracked
+# (unlike static_settings/ which is gitignored). Summary commits scope to this.
+DYN_SETTINGS_REL = ".teahouse/dyn_settings"
+
+
 def update_summary_index(instance_dir: Path, start: int, end: int) -> str:
-    """Record a summary range in summary/index.json (authoritative archive boundary).
+    """Record a summary range in <dyn_settings>/summary/index.json (authoritative archive boundary).
 
     Called by the backend on GitCommit(type="summary", start, end). Appends one
     entry per call (deduped by exact range) and advances summarized_through to the
     reported `end`. Returns the ledger file path written for reference.
     """
-    idx_path = instance_dir / "summary" / "index.json"
+    idx_path = instance_dir / DYN_SETTINGS_REL / "summary" / "index.json"
     if idx_path.exists():
         data = json.loads(idx_path.read_text(encoding="utf-8"))
     else:

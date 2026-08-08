@@ -1,11 +1,11 @@
 ---
 name: teahouse-summarize
-description: 教导导演如何执行总结流程，包括上下文压缩、设定更新、变量更新、流水账落盘。归档界由后端在 GitCommit(type=summary) 时自动维护于 summary/index.json。当满足总结触发条件时（建议每 7 层一次），或用户手动要求总结时触发。
+description: 教导导演如何执行总结流程，包括上下文压缩、设定更新、变量更新、流水账落盘。归档界由后端在 GitCommit(type=summary) 时自动维护于 .teahouse/dyn_settings/summary/index.json。当满足总结触发条件时（建议每 7 层一次），或用户手动要求总结时触发。
 ---
 
 # 总结归纳 Skill
 
-教导导演如何执行总结流程。总结通过**更新设定与变量**完成上下文压缩，并把**流水账文本**落在根 `summary/` 供导演回溯深挖设定用。
+教导导演如何执行总结流程。总结通过**更新设定与变量**完成上下文压缩，并把**流水账文本**落在 `.teahouse/dyn_settings/summary/` 供导演回溯深挖设定用。
 
 ## 适用时机
 
@@ -17,16 +17,16 @@ description: 教导导演如何执行总结流程，包括上下文压缩、设�
 
 **关键原则**：
 - 总结的**产物**（改设定 + 改变量 + 流水账）——设定/变量持续影响后续生成，流水账只作导演回溯参考。
-- 总结的**结果**（流水账文本）**不入正文 Bot 上下文**。正文模型不靠总结文本，而是靠**设定切片**（`{{settings/...}}` 锚点）承载对过去的记忆，由提示词层弥合。正文可见性由创作者用 yaml 配置决定，引擎不强制。
-- **归档界**（已总结到哪一层）由后端在每次 `GitCommit(type="summary", start, end)` 时自动写入根 `summary/index.json` 的 `summarized_through`，导演无需手改。窗口只回溯未总结楼层。
+- 总结的**结果**（流水账文本）**不入正文 Bot 上下文**。正文模型不靠总结文本，而是靠**设定切片**（`{{.teahouse/dyn_settings/...}}` 锚点）承载对过去的记忆，由提示词层弥合。正文可见性由创作者用 yaml 配置决定，引擎不强制。
+- **归档界**（已总结到哪一层）由后端在每次 `GitCommit(type="summary", start, end)` 时自动写入根 `.teahouse/dyn_settings/summary/index.json` 的 `summarized_through`，导演无需手改。窗口只回溯未总结楼层。
 
 ## 文件命名规范
 
-流水账存放于根 `summary/` 目录下，命名格式为 `sum-A-B.md`；归档界索引 `summary/index.json` 由后端自动维护（`summarized_through` + entries）。
+流水账存放于 `.teahouse/dyn_settings/summary/` 目录下，命名格式为 `sum-A-B.md`；归档界索引 `.teahouse/dyn_settings/summary/index.json` 由后端自动维护（`summarized_through` + entries）。
 
-- `summary/sum-1-7.md` — 覆盖第 1 到第 7 层的流水账
-- `summary/sum-8.md` — 仅覆盖第 8 层的流水账（A == B 时简写为单数字）
-- `summary/index.json` — 代码维护的归档界索引，不要手改
+- `.teahouse/dyn_settings/summary/sum-1-7.md` — 覆盖第 1 到第 7 层的流水账
+- `.teahouse/dyn_settings/summary/sum-8.md` — 仅覆盖第 8 层的流水账（A == B 时简写为单数字）
+- `.teahouse/dyn_settings/summary/index.json` — 代码维护的归档界索引，不要手改
 
 ## SOP
 
@@ -39,15 +39,15 @@ description: 教导导演如何执行总结流程，包括上下文压缩、设�
 ### 步骤 2：确定总结范围
 
 ```
-Read summary/index.json            → 权威归档界（summarized_through）+ 已有流水账索引
+Read .teahouse/dyn_settings/summary/index.json            → 权威归档界（summarized_through）+ 已有流水账索引
 Glob .teahouse/output/floors/floor-*.md   → 列出所有楼层/草稿
 ```
 
-从 `summary/index.json` 的 `summarized_through` 读上次总结的结束楼层（代码在每次 GitCommit(type=summary) 时自动维护），结合最新楼层编号确定本次总结范围（上次 end + 1 起）。旧的 `sum-*.md` 文件名数字不再作为归档界来源。
+从 `.teahouse/dyn_settings/summary/index.json` 的 `summarized_through` 读上次总结的结束楼层（代码在每次 GitCommit(type=summary) 时自动维护），结合最新楼层编号确定本次总结范围（上次 end + 1 起）。旧的 `sum-*.md` 文件名数字不再作为归档界来源。
 
 **重要规则**：
 - **每一次总结最多覆盖 10 章**。如果用户要求一次性总结超过 10 章，应拆分为多个总结文件，每个覆盖不超过 10 章
-- 例如：要求总结 1~23 章 → 创建 `summary/sum-1-10.md`、`summary/sum-11-20.md`、`summary/sum-21-23.md`，并分别 `GitCommit(type="summary", ...)`
+- 例如：要求总结 1~23 章 → 创建 `.teahouse/dyn_settings/summary/sum-1-10.md`、`.teahouse/dyn_settings/summary/sum-11-20.md`、`.teahouse/dyn_settings/summary/sum-21-23.md`，并分别 `GitCommit(type="summary", ...)`
 
 ### 步骤 3：阅读待总结的楼层
 
@@ -85,9 +85,9 @@ Read .teahouse/output/floors/floor-032.md
 
 ### 步骤 5：更新设定（关键！）与变量
 
-正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
+正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `.teahouse/dyn_settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
 
-正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
+正文 Bot 不读总结文本，它靠**设定切片**记住过去。所以本轮楼层中**对后续有持续影响、需要长期记住**的信息，必须沉淀到 `.teahouse/dyn_settings/` 的设定文件里（角色状态、关系、世界观进展等），供后续生成以 `{{path|from=...}}` 锚点引用。
 
 同时更新变量系统（`.teahouse/runtime_vars.jsonl`，**核心变量已在你系统提示词里 no-cache 呈现**，通常无需额外读取）：
 
@@ -101,7 +101,7 @@ SetRuntimeVar(updates={...})  → 写变量
 #### 变量 vs 设定的边界
 
 - **变量**（SetRuntimeVar 管理）：高度精炼、会频繁变动的数值/重要值（`金币`、`修为`、`好感度`）。核心变量注入系统提示词（no cache）。
-- **动态设定**（settings/ 文件管理）：较长、中短期生效的文字状态——人物关系变化、任务进展、二人闹别扭等。它们会随剧情变，但**不是变量**，归 `settings/` 用 Write/Edit/WriteLine 维护，识别到变化时就地更新对应设定文件。
+- **动态设定**（`.teahouse/dyn_settings/` 文件管理）：较长、中短期生效的文字状态——人物关系变化、任务进展、二人闹别扭等。它们会随剧情变，但**不是变量**，归 `.teahouse/dyn_settings/` 用 Write/Edit/WriteLine 维护，识别到变化时就地更新对应设定文件。
 
 #### 变量操作
 
@@ -111,7 +111,7 @@ SetRuntimeVar(updates={...})  → 写变量
 SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层", "主线进度": "青云山试炼完成"})
 ```
 
-范围/变更历史如需留档（便于跨楼层追踪"何时因何变了多少"），可在 `settings/` 下维护一份可选的变量变更记录文件（如 `settings/variable-change-log.md`）并用 Edit 追加。这是可选的——通常直接把变更写进设定与正文即可。
+范围/变更历史如需留档（便于跨楼层追踪"何时因何变了多少"），可在 `.teahouse/dyn_settings/` 下维护一份可选的变量变更记录文件（如 `.teahouse/dyn_settings/variable-change-log.md`）并用 Edit 追加。这是可选的——通常直接把变更写进设定与正文即可。
 
 #### 清理无用变量
 
@@ -120,22 +120,28 @@ SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层", "主线进度": 
 ### 步骤 6：写入流水账（导演回溯参考）
 
 ```
-FileOps mkdir summary/                 → 确保存在
-Write summary/sum-A-B.md               → 写入流水账文本
+FileOps mkdir .teahouse/dyn_settings/summary/ → 确保存在
+Write .teahouse/dyn_settings/summary/sum-A-B.md     → 写入流水账文本
 ```
 
 如果拆分为多个摘要，每个写入独立文件。
 
-> ⚠️ 流水账仅供导演回溯深挖设定用，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `settings/` 设定与 `.teahouse/runtime_vars.jsonl` 变量。正文 Bot 看「最近 N 章正文 + settings + 变量」即可；若创作者想在自己的 yaml 配置里引用 summary 也行——正文可见性由创作者自己决定，引擎不强制。
+> ⚠️ 流水账仅供导演回溯深挖设定用，**不会进入正文 Bot 的上下文**。对后续剧情真正重要的是你在步骤 5 里更新出的 `.teahouse/dyn_settings/` 设定与 `.teahouse/runtime_vars.jsonl` 变量。正文 Bot 看「最近 N 章正文 + 动态设定 + 变量」即可；若创作者想在自己的 yaml 配置里引用 summary 也行——正文可见性由创作者自己决定，引擎不强制。
 
 ### 步骤 7：Git 提交（归档界由后端自动维护）
 
 ```
-GitCommit(type="summary", start=A, end=B, message="简短描述")
+GitCommit(type="summary", start=A, end=B, paths=[".teahouse/dyn_settings", ".teahouse/generate-config"], message="简短描述")
 ```
 
+**务必带 `paths=[".teahouse/dyn_settings", ".teahouse/generate-config"]`**：总结会话改动（动态设定 + 流水账 + 归档界 index）在本目录下；`.teahouse/generate-config/` 的生成配置若随剧情重组也会在本轮变。带上这两个路径确保本轮提交**只提交总结自己的改动**，不会把主会话尚未提交的楼层/变量改动卷进来——这是总结子会话能与前台游玩**并行**、互不污染的关键。提交前可先 `GitStatus` / `GitDiff(staged=true)` 自查本次 stage 的内容。
+
+> git 只提交 `paths` 里**实际有变**的文件：若本轮生成配置没改（动态设定切片由 dyn_settings 承载、generate-config 常年不动），git 自动跳过它，不会产生空改动提交。提交前用 `GitDiff(staged=true)` 确认 stage 的正是你想提交的那几个。
+
+> 🚫 总结**不修改** `static_settings/`（根目录，长期静态设定，已被 gitignore）。它是背景板级常量，跟剧情无关，交给你只读引用（`{{static_settings/...}}` 切片），不要写它。
+
 提交时后端会自动执行两件事：
-1. 把 `summary/index.json` 的 `summarized_through` 推进到 **B**（覆盖楼层含端点），
+1. 把 `.teahouse/dyn_settings/summary/index.json` 的 `summarized_through` 推进到 **B**（覆盖楼层含端点），
 2. 追加一条流水账索引 entry `{start, end, file}`。
 
 你无需手改 `teahouse.md` 里的归档界——它已经由代码自动维护。**唯一要保证的是 start/end 填对**（与 `sum-N-M.md` 覆盖范围一致），因为后端信任你上报的 `end`。后续 `{{glob:output/floors/floor-*.md:lastN}}` 的窗口计算会自动读该索引只回溯未总结楼层。
@@ -144,7 +150,7 @@ GitCommit(type="summary", start=A, end=B, message="简短描述")
 
 ## 注意事项
 
-- **归档界在 `summary/index.json`，由代码自动推进**，不要手改 `teahouse.md` 的 `summarized_to`（已退役）。
+- **归档界在 `.teahouse/dyn_settings/summary/index.json`，由代码自动推进**，不要手改 `teahouse.md` 的 `summarized_to`（已退役）。
 - `sum-*.md` 名字里的数字现在**只作文档/文件名**，后端统计不再靠它推导归档界——所以名字可稍随意，但仍建议按规范命名便于人读。
 
 - 总结不是楼层，不增加楼层计数
