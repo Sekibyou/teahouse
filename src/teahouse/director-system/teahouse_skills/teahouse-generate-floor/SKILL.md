@@ -19,10 +19,20 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 
 ## 目录约定
 
-- `temp/` — 真草稿（多版本、多块拼接，创作过程中间产物）。**temp/ 不纳入 git 版本控制**（GitCommit 不会提交其内容），草稿/探索中间产物放这里很安全
+- `temp/` — 草稿/探索中间产物（**每章一份、就地覆盖**，不做多版本并存）。**temp/ 不纳入 git 版本控制**（GitCommit 不会提交其内容），草稿/探索中间产物放这里很安全。**写 temp/ 的 Generate 不进沙盒打字机**——流式仅在最终落进 `.teahouse/output/floors/` 后一次性渲染
 - `.teahouse/output/floors/` — 上下文引擎正文历史（半正式稿 + 定稿），每层最多一份，就地覆盖
   - `floor-N-draft.md` — 半正式稿（创作过程中）
   - `floor-N.md` — 正式定稿（满意后 rename）
+
+## 输出路径：按用户要求分流
+
+Generate 的 `path` 落在哪个目录，决定沙盒是否流式渲染，须按用户意图选择：
+
+- **生成全文 / 重写** → `path` **直接**写 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+  落盘即在正文历史 → 触发沙盒打字机并常驻渲染。
+- **续写 / 大幅度改写** → `path` 写 `temp/draft-{{N}}.md`，完成后读出现稿与之**对比合并**
+  （新增部分并入），再落进 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+  temp/ 阶段不打字机；落进 floors/ 后一次性渲染合并结果。
 
 ## SOP
 
@@ -112,9 +122,9 @@ Glob .teahouse/output/floors/floor-*.md
 
 **工作流**：
 
-1. **复制配置模板**：
-   - 如果是首次创作：复制 `settings/generate-config-default.yaml` → `temp/generate-config-{{N}}-1.yaml`
-   - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}-1.yaml`）→ `temp/generate-config-{{N}}-1.yaml`
+1. **复制配置模板**（每章一份 `generate-config-{{N}}.yaml`，就地覆盖、不做多版本）：
+   - 如果是首次创作：复制 `settings/generate-config-default.yaml` → `temp/generate-config-{{N}}.yaml`
+   - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}.yaml`）→ `temp/generate-config-{{N}}.yaml`
 
 2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
    - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{summary/sum-*.md}}` 而非逐层）
@@ -155,22 +165,31 @@ Glob .teahouse/output/floors/floor-*.md
    - 在最后一条 user 消息中填入用户的实际写作要求
    - 必要时添加伪造的 user/assistant 对话来破限或引导文风
 
-3. **调用 Generate**（真草稿落 temp，多版本并存供返工）：
-   ```
-   Generate(
-     source_file: "temp/generate-config-{{N}}-1.yaml",
-     path: "temp/draft-{{N}}-1.md"
-   )
-   ```
+3. **调用 Generate**（按上面的「输出路径」分流，配置 `source_file` 每章一份就地覆盖）：
+   - **生成全文 / 重写**（直接落正文历史，触发打字机）：
+     ```
+     Generate(
+       source_file: "temp/generate-config-{{N}}.yaml",
+       path: ".teahouse/output/floors/floor-{{N}}-draft.md"
+     )
+     ```
+   - **续写 / 大幅度改写**（先落 temp 不打字机，完成后再对比合并、落进 floors）：
+     ```
+     Generate(
+       source_file: "temp/generate-config-{{N}}.yaml",
+       path: "temp/draft-{{N}}.md"
+     )
+     ```
 
-4. **返工时**：版本号递增，如 `temp/generate-config-{{N}}-2.yaml` → Generate → `temp/draft-{{N}}-2.md`
+4. **返工时**：直接改 `temp/generate-config-{{N}}.yaml` 后再 Generate（不建多版本），产出同样就地覆盖。
 
 ### 步骤 8：落半正式稿（把正文交给前端展示）
 
-Generate 产出的 temp 真草稿定稿后，落为唯一半正式稿，前端即可自动刷新展示：
+- **生成全文 / 重写场景**：Generate 已直接写 `.teahouse/output/floors/floor-{{N}}-draft.md`，前端已自动展示，**无需 move**。
+- **续写 / 大幅度改写场景**：Generate 产出的 temp 草稿定稿后，与现有稿件对比合并，再落为唯一半正式稿：
 
 ```
-FileOps move temp/draft-{{N}}-{{V}}.md .teahouse/output/floors/floor-{{N}}-draft.md
+FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 ```
 
 半正式稿 `floor-N-draft.md` **每层唯一**——返工/修改时直接覆盖它（FileOps move 会覆盖已有同名目标）。它是前端在写稿过程中看到的正文版本。
@@ -179,7 +198,7 @@ FileOps move temp/draft-{{N}}-{{V}}.md .teahouse/output/floors/floor-{{N}}-draft
 
 通知用户查看产物（前端已自动展示 `floor-{{N}}-draft.md`）。等待用户进一步指示。
 
-- **如果用户要求返工**：版本号递增生成新的 temp 草稿（draft-{{N}}-2.md）后，再次 FileOps move 覆盖 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+- **如果用户要求返工**：直接修改 `temp/generate-config-{{N}}.yaml`（或对应场景的产出）后再次生成，就地覆盖 `.teahouse/output/floors/floor-{{N}}-draft.md`（续写/改写场景需再对比合并后 move）。
 - **如果用户要求修改这一层**：不要重新生成，直接对 `.teahouse/output/floors/floor-{{N}}-draft.md` 用 Edit 或 WriteLine 精确替换。除非用户明确要求重写。
 
 ### 步骤 10：用户确认后，正式定稿并 Git 提交
