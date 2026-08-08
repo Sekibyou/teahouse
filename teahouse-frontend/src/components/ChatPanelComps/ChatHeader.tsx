@@ -1,4 +1,4 @@
-import { Stethoscope, Puzzle, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
+import { Puzzle, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
 interface ChangeCounts {
@@ -8,11 +8,6 @@ interface ChangeCounts {
 }
 
 interface ChatHeaderProps {
-  // Diag
-  showDiag: boolean
-  onToggleDiag: () => void
-  diagEnabled: boolean
-
   // Slot models
   slotModels: Record<string, string | null>
   enabledPluginCount: number
@@ -39,9 +34,6 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({
-  showDiag,
-  onToggleDiag,
-  diagEnabled,
   slotModels,
   enabledPluginCount,
   onOpenSettings,
@@ -61,18 +53,9 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <div className="p-3 border-b border-border shrink-0 space-y-2">
-      {/* Row 1: 导演 + enabled plugin count + model names + diag */}
+      {/* Row 1: 导演 + enabled plugin count + model names */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold">导演</h3>
-          <button
-            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-            onClick={onToggleDiag}
-            title={showDiag ? "关闭诊断日志" : (diagEnabled ? "诊断日志（录制中）" : "诊断日志")}
-          >
-            <Stethoscope className={`h-3.5 w-3.5 ${diagEnabled ? "text-green-500" : ""}`} />
-          </button>
-        </div>
+        <h3 className="text-sm font-semibold">导演</h3>
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <button
             className="flex items-center gap-1 hover:text-foreground transition-colors"
@@ -112,7 +95,6 @@ export function ChatHeader({
               className={`relative px-2 py-0.5 rounded text-[10px] border transition-colors ${
                 active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
               }`}
-              title={isMain ? "主会话（持续对话）" : `会话 ${s.session_id} · ${s.record_count} 条记录`}
             >
               {label}{isMain ? "" : (s.record_count > 0 ? `·${s.record_count}` : "")}
               {/* 有新消息 → 右上角小圆圈 */}

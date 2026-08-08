@@ -328,14 +328,27 @@ def records_to_context(instance_dir: Path, api_style: str, session_id: str = MAI
 def destroy(instance_dir: Path, session_id: str) -> None:
     """Delete a session's JSONL and metadata file.
 
-    Unified lifecycle — works for main and child sessions alike. Main will be
-    lazily recreated on the next write.
+    Unified lifecycle — works for child sessions. Main will be lazily
+    recreated on the next write.
     """
     sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
     meta = instance_dir / SESSION_DIR / f"{session_id}.meta.json"
     for p in (sess, meta):
         if p.exists():
             p.unlink()
+
+
+def truncate(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> None:
+    """Wipe a session's records but keep its JSONL file on disk.
+
+    Used for the main session `/clear`: the file stays so `list_sessions`
+    keeps reporting the main session and the frontend session strip doesn't
+    lose its "主会话" tab (a deleted file would otherwise drop the entry and
+    no `session_destroyed` re-add path exists for main).
+    """
+    sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
+    if sess.exists():
+        sess.write_text("", encoding="utf-8")
 
 
 # -- legacy aliases (kept for backward-compat in routes) --

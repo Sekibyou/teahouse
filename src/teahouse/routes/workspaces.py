@@ -1063,6 +1063,12 @@ async def destroy_session(
 
     ``abort=true`` additionally cancels an in-flight /v1/chat for that session
     (frontend-disconnect style). Broadcasts ``session_destroyed``.
+
+    The main session is special-cased: ``/clear`` truncates its records but
+    keeps the JSONL file on disk and does NOT broadcast ``session_destroyed``.
+    Deleting the file would drop the main entry from the frontend session
+    strip (it only re-adds on a genuine destroy), leaving no "主会话" tab.
+    Child sessions keep the delete + broadcast behavior.
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -1070,11 +1076,15 @@ async def destroy_session(
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    from ..sessions import destroy as _destroy
+    from ..sessions import MAIN_SESSION_ID, destroy as _destroy, truncate as _truncate
 
     if abort:
         from ..session_tracker import abort_session_requests
         await abort_session_requests(instance_dir.name, session_id)
+
+    if session_id == MAIN_SESSION_ID:
+        _truncate(instance_dir, session_id)
+        return {"status": "ok", "session_id": session_id}
 
     _destroy(instance_dir, session_id)
     state.broadcast("session_destroyed", {"instance_id": instance_id, "session_id": session_id})

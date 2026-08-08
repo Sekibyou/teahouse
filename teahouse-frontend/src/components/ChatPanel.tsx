@@ -8,7 +8,6 @@ import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import type { FloorsStats } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
-import { useDiagnosticLog, DiagnosticPanel } from "@/components/DiagnosticPanel"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
 import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
@@ -17,8 +16,6 @@ import { ChatInput } from "./ChatPanelComps/ChatInput"
 
 export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
-  const [showDiag, setShowDiag] = useState(false)
-  const diag = useDiagnosticLog()
 
   // ── Per-session UI state ─────────────────────────────────────────
   // running / elapsed / tokenCount come from the BACKEND (session_tracker).
@@ -257,7 +254,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           const sid = data.session_id
           if (!sid) return
           const qid = data.queue_id as string | undefined
-          window.__TEAHOUSE_LOG__?.("session_user_msg", `sid=${sid} active=${activeSidRef.current} qid=${qid || "NONE"} content=${data.content ? JSON.stringify((data.content as string).slice(0, 80)) : "NONE"}`)
           if (activeSidRef.current === sid && data.content) {
             // Try to upgrade an existing queued bubble first
             let upgraded = false
@@ -268,7 +264,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                   const next = [...prev]
                   next[idx] = { ...next[idx], status: "done" as MsgStatus }
                   upgraded = true
-                  window.__TEAHOUSE_LOG__?.("session_user_msg", `UPGRADED queued msg idx=${idx} → done`)
                   return next
                 }
                 return prev
@@ -280,7 +275,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               // wake-up that arrived when loop was idle so no queued event fired).
               const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done", _queue_id: qid }
               const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-              window.__TEAHOUSE_LOG__?.("session_user_msg", `APPENDING userMsg.id=${userMsg.id} pendingAsst.id=${pendingAsst.id}`)
               setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
             }
             scrollToBottom()
@@ -305,7 +299,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          window.__TEAHOUSE_LOG__?.("session_user_queued", `sid=${sid} active=${activeSidRef.current} qid=${data.queue_id}`)
           if (activeSidRef.current === sid && data.content) {
             const queuedMsg: RichMessage = {
               id: nextId(),
@@ -370,7 +363,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
           if (activeSidRef.current === sid) {
             // ---- Currently viewing this session: real-time streaming ----
-            window.__TEAHOUSE_LOG__?.("session_event", `type=${t} sid=${sid} ${t === "text" ? `text_len=${(data.text as string)?.length || 0}` : t === "tool_call" ? `name=${data.name}` : t === "tool_result" ? `name=${data.name} id=${data.id}` : ""}`)
 
             // Helper: find or create a pending assistant to stream into.
             // When the user switches back to a running session mid-stream,
@@ -928,7 +920,6 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
   const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
     const sid = targetSid || activeSid
-    window.__TEAHOUSE_LOG__?.("_doSend", `sid=${sid} useTools=${useTools} text=${JSON.stringify(text.slice(0, 80))}`)
 
     // /clear command
     if (text === "/clear") {
@@ -1117,21 +1108,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
   return (
     <div className="h-full flex flex-col relative">
-      <DiagnosticPanel
-        open={showDiag}
-        onClose={() => setShowDiag(false)}
-        entries={diag.entries}
-        enabled={diag.enabled}
-        onEnable={diag.enable}
-        onDisable={diag.disable}
-        onClear={diag.clear}
-        onCopy={diag.copy}
-      />
       {/* Header */}
       <ChatHeader
-        showDiag={showDiag}
-        onToggleDiag={() => setShowDiag(v => !v)}
-        diagEnabled={diag.enabled}
         slotModels={slotModels}
         enabledPluginCount={enabledPluginCount}
         onOpenSettings={openSettings}
