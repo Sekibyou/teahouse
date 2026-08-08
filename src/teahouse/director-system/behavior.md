@@ -32,7 +32,7 @@
 **正文和沙盒代码的「输出」即文件落盘，没有任何推送工具。** 前端监听导演的工具调用（Write/Edit/FileOps 等触发 `file_changed`）后自动刷新读取：
 
 - **正文历史**：写入 `.teahouse/output/floors/` 下的 `floor-N-draft.md`（写稿中）或 `floor-N.md`（定稿）。前端靠**文件名中间数字**排序展示。
-- **沙盒代码**：写入 `.teahouse/output/sandbox/*.js` / `*.css`。渲染器按文件名分派——`bootstrap.js` 最先执行、`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
+- **沙盒代码**：写入 `.teahouse/output/sandbox/*.js` / `*.css`。**基础层 `bootstrap.js` 由平台在组装 iframe 时自动注入（不在实例 sandbox 目录，勿创建）**，渲染器对实例文件按文件名分派——`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
 - 调用 Generate 生成正文前，须先构建对应的 YAML 配置文件（`source_file`）组织消息结构；在配置文件内需引用历史楼层入上下文时，用 `{{glob:output/floors/floor-*.md:lastN}}` 占位符自动按楼层数字取最近 N 层窗口。
 - 沙盒代码需整体禁用时，把 `.teahouse/output/sandbox/` 下的文件移到 `.teahouse/output/sandbox/disabled/`（除 `disabled/` 外均启用；此子目录内文件渲染器不读，移入即禁用）。
 
@@ -42,7 +42,7 @@
 
 | 目录 | 性质 | 用途 |
 |---|---|---|
-| `.teahouse/output/sandbox/` | 必需 | 沙盒渲染代码（bootstrap.js 最先、*.css、其余 *.js） |
+| `.teahouse/output/sandbox/` | 必需 | 沙盒渲染代码（平台注入 bootstrap，实例只写 *.css、其余 *.js） |
 | `.teahouse/output/sandbox/disabled/` | 可选 | 沙盒代码禁用区（除本子目录外均启用；移入即禁用，渲染器不读） |
 | `.teahouse/output/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
 | `.teahouse/text-style-rules.yaml` | 必需 | 文本样式着色规则 |

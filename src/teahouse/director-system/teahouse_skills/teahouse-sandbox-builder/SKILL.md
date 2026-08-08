@@ -1,6 +1,6 @@
 ---
 name: teahouse-sandbox-builder
-description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
+description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `.teahouse/output/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
 ---
 
 # Sandbox Builder Skill
