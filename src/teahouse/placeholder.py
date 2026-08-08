@@ -59,6 +59,8 @@ def resolve_placeholders(text: str, instance_dir: Path, strict: bool = False) ->
     strict=True: raises PlaceholderError on failure (used by Write/Edit/WriteLine
     where the director explicitly opted in and should see the error).
     """
+    text, literals = _hide_escaped_placeholders(text)
+
     def _replacer(match: re.Match) -> str:
         raw = match.group(1).strip()
         try:
@@ -68,10 +70,101 @@ def resolve_placeholders(text: str, instance_dir: Path, strict: bool = False) ->
                 raise
             return match.group(0)  # keep literal
 
-    return re.sub(r"\{\{(.+?)\}\}", _replacer, text)
+    text = re.sub(r"\{\{(.+?)\}\}", _replacer, text)
+    return _restore_escaped_placeholders(text, literals)
 
 
 _VARIABLE_RE = re.compile(r"\$\{(.+?)\}")
+
+# ---------------------------------------------------------------------------
+# 转义语法 — 前缀反斜杠保护占位符不被展开
+#
+#   \{{path}}  /  \{{glob:...:lastN}}   →  字面量  {{path}}（文件切片不展开）
+#   \${name}                              →  字面量  ${name}（变量不展开）
+#   \$ { if ...: return ... }             →  字面量  ${ if ...: }（条件块不执行）
+#   \\                                    →  字面量  \
+#
+# 实现：解析全程用哨兵令牌顶替被转义的占位符，使之对 ${} / {{}} 两个解析器都
+# 不可见（尤其避开 resolve_variables 的多轮交替展开与 max_depth 递归），等解析
+# 全部结束后的"最后阶段"才一次性把哨兵还原为去掉反斜杠的字面量。
+# ---------------------------------------------------------------------------
+
+# 哨兵令牌。\x01 是几乎不可能出现在正文里的控制符，且两边各有一个，避免与
+# 任何真实段落撞车；哨兵内部编号保证唯一。
+_ESC_SENTINEL_START = "\x01\x05ESC"
+_ESC_SENTINEL_END = "\x01\x05"
+_ESC_SENTINEL_RE = re.compile(
+    re.escape(_ESC_SENTINEL_START) + r"(\d+)" + re.escape(_ESC_SENTINEL_END)
+)
+
+
+def _hide_escaped_placeholders(text: str) -> tuple[str, list[str]]:
+    """把被反斜杠转义的占位符替换为哨兵，返回 (hidden, literals)。
+
+    literals[i] 是第 i 个被转义占位符的**字面量**（去掉前导反斜杠的原样文本）。
+    hidden 文本里第 i 个哨兵还原时取 literals[i]。
+
+    用 balanced 扫描（同 resolve_conditional_slices）匹配开括号，所以：
+      - \${...}（单行变量）与其内部的 } 正确配对
+      - \$ {...}（多行条件块）内部的 } 按嵌套深度配对，不会被截断
+      - \{{...}} 单层切片正确配对
+    未闭合/异常的前导反斜杠原样保留（不吞掉 \）。
+    """
+    literals: list[str] = []
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "\\" and i + 1 < n and text[i + 1] in ("{", "$"):
+            second = text[i + 1]
+            # 定位开括号位置：
+            #   \{{...}}  → 直接从第一个 { 起 balanced
+            #   \${...}   → $ 后紧跟 { ，从该 { 起 balanced
+            #   \$ {...}  → $ 后允许空白（多行条件块写法），越过空白找 { 再 balanced
+            k = i + 1  # 指向 $ 或 {（反斜杠后的第二字符）
+            if second == "$":
+                k += 1  # 指向 { ，或空白
+                while k < n and text[k] in " \t\r\n":
+                    k += 1
+            # 此时若 text[k] == "{"，即找到开括号；否则不是占位符
+            if k < n and text[k] == "{":
+                depth = 0
+                j = k
+                closed = False
+                while j < n:
+                    if text[j] == "{":
+                        depth += 1
+                    elif text[j] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            closed = True
+                            break
+                    j += 1
+                if closed:
+                    # 被转义片段：去掉前导反斜杠后作为字面量
+                    literal = text[i + 1 : j + 1]  # i+1 跳过反斜杠
+                    token = f"{_ESC_SENTINEL_START}{len(literals)}{_ESC_SENTINEL_END}"
+                    literals.append(literal)
+                    out.append(token)
+                    i = j + 1
+                    continue
+            # 无闭合大括号 — 反斜杠原样保留，继续下一个字符
+            out.append(text[i])
+            i += 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out), literals
+
+
+def _restore_escaped_placeholders(text: str, literals: list[str]) -> str:
+    """把哨兵还原为字面量。仅在全部解析完成后调用（转义的最后阶段）。"""
+    def _replacer(match: re.Match) -> str:
+        idx = int(match.group(1))
+        if 0 <= idx < len(literals):
+            return literals[idx]
+        return match.group(0)
+    return _ESC_SENTINEL_RE.sub(_replacer, text)
 
 
 def _substitute_variable_literals(text: str, var_map: dict) -> str:
@@ -521,15 +614,22 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     are lenient (strict=False): unresolvable `{{...}}` (a doc example) stays literal
     rather than raising.
     """
+    # 转义的最后阶段：隐藏被 \ 转义的占位符，避免多轮交替展开把它们吞掉。
+    # ${teahouse.*} / ${name} 变量值在循环内才注入，注入后可能出现新的 \{{...}}，
+    # 所以隐藏要**在每次迭代里重复做**（把新增的转发给哨兵），循环稳定后统一还原。
+    esc_literals: list[str] = []
     for _ in range(max_depth):
         before = text
         text = resolve_conditional_slices(text, var_map)
         text = _substitute_variable_literals(text, var_map)
+        # 变量值注入后，把新增的转义占位符保护为哨兵
+        text, extra = _hide_escaped_placeholders(text)
+        esc_literals.extend(extra)
         if "{{" in text:
             text = resolve_placeholders(text, instance_dir, strict=strict)
         if text == before:
             break
-    return text
+    return _restore_escaped_placeholders(text, esc_literals)
 
 
 def _stringify(value) -> str:
