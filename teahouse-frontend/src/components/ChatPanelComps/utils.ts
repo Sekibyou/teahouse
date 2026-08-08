@@ -40,6 +40,21 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
 }
 
 /**
+ * 识别固定格式的 `[auto]` 系统消息并归类，以便前端用特殊标记渲染而非普通气泡。
+ * - "interrupt"   : 用户打断（"[auto] user interrupted"）
+ * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
+ * 其它消息返回 null（普通 user 气泡）。
+ */
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "session_done"; sid: string } | null {
+  if (!content.startsWith("[auto] ")) return null
+  const trimmed = content.slice("[auto] ".length)
+  if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
+  const sidMatch = trimmed.match(/session-([0-9a-fA-F]{8,})/)
+  if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
+  return null
+}
+
+/**
  * 合并连续相同 role 的消息为单条（用换行分隔）。
  * Anthropic API 会在服务端自动合并；OpenAI 原生不强制交替；
  * 但严格第三方提供商（Kimi、Qwen 等）要求严格交替，合并后满足所有 API。

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Loader2 } from "lucide-react"
+import { Loader2, X, CheckCircle2 } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
@@ -9,7 +9,7 @@ import type { FloorsStats } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
@@ -279,10 +279,16 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               // No queued bubble to upgrade — the frontend missed the queued
               // event (e.g. interrupt auto-message, sub-session wake-up while
               // idle). Insert the user bubble at its ordered position.
+              const auto = autoMsgKind((data.content as string) || "")
               const userMsg: RichMessage = {
                 id: nextId(), role: "user", content: data.content as string,
                 reasoning: "", status: "done", order: typeof order === "number" ? order : 0,
                 sub: null, subRank: 0,
+                ...(auto
+                  ? auto.kind === "session_done"
+                    ? { autoKind: "session_done" as const, autoSid: auto.sid }
+                    : { autoKind: "interrupt" as const }
+                  : {}),
               }
               setMessagesFor(sid, (prev) => insertBubbleSorted(prev, userMsg))
             }
@@ -310,6 +316,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           if (!sid) return
           if (activeSidRef.current === sid && data.content) {
             const order = typeof data.order === "number" ? data.order : 0
+            const auto = autoMsgKind((data.content as string) || "")
             const queuedMsg: RichMessage = {
               id: nextId(),
               role: "user",
@@ -319,6 +326,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               order,
               sub: null,
               subRank: 0,
+              ...(auto
+                ? auto.kind === "session_done"
+                  ? { autoKind: "session_done" as const, autoSid: auto.sid }
+                  : { autoKind: "interrupt" as const }
+                : {}),
             }
             setMessagesFor(sid, (prev) => insertBubbleSorted(prev, queuedMsg))
             scrollToBottom()
@@ -624,16 +636,23 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     const order = typeof rec.order === "number" ? rec.order : 0
     const sub: number | "r" | null = rec.sub === undefined || rec.sub === null ? null : (rec.sub === "r" ? "r" : (typeof rec.sub === "number" ? rec.sub : null))
     const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
+    const content = rec.content || ""
+    const auto = content ? autoMsgKind(content) : null
     return {
       id: nextId(),
       role: rec.role === "user" ? "user" : "assistant",
-      content: rec.content || "",
+      content,
       reasoning: rec.reasoning || "",
       status: "done",
       blocks: rec.blocks || undefined,
       order,
       sub,
       subRank,
+      ...(auto && rec.role === "user"
+        ? auto.kind === "session_done"
+          ? { autoKind: "session_done" as const, autoSid: auto.sid }
+          : { autoKind: "interrupt" as const }
+        : {}),
     }
   }
 
@@ -942,10 +961,17 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   }, [isStreaming])
 
   // ESC 快捷键：停止生成
+  // 注意：handler 里的 running/waiting 必须从 ref 读最新值——把 isStreaming/
+  // isWaiting 放进依赖数组会让监听器随每次流式状态变化反复重建，且闭包若只
+  // 捕获首次渲染的值会导致 ESC 在生成中失效（按钮在 render 里每次读，故正常）。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      if (!isStreaming && !isWaiting) return
+      const sidNow = activeSidRef.current
+      const st = sessionStateRef.current[sidNow]
+      const running = st?.running === true
+      const waiting = st?.waiting === true && !running
+      if (!running && !waiting) return
       e.preventDefault()
       handleStop()
     }
@@ -1201,6 +1227,20 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                       isGlobalGenerating={isGlobalGenerating}
                       isIdle={isIdle}
                     />
+                  ) : msg.role === "user" && msg.autoKind ? (
+                    <div className="max-w-[85%] rounded-lg px-3 py-1.5 text-xs text-muted-foreground/70 bg-muted/40 border border-border/60 flex items-center gap-1.5">
+                      {msg.autoKind === "interrupt" ? (
+                        <>
+                          <X className="h-3 w-3 text-muted-foreground/70" />
+                          <span>已中断</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 text-muted-foreground/70" />
+                          <span className="font-mono">子会话已结束：{msg.autoSid || ""}</span>
+                        </>
+                      )}
+                    </div>
                   ) : msg.status === "queued" ? (
                     <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
                       <Loader2 className="h-3 w-3 animate-spin" />
