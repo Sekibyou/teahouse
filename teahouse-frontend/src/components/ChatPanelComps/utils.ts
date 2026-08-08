@@ -8,6 +8,38 @@ export function nextId() {
 }
 
 /**
+ * 按 (order, subRank) 升序比较两条气泡，用于稳定排序 / 有序插入。
+ * 后端 JSONL 是唯一事实来源：order 即 record 序，subRank 即记录内的子泡序。
+ */
+export function compareBubbles(a: { order: number; subRank: number }, b: { order: number; subRank: number }): number {
+  if (a.order !== b.order) return a.order - b.order
+  return a.subRank - b.subRank
+}
+
+/** 在列表中定位拥有指定 (order, sub) 的气泡，找不到返回 -1。 */
+export function findBubbleIndex(
+  msgs: RichMessage[],
+  order: number,
+  sub: number | string | null,
+): number {
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i]
+    if (m.order === order && m.sub === sub) return i
+  }
+  return -1
+}
+
+/** 在保持 (order, subRank) 顺序的前提下，把一个气泡插入列表正确位置。 */
+export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichMessage[] {
+  const idx = msgs.findIndex(m => compareBubbles(m, msg) > 0)
+  if (idx === -1) return [...msgs, msg]
+  if (msgs[idx].order === msg.order && msgs[idx].sub === msg.sub) return msgs
+  const next = msgs.slice()
+  next.splice(idx, 0, msg)
+  return next
+}
+
+/**
  * 合并连续相同 role 的消息为单条（用换行分隔）。
  * Anthropic API 会在服务端自动合并；OpenAI 原生不强制交替；
  * 但严格第三方提供商（Kimi、Qwen 等）要求严格交替，合并后满足所有 API。

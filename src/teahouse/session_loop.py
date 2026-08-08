@@ -88,9 +88,22 @@ class SessionLoop:
         self.session_id = session_id
         self.instance_id = instance_id
         self.user_id = user_id
-        self._queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
         self._interrupted = False
         self._task: asyncio.Task | None = None
+        # Session-wide monotonic order watermark. Initialised from the current
+        # on-disk record count and bumped by every append AND every in-memory
+        # reservation (queued bubble / streaming round). This keeps the reserved
+        # order of a queued-but-not-yet-persisted message distinct from the next
+        # one, even when several are enqueued while the loop is busy.
+        self._order = sessions._count_records(
+            instance_dir / sessions.SESSION_DIR / f"{session_id}.jsonl"
+        )
+
+    def next_order(self) -> int:
+        """Allocate the next order for this session (monotonic, not persisted)."""
+        self._order += 1
+        return self._order - 1
 
     # ------------------------------------------------------------------
     # Public API
@@ -108,9 +121,10 @@ class SessionLoop:
         if not content:
             return
         queue_id = uuid.uuid4().hex[:12]
+        order = self.next_order()
         _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": content[:200]})
-        self._broadcast_user_queued(queue_id, content)
-        self._queue.put_nowait((queue_id, content))
+        self._broadcast_user_queued(queue_id, content, order)
+        self._queue.put_nowait((queue_id, content, order))
 
     def interrupt(self) -> None:
         """Set the interrupt flag and cancel the in-flight tool-loop task.
@@ -163,12 +177,14 @@ class SessionLoop:
             if self._interrupted:
                 self._interrupted = False
                 _event_log(self.instance_dir, self.session_id, "loop_interrupted", {})
+                order = self.next_order()
                 sessions.append_user(
                     self.instance_dir,
                     "[auto] user interrupted",
                     session_id=self.session_id,
+                    order=order,
                 )
-                self._broadcast_user_msg(None, "[auto] user interrupted")
+                self._broadcast_user_msg(None, "[auto] user interrupted", order)
                 self._broadcast_done()
 
             # 2. Drain queue. Messages are NOT yet persisted — enqueue() only
@@ -182,10 +198,13 @@ class SessionLoop:
             _event_log(self.instance_dir, self.session_id, "loop_drain", {"count": len(msgs), "preview": [m[1][:100] for m in msgs]})
 
             # Persist each message to jsonl now, then broadcast the upgrade
-            # event so the frontend can turn the grey bubble white.
-            for queue_id, content in msgs:
-                sessions.append_user(self.instance_dir, content, session_id=self.session_id)
-                self._broadcast_user_msg(queue_id, content)
+            # event so the frontend can turn the grey bubble white. The order
+            # comes from the reservation made at enqueue time (stored in the
+            # queue entry), so the persisted order matches the queued bubble's
+            # position and the upgrade by order succeeds.
+            for queue_id, content, order in msgs:
+                sessions.append_user(self.instance_dir, content, session_id=self.session_id, order=order)
+                self._broadcast_user_msg(queue_id, content, order)
 
             # 3. Resolve LLM client
             client = await self._resolve_client()
@@ -231,6 +250,7 @@ class SessionLoop:
             self.instance_id,
             session_id=self.session_id,
             enabled_tools=enabled_tools,
+            order_allocator=self.next_order,
         ):
             task_tracker.stats_tick(self.instance_dir.name, self.session_id)
             stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
@@ -268,12 +288,13 @@ class SessionLoop:
         except Exception:
             return None
 
-    def _drain_queue(self) -> list[tuple[str, str]]:
+    def _drain_queue(self) -> list[tuple[str, str, int]]:
         """Pull all pending messages from the queue (non-blocking).
 
-        Returns a list of (queue_id, content) tuples.
+        Returns a list of (queue_id, content, order) tuples — the order was
+        reserved at enqueue time and is used to persist + broadcast the message.
         """
-        msgs: list[tuple[str, str]] = []
+        msgs: list[tuple[str, str, int]] = []
         while not self._queue.empty():
             try:
                 msgs.append(self._queue.get_nowait())
@@ -293,13 +314,14 @@ class SessionLoop:
             "session_id": self.session_id,
             "type": "done",
             "running": running,
+            "force_close_incomplete": True,
             "stats": {
                 "elapsed": stats.elapsed if stats else 0,
                 "token_count": stats.token_count if stats else 0,
             },
         })
 
-    def _broadcast_user_msg(self, queue_id: str | None, content: str) -> None:
+    def _broadcast_user_msg(self, queue_id: str | None, content: str, order: int) -> None:
         """Tell the frontend a user message was persisted to jsonl (upgrade from queued→done)."""
         from .sessions import _count_records
         count = _count_records(
@@ -310,14 +332,21 @@ class SessionLoop:
             "session_id": self.session_id,
             "queue_id": queue_id,
             "content": content,
+            "order": order,
             "count": count,
         })
 
-    def _broadcast_user_queued(self, queue_id: str, content: str) -> None:
-        """Tell the frontend a user message is queued in memory (grey bubble, not yet persisted)."""
+    def _broadcast_user_queued(self, queue_id: str, content: str, order: int) -> None:
+        """Tell the frontend a user message is queued in memory (grey bubble, not yet persisted).
+
+        ``order`` is reserved at enqueue time from this session's monotonic
+        watermark; the later ``session_user_msg`` (after drain persists it with
+        the same order) upgrades the grey bubble by ``order``.
+        """
         state.broadcast("session_user_queued", {
             "instance_id": self.instance_id or self.instance_dir.name,
             "session_id": self.session_id,
             "queue_id": queue_id,
             "content": content,
+            "order": order,
         })

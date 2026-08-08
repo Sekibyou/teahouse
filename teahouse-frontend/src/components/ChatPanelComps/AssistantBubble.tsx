@@ -143,6 +143,5 @@ export const AssistantBubble = memo(function AssistantBubble({
   prevProps.message === nextProps.message &&
   prevProps.isLatest === nextProps.isLatest &&
   prevProps.isGlobalGenerating === nextProps.isGlobalGenerating &&
-  prevProps.isWaiting === nextProps.isWaiting &&
   prevProps.isIdle === nextProps.isIdle
 )

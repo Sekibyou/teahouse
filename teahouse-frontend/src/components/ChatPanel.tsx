@@ -9,7 +9,7 @@ import type { FloorsStats } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
@@ -85,6 +85,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   sessionListRef.current = sessionList
   const activeSidNewRef = useRef(MAIN_SID)
   activeSidNewRef.current = activeSid
+  // Writer (non-tools) path builds local bubbles with a private negative order
+  // namespace so they sort after all backend-ordered (>=0) bubbles.
+  const writerLocalOrderRef = useRef(-1)
   const markSessionNew = useCallback((sid: string) => {
     if (activeSidNewRef.current === sid) return // 正在看的会话不需要新消息标注
     const next = { ...newMsgMapRef.current, [sid]: true }
@@ -244,22 +247,25 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       })
 
       es.addEventListener("session_user_msg", (e: MessageEvent) => {
-        // The backend persisted a user message to jsonl.  If there is a
-        // queue_id, try to upgrade an existing grey "queued" bubble first;
-        // otherwise append a fresh user bubble (sub-session wake-up,
-        // interrupt auto-message, etc.).
+        // The backend persisted a user message to jsonl.  User bubbles carry a
+        // stable backend ``order`` (the JSONL record id — the single source of
+        // truth for ordering).  Upgrade a matching grey "queued" bubble to done;
+        // otherwise insert a fresh user bubble at its sorted position.  We do
+        // NOT create a placeholder assistant bubble here — the assistant's own
+        // streaming (order,sub) events create its bubbles, and the standalone
+        // "生成中… / 等待中…" indicator covers the gap before first token.
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          const qid = data.queue_id as string | undefined
+          const order = data.order as number | undefined
           if (activeSidRef.current === sid && data.content) {
-            // Try to upgrade an existing queued bubble first
+            // Upgrade an existing queued (order,null) bubble, or insert fresh.
             let upgraded = false
-            if (qid) {
+            if (typeof order === "number") {
               setMessagesFor(sid, (prev) => {
-                const idx = prev.findIndex(m => m._queue_id === qid && m.status === "queued")
+                const idx = prev.findIndex(m => m.order === order && m.sub === null && m.status === "queued")
                 if (idx >= 0) {
                   const next = [...prev]
                   next[idx] = { ...next[idx], status: "done" as MsgStatus }
@@ -270,12 +276,15 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               })
             }
             if (!upgraded) {
-              // No queued bubble to upgrade — append fresh user message +
-              // pending assistant bubble (e.g. interrupt auto-message, sub-session
-              // wake-up that arrived when loop was idle so no queued event fired).
-              const userMsg: RichMessage = { id: nextId(), role: "user", content: data.content as string, reasoning: "", status: "done", _queue_id: qid }
-              const pendingAsst: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-              setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAsst])
+              // No queued bubble to upgrade — the frontend missed the queued
+              // event (e.g. interrupt auto-message, sub-session wake-up while
+              // idle). Insert the user bubble at its ordered position.
+              const userMsg: RichMessage = {
+                id: nextId(), role: "user", content: data.content as string,
+                reasoning: "", status: "done", order: typeof order === "number" ? order : 0,
+                sub: null, subRank: 0,
+              }
+              setMessagesFor(sid, (prev) => insertBubbleSorted(prev, userMsg))
             }
             scrollToBottom()
           } else {
@@ -290,25 +299,28 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       })
 
       es.addEventListener("session_user_queued", (e: MessageEvent) => {
-        // The backend enqueued a user message into the in-memory queue.
-        // It has NOT been persisted to jsonl yet (the tool_loop may still
-        // be running).  Show a grey "waiting" bubble; it will be upgraded
-        // to white "done" when session_user_msg fires later.
+        // The backend enqueued a user message into the in-memory queue; it has
+        // NOT been persisted yet (the tool_loop may still be running).  Show a
+        // grey "queued" bubble keyed by the reserved backend ``order``.  It is
+        // upgraded to done by the later session_user_msg carrying the same order.
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
           if (activeSidRef.current === sid && data.content) {
+            const order = typeof data.order === "number" ? data.order : 0
             const queuedMsg: RichMessage = {
               id: nextId(),
               role: "user",
               content: data.content as string,
               reasoning: "",
               status: "queued",
-              _queue_id: data.queue_id as string,
+              order,
+              sub: null,
+              subRank: 0,
             }
-            setMessagesFor(sid, (prev) => [...prev, queuedMsg])
+            setMessagesFor(sid, (prev) => insertBubbleSorted(prev, queuedMsg))
             scrollToBottom()
           }
         } catch {
@@ -363,77 +375,106 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
 
           if (activeSidRef.current === sid) {
             // ---- Currently viewing this session: real-time streaming ----
+            // Positioning is driven entirely by the backend (order, sub) key —
+            // no "find last non-done bubble" inference. Every streaming event
+            // carries the stable record order + block sub; bubbles are created
+            // (or resumed) at exactly that (order, sub) and sorted numerically,
+            // so an interrupted round can never have a later reply streamed
+            // into a stale bubble positioned above newer user messages.
+            const order = typeof data.order === "number" ? data.order : 0
+            const sub = data.sub === undefined ? null : data.sub
+            const subRank = sub === null ? 0 : (sub === "r" ? -1 : (sub as number))
 
-            // Helper: find or create a pending assistant to stream into.
-            // When the user switches back to a running session mid-stream,
-            // the history loaded from jsonl only contains done records, so
-            // we synthesise a fresh "生成中…" bubble for the in-flight round.
-            const findOrCreatePending = (prev: RichMessage[]): { list: RichMessage[]; msg: RichMessage } => {
-              const existing = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-              if (existing) return { list: prev, msg: existing }
-              const newMsg: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-              return { list: [...prev, newMsg], msg: newMsg }
+            // Find the (order,sub) assistant bubble, or create it in sorted place.
+            const bubbleFor = (prev: RichMessage[], action: (m: RichMessage) => RichMessage): RichMessage[] => {
+              const idx = prev.findIndex(m => m.order === order && m.sub === sub)
+              if (idx >= 0) {
+                const updated = action(prev[idx])
+                if (updated === prev[idx]) return prev
+                const next = prev.slice()
+                next[idx] = updated
+                return next
+              }
+              const fresh: RichMessage = {
+                id: nextId(), role: "assistant", content: "", reasoning: "",
+                status: sub === "r" ? "reasoning" : "pending",
+                blocks: sub === "r" ? [] : undefined,
+                order, sub, subRank,
+              }
+              let placed = insertBubbleSorted(prev, fresh)
+              // Apply the streaming chunk onto the freshly created bubble.
+              placed = placed.map(m => (m.id === fresh.id ? action(m) : m))
+              return placed
             }
 
             if (t === "done") {
-              // Stream finished. Close any open streaming assistant bubble.
+              // Final done carries force_close semantics: the backend round is
+              // over; close every still-open assistant bubble (drop empty ones).
               setMessagesFor(sid, (prev) => {
-                const lastAsst = [...prev].reverse().find((m) => m.role === "assistant" && m.status !== "done")
-                if (!lastAsst) return prev
-                // Drop empty bubble
-                if (!lastAsst.content && !lastAsst.reasoning && (!lastAsst.blocks || lastAsst.blocks.length === 0)) {
-                  return prev.filter((m) => m.id !== lastAsst.id)
+                const closer = [...prev]
+                let changed = false
+                for (let i = 0; i < closer.length; i++) {
+                  const m = closer[i]
+                  if (m.role === "assistant" && m.status !== "done") {
+                    if (!m.content && !m.reasoning && (!m.blocks || m.blocks.length === 0)) {
+                      closer.splice(i, 1); i--; changed = true
+                    } else {
+                      closer[i] = { ...m, status: "done" as MsgStatus }; changed = true
+                    }
+                  }
                 }
-                return updateMessage(prev, lastAsst.id, (m) => ({ ...m, status: "done" })) || prev
+                return changed ? closer : prev
               })
               return
             }
 
             if (t === "assistant_done") {
-              // Tool-round boundary: close current bubble, start a fresh one.
+              // This assistant round completed: close its (order,sub) bubbles.
               setMessagesFor(sid, (prev) => {
-                const closed = prev.map((m) =>
-                  m.role === "assistant" && m.status !== "done"
-                    ? { ...m, status: "done" as MsgStatus }
-                    : m
-                )
-                const nextAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
-                return [...closed, nextAssistant]
+                const closer = [...prev]
+                let changed = false
+                for (let i = 0; i < closer.length; i++) {
+                  const m = closer[i]
+                  if (m.role === "assistant" && m.status !== "done" && m.order === order) {
+                    if (!m.content && !m.reasoning && (!m.blocks || m.blocks.length === 0)) {
+                      closer.splice(i, 1); i--; changed = true
+                    } else {
+                      closer[i] = { ...m, status: "done" as MsgStatus }; changed = true
+                    }
+                  }
+                }
+                return changed ? closer : prev
               })
               return
             }
 
             if (t === "tool_call") {
-              setMessagesFor(sid, (prev) => {
-                const { list, msg } = findOrCreatePending(prev)
-                return updateMessage(list, msg.id, (m) => ({
-                  ...m,
-                  status: "streaming",
-                  blocks: [
-                    ...(m.blocks || []),
-                    {
-                      type: "tool_call" as const,
-                      id: data.id as string,
-                      name: data.name as string,
-                      args: data.args as Record<string, unknown>,
-                      ...(data._batch_meta ? { batch: data._batch_meta as { path: string; index: number; total: number } } : {}),
-                    },
-                  ],
-                })) || prev
-              })
+              setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
+                ...m,
+                status: "streaming",
+                blocks: [{
+                  type: "tool_call" as const,
+                  id: data.id as string,
+                  name: data.name as string,
+                  args: data.args as Record<string, unknown>,
+                  ...(data._batch_meta ? { batch: data._batch_meta as { path: string; index: number; total: number } } : {}),
+                }],
+              })))
               return
             }
 
             if (t === "tool_result") {
-              setMessagesFor(sid, (prev) => {
-                const { list, msg } = findOrCreatePending(prev)
-                return updateMessage(list, msg.id, (m) => ({
-                  ...m,
-                  blocks: (m.blocks || []).map((b) =>
-                    b.type === "tool_call" && b.id === data.id ? { ...b, result: data.result as string } : b
-                  ),
-                })) || prev
-              })
+              setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
+                ...m,
+                status: "streaming",
+                blocks: [{
+                  type: "tool_call" as const,
+                  id: data.id as string,
+                  name: data.name as string,
+                  args: (m.blocks && m.blocks[0] && m.blocks[0].type === "tool_call" ? m.blocks[0].args : {}) as Record<string, unknown>,
+                  result: data.result as string,
+                }],
+              })))
               return
             }
 
@@ -443,15 +484,17 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 if (inst) {
                   gitApi.approveTool(inst.id, data.id as string, data.args as Record<string, unknown>).then(res => {
                     if (res.ok) {
-                      setMessagesFor(sid, (prev) => {
-                        const { list, msg: target } = findOrCreatePending(prev)
-                        return updateMessage(list, target.id, (m) => ({
-                          ...m,
-                          blocks: (m.blocks || []).map((b) =>
-                            b.type === "tool_call" && b.id === data.id ? { ...b, result: "（自动批准）" } : b
-                          ),
-                        })) || prev
-                      })
+                      setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
+                        ...m,
+                        status: "streaming",
+                        blocks: [{
+                          type: "tool_call" as const,
+                          id: data.id as string,
+                          name: data.name as string,
+                          args: (data.args as Record<string, unknown>) || {},
+                          result: "（自动批准）",
+                        }],
+                      })))
                     }
                   }).catch(() => {})
                   return
@@ -472,31 +515,23 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               // guard ensures stale backends or edge cases don't flash JSON.
               if (data.tool_args) return
               if (t === "reasoning") {
-                setMessagesFor(sid, (prev) => {
-                  const { list, msg } = findOrCreatePending(prev)
-                  return updateMessage(list, msg.id, (m) => ({
-                    ...m,
-                    status: "reasoning",
-                    reasoning: m.reasoning + chunkText,
-                  })) || prev
-                })
+                setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
+                  ...m,
+                  status: "reasoning",
+                  reasoning: m.reasoning + chunkText,
+                })))
               } else if (chunkText) {
-                setMessagesFor(sid, (prev) => {
-                  const { list, msg } = findOrCreatePending(prev)
-                  const blocks = [...(msg.blocks || [])]
-                  const last = blocks[blocks.length - 1]
-                  if (last && last.type === "text") {
-                    blocks[blocks.length - 1] = { ...last, text: (last.text || "") + chunkText }
-                  } else {
-                    blocks.push({ type: "text", text: chunkText })
-                  }
-                  return updateMessage(list, msg.id, (m) => ({
+                setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => {
+                  const block: ContentBlock = { type: "text", text: (m.blocks && m.blocks[0] && m.blocks[0].type === "text"
+                    ? (m.blocks[0].text || "") + chunkText
+                    : chunkText) }
+                  return {
                     ...m,
-                    blocks,
+                    blocks: [block],
                     content: m.content + chunkText,
                     status: "streaming",
-                  })) || prev
-                })
+                  }
+                }))
               }
               return
             }
@@ -583,9 +618,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const loadingMoreRef = useRef(false)
   const historyLoadedRef = useRef(false)
 
-  // Convert a backend session record (or an in-flight local message) into the
-  // RichMessage shape the renderer uses.
-  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string }): RichMessage {
+  // Convert a backend session record (already in bubble view, carrying
+  // order/sub/subRank) or an in-flight local message into RichMessage shape.
+  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number }): RichMessage {
+    const order = typeof rec.order === "number" ? rec.order : 0
+    const sub: number | "r" | null = rec.sub === undefined || rec.sub === null ? null : (rec.sub === "r" ? "r" : (typeof rec.sub === "number" ? rec.sub : null))
+    const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
     return {
       id: nextId(),
       role: rec.role === "user" ? "user" : "assistant",
@@ -593,6 +631,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       reasoning: rec.reasoning || "",
       status: "done",
       blocks: rec.blocks || undefined,
+      order,
+      sub,
+      subRank,
     }
   }
 
@@ -608,19 +649,22 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       const total = res.data?.total ?? 0
       if (replace) {
         const first = recs.map(r => recordToRichMessage(r as any))
-        // SSE events may have already appended an in-flight pending assistant
-        // to the cache slot while the http fetch was in flight.  Preserve it
-        // so the "生成中…" bubble and streamed chunks aren't wiped.
+        // SSE events may have already appended in-flight (order,sub) bubbles to the
+        // cache slot while the http fetch was in flight. Preserve the non-done ones
+        // (current running round) and merge by sorted (order,subRank) without
+        // duplicating record-level bubbles already persisted.
         const tail = messagesBySidRef.current[targetSid] || []
         const sseOnly = tail.filter(m => m.role === "assistant" && m.status !== "done")
-        const merged = sseOnly.length > 0 ? [...first, ...sseOnly] : first
+        const merged = [...first, ...sseOnly].sort(compareBubbles)
         messagesBySidRef.current[targetSid] = merged
         setMessages(merged)
         historyCursorRef.current = first.length
         historyLoadedRef.current = first.length >= total
       } else if (recs.length > 0) {
         const more = recs.map(r => recordToRichMessage(r as any))
-        const merged = [...more, ...(messagesBySidRef.current[targetSid] || [])]
+        const existing = messagesBySidRef.current[targetSid] || []
+        const known = new Set(existing.map(m => `${m.order}|${m.sub}`))
+        const merged = [...more.filter(m => !known.has(`${m.order}|${m.sub}`)), ...existing].sort(compareBubbles)
         messagesBySidRef.current[targetSid] = merged
         setMessages(merged)
         historyCursorRef.current = (historyCursorRef.current ?? 0) + more.length
@@ -964,9 +1008,13 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           sid,
         )
       } else {
-        // Writer path (non-tools): still uses direct SSE streaming.
-        const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done" }
-        const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [] }
+        // Writer path (non-tools): still uses direct SSE streaming. These local
+        // bubbles carry negative orders (a private namespace) so they sort after
+        // all backend-ordered (>=0) bubbles and never collide with them.
+        writerLocalOrderRef.current -= 2
+        const localOrder = writerLocalOrderRef.current
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done", order: localOrder, sub: null, subRank: 0 }
+        const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [], order: localOrder + 1, sub: null, subRank: 0 }
         setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
         const mergedMessages = mergeConsecutiveSameRole([...messages, userMsg, pendingAssistant])
         const apiMessages = mergedMessages.map((m) => {

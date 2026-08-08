@@ -511,6 +511,7 @@ async def _tool_use_loop(
     instance_id: str | None = None,
     session_id: str | None = None,
     enabled_tools: list[str] | None = None,
+    order_allocator=None,
 ):
     """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
@@ -518,6 +519,11 @@ async def _tool_use_loop(
     ``session_id`` selects which .sessions/<sid>.jsonl to read/write (None => main).
     ``enabled_tools`` (a child session) gates which tools the director may call;
     None means unrestricted (main session / sandbox runTool).
+
+    ``order_allocator`` (optional zero-arg callable) supplies this round's order
+    from the owning SessionLoop's monotonic watermark, keeping the round's
+    reserved order consistent with queued-user reservations and the persisted
+    record. When omitted, orders fall back to the on-disk record count.
     """
     api_style = client.api_style
 
@@ -549,13 +555,14 @@ async def _tool_use_loop(
     # so a long partial reply isn't lost wholesale.
     _pending = {"content": "", "reasoning": ""}
 
-    def _flush_assistant(content: str, blocks: list[dict] | None = None) -> None:
+    def _flush_assistant(content: str, blocks: list[dict] | None = None, order: int | None = None) -> None:
         sessions.append_assistant(
             instance_dir,
             content=content,
             reasoning=_pending["reasoning"],
             blocks=blocks or [],
             session_id=sid,
+            order=order,
         )
         _pending["content"] = ""
         _pending["reasoning"] = ""
@@ -609,6 +616,26 @@ async def _tool_use_loop(
             msgs.append({"role": "tool", "tool_call_id": tc_id, "content": result})
 
     for _round in range(MAX_TOOL_ROUNDS):
+        # ── Phase 0: Assign this round's order (session-wide monotonic) ──
+        # The order is the stable (order, sub) key stamped onto every SSE event
+        # of this round; it must equal the order append_assistant stamps when
+        # the round persists (passed into _flush_assistant below), keeping
+        # streaming and replayed records consistent. The allocator (when given)
+        # is the SessionLoop's watermark, so concurrent queued-user reservations
+        # never collide with the round's order.
+        if order_allocator is not None:
+            round_order = order_allocator()
+        else:
+            round_order = sessions.next_order(instance_dir, sid)
+
+        def _tag(ev: dict, sub=None) -> dict:
+            """Attach this round's order (+ optional block sub) to an event dict."""
+            ev = dict(ev)
+            ev["order"] = round_order
+            if sub is not None:
+                ev["sub"] = sub
+            return ev
+
         # ── Phase 1: Streaming LLM call ──
         collected_text = ""
         all_tool_calls = None  # stores {"type": "tool_calls", "calls": [...]} when received
@@ -622,7 +649,8 @@ async def _tool_use_loop(
                     if not event.get("tool_args"):
                         collected_text += event["text"]
                         _pending["content"] = collected_text
-                        yield event
+                        # A round has a single leading text block (index 0) when any.
+                        yield _tag(event, 0)
                     else:
                         # tool-call arg fragment → count for stats, skip frontend
                         task_tracker.stats_add_tokens(
@@ -632,11 +660,11 @@ async def _tool_use_loop(
                     chunk = event.get("text", "")
                     _pending["reasoning"] += chunk
                     task_tracker.stats_add_tokens(instance_dir.name, sid, len(chunk))
-                    yield event
+                    yield _tag(event, "r")
                 elif event["type"] == "tool_calls":
                     all_tool_calls = event["calls"]
                 elif "error" in event:
-                    yield {"type": "text", "text": f"LLM API error: {event['error']}"}
+                    yield _tag({"type": "text", "text": f"LLM API error: {event['error']}"}, 0)
                     return
         except GeneratorExit:
             # Frontend disconnected mid-stream. Persist whatever reasoning/text
@@ -645,6 +673,7 @@ async def _tool_use_loop(
                 _flush_assistant(
                     _pending["content"],
                     [{"type": "text", "text": _pending["content"]}] if _pending["content"] else None,
+                    round_order,
                 )
             raise
 
@@ -659,9 +688,9 @@ async def _tool_use_loop(
         # ── Phase 2: If no tool calls, done ──
         if not all_tool_calls:
             # Persist the plain-text assistant reply (no tool blocks).
-            _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None)
+            _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None, round_order)
             # Signal the frontend to close this bubble (mirrors Phase 4's assistant_done).
-            yield {"type": "assistant_done"}
+            yield _tag({"type": "assistant_done"})
             return
 
         # ── Phase 3: Add assistant message with tool_calls ──
@@ -706,8 +735,12 @@ async def _tool_use_loop(
         _round_blocks: list[dict] = []
         if collected_text:
             _round_blocks.append({"type": "text", "text": collected_text})
+        # Block index layout within this round's persisted record:
+        # text block = sub 0 (when present); tool_calls follow with sub
+        # (1 if text else 0) + tool_index. Frontend sorts strictly by this.
+        _tool_base = 1 if collected_text else 0
 
-        for tc in all_tool_calls:
+        for _ti, tc in enumerate(all_tool_calls):
             tc_id = tc["id"]
             name = tc["function"]["name"]
             try:
@@ -717,9 +750,9 @@ async def _tool_use_loop(
             ev: dict = {"type": "tool_call", "id": tc_id, "name": name, "args": args}
             if tc.get("_batch_meta"):
                 ev["_batch_meta"] = tc["_batch_meta"]
-            yield ev
+            yield _tag(ev, _tool_base + _ti)
 
-        for tc in all_tool_calls:
+        for _ti, tc in enumerate(all_tool_calls):
             tc_id = tc["id"]
             name = tc["function"]["name"]
             try:
@@ -727,39 +760,40 @@ async def _tool_use_loop(
             except (json.JSONDecodeError, KeyError):
                 args = {}
             batch_meta = tc.get("_batch_meta")
+            _tool_sub = _tool_base + _ti
 
             # Approval-required tools
             if name in APPROVAL_REQUIRED_TOOLS:
-                yield {
+                yield _tag({
                     "type": "approval_required",
                     "id": tc_id,
                     "name": name,
                     "args": args,
-                }
+                }, _tool_sub)
                 approved_result = await approval_store.wait_for_approval(tc_id)
                 if approved_result is None:
                     reject_reason = "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
                     _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": reject_reason, **({"batch": batch_meta} if batch_meta else {})})
-                    yield {"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}
+                    yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}, _tool_sub)
                     _feed_tool_result(msg, api_style, tc_id, name, reject_reason, batch_meta)
                     continue
                 _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": approved_result, **({"batch": batch_meta} if batch_meta else {})})
-                yield {"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}
+                yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}, _tool_sub)
                 _feed_tool_result(msg, api_style, tc_id, name, approved_result, batch_meta)
                 continue
 
             # Execute
             result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools)
             _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result, **({"batch": batch_meta} if batch_meta else {})})
-            yield {"type": "tool_result", "id": tc_id, "name": name, "result": result}
+            yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _tool_sub)
             _feed_tool_result(msg, api_style, tc_id, name, result, batch_meta)
 
         # Flush this round's completed assistant record (reasoning + text + all tool results)
-        _flush_assistant(collected_text, _round_blocks)
+        _flush_assistant(collected_text, _round_blocks, round_order)
         # Signal the frontend that this tool round is a complete assistant turn, so
         # it can close the current bubble and start a fresh one — matching the
         # per-round records later replayed from .sessions/.
-        yield {"type": "assistant_done"}
+        yield _tag({"type": "assistant_done"})
 
         # Broadcast floors stats after each tool round
         from .director_system import get_floors_stats

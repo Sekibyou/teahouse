@@ -115,15 +115,39 @@ def _count_records(path: Path) -> int:
     return n
 
 
-def append_user(instance_dir: Path, content: str, session_id: str = MAIN_SESSION_ID) -> None:
-    """Persist one real user message."""
+def next_order(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> int:
+    """Return the next unused ``order`` for a session, without persisting.
+
+    ``order`` is the session-wide monotonic sequence number stamped onto each
+    JSONL record — the single source of truth for display ordering (the JSONL
+    file itself). Because the counter equals the current non-empty line count,
+    it is self-healing and identical whether a caller reserves it for in-flight
+    streaming (before persistence) or lets ``append_record`` stamp it on write.
+    Interrupted rounds that never persist simply skip an order; the frontend
+    sorts numerically so sequence holes are harmless.
+    """
+    return _count_records(resolve_session_path(instance_dir, session_id))
+
+
+def append_user(
+    instance_dir: Path,
+    content: str,
+    session_id: str = MAIN_SESSION_ID,
+    order: int | None = None,
+) -> int:
+    """Persist one real user message and return its ``order``.
+
+    ``order`` is normally auto-assigned from the on-disk count. Pass it
+    explicitly when a session allocator has already reserved the order (the
+    SessionLoop's monotonic watermark), so the persisted order matches the
+    order reserved for a queued bubble or in-flight round.
+    """
     if not content:
-        return
-    append_record(
-        instance_dir,
-        {"role": "user", "content": content},
-        session_id=session_id,
-    )
+        return order if order is not None else next_order(instance_dir, session_id)
+    rec = {"role": "user", "content": content}
+    if order is not None:
+        rec["order"] = order
+    return append_record(instance_dir, rec, session_id=session_id)
 
 
 def append_assistant(
@@ -133,28 +157,41 @@ def append_assistant(
     reasoning: str = "",
     blocks: list[dict] | None = None,
     session_id: str = MAIN_SESSION_ID,
-) -> None:
+    order: int | None = None,
+) -> int:
     """Persist one finished assistant record (reasoning + interleaved blocks).
 
     ``blocks`` are ``{type:"text"|"tool_call", ...}`` already in frontend shape.
+    ``order`` is normally auto-assigned from the on-disk count; pass it
+    explicitly when a session allocator reserved it (so the persisted order
+    matches the round's streaming events and any interleaved reservations).
+    Returns the stamped order.
     """
-    append_record(
-        instance_dir,
-        {
-            "role": "assistant",
-            "content": content,
-            "reasoning": reasoning,
-            "blocks": blocks or [],
-        },
-        session_id=session_id,
-    )
+    rec = {
+        "role": "assistant",
+        "content": content,
+        "reasoning": reasoning,
+        "blocks": blocks or [],
+    }
+    if order is not None:
+        rec["order"] = order
+    return append_record(instance_dir, rec, session_id=session_id)
 
 
-def append_record(instance_dir: Path, record: dict, session_id: str = MAIN_SESSION_ID) -> None:
-    """Append a single JSON line to a session file."""
+def append_record(instance_dir: Path, record: dict, session_id: str = MAIN_SESSION_ID) -> int:
+    """Append a single JSON line to a session file, stamping its ``order``.
+
+    ``order`` is assigned from the current on-disk line count (0-based), so it
+    is unique, monotonic, and consistent with ``next_order``. If the caller
+    already set ``record["order"]`` (e.g. the streaming path reserved the same
+    number), it is respected unchanged. Returns the stamped ``order``.
+    """
     path = resolve_session_path(instance_dir, session_id)
+    if "order" not in record:
+        record["order"] = _count_records(path)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record["order"]
 
 
 def load_records(
@@ -182,6 +219,11 @@ def load_records(
             records.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    # Backfill missing orders (legacy files written before the order contract)
+    # from line index, keeping them consistent with next_order / append_record.
+    for i, rec in enumerate(records):
+        if "order" not in rec:
+            rec["order"] = i
     total = len(records)
     start = max(0, total - offset - (limit or total))
     end = total - offset if offset < total else 0
@@ -202,23 +244,62 @@ def _preview_str(text: str, max_lines: int = PREVIEW_LINES) -> str:
 
 
 def render_records(records: list[dict]) -> list[dict]:
-    """Return a *display* copy of records for the frontend renderer.
+    """Return a *display* list of bubbles for the frontend renderer.
 
-    Tool results are clipped to a short preview so the renderer never pulls
-    large tool outputs into memory — the full result stays in storage for LLM
-    context. Reasoning is kept (the thinking-collapse UI shows it) but is never
-    fed back into LLM context (see ``records_to_context``).
+    Each JSONL record becomes one or more "bubbles" carrying a stable
+    ``(order, sub)`` key for position-independent ordering:
+
+    - a ``user`` record → one bubble (``order``, ``sub=None``)
+    - an ``assistant`` record → one bubble per reasoning strip (``sub="r"``) and
+      per ``blocks[i]`` (``sub=i``), i.e. physical splitting of the original
+      single assistant bubble into independent UI bubbles.
+
+    ``subRank`` is a numeric sort key (reasoning=-1, blocks 0..n-1, user=0) so
+    the frontend can order strictly by ``(order, subRank)``. Tool results are
+    clipped to a short preview (the full result stays in storage for LLM
+    context). ``records_to_context`` reads the *original* records directly, so
+    the LLM context is unaffected by this display splitting.
     """
     out: list[dict] = []
+    records = sorted(records, key=lambda r: r.get("order", 0))
     for rec in records:
         if rec.get("role") == "user":
-            out.append({"role": "user", "content": rec.get("content", "")})
+            out.append({
+                "role": "user",
+                "order": rec.get("order", 0),
+                "sub": None,
+                "subRank": 0,
+                "content": rec.get("content", ""),
+                "reasoning": "",
+                "blocks": [],
+            })
             continue
         # assistant
-        blocks = []
-        for b in rec.get("blocks") or []:
+        order = rec.get("order", 0)
+        reasoning = rec.get("reasoning", "")
+        if reasoning:
+            out.append({
+                "role": "assistant",
+                "order": order,
+                "sub": "r",
+                "subRank": -1,
+                "content": "",
+                "reasoning": reasoning,
+                "blocks": [],
+                "kind": "reasoning",
+            })
+        for i, b in enumerate(rec.get("blocks") or []):
             if b.get("type") == "text":
-                blocks.append({"type": "text", "text": b.get("text", "")})
+                out.append({
+                    "role": "assistant",
+                    "order": order,
+                    "sub": i,
+                    "subRank": i,
+                    "content": b.get("text", ""),
+                    "reasoning": "",
+                    "blocks": [{"type": "text", "text": b.get("text", "")}],
+                    "kind": "text",
+                })
             elif b.get("type") == "tool_call":
                 result = b.get("result")
                 block: dict = {
@@ -230,16 +311,18 @@ def render_records(records: list[dict]) -> list[dict]:
                     # tool output stays in storage for LLM context.
                     "result": _preview_str(result) if isinstance(result, str) else None,
                 }
-                # Display-only batch metadata (BatchExecute expansion) survives render
                 if b.get("batch"):
                     block["batch"] = b["batch"]
-                blocks.append(block)
-        out.append({
-            "role": "assistant",
-            "content": rec.get("content", ""),
-            "reasoning": rec.get("reasoning", ""),
-            "blocks": blocks,
-        })
+                out.append({
+                    "role": "assistant",
+                    "order": order,
+                    "sub": i,
+                    "subRank": i,
+                    "content": "",
+                    "reasoning": "",
+                    "blocks": [block],
+                    "kind": "tool_call",
+                })
     return out
 
 
