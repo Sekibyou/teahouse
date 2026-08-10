@@ -23,24 +23,35 @@ description: 教导导演如何设计和构建前端沙盒代码（UI 组件、�
 Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离的独立运行环境。沙盒分为两层：
 
 - **基础设施层（引擎内置，不出现于实例）**：`bootstrap.js` — postMessage 通信桥、Teahouse API、runTool 封装、流式草稿管理、事件系统、UI 组件管理、DOM 容器创建。由引擎提供，随引擎升级自动更新。
-- **UI 组件层（实例 `.teahouse/output/sandbox/`）**：用户的 `*.js` / `*.css` 文件 — 正文渲染器、翻页器、变量面板、生成按钮、主题样式等。热重载热插拔，写文件即生效。
+- **UI 组件层（实例 `.teahouse/output/sandbox/`）**：用户的组件文件 — 正文渲染器、翻页器、变量面板、生成按钮、主题样式等。热重载热插拔，写文件即生效。
 
 **沙盒代码是文件系统驱动的**，UI 组件唯一来源是 `.teahouse/output/sandbox/` 目录。前端渲染器（SandboxManager）遍历该目录构建 srcdoc，**无需任何推送工具**——你只需 Write 文件，前端自动读取并重建 iframe。
 
-### 文件分派规则（由文件名/扩展名决定，无 content_type 概念）
+### 沙盒目录结构 —— 一个组件 = 一个文件，或一个文件夹
 
-| 文件 | 注入方式 | 用途 |
-|---|---|---|
-| `*.css` | 注入 iframe `<head>` 的 `<style>` | 全局样式表、主题变量 |
-| `*.js` | 按文件名排序追加挂载 | UI 组件、场景脚本、交互逻辑；每个文件独立，可单独编辑 |
+`.teahouse/output/sandbox/` **根目录只允许两类条目，每个组件一份，不留多余文件**：
+
+| 条目 | 含义 |
+|---|---|
+| `foo.js` | **简单组件**：单个自包含 js 文件 = 一整个组件 |
+| `foo/` | **组件包**：文件夹内一个入口 js + 该组件的数据（`.json` 等） |
+
+**文件夹 = 组件包**。文件夹名 = 组件名，内部唯一的入口脚本**必须与文件夹同名**（如 `foo/foo.js`）；文件夹里其余文件（`.json` / `.md` / `.txt`）都是该组件的数据，数据用**纯 `.json`** 即可（不被当作代码注入，天然安全）。
+
+**三条自包含硬约束**：
+- **UI 不写独立 `.css` 文件** —— 组件自己的样式一律**内嵌在组件 js 里**（`element.style.cssText` 或注入 `<style>`），杜绝 `foo.css` 与 `foo.js` 散落。
+- **不区分 UI js 与辅助 js** —— 一个组件所有逻辑**收敛进单个 js**（IIFE + 内部 function/var），不拆 helper 文件。
+- **根目录不直接放配置文件** —— 数据一律进该组件所属的文件夹内。
+
+**唯一例外：全局主题 css**。仅全局级/换肤入口（如 `theme.css`）允许作为根目录下的独立 css 文件存在。组件局部样式不在此列，一律内嵌 js。
 
 **注意**：`bootstrap.js` 是引擎内置的，不在实例目录中。不要创建 `bootstrap.js`——即使创建了也会被忽略。
 
 **正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`。沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
 
-### 子目录仅做管理归类
+### 注入规则（由文件名/扩展名决定，无 content_type 概念）
 
-sandbox 下可建子目录归类（如 `ui/`、`scenes/`），但渲染规则**只按文件名/扩展名分派**，不做跨目录排除。
+**无限深度扫描 `.js` / `.css`**：不论在根目录还是任意深度的子文件夹，`*.js` 都追加挂载、`*.css` 都注入 `<head>`，不做跨目录排除。`.json` / `.md` / `.txt` 等数据文件**不被当代码注入**，仅作为文件存在（组件用 `readText` 自行读取）。
 
 ### 脚本执行顺序
 
@@ -149,7 +160,11 @@ MIME 后端按文件头（magic bytes）探测，任何文件类型都接受，�
 写入文件内容（覆盖式）。path 相对于实例根目录。
 
 ```js
-await Teahouse.writeFile(".teahouse/output/sandbox/state.json", JSON.stringify(saveData))
+// 组件包方式：数据写入组件自己的文件夹，写在 .json 上（不被注入、随 git 追踪）
+await Teahouse.writeFile(".teahouse/output/sandbox/var-editor/important-vars.json",
+                         JSON.stringify({ important: ["金币", "修为"] }))
+// 读取：
+const prefs = JSON.parse(await Teahouse.readText(".teahouse/output/sandbox/var-editor/important-vars.json"))
 ```
 
 **权限**：文件操作受 JWT 身份控制，与当前用户权限一致。沙盒可读写实例内任意路径。
@@ -319,6 +334,35 @@ API：
 | `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
 | `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
+| `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |
+
+#### 跟随宿主主题（`theme.change`）
+
+沙盒是 `<iframe sandbox="allow-scripts">` 隔离环境，**读不到**宿主 DOM / `localStorage` / CSS class，因此组件要跟随宿主 dark/light，只能订阅宿主主动推送的 `theme.change` 事件。订阅后按 `dark` 切换自己组件的配色（改元素的内联样式、切换 CSS 变量、或注入不同 `<style>` 均可）：
+
+```js
+// 组件.js — 跟随宿主主题
+var root = document.documentElement;   // 或某个容器
+
+function applyTheme(dark) {
+  root.style.setProperty('--bg', dark ? '#0d0d1f' : '#f5f5f7');
+  root.style.setProperty('--fg', dark ? '#eee' : '#222');
+  root.style.setProperty('--panel', dark ? 'rgba(12,12,28,0.94)' : 'rgba(255,255,255,0.92)');
+  root.style.setProperty('--border', dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)');
+  Fab.style.border = dark ? '1px solid rgba(255,255,255,0.16)' : '1px solid rgba(0,0,0,0.16)';
+  // ...
+}
+
+Teahouse.on('theme.change', function(ev) { applyTheme(!!ev.dark); });
+
+// sandbox 端只有一个 host theme，可用 CSS 变量集中换肤：组件里的颜色一律用
+// var(--fg) / var(--bg) / var(--panel) 等，host 一改，全部组件自动跟随。
+```
+
+**要点**：
+- 事件在**初次挂载 / iframe 重建后**也会补推一次当前主题，所以组件无需自行拉初始值——订阅后 `theme.change` 一定会到。
+- 宿主切主题**不重建 iframe**（只在变更时发一次事件），所以沙盒内 DOM 状态保留，`applyTheme` 原地换肤即可。
+- 让所有组件统一通过 CSS 变量换肤，比每个组件单独监听更省事；若某组件要完全不同的配色，再单独监听 `theme.change`。
 
 ### 流式草稿（`Teahouse.currentDraft`）
 
@@ -400,11 +444,41 @@ Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
 
 Write 到 `.teahouse/output/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
 
-### 步骤 3：编写 CSS 主题
+### 步骤 3：编写全局主题 CSS（唯一允许的独立 css）
 
-css 文件注入 iframe `<head>` 中的 `<style>` 标签。基础模板见实例现有 `theme.css`。Write 到 `.teahouse/output/sandbox/theme.css`。
+全局级/换肤入口的 `*.css` 注入 iframe `<head>` 中的 `<style>` 标签。基础模板见实例现有 `theme.css`。Write 到 `.teahouse/output/sandbox/theme.css`。
 
-多个 css 文件**叠加生效**——写多个 `*.css`，所有样式都会注入。
+`theme.css` 同时承载**主题换肤**：颜色一律抽成 CSS 变量（`--bg` / `--text` / `--panel` / `--accent` …），暗色为 `:root` 默认，亮色由 `html[data-theme="light"]` 覆盖。`theme-proxy.js` 订阅宿主 `theme.change` 切换 `data-theme`，所有用 `var(--…)` 的正文与悬浮组件自动跟随切换。**主题机制全量经此变量集驱动**，组件靠 CSS 变量而不靠各自监听宿主换肤。
+
+**使用 `theme.css` 变量的三条约定**：
+
+1. **自定义组件优先复用 `theme.css` 里已有的变量**（`var(--text)`、`var(--panel)`、`var(--accent)`、`var(--border)` 等），不要为单个组件造专属色值。
+2. **`theme.css` 可以修改已有变量的值**——全局换肤、调暗亮两套的具体颜色是 theme.css 的职责。
+3. **`theme.css` 不建议新增变量**——同一套变量集是各组件共享的"主题接口"，肆意扩张会让接口臃肿。组件若要一个 `theme.css` 里不存在的颜色，**用内嵌 css**（`style.cssText` 或组件内 `<style>`），不要往 theme.css 加。
+
+**accent 的三态用法**：`--accent` 只作**文字/边线/勾勾的强调**（如选中文字色、checkbox 勾色、下划线）；**实心 accent 色块**（发送按钮、角标、提交按钮这类"整块填 accent 色"）一律用 `--accent-fill` 做背景 + `--accent-filled-text` 做其上文字——亮色下 `--accent` 是深蓝、`--accent-fill` 是中蓝，两者分开才能保证实心块在亮暗两套都清晰，不会出现"深蓝底黑字"。别把 `--accent` 当底色配深字。
+
+**直接用现成控件类，别手拼控件外观**：`theme.css` 内置一组 `th-` 前缀的复用类，凡是要按钮/输入框/角标/图标按钮，**优先挂这些类**（每个类都自带亮暗跟随 + 统一圆角/悬停/禁用态），而不是写一长串 `style.cssText`：
+
+| 类 | 用途 |
+|---|---|
+| `th-btn` | 主按钮（主色实心填充 + hover 提亮 + `:disabled` 半透明）。例 `<button class="th-btn">发送</button>` |
+| `th-btn-ghost` | 次按钮/描边按钮（透明底 + 细边 + hover 垫淡色） |
+| `th-ip` | 输入框（圆角 + 边框 + `:focus` 高亮环） |
+| `th-chip` / `th-chip-plain` | 角标/小徽章（主色柔和底 or 中性底） |
+| `th-icon` | 图标/星标按钮（透明底 + hover 垫底），配合 `th-icon-stroke`（正常）/ `th-icon-dim`（弱）控制颜色 |
+
+尺寸可用内联 `style` 微调（如 `height:30px;font-size:12px`），但**颜色/圆角/hover/禁用交给类**，不要在组件里重写。按钮想换语义色（比如"危险操作"要红色）就叠一个改 `background` 的内联或再加语义色类。
+
+**语义色变量（成功/危险/警示），与 accent 同构、三态齐全**：
+- 文字强调：`--success` / `--danger` / `--warn`
+- 柔和底（选中/hover）：`--success-soft` / `--danger-soft` / `--warn-soft`
+- 实心底 + 其上文字：`--success-fill`+`--success-filled-text` / `--danger-fill`+`--danger-filled-text`
+- 场景：红=脏/未提交/危险（`--danger`）、黄=星标/警示（`--warn`）、绿=最新/成功（`--success`）。当前已应用到 var-editor（脏值与星标）、page-bar（最新/草稿角标）。
+
+**层级速记变量**：`--text-strong/--text/--text-soft/--text-dim`（前景强弱）、`--bg/--bg-elevated/--panel`（底面层级）、`--border/--border-strong`（分隔线）。写组件时按"几级文本/几级底"选，不用记具体 rgba。
+
+多个全局 css 文件**叠加生效**。但**组件的局部样式不写独立 css**——一律内嵌进该组件自己的 js（`style.cssText` 或 JS 注入 `<style>`），保持"一个组件一个文件"的自包含。
 
 ### 步骤 4：编写 UI 组件（*.js）
 
@@ -415,9 +489,10 @@ UI 组件是固定定位的悬浮元素。模式：
 - 挂载到 `#teahouse-ui-layer`（用 `window.registerUI`，勿直接 appendChild）
 - 若 bootstrap 已暴露共享状态，通过 `window.Teahouse` 读写
 - 需要响应导演写正文时用 `Teahouse.on("output.refresh", callback)`
+- **样式内嵌 js**（`style.cssText`），**所有逻辑收敛进单文件**（不拆辅助 js）
 
 ```js
-// .teahouse/output/sandbox/statusbar.js — 底栏状态条
+// .teahouse/output/sandbox/statusbar.js — 底栏状态条（简单组件：单文件即可）
 (function() {
   var bar = document.createElement('div')
   bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:200;display:flex;...'
@@ -425,7 +500,18 @@ UI 组件是固定定位的悬浮元素。模式：
 })()
 ```
 
-多个 `*.js` 是**追加式**的，不会替换已有组件。一个文件一个组件，独立可编辑。
+```js
+// .teahouse/output/sandbox/var-editor/var-editor.js — 组件包：文件夹 = 组件
+//   数据文件在同文件夹：var-editor/important-vars.json
+(function() {
+  var PANEL;
+  // ... 用 Teahouse.readText(".teahouse/output/sandbox/var-editor/important-vars.json")
+  //     读配置，Teahouse.writeFile(...) 写回，Teahouse.setVar/getVars 读写变量
+  window.registerUI('var-editor', PANEL)
+})()
+```
+
+一个组件 = 一个入口 js（或一个文件夹），文件相互独立、可单独编辑替换。
 
 ### 步骤 5（可选）：编写用户输入组件
 
@@ -438,12 +524,12 @@ UI 组件是固定定位的悬浮元素。模式：
 先创建文件，再 Write 到 `.teahouse/output/sandbox/`：
 
 1. **teahouse-maintext-renderer.js**：正文渲染器（最先执行，建立 _pageState 和渲染逻辑）
-2. **theme.css**：主题样式
-3. **其余 *.js**：UI 组件（翻页器、按钮等）
+2. **theme.css**（可选）：全局主题样式——唯一允许的独立 css，换肤入口
+3. **其余组件**：简单组件写 `*.js`；带数据的组件开同名文件夹（`组名/组名.js` + `组名/数据.json`）
 
 #### 迭代修改
 
-- **修改代码文件 → 直接 Edit `.teahouse/output/sandbox/` 下对应文件**。前端监听到 `file_changed` 后重建 iframe srcdoc（热重载）。
+- **修改组件 → 直接 Edit `.teahouse/output/sandbox/` 下对应 js（或组件文件夹内文件）**。前端监听到 `file_changed` 后重建 iframe srcdoc（热重载）。**数据文件变更和代码变更一样会触发重建**——改组件自持的 `*.json` 后，相当于改沙盒内容，iframe 也会刷新。
 - 修改正文渲染器 → iframe 全重建，DOM 状态全丢。
 
 #### 沙盒代码整体禁用
@@ -460,18 +546,19 @@ FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/ou
 
 1. **使用 var 和普通 function**：iframe 无 transpiler，不识别 const/let/箭头函数
 2. **IIFE 包裹每个文件**：避免全局变量污染
-3. **共享状态通过 `window.Teahouse` 暴露**：`window.Teahouse._colorState`、`window.Teahouse._pageState` 等
-4. **跨组件通信通过事件**：`window.Teahouse._emit('color.change', data)` + `window.Teahouse.on('color.change', callback)`
-5. **正文渲染靠 `listFloors()` + `readText()` + `renderRichText()`**：不要假设正文会被推送进来
-6. **fixed 定位的 UI 组件 z-index 分层次**：topbar ~200、UI 层 ~100、panel ~200、input ~300
-7. **不要在沙盒内写 ES6+ 语法**：`let`、`const`、`=>`、模板字符串、async/await 都不安全（用 var + 普通 function + Promise 链）
-8. **CSS 中用 `rgba()` 而非 `oklch()`**：iframe 内没有 Tailwind 的 oklch polyfill
-9. **先 Read 后 Edit**：修改现有沙盒代码前先读取当前内容
-10. **一个文件一个组件**：分开后更容易独立替换和迭代
-11. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`，因 DOM 未就绪会静默丢失
-12. **共享状态挂载到 `window.Teahouse` 并带事件通知**：状态变更方 `_emit`，订阅方 `on`
-13. **runTool 用 Promise 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定
-14. **流式生成用 `draft.change` 事件，不要直接监听 `generate_progress`**：bootstrap 已集中处理
+3. **组件样式内嵌 js**（`style.cssText` / JS 注入 `<style>`）：组件不写独立 css，不拆辅助 js —— 一个组件 = 一个自包含 js 文件，或一个组件包文件夹
+4. **一个组件一个入口**：简单组件就一个 `foo.js`；要配数据就开同名文件夹（`foo/foo.js` + `foo/*.json`），根目录不留散文件
+5. **共享状态通过 `window.Teahouse` 暴露**：`window.Teahouse._colorState`、`window.Teahouse._pageState` 等
+6. **跨组件通信通过事件**：`window.Teahouse._emit('color.change', data)` + `window.Teahouse.on('color.change', callback)`
+7. **正文渲染靠 `listFloors()` + `readText()` + `renderRichText()`**：不要假设正文会被推送进来
+8. **fixed 定位的 UI 组件 z-index 分层次**：topbar ~200、UI 层 ~100、panel ~200、input ~300
+9. **不要在沙盒内写 ES6+ 语法**：`let`、`const`、`=>`、模板字符串、async/await 都不安全（用 var + 普通 function + Promise 链）
+10. **CSS 中用 `rgba()` 而非 `oklch()`**：iframe 内没有 Tailwind 的 oklch polyfill
+11. **先 Read 后 Edit**：修改现有沙盒代码前先读取当前内容
+12. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`，因 DOM 未就绪会静默丢失
+13. **共享状态挂载到 `window.Teahouse` 并带事件通知**：状态变更方 `_emit`，订阅方 `on`
+14. **runTool 用 Promise 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定
+15. **流式生成用 `draft.change` 事件，不要直接监听 `generate_progress`**：bootstrap 已集中处理
 
 ## 注意事项
 
@@ -482,4 +569,6 @@ FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/ou
 - **BBCode 渲染在宿主层**：沙盒代码中不要手动解析 BBCode，调用 `Teahouse.renderRichText()`
 - **文件操作有权限**：`readText` / `readAsset` / `writeFile` 受当前用户 JWT 权限限制
 - **正文楼层在 `.teahouse/output/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
+- **组件数据放组件文件夹，不进根目录**：`foo/foo.js` + `foo/*.json`；`.json` 不被注入，用 `writeFile`/`readText` 自读写，随 git 追踪、导出随包
+- **数据文件是 `.json` 时不被当代码注入，安全**：但**别在组件文件夹放 `*.js`/`*.css` 之外的其他可执行东西**——无限深度扫描下，任何深度的 `.js`/`.css` 都会被注入进 srcdoc
 - **不确定时参考 sandbox 实例**：`data/lowstar/instances/sandbox/` 下有完整的 UI 组件参考

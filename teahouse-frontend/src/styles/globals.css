@@ -179,6 +179,21 @@
     margin-top: 0.25em !important;
     margin-bottom: 0.25em !important;
   }
+  /* typography 插件默认给 pre / 行内 code 固定深色背景，light 下不会自己回退（只靠 dark:prose-invert），
+     导致 light 模式代码框仍是黑底。这里用项目语义变量覆盖，让代码块跟随 light/dark 主题。 */
+  .prose pre,
+  .prose-chat pre {
+    background-color: color-mix(in oklch, var(--muted) 85%, transparent) !important;
+    color: var(--foreground) !important;
+    border: 1px solid var(--border);
+  }
+  .prose code,
+  .prose-chat code {
+    background-color: color-mix(in oklch, var(--muted) 80%, transparent) !important;
+    color: var(--foreground) !important;
+    padding: 0.1em 0.3em;
+    border-radius: 0.25rem;
+  }
   .prose-chat blockquote {
     margin-top: 0.25em !important;
     margin-bottom: 0.25em !important;

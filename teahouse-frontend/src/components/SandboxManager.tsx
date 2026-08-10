@@ -6,6 +6,7 @@ import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsA
 import type { ToolsRunStep } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useSessionStore } from "@/stores/sessionStore"
+import { useThemeStore } from "@/stores/themeStore"
 
 // ============================================================
 // SandboxManager — file-system driven sandbox iframe + TeahouseBridge
@@ -44,6 +45,12 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
       "*"
     )
   }, [])
+
+  // ---- host theme → sandbox: relay dark/light so sandbox UI can follow ----
+  const hostIsDark = useThemeStore((s) => s.isDark)
+  useEffect(() => {
+    sendToSandbox("theme.change", { dark: hostIsDark })
+  }, [hostIsDark, sendToSandbox])
 
   // ---- text style rules ----
   useEffect(() => {
@@ -173,6 +180,11 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
 
     if (d._type === "ready") {
       iframe.contentWindow?.postMessage({ _type: "init", instanceId, instanceName }, "*")
+      // sandbox (re)booted — (re)send current host theme so the fresh document gets it
+      iframe.contentWindow?.postMessage(
+        { _type: "_teahouse_event", _event: "theme.change", _data: { dark: hostIsDark } },
+        "*"
+      )
       return
     }
     if (!d._method) return
@@ -295,7 +307,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
         _error: err instanceof Error ? err.message : "Unknown error",
       }, "*")
     }
-  }, [instanceId, instanceName, onSend, textStyleRules])
+  }, [instanceId, instanceName, onSend, textStyleRules, hostIsDark])
 
   useEffect(() => {
     window.addEventListener("message", handleMessage)
