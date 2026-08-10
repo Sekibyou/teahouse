@@ -745,6 +745,9 @@ async def run_instance_tools(
     task = asyncio.create_task(
         _run_steps(instance_dir, user_id, run_uuid, body.steps)
     )
+    # 登记本批 task，供 POST .../tools/run/{run_uuid}/cancel 中途打断（Generate 等长步骤）
+    from ..run_tool_tracker import run_tool_tracker
+    run_tool_tracker.register(run_uuid, task)
     # 兜底：取异常引用，避免"未处理异常"日志告警（任务结果无人读取）
     task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     return {"ok": True, "accepted": True, "run_uuid": run_uuid, "steps": len(body.steps)}
@@ -756,24 +759,62 @@ async def _run_steps(
     run_uuid: str,
     steps: list[ToolsRunStep],
 ) -> None:
-    for i, step in enumerate(steps, 1):
-        name = step.tool
-        cargs = step.args or {}
-        result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name), run_uuid)
-        ok = not result.startswith("Error")
+    from ..run_tool_tracker import run_tool_tracker
+    try:
+        for i, step in enumerate(steps, 1):
+            name = step.tool
+            cargs = step.args or {}
+            result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name), run_uuid)
+            ok = not result.startswith("Error")
+            state.broadcast(
+                "tool_run",
+                {
+                    "run_uuid": run_uuid,
+                    "index": i,
+                    "tool": name,
+                    "result": result,
+                    "ok": ok,
+                    "instance_id": instance_dir.name,
+                },
+            )
+            if not ok:
+                return
+    finally:
+        # 无论正常结束、某步失败还是被 cancel 中途打断，都清理注册，避免泄漏
+        run_tool_tracker.unregister(run_uuid)
+
+
+@router.post("/instances/{instance_id}/tools/run/{run_uuid}/cancel")
+async def cancel_run_tools(
+    instance_id: str,
+    run_uuid: str,
+    user: UserInfo = Depends(require_user),
+):
+    """Cancel an in-flight sandbox runTool batch by its run_uuid.
+
+    Fire-and-forget runTool batches are tracked by run_uuid in run_tool_tracker;
+    this cancels the background task (e.g. a long Generate step). On cancel the
+    current step is interrupted and does NOT flush a half-baked file
+    (CancelledError is a BaseException, so execute_generate's except Exception
+    won't write). The sandbox is notified via a tool_run_cancelled broadcast so
+    its runTool handle rejects promptly instead of waiting for the timeout.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    from ..run_tool_tracker import run_tool_tracker
+    cancelled = await run_tool_tracker.abort(run_uuid)
+    if cancelled:
         state.broadcast(
-            "tool_run",
+            "tool_run_cancelled",
             {
                 "run_uuid": run_uuid,
-                "index": i,
-                "tool": name,
-                "result": result,
-                "ok": ok,
-                "instance_id": instance_dir.name,
+                "instance_id": instance_id,
             },
         )
-        if not ok:
-            return
+    return {"status": "ok", "run_uuid": run_uuid, "cancelled": cancelled}
 
 
 # ===== Skills =====

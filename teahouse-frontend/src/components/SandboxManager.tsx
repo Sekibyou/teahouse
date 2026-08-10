@@ -256,6 +256,17 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           }
           break
         }
+        case "cancelRunTools": {
+          // { run_uuid } → 打断一个 fire-and-forget 的 runTool 批次（如长 Generate 步骤）
+          const runUuid = _args[0] as string
+          if (instanceId && runUuid) {
+            const res = await instancesApi.cancelRunTools(instanceId, runUuid)
+            result = res.ok ? res.data : { ok: false, error: res.error }
+          } else {
+            result = { ok: false, error: "cancelRunTools requires {run_uuid}" }
+          }
+          break
+        }
         case "getVars": {
           if (instanceId) {
             const names = Array.isArray(_args[0]) ? (_args[0] as string[]) : []

@@ -12,7 +12,8 @@ interface SSERefreshOptions {
   onToolRun?: (payload: Record<string, unknown>) => void
   /** Called when a streaming Generate broadcasts a progress tick (~200ms, carries diff). */
   onGenerateProgress?: (payload: Record<string, unknown>) => void
-  /** Called when a sub-session broadcasts session_done (EndSession) or session_destroyed. */
+  /** Called when a sub-session broadcasts session_done (EndSession), session_destroyed
+   * (DeleteSubSession), session_created, or a runTool batch is cancelled (tool_run_cancelled). */
   onSessionEvent?: (event: string, payload: Record<string, unknown>) => void
   /** The instance ID (UUID) to scope events to. */
   instanceId: string | undefined
@@ -153,7 +154,7 @@ export function useSSERefresh({
         }
       })
 
-      for (const evt of ["session_done", "session_destroyed", "session_created"]) {
+      for (const evt of ["session_done", "session_destroyed", "session_created", "tool_run_cancelled"]) {
         es.addEventListener(evt, (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data)

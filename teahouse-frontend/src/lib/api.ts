@@ -172,6 +172,8 @@ export interface ToolsRunResult {
   /** 即发即返：请求只确认已受理，不返回每步结果；实际产出由 SSE (file_changed) 推送刷新 */
   accepted: boolean
   steps: number
+  /** 本批 run_uuid，供沙盒在生成中途调用 cancelRunTools 打断 */
+  run_uuid?: string
 }
 
 export const instancesApi = {
@@ -278,6 +280,12 @@ export const instancesApi = {
 
   runTools: async (instanceId: string, steps: ToolsRunStep[]) => {
     return post<ToolsRunResult>(`/api/instances/${instanceId}/tools/run`, { steps })
+  },
+
+  cancelRunTools: async (instanceId: string, runUuid: string) => {
+    return post<{ status: string; run_uuid: string; cancelled: boolean }>(
+      `/api/instances/${instanceId}/tools/run/${runUuid}/cancel`,
+    )
   },
 }
 

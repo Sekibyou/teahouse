@@ -87,6 +87,16 @@
     }
   }
 
+  // —— runTool 批被后端取消：reject 对应批，不再悬到 5 分钟超时 ——
+  function handleToolCancel(data) {
+    if (!data || !data.run_uuid) return;
+    var r = pendingRuns[data.run_uuid];
+    if (!r) return;
+    clearTimeout(r.timer);
+    delete pendingRuns[data.run_uuid];
+    r.reject(new Error('runTool 已取消：' + data.run_uuid));
+  }
+
   // ============================================================
   // 流式管理层
   //
@@ -189,23 +199,40 @@
       });
     },
 
-    // ---- runTool 封装：Promise 接口，自动管理完成判定 ----
+    // ---- runTool 封装：返回可取消 handle，自动管理完成判定 ----
     // steps: [{tool, args}, ...]
-    // 返回 Promise<{ok, results: [{tool, result, ok}]}>
+    // 返回值是一个 thenable（带 .then，可 await），同时暴露：
+    //   .run_uuid — 受理后填充，供中途取消
+    //   .cancel()  — 调用宿主打断本批（等效 Teahouse.cancelRunTool(run_uuid)）
+    // 完成/失败/取消时 handle 像 Promise 一样 resolve / reject。
     runTool: function(steps) {
-      return new Promise(function(resolve, reject) {
-        callHost('runTools', [steps]).then(function(res) {
-          if (!res || !res.ok) {
-            reject(new Error('runTool 提交失败：' + (res && res.error ? res.error : JSON.stringify(res))));
-            return;
-          }
-          // 即发即返确认受理 → 登记本批，等待 tool_run 事件驱动完成
-          var total = res.steps || steps.length;
-          registerRun(res.run_uuid, total, resolve, reject);
-        }).catch(function(err) {
-          reject(err);
-        });
+      var resolve, reject;
+      var pr = new Promise(function(res, rej) { resolve = res; reject = rej; });
+      var handle = {
+        run_uuid: null,
+        then: function(onFulfilled, onRejected) { return pr.then(onFulfilled, onRejected); },
+        cancel: function() {
+          if (handle.run_uuid) callHost('cancelRunTools', [handle.run_uuid]);
+        }
+      };
+      callHost('runTools', [steps]).then(function(res) {
+        if (!res || !res.ok) {
+          reject(new Error('runTool 提交失败：' + (res && res.error ? res.error : JSON.stringify(res))));
+          return;
+        }
+        // 即发即返确认受理 → 记下 run_uuid 供取消，登记本批等待 tool_run 驱动完成
+        handle.run_uuid = res.run_uuid;
+        var total = res.steps || steps.length;
+        registerRun(res.run_uuid, total, resolve, reject);
+      }).catch(function(err) {
+        reject(err);
       });
+      return handle;
+    },
+
+    // ---- cancelRunTool：按 run_uuid 显式打断一个 runTool 批次（长 Generate 步骤）----
+    cancelRunTool: function(run_uuid) {
+      return callHost('cancelRunTools', [run_uuid]);
     },
 
     // ---- 流式草稿（只读） ----
@@ -295,10 +322,11 @@
     uiLayerReady = true;
     flushUIQueue();
 
-    // ---- 集中订阅 tool_run / generate_progress（Teahouse 已就绪后才注册） ----
+    // ---- 集中订阅 tool_run / tool_run_cancelled / generate_progress（Teahouse 已就绪后才注册） ----
     window.Teahouse.on('tool_run', handleToolRun);
+    window.Teahouse.on('tool_run_cancelled', handleToolCancel);
     window.Teahouse.on('generate_progress', handleGenerateProgress);
-    console.log('[bootstrap] tool_run/generate_progress handlers registered');
+    console.log('[bootstrap] tool_run/tool_run_cancelled/generate_progress handlers registered');
 
     window.Teahouse._emit('teahouse.ready');
     // 通知宿主沙盒就绪

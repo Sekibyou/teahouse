@@ -267,17 +267,34 @@ Teahouse.openDirector()
 
 ### 内联工具流水线：`Teahouse.runTool`
 
-#### runTool(steps) → Promise<{ok, results}>
+#### runTool(steps) → handle (可取消的 thenable)
 
 依次执行一段**内联工具调用数组**（`[{tool, args}, ...]`），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：数组内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接按序执行。
 
 `steps` 元素形如 `{tool: "Write", args: {...}}`，与导演同名工具一致（同一 `execute_tool` 通道）。**不解析任何占位符**：需要运行时变量时，先用 `getVars()` 取到真实 js 值并在组装 `args` 时拼接，不要指望沙盒侧 `${{...}}` 占位符解析。
 
-**封装后的 Promise 接口**：bootstrap 内部自动管理 `run_uuid` 登记、`tool_run` 事件分拣、完成判定。返回的 Promise 在**整批完成或失败时 resolve**，UI 组件无需手动管理 pendingRuns 或订阅 tool_run 事件。
+**返回一个可取消的 thenable handle**：bootstrap 内部自动管理 `run_uuid` 登记、`tool_run` 事件分拣、完成判定。handle **带 `.then` 可直接 `await`**，同时暴露两个成员：
+
+- `.run_uuid` — 受理后即填充的本批 UUID，可用来主动打断
+- `.cancel()` — 中途打断本批（等效 `Teahouse.cancelRunTool(run_uuid)`）
+
+handle 的 Promise 语义：**在整批完成或失败时 resolve/reject**，UI 无需手动管理 pendingRuns 或订阅 tool_run 事件。
 
 - 成功：`{ok: true, results: [{tool, result, ok}, ...]}` — results 数组按步骤顺序排列
 - 失败：Promise reject，错误信息包含失败步骤和原因
+- 被打断：`cancel()` 后 reject（`runTool 已取消：<run_uuid>`），**不会等 5 分钟超时**
 - 超时保护：5 分钟无响应自动 reject
+
+**中途取消（长 Generate 步骤）**：`runTool` 里若带 `{tool: "Generate", ...}` 这类可能跑很久的步骤，可让玩家随时打断。**已生成的部分会落盘为半成品供续写**（semantics 与"流中失败/中断"一致——`cancel()` 打断的 Generate 会把已累积正文写入目标 path，`-draft.md` 这类即可续写），只是整批 `runTool` 的 handle 会 reject。两种等价写法：
+
+```js
+// 方式 A：用 handle.cancel()，先在回调里暂存 handle
+var h = Teahouse.runTool([{ tool: "Generate", args: {...} }]);
+window.__abortGen = function() { h.cancel(); };   // 某按钮/时机调用
+
+// 方式 B：用 Teahouse.cancelRunTool(run_uuid) 显式传 uuid
+Teahouse.cancelRunTool(h.run_uuid);
+```
 
 ```js
 // 开场流水线：产第一楼 + 提交
@@ -368,7 +385,8 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 | 事件 | payload | 触发时机 |
 |---|---|---|
 | `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
-| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条。**bootstrap 内部已封装完成判定**，UI 组件通常不需要直接订阅此事件——使用 `Teahouse.runTool()` 的 Promise 接口即可 |
+| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条。**bootstrap 内部已封装完成判定**，UI 组件通常不需要直接订阅此事件——使用 `Teahouse.runTool()` 的 Promise/handle 接口即可 |
+| `tool_run_cancelled` | `{ run_uuid, instance_id }` | 某 runTool 批被后端取消（经 `handle.cancel()` / `Teahouse.cancelRunTool(run_uuid)`）时广播。bootstrap 内部据此 reject 对应批，UI 无需手动订阅 |
 | `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
 | `draft.change` | `{ path, text, accumulated_len }` | bootstrap 收到 `generate_progress` 后更新 `currentDraft` 并广播此事件。UI 组件（如正文渲染器）订阅此事件即可实现生成中的打字机效果 |
 | `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
@@ -431,7 +449,7 @@ Teahouse.on("generation.status", function(status) {
 
 **⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。bootstrap 内部订阅 `generate_progress` 和 `tool_run` 维护 currentDraft 和 runTool 封装。用户代码不应再直接监听 `generate_progress` 或自行管理 `tool_run` 完成判定，应使用 `Teahouse.runTool()` Promise 和 `draft.change` 事件。
 
-**Generate 流式**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/中断/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**。bootstrap 据此：
+**Generate 流式**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/用户取消（runTool 打断或导演 ESC）/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**（取消也算"中断"，**已生成的正文同样落半成品供续写**，不会丢内容）。bootstrap 据此：
 - 开始 generate → `generationStatus = 'generating'`，`currentDraft` 建立，`draft.change` 广播
 - 每个 delta → 追加到 `currentDraft.text`，`draft.change` 广播 → 正文渲染器 rAF 节流刷新
 - 结束 → `currentDraft = null`，`generationStatus = 'done'`，等 `file_changed` → `output.refresh` → 文件渲染接管
@@ -597,7 +615,7 @@ FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/ou
 11. **先 Read 后 Edit**：修改现有沙盒代码前先读取当前内容
 12. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`，因 DOM 未就绪会静默丢失
 13. **共享状态挂载到 `window.Teahouse` 并带事件通知**：状态变更方 `_emit`，订阅方 `on`
-14. **runTool 用 Promise 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定
+14. **runTool 用 handle 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定；长 Generate 步骤要用 `handle.cancel()` / `Teahouse.cancelRunTool(run_uuid)` 让玩家可打断
 15. **流式生成用 `draft.change` 事件，不要直接监听 `generate_progress`**：bootstrap 已集中处理
 
 ## 注意事项

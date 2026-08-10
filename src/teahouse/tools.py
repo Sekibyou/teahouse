@@ -1038,6 +1038,19 @@ async def execute_generate(
                     got_text = True
                 _progress(done=False, delta=chunk["text"])
                 buffered += chunk["text"]
+    except asyncio.CancelledError:
+        # 任务被取消（沙盒 runTool 打断 / 导演 ESC）——已生成正文也要落盘
+        # 半成品供续写，与"流中失败/中断"语义一致；写盘后重新抛 CancelledError
+        # 让外层任务干净终止。shield 保证在已取消任务里落盘仍能执行完
+        # （_finalize_write 全同步、无 await，实证可靠），随后 raise 不得被省略，
+        # 否则任务不会真正进入 cancelled 状态。
+        if got_text:
+            try:
+                await asyncio.shield(_finalize_write())
+            except Exception:
+                pass
+            _progress(done=True)
+        raise
     except LLMError as e:
         # 流中途失败：首 chunk 前失败 → 不产出文件；已有正文 → 留下半成品供续写。
         if got_text:
