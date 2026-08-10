@@ -574,9 +574,24 @@ async def save_instance_file(
     instance_dir = _resolve_instance_dir(inst)
     try:
         write_file(instance_dir, path, body.content)
-        return {"path": path, "status": "saved"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 用户编辑器就地保存 —— 与导演工具一致，广播 file_changed：
+    #  - path 落在沙盒数据区(.teahouse/output/) → 正文/沙盒刷新
+    #  - path 是 runtime_vars.jsonl → 变量变更，正文占位符重解析出新值
+    p = path.replace("\\", "/")
+    if p.startswith("./"):
+        p = p[2:]
+    parts = p.split("/")
+    if parts[0] == ".teahouse" and (
+        len(parts) > 1
+        and (parts[1] == "output" or "/".join(parts[1:]) == "runtime_vars.jsonl")
+    ):
+        state.broadcast(
+            "file_changed",
+            {"path": p, "tool": "EditorSave", "instance_id": instance_id},
+        )
+    return {"path": path, "status": "saved"}
 
 
 @router.get("/instances/{instance_id}/runtime-vars")

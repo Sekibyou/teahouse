@@ -29,6 +29,22 @@ from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
+# The runtime-vars file's canonical relative path within an instance. Because it
+# is the "file-as-state" authority for variables, a few file tools may also touch
+# it directly (not just SetRuntimeVar). When that happens we broadcast the same
+# file_changed the sandbox relies on to re-resolve ${name} placeholders in prose.
+RUNTIME_VARS_RELPATH = ".teahouse/runtime_vars.jsonl"
+
+
+def _maybe_broadcast_vars_changed(instance_dir: Path, full: Path, tool: str) -> None:
+    """Broadcast the runtime-vars file_changed signal when the written path is
+    the variables file (so prose ${name} placeholders re-resolve to new values)."""
+    if full.resolve() == (instance_dir / RUNTIME_VARS_RELPATH).resolve():
+        state.broadcast(
+            "file_changed",
+            {"path": RUNTIME_VARS_RELPATH, "tool": tool, "instance_id": instance_dir.name},
+        )
+
 import yaml
 import time
 
@@ -422,6 +438,7 @@ async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_dir.name})
+    _maybe_broadcast_vars_changed(instance_dir, full, "Write")
     return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -462,11 +479,13 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
         new_content = content.replace(old_string, new_string)
         full.write_text(new_content, encoding="utf-8")
         state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "Edit")
         return f"Successfully replaced all {count} occurrences in {path}. File state is now up to date in your context — no need to Read it back."
     else:
         new_content = content.replace(old_string, new_string, 1)
         full.write_text(new_content, encoding="utf-8")
         state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "Edit")
         return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -693,6 +712,7 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
 
     full.write_text(new_file, encoding="utf-8")
     state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_dir.name})
+    _maybe_broadcast_vars_changed(instance_dir, full, "WriteLine")
     return f"Successfully replaced lines {start_line}–{end_line} in {path}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -1062,6 +1082,7 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(full), str(dest))
         state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "action": "move", "instance_id": instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, dest, "FileOps")
         return f"已移动：{path_str} → {destination_str}"
 
     if action == "delete":
@@ -1074,6 +1095,7 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
             full.unlink()
 
         state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "action": "delete", "instance_id": instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "FileOps")
         return f"已删除：{path_str}"
 
     return f"Error: 未知操作 '{action}'，支持 mkdir / move / delete"
