@@ -35,6 +35,7 @@ export function WorkspacePage() {
   const mode = useViewModeStore((s) => s.mode)
   const chatWidth = useViewModeStore((s) => s.chatWidth)
   const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
+  const setChatCollapsed = useViewModeStore((s) => s.setChatCollapsed)
   const setChatWidth = useViewModeStore((s) => s.setChatWidth)
   const isMobile = useIsMobile()
   const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
@@ -102,6 +103,12 @@ export function WorkspacePage() {
   const [exportError, setExportError] = useState("")
 
   const instId = activeInstance?.id
+
+  // 沙盒唤起导演栏：移动端切到全屏导演面板，桌面端展开折叠的 ChatPanel。
+  const openDirector = useCallback(() => {
+    if (isMobile) setFullscreenPanel("director")
+    else setChatCollapsed(false)
+  }, [isMobile])
 
   // Git state — file statuses for tree coloring from unified store
   const fileStatuses = useGitStore((s) => s.fileStatuses)
@@ -452,7 +459,7 @@ export function WorkspacePage() {
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {mode === "play" ? (
-            <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} />
+            <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} />
           ) : (
             /* Backstage mode — textarea editor */
             <div className="flex-1 flex flex-col min-h-0">
@@ -847,7 +854,7 @@ export function WorkspacePage() {
 
         {/* Play mode — Output panel (always mounted, hidden when backstage) */}
         <div className={`flex-1 flex-col min-w-0 ${mode === "play" ? "flex" : "hidden"}`}>
-          <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} />
+          <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} />
         </div>
       </div>
 

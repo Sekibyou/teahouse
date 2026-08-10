@@ -152,6 +152,9 @@
     // 发送消息给导演
     send: function(message) { callHost('send', [message]); },
 
+    // 唤起导演栏：当导演栏被折叠/隐藏时，请求宿主将其打开（纯前端，不触发生成）。
+    openDirector: function() { callHost('openDirector', []); },
+
     // 子会话
     sessionCreate: function(opts) { return callHost('sessionCreate', [opts || {}]); },
     sessionSend: function(session_id, message) {

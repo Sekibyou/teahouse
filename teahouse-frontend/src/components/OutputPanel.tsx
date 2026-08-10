@@ -8,6 +8,8 @@ interface OutputPanelProps {
   instanceId: string | undefined
   instanceName: string | undefined
   onSend?: (message: string) => void
+  /** 沙盒唤起导演栏（折叠时打开），透传给 SandboxManager。 */
+  onOpenDirector?: () => void
 }
 
 /**
@@ -18,7 +20,7 @@ interface OutputPanelProps {
  * - 底部提供一个稳定调试栏：无论沙盒内渲染是否成功，都列出当前
  *   沙盒代码文件与楼层文件，便于排查。
  */
-export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelProps) {
+export function OutputPanel({ instanceId, instanceName, onSend, onOpenDirector }: OutputPanelProps) {
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({})
   const [floors, setFloors] = useState<FloorEntry[]>([])
   const [refresh, setRefresh] = useState(0)
@@ -56,6 +58,7 @@ export function OutputPanel({ instanceId, instanceName, onSend }: OutputPanelPro
           instanceId={instanceId}
           instanceName={instanceName}
           onSend={onSend}
+          onOpenDirector={onOpenDirector}
         />
       </div>
 
