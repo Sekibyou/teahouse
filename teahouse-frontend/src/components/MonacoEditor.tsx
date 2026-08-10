@@ -1,13 +1,18 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from "react"
 import Editor, { type OnMount, loader } from "@monaco-editor/react"
-import type * as Monaco from "monaco-editor"
+import * as Monaco from "monaco-editor"
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
 
-// ---- CDN config ----
-loader.config({
-  paths: {
-    vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs",
+// ---- Local Monaco bundle (no CDN) ----
+// Bundle Monaco locally via Vite and hand the instance to @monaco-editor/react,
+// so its "Loading..." never depends on a remote jsdelivr fetch.
+self.MonacoEnvironment = {
+  // All languages we enable share the base editor worker.
+  getWorker() {
+    return new EditorWorker()
   },
-})
+}
+loader.config({ monaco: Monaco })
 
 // ---- Theme helpers ----
 
@@ -317,6 +322,11 @@ export function MonacoEditor({
         height="100%"
         path={path}
         language={language}
+        loading={
+          <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+            正在加载编辑器…
+          </div>
+        }
         onChange={(val) => onChange?.(val || "")}
         theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
         onMount={handleMount}
