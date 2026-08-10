@@ -909,6 +909,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     })
   }, [])
 
+  // 用户聚焦输入框开始输入时，自动吸底一次，让用户看到最新对话
+  const handleInputFocus = useCallback(() => {
+    scrollToBottom()
+  }, [scrollToBottom])
+
   // Auto-scroll when messages change (except during streaming to avoid forced bottom-pinning)
   useEffect(() => {
     if (!isStreaming) {
@@ -1293,6 +1298,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         onToggleExpand={() => setExpandedInput(v => !v)}
         onSend={handleSend}
         onStop={handleStop}
+        onFocus={handleInputFocus}
         filteredCommands={filteredCommands}
         commandIndex={commandIndex}
         onCommandHover={setCommandIndex}

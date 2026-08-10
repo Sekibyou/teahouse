@@ -26,6 +26,7 @@ interface ChatInputProps {
   // Send / Stop
   onSend: () => void
   onStop: () => void
+  onFocus?: () => void
 
   // Command autocomplete
   filteredCommands: CommandDef[]
@@ -51,6 +52,7 @@ export function ChatInput({
   onToggleExpand,
   onSend,
   onStop,
+  onFocus,
   filteredCommands,
   commandIndex,
   onCommandHover,
@@ -135,6 +137,7 @@ export function ChatInput({
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={onKeyDown}
+            onFocus={onFocus}
             placeholder={isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
           />
           <Button
