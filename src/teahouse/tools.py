@@ -750,6 +750,7 @@ async def execute_generate(
     source_file_str = args.get("source_file", "")
     output_path_str = args.get("path", "")
     dump_payload_str = args.get("dump_payload_path", "")
+    overwrite = bool(args.get("overwrite", False))
 
     if not source_file_str:
         return "Error: 'source_file' is required — specify the YAML config file path (e.g. temp/generate-config-12-1.yaml)"
@@ -788,6 +789,23 @@ async def execute_generate(
         return f"Error: {e}"
 
     output_full.parent.mkdir(parents=True, exist_ok=True)
+
+    # Overwrite safety: by default refuse to clobber an existing file, WITHOUT
+    # calling the writer model. When overwrite=true, delete the old file first
+    # so the streaming model can't silently overwrite fresh content before it
+    # materializes — the replace happens up-front (old content is recoverable
+    # via git), and the accumulated text is what lands at stream end.
+    if output_full.exists():
+        if not overwrite:
+            return (
+                f"Error: 目标文件已存在: {output_path_str}\n"
+                f"拒绝覆盖（Generate 默认只读保护）。\n"
+                f"请选择一个新文件路径，或确认覆盖后在参数传入 overwrite=true 重试。"
+            )
+        try:
+            output_full.unlink()
+        except OSError as e:
+            return f"Error: 删除旧文件失败，无法覆盖: {output_path_str}: {e}"
 
     # Step 2: Resolve ${variables} + {{path}} file slices before sending to the writer LLM.
     resolved = _resolve_messages_vars(messages, instance_dir)
