@@ -955,6 +955,7 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
 
 class SessionCreateRequest(BaseModel):
     enabled_tools: list[str] | None = None  # None → default read-only base set
+    reasoning_effort: str | None = None  # optional none|low|mid|high|max
 
 
 @router.post("/instances/{instance_id}/sessions")
@@ -967,6 +968,7 @@ async def create_session(
 
     ``enabled_tools`` sets the session's tool allow-list. When omitted, the
     read-only baseline (Read/Glob/Grep/GetRuntimeVars/Report/EndSession) applies.
+    ``reasoning_effort`` (optional) sets the child session's thinking strength.
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -975,17 +977,93 @@ async def create_session(
     instance_dir = _resolve_instance_dir(inst)
 
     from ..tools import SUB_SESSION_BASE_TOOLS
+    from ..reasoning import validate_effort
     from ..sessions import MAIN_SESSION_ID, ensure_meta
     session_id = f"session-{uuid.uuid4().hex[:4]}"
     enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
-    ensure_meta(instance_dir, session_id, {"enabled_tools": enabled})
+    meta = {"enabled_tools": enabled}
+    if validate_effort(body.reasoning_effort):
+        meta["reasoning_effort"] = validate_effort(body.reasoning_effort)
+    ensure_meta(instance_dir, session_id, meta)
     state.broadcast("session_created", {
         "instance_id": instance_id,
         "session_id": session_id,
         "parent_session_id": None,
         "parent_await_result": False,
     })
-    return {"session_id": session_id, "enabled_tools": enabled}
+    return {"session_id": session_id, "enabled_tools": enabled, "reasoning_effort": meta.get("reasoning_effort")}
+
+
+class ReasoningEffortRequest(BaseModel):
+    effort: str | None = None  # none|low|mid|high|max; None clears to default
+
+
+@router.post("/instances/{instance_id}/sessions/{session_id}/reasoning")
+async def set_session_reasoning_effort(
+    instance_id: str,
+    session_id: str,
+    body: ReasoningEffortRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Set a session's reasoning effort (thinking strength).
+
+    ``session_id == "main"`` → persist as the user-level default in users
+    preferences (global across instances). Any other session → persist into that
+    child session's ``.meta.json`` as a per-session override.
+
+    Effort value must be one of ``none|low|mid|high|max``.
+    """
+    from ..reasoning import EFFORT_VALUES, validate_effort
+    from ..sessions import MAIN_SESSION_ID
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    effort = validate_effort(body.effort)
+    if body.effort is not None and effort is None:
+        raise HTTPException(status_code=422, detail=f"Invalid effort '{body.effort}'. Choose from {', '.join(EFFORT_VALUES)}")
+
+    if session_id == MAIN_SESSION_ID:
+        from ..database.users import set_preference
+        prefs = await set_preference(u["id"], "reasoning_effort", effort)
+        return {"session_id": session_id, "reasoning_effort": prefs.get("reasoning_effort"), "scope": "user"}
+    else:
+        from ..sessions import ensure_meta, save_meta
+        meta = ensure_meta(instance_dir, session_id)
+        if effort is None:
+            meta.pop("reasoning_effort", None)
+        else:
+            meta["reasoning_effort"] = effort
+        save_meta(instance_dir, session_id, meta)
+        return {"session_id": session_id, "reasoning_effort": meta.get("reasoning_effort"), "scope": "session"}
+
+
+@router.get("/instances/{instance_id}/sessions/{session_id}/reasoning")
+async def get_session_reasoning_effort(
+    instance_id: str,
+    session_id: str,
+    user: UserInfo = Depends(require_user),
+):
+    """Return the session's effective reasoning effort (thinking strength).
+
+    ``session_id == "main"`` → read the user-level default. Any other session →
+    read that child session's ``.meta.json`` override (falling back to the user
+    default when the child hasn't set one). Response mirrors the POST so both
+    share the same shape: ``{session_id, reasoning_effort, scope}``.
+    """
+    from ..reasoning import resolve_session_effort
+    from ..sessions import MAIN_SESSION_ID
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    effort = await resolve_session_effort(instance_dir, session_id, u["id"])
+    scope = "session" if session_id != MAIN_SESSION_ID else "user"
+    return {"session_id": session_id, "reasoning_effort": effort, "scope": scope}
 
 
 @router.post("/instances/{instance_id}/sessions/{session_id}/interrupt")

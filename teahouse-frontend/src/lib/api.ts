@@ -234,10 +234,23 @@ export const instancesApi = {
   },
 
   // Session lifecycle (multi-session director tasks)
-  createSession: async (instanceId: string, enabledTools?: string[]) => {
-    return post<{ session_id: string; enabled_tools: string[] }>(
+  createSession: async (instanceId: string, enabledTools?: string[], reasoningEffort?: string) => {
+    return post<{ session_id: string; enabled_tools: string[]; reasoning_effort?: string }>(
       `/api/instances/${instanceId}/sessions`,
-      { enabled_tools: enabledTools },
+      { enabled_tools: enabledTools, reasoning_effort: reasoningEffort },
+    )
+  },
+
+  setSessionReasoning: async (instanceId: string, sessionId: string, effort: string) => {
+    return post<{ session_id: string; reasoning_effort: string | null; scope: string }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}/reasoning`,
+      { effort },
+    )
+  },
+
+  getSessionReasoning: async (instanceId: string, sessionId: string) => {
+    return get<{ session_id: string; reasoning_effort: string | null; scope: string }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}/reasoning`,
     )
   },
 

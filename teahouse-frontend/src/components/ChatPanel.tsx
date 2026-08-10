@@ -108,6 +108,49 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
   const instId = activeInst?.id
   const instName = activeInst?.name
 
+  // ── Reasoning effort (thinking strength) per session ──────────────────
+  // Reflects the value shown in the ChatHeader cycle button. None = not set
+  // (model default). Keyed by session_id; main → user default, child → override.
+  const EFFORT_ORDER = ["none", "low", "mid", "high", "max"]
+  const [reasoningEffortBySid, setReasoningEffortBySid] = useState<Record<string, string>>({})
+  const reasoningEffortBySidRef = useRef<Record<string, string>>({})
+  reasoningEffortBySidRef.current = reasoningEffortBySid
+  // The cycle button keys off the ACTIVE session's stored value; None means unset.
+  const currentEffort = reasoningEffortBySid[activeSid] ?? "none"
+
+  const refreshSessionEffort = useCallback((sid: string) => {
+    if (!instId) return
+    instancesApi.getSessionReasoning(instId, sid).then(res => {
+      if (!res.ok) return
+      const val = res.data?.reasoning_effort ?? "none"
+      const map = { ...reasoningEffortBySidRef.current, [sid]: val }
+      reasoningEffortBySidRef.current = map
+      setReasoningEffortBySid(map)
+    }).catch(() => {})
+  }, [instId])
+
+  const cycleSessionEffort = useCallback(async () => {
+    if (!instId) return
+    const cur = reasoningEffortBySidRef.current[activeSid] ?? "none"
+    const next = EFFORT_ORDER[(EFFORT_ORDER.indexOf(cur) + 1) % EFFORT_ORDER.length]
+    const res = await instancesApi.setSessionReasoning(instId, activeSid, next)
+    if (res.ok) {
+      const map = { ...reasoningEffortBySidRef.current, [activeSid]: next }
+      reasoningEffortBySidRef.current = map
+      setReasoningEffortBySid(map)
+      const label = activeSid === MAIN_SID ? "主会话" : `子会话 ${activeSid}`
+      toast.success(`${label} 思考强度已设为 ${next}`)
+    } else {
+      toast.error(`设置思考强度失败:${res.error || "未知错误"}`)
+    }
+  }, [instId, activeSid])
+
+  // 顶层思考强度显示初始化：实例或活跃会话变化时,同步当前会话的 effort 值。
+  useEffect(() => {
+    refreshSessionEffort(activeSid)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instId, activeSid])
+
   // Chatpan must define refreshSessionsStatus AFTER instId (it reads it).
   const refreshSessionsStatus = useCallback(() => {
     if (instId) {
@@ -760,6 +803,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     // This populates sessionStateMap so isStreaming / elapsed / tokenCount are
     // correct immediately for the target session.
     refreshSessionsStatus()
+    // 同步拉取目标会话的思考强度,更新顶部轮换按钮的显示。
+    refreshSessionEffort(sid)
     historyCursorRef.current = null
     historyLoadedRef.current = false
     // If the session is running, always rebuild from jsonl rather than trusting
@@ -775,7 +820,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       setMessages([])
       loadHistory(true, sid)
     }
-  }, [activeSid, messages, loadHistory, clearSessionNew, refreshSessionsStatus])
+  }, [activeSid, messages, loadHistory, clearSessionNew, refreshSessionsStatus, refreshSessionEffort])
 
   // Latest switchSession, exposed via ref so once-created SSE listeners can drive
   // a passive switch (e.g. session_destroyed) through the SAME unified path as a
@@ -899,13 +944,69 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
     return () => clearInterval(timer)
   }, [])
 
-  // Available commands for autocomplete
-  const COMMANDS = [{ name: "/clear", description: "清空当前对话" }]
+  // Available commands for autocomplete.
+  // A command with a `params` list gets a second autocomplete stage: after the
+  // name is picked, the menu suggests parameter values instead.
+  interface CommandParam {
+    name: string
+    description: string
+  }
+  interface CommandDef {
+    name: string
+    description: string
+    params?: CommandParam[]
+  }
+  const COMMANDS: CommandDef[] = [
+    { name: "/clear", description: "清空当前对话" },
+    {
+      name: "/think",
+      description: "设置思考强度",
+      params: [
+        { name: "none", description: "关闭思考" },
+        { name: "low", description: "低" },
+        { name: "mid", description: "中" },
+        { name: "high", description: "高" },
+        { name: "max", description: "最高" },
+      ],
+    },
+  ]
 
-  // Compute filtered commands
-  const filteredCommands = input.startsWith("/")
-    ? COMMANDS.filter((c) => c.name.startsWith(input))
-    : []
+  // Two-stage autocomplete derived purely from `input` (no extra state).
+  // - stage "command": "/xxx" without a space → suggest command names.
+  // - stage "param":   "/name <tail>" on a command with params → suggest param values.
+  // - stage "none":    otherwise → no menu.
+  type CompletionStage = "none" | "command" | "param"
+  const parseCommandInput = (value: string): {
+    stage: CompletionStage
+    command: CommandDef | null
+    nick: (CommandDef | CommandParam)[]
+  } => {
+    if (!value.startsWith("/")) return { stage: "none", command: null, nick: [] }
+    const paramMatch = value.match(/^\/(\S+)\s+([^/]*)$/)
+    if (paramMatch) {
+      const cmd = COMMANDS.find((c) => c.name === "/" + paramMatch[1]) || null
+      if (!cmd || !cmd.params) return { stage: "none", command: null, nick: [] }
+      const tail = paramMatch[2]
+      // A full param value already in place means the command is complete — close
+      // the menu so Enter runs it instead of re-picking the same param.
+      if (cmd.params.some((p) => p.name === tail)) {
+        return { stage: "none", command: null, nick: [] }
+      }
+      return {
+        stage: "param",
+        command: cmd,
+        nick: cmd.params.filter((p) => p.name.startsWith(tail)),
+      }
+    }
+    return {
+      stage: "command",
+      command: null,
+      nick: COMMANDS.filter((c) => c.name.startsWith(value)),
+    }
+  }
+
+  const completion = parseCommandInput(input)
+  const filteredCommands = completion.nick
 
   // Clamp commandIndex when filtered list shrinks
   useEffect(() => {
@@ -1018,7 +1119,40 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       if (inst) {
         instancesApi.clearSessionMemory(inst.id, sid).catch(() => {})
       }
-      toast.success("会话已清空")
+      const label = sid === "main" ? "主会话" : `子会话 ${sid}`
+      toast.success(`已清除 ${label} 内容`)
+      scrollToBottom()
+      return
+    }
+
+    // /think command — set reasoning effort for the active session.
+    // Persists: main → user default (global), child → that session's meta.
+    const thinkMatch = text.match(/^\/think\s+(\S+)$/)
+    if (thinkMatch) {
+      const effort = thinkMatch[1].toLowerCase()
+      const valid = ["none", "low", "mid", "high", "max"]
+      if (!valid.includes(effort)) {
+        toast.error(`无效思考强度：${thinkMatch[1]}。可选 ${valid.join("|")}`)
+        return
+      }
+      const activeInst = getActiveInstance()
+      if (!activeInst) {
+        toast.error("未选中实例,无法设置思考强度")
+        return
+      }
+      const res = await instancesApi.setSessionReasoning(activeInst.id, sid, effort)
+      if (res.ok) {
+        const scope = res.data?.scope
+        const label = sid === "main" ? "主会话" : `子会话 ${sid}`
+        toast.success(
+          scope === "user"
+            ? `主会话思考强度已设为 ${effort}`
+            : `${label} 思考强度已设为 ${effort}`,
+        )
+      } else {
+        toast.error(`设置思考强度失败:${res.error || "未知错误"}`)
+      }
+      setInput("")
       scrollToBottom()
       return
     }
@@ -1184,7 +1318,18 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault()
-        setInput(filteredCommands[commandIndex].name + " ")
+        const selected = filteredCommands[commandIndex]
+        if (completion.stage === "command" && selected && "params" in selected) {
+          // Pick a command name → fill with trailing space so the param stage fires.
+          setInput((selected as CommandDef).name + " ")
+        } else if (completion.stage === "param" && selected) {
+          // Pick a param value → fill the full "cmd param" and let the Enter-to-send
+          // branch below execute it.
+          setInput(`${completion.command!.name} ${(selected as CommandParam).name}`)
+        } else if (selected) {
+          // Param-less command name → fill with trailing space (no second stage).
+          setInput((selected as CommandDef).name + " ")
+        }
         setCommandIndex(0)
         inputRef.current?.focus()
         return
@@ -1221,6 +1366,8 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           setAutoApproveCommit(checked)
           localStorage.setItem("teahouse_auto_approve_commit", String(checked))
         }}
+        reasoningEffort={currentEffort}
+        onCycleReasoningEffort={cycleSessionEffort}
       />
 
       {/* Messages */}
@@ -1319,7 +1466,13 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         commandIndex={commandIndex}
         onCommandHover={setCommandIndex}
         onCommandSelect={(name) => {
-          setInput(name + " ")
+          if (completion.stage === "param") {
+            // Selecting a param value → fill full "cmd param", don't keep the menu open.
+            setInput(`${completion.command!.name} ${name}`)
+          } else {
+            // Selecting a command name → fill with trailing space so the param stage fires.
+            setInput(name + " ")
+          }
           setCommandIndex(0)
           inputRef.current?.focus()
         }}

@@ -553,6 +553,9 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
     await_result = bool(args.get("await_result", False))
     parent = session_id or ""
 
+    from .reasoning import validate_effort
+    effort = validate_effort(args.get("reasoning_effort"))
+
     child = f"session-{uuid.uuid4().hex[:4]}"
     tools_list = sorted(set(enabled)) if enabled else sorted(SUB_SESSION_BASE_TOOLS)
     meta = {
@@ -561,6 +564,8 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
         "await_result": await_result,
         "created_from": "director",
     }
+    if effort:
+        meta["reasoning_effort"] = effort
     _write_meta(instance_dir, child, meta)
 
     # Enqueue the task into the child's session loop. The loop persists it to
@@ -825,6 +830,9 @@ async def execute_generate(
     dump_payload_str = args.get("dump_payload_path", "")
     overwrite = bool(args.get("overwrite", False))
 
+    from .reasoning import validate_effort
+    effort = validate_effort(args.get("reasoning_effort"))
+
     if not source_file_str:
         return "Error: 'source_file' is required — specify the YAML config file path (e.g. temp/generate-config-12-1.yaml)"
     if not output_path_str:
@@ -883,19 +891,6 @@ async def execute_generate(
     # Step 2: Resolve ${variables} + {{path}} file slices before sending to the writer LLM.
     resolved = _resolve_messages_vars(messages, instance_dir)
 
-    # Step 3: dry-run — dump resolved payload and return WITHOUT calling the writer model
-    if dump_payload_str:
-        try:
-            payload_full = _validate_path(instance_dir, dump_payload_str)
-            payload_full.parent.mkdir(parents=True, exist_ok=True)
-            payload_json = json.dumps(resolved, ensure_ascii=False, indent=2)
-            payload_full.write_text(payload_json, encoding="utf-8")
-        except ValueError as e:
-            return f"Error: dump_payload_path 路径无效: {e}"
-        except Exception as e:
-            return f"Error: 写入 dump_payload_path 失败: {e}"
-        return f"Dry-run: payload 已写出到 {dump_payload_str}，未调用正文模型"
-
     # Step 4: Resolve writer slot LLM client
     if not user_id:
         return (
@@ -944,6 +939,46 @@ async def execute_generate(
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
 
+    # Step 3: dry-run — dump the full resolved request context and return WITHOUT
+    # calling the writer model. Placed AFTER client resolution so
+    # url/model/api_style/effort-mapping are known. API key is masked (only the
+    # last 4 chars survive) so the payload is safe to inspect but traceable to a
+    # specific endpoint/key. This lets a dry run verify precisely what a real
+    # call would send.
+    if dump_payload_str:
+        from .reasoning import effort_kwargs
+
+        def _mask_key(key: str | None) -> str | None:
+            if not key:
+                return key
+            return "*" * max(len(key) - 4, 0) + key[-4:]
+
+        try:
+            payload_full = _validate_path(instance_dir, dump_payload_str)
+            payload_full.parent.mkdir(parents=True, exist_ok=True)
+            payload_obj: dict = {
+                "model": writer_client.config.model,
+                "api_style": writer_client.api_style,
+                "url": writer_client.config.url,
+                "api_key": _mask_key(writer_client.config.key),
+                "max_tokens": writer_client.config.max_tokens,
+                "temperature": writer_client.config.temperature,
+                "top_p": writer_client.config.top_p,
+                "frequency_penalty": writer_client.config.frequency_penalty,
+                "presence_penalty": writer_client.config.presence_penalty,
+                "reasoning_effort": effort,
+                "api_fields": effort_kwargs(writer_client.api_style, effort),
+                "messages": resolved,
+            }
+            payload_full.write_text(
+                json.dumps(payload_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except ValueError as e:
+            return f"Error: dump_payload_path 路径无效: {e}"
+        except Exception as e:
+            return f"Error: 写入 dump_payload_path 失败: {e}"
+        return f"Dry-run: payload 已写出到 {dump_payload_str}，未调用正文模型"
+
     # Step 5/6: Call writer LLM — stream and forward each text chunk to the
     # frontend as an incremental delta via generate_progress (no throttling), but
     # do NOT write the file or broadcast file_changed until the stream ends
@@ -958,7 +993,10 @@ async def execute_generate(
     buffered = ""            # 已累积正文（仅 text chunk，不含 reasoning/thinking）
     got_text = False         # 是否收到过任一正文 chunk（gate：无正文则不产出文件）
 
-    stream = writer_client.send_message_stream(resolved)
+    _gen_kwargs = {}
+    if effort:
+        _gen_kwargs["reasoning_effort"] = effort
+    stream = writer_client.send_message_stream(resolved, **_gen_kwargs)
 
     def _progress(done: bool, delta: str = "") -> None:
         # done=false: forward just this chunk's delta (append on the frontend).

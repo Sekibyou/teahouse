@@ -267,10 +267,10 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
           break
         }
         case "sessionCreate": {
-          // { enabled_tools?: string[] } → creates a child sub-session, returns {session_id}.
+          // { enabled_tools?: string[], reasoning_effort?: string } → creates a child sub-session, returns {session_id}.
           if (instanceId) {
-            const opts = (_args[0] as { enabled_tools?: string[] } | undefined) || {}
-            const res = await instancesApi.createSession(instanceId, opts.enabled_tools)
+            const opts = (_args[0] as { enabled_tools?: string[]; reasoning_effort?: string } | undefined) || {}
+            const res = await instancesApi.createSession(instanceId, opts.enabled_tools, opts.reasoning_effort)
             // 统一返回 {ok, data|error}：成功时包装为 {ok:true, data:{session_id, enabled_tools}}，沙盒端用 res.ok 判断。
             result = res.ok ? { ok: true, data: res.data } : { ok: false, error: res.error }
           } else {

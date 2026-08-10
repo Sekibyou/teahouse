@@ -512,6 +512,7 @@ async def _tool_use_loop(
     session_id: str | None = None,
     enabled_tools: list[str] | None = None,
     order_allocator=None,
+    reasoning_effort: str | None = None,
 ):
     """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
@@ -524,6 +525,10 @@ async def _tool_use_loop(
     from the owning SessionLoop's monotonic watermark, keeping the round's
     reserved order consistent with queued-user reservations and the persisted
     record. When omitted, orders fall back to the on-disk record count.
+
+    ``reasoning_effort`` (optional) is an internal effort value (none|low|mid|
+    high|max). When None it is resolved from the session at run time (child
+    meta / main user default); when set it wins.
     """
     api_style = client.api_style
 
@@ -597,6 +602,13 @@ async def _tool_use_loop(
             f"Do not do unrelated work or wait for further instructions — this task is one-shot."
         )
 
+    # Resolve effective reasoning effort for this session at run time.
+    # Precedence: explicit caller override (child session meta) → session-level
+    # effort (main → user default). None = omit the knob (model default).
+    if reasoning_effort is None:
+        from .reasoning import resolve_session_effort
+        reasoning_effort = await resolve_session_effort(instance_dir, sid, user_id)
+
     def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str, batch_meta: dict | None = None):
         # When a call came from a BatchExecute expansion, prepend a batch note so
         # the director can tell this step was issued as part of a batch script (a
@@ -640,7 +652,10 @@ async def _tool_use_loop(
         collected_text = ""
         all_tool_calls = None  # stores {"type": "tool_calls", "calls": [...]} when received
         try:
-            async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
+            _call_kwargs = {}
+            if reasoning_effort is not None:
+                _call_kwargs["reasoning_effort"] = reasoning_effort
+            async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools, **_call_kwargs):
                 if event["type"] == "text":
                     # tool_args-marked events carry OpenAI tool-call argument
                     # fragments for token counting. Do NOT accumulate into

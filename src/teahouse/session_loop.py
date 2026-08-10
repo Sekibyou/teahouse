@@ -224,11 +224,12 @@ class SessionLoop:
             # 5. Load tool permissions
             meta = sessions.load_meta(self.instance_dir, self.session_id)
             enabled_tools = meta.get("enabled_tools") or None
+            reasoning_effort = meta.get("reasoning_effort") or None
 
             # 6. Run tool loop
             task_tracker.stats_start(self.instance_dir.name, self.session_id)
             self._task = asyncio.create_task(
-                self._run_tool_loop(client, enabled_tools)
+                self._run_tool_loop(client, enabled_tools, reasoning_effort)
             )
             task_tracker.register(self.instance_dir.name, self.session_id, self._task)
             try:
@@ -245,11 +246,11 @@ class SessionLoop:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _run_tool_loop(self, client, enabled_tools: list[str] | None) -> None:
+    async def _run_tool_loop(self, client, enabled_tools: list[str] | None, reasoning_effort: str | None = None) -> None:
         """Consume _tool_use_loop generator, broadcasting every event as session_event."""
         from .app import _tool_use_loop
 
-        _event_log(self.instance_dir, self.session_id, "tool_loop_start", {"enabled_tools": enabled_tools})
+        _event_log(self.instance_dir, self.session_id, "tool_loop_start", {"enabled_tools": enabled_tools, "reasoning_effort": reasoning_effort})
         event_count = 0
         async for event in _tool_use_loop(
             client,
@@ -260,6 +261,7 @@ class SessionLoop:
             session_id=self.session_id,
             enabled_tools=enabled_tools,
             order_allocator=self.next_order,
+            reasoning_effort=reasoning_effort,
         ):
             task_tracker.stats_tick(self.instance_dir.name, self.session_id)
             stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)

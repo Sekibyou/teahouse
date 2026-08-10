@@ -1,4 +1,4 @@
-import { Puzzle, GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
+import { GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
 interface ChangeCounts {
@@ -12,6 +12,10 @@ interface ChatHeaderProps {
   slotModels: Record<string, string | null>
   enabledPluginCount: number
   onOpenSettings: (tab: string) => void
+
+  // Reasoning effort (thinking strength) of the active session
+  reasoningEffort: string
+  onCycleReasoningEffort: () => void
 
   // Session strip
   MAIN_SID: string
@@ -37,6 +41,8 @@ export function ChatHeader({
   slotModels,
   enabledPluginCount,
   onOpenSettings,
+  reasoningEffort,
+  onCycleReasoningEffort,
   MAIN_SID,
   sessionList,
   activeSid,
@@ -59,11 +65,19 @@ export function ChatHeader({
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <button
             className="flex items-center gap-1 hover:text-foreground transition-colors"
+            onClick={onCycleReasoningEffort}
+            title={`思考强度：${reasoningEffort}（点击轮换 none|low|mid|high|max）`}
+          >
+            思考：<span className="text-foreground font-medium">
+              {({ none: "无", low: "低", mid: "中", high: "高", max: "极" } as Record<string, string>)[reasoningEffort] ?? reasoningEffort}
+            </span>
+          </button>
+          <button
+            className="flex items-center gap-1 hover:text-foreground transition-colors"
             onClick={() => onOpenSettings("plugins")}
             title="打开设置→插件管理"
           >
-            <Puzzle className="h-3 w-3" />
-            <span className="text-foreground font-medium">{enabledPluginCount}</span>
+            插件：<span className="text-foreground font-medium">{enabledPluginCount}</span>
           </button>
           <button
             className="flex items-center gap-1 hover:text-foreground transition-colors"

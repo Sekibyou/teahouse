@@ -184,7 +184,7 @@
   {
     "name": "Generate",
     "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",
-    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `overwrite`（可选，默认 false）：当 `path` 指向的文件已存在时，是否允许覆盖。默认**只读保护**：目标已存在则直接报错并拒绝生成，不调用正文模型、不修改该文件。此时应由外部（前端/玩家）决定是换一个新文件名重试、还是显式传 `overwrite=true` 确认覆盖后重发。传 `overwrite=true` 时，生成开始时**先删除旧文件**再流式生成，生成完成才落盘；因此若生成中途失败，旧文件已删、只剩新积内容（旧内容靠 git 兜底回滚）。\n- `dump_payload_path`（可选，dry-run）：填入路径后，把展开占位符后的完整 Payload JSON 写入该路径并**立即返回**，不调用正文模型。用于调试时查看实际发给模型的 payload 内容\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      \\{{static_settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  \\{{path}}                                    引用整个文件\n  \\{{path:10-30}}                              引用文件的第 10~30 行\n  \\{{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  \\{{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  \\{{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  \\{{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  \\{{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  \\{{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：\\{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。\n\n转义：占位符语法说明里的示例以 \\{{...}} / \\${...} 书写，仅作教学，解析时会保持字面量、不展开。正文里想展示字面 {{...}} 或 ${...} 而不要其被解析时，同样在开括号前加 \\ 前缀。",
+    "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `overwrite`（可选，默认 false）：当 `path` 指向的文件已存在时，是否允许覆盖。默认**只读保护**：目标已存在则直接报错并拒绝生成，不调用正文模型、不修改该文件。此时应由外部（前端/玩家）决定是换一个新文件名重试、还是显式传 `overwrite=true` 确认覆盖后重发。传 `overwrite=true` 时，生成开始时**先删除旧文件**再流式生成，生成完成才落盘；因此若生成中途失败，旧文件已删、只剩新积内容（旧内容靠 git 兜底回滚）。\n- `dump_payload_path`（可选，dry-run）：填入路径后，把展开占位符后的完整 Payload JSON 写入该路径并**立即返回**，不调用正文模型。用于调试时查看实际发给模型的 payload 内容\n- `reasoning_effort`（可选）：本次正文生成的思考强度，取值 `none|low|mid|high|max`（默认不传=模型默认）。none 关闭思考；其余依模型能力映射。\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      \\{{static_settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  \\{{path}}                                    引用整个文件\n  \\{{path:10-30}}                              引用文件的第 10~30 行\n  \\{{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  \\{{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  \\{{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  \\{{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  \\{{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  \\{{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：\\{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。\n\n转义：占位符语法说明里的示例以 \\{{...}} / \\${...} 书写，仅作教学，解析时会保持字面量、不展开。正文里想展示字面 {{...}} 或 ${...} 而不要其被解析时，同样在开括号前加 \\ 前缀。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -200,7 +200,12 @@
         },
         "dump_payload_path": {
           "type": "string",
-          "description": "可选 dry-run 参数：填入路径后把展开占位符后的完整 Payload JSON 写入该路径并立即返回，不调用正文模型。用于调试 payload 内容。"
+          "description": "可选 dry-run 参数：填入路径后把本次会发送的完整请求上下文 JSON 写入该路径并立即返回，不调用正文模型。含 model/api_style/url/api_key(打码,仅末尾4位)/max_tokens/temperature/top_p/frequency_penalty/presence_penalty/reasoning_effort 及其映射后的 api_fields、resolved messages。用于调试实际发给模型的 payload。"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "low", "mid", "high", "max"],
+          "description": "可选，正文生成思考强度。none 关闭思考；low/mid/high/max 依模型能力映射。不传则用模型默认。"
         }
       },
       "required": [
@@ -502,7 +507,7 @@
   {
     "name": "StartSubSession",
     "description": "（导演专用）开启一个独立的导演会话（session），委派一次性任务（探索设定、总结、批量改写等）。新会话有独立上下文、受限工具集，不污染当前会话历史。可边开边继续当前会话工作，或选择等它完成后被唤醒。",
-    "usage": "当你想把一件耗时/会污染注意力的独立工作（如深入某个设定的文件考古、批量改写某几楼、独立总结一段）外包给一个独立 agent 时，用本工具开启新会话。\n\n参数：\n- `task`（必填）：给新会话的任务指令，越明确越好。新会话会据此执行，完成后用 `EndSession` 宣告结束。\n- `enabled_tools`（可选）：给新会话的工具白名单。默认只读基础集（Read/Glob/Grep/GetRuntimeVars/Report/EndSession）。若新会话需要写 temp/ 草稿或 Generate 正文，显式传入对应工具。\n- `await_result`（可选，布尔，默认 false）：**等待策略**。\n  - `false`（默认）：发起后立刻返回 `session_id`，你**继续本轮的其它工具调用**，并行推进当前会话工作；之后用 `Read` 读新会话落到 `temp/` 的结论（让新会话经 `Report` 写 temp）。\n  - `true`：发起后本轮**就此终止**、等待唤醒——不要再发别的工具调用。新会话结束时后端会向你注入一条消息重新开启新一轮，你再读取结论收尾。\n\n注意：\n- 新会话默认**不能写正式区**（floors/、settings/ 等），探索结论一律经 `Report` 写 `temp/*.md`（不纳入 git 版本控制）。\n- 即使 `await_result:true`，本工具也只返回一个\"已发起等待\"确认，不会真的阻塞——你结束本轮后，唤醒靠新会话结束信号。\n- 每个新会话都是全新上下文，不继承你当前对话的历史，所以 `task` 要自包含（说明它需要读取哪些文件）。",
+    "usage": "当你想把一件耗时/会污染注意力的独立工作（如深入某个设定的文件考古、批量改写某几楼、独立总结一段）外包给一个独立 agent 时，用本工具开启新会话。\n\n参数：\n- `task`（必填）：给新会话的任务指令，越明确越好。新会话会据此执行，完成后用 `EndSession` 宣告结束。\n- `enabled_tools`（可选）：给新会话的工具白名单。默认只读基础集（Read/Glob/Grep/GetRuntimeVars/Report/EndSession）。若新会话需要写 temp/ 草稿或 Generate 正文，显式传入对应工具。\n- `reasoning_effort`（可选）：新会话的思考强度，取值 `none|low|mid|high|max`（默认不传=模型默认）。none 关闭思考；low/mid/high/max 依模型能力映射（Anthropic 映射思考预算，OpenAI 映射 reasoning_effort）。\n- `await_result`（可选，布尔，默认 false）：**等待策略**。\n  - `false`（默认）：发起后立刻返回 `session_id`，你**继续本轮的其它工具调用**，并行推进当前会话工作；之后用 `Read` 读新会话落到 `temp/` 的结论（让新会话经 `Report` 写 temp）。\n  - `true`：发起后本轮**就此终止**、等待唤醒——不要再发别的工具调用。新会话结束时后端会向你注入一条消息重新开启新一轮，你再读取结论收尾。\n\n注意：\n- 新会话默认**不能写正式区**（floors/、settings/ 等），探索结论一律经 `Report` 写 `temp/*.md`（不纳入 git 版本控制）。\n- 即使 `await_result:true`，本工具也只返回一个\"已发起等待\"确认，不会真的阻塞——你结束本轮后，唤醒靠新会话结束信号。\n- 每个新会话都是全新上下文，不继承你当前对话的历史，所以 `task` 要自包含（说明它需要读取哪些文件）。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -520,6 +525,11 @@
         "await_result": {
           "type": "boolean",
           "description": "true=发起后结束本轮等唤醒；false=发起后继续本轮其它工作（默认）"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "low", "mid", "high", "max"],
+          "description": "子会话思考强度（可选）。none 关闭思考；low/mid/high/max 依模型能力映射。不传则用模型默认。"
         }
       },
       "required": [

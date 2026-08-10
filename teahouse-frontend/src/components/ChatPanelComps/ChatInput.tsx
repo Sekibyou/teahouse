@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button"
 interface CommandDef {
   name: string
   description: string
+  params?: {
+    name: string
+    description: string
+  }[]
 }
 
 interface PendingApproval {

@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator
 import httpx
 
 from .config import LLMConfig
+from .reasoning import effort_kwargs
 
 logger = logging.getLogger("teahouse.llm")
 
@@ -118,12 +119,20 @@ class LLMClient:
 
     def _request_body(self, messages: list[dict], system: str | None, stream: bool, **kwargs: Any) -> dict:
         cfg = self.config
+
+        # Translate our internal reasoning-effort (none|low|mid|high|max) onto
+        # this API's native knob. It arrives as a plain internal enum through
+        # kwargs and must NOT leak through as-is into the body.
+        effort = kwargs.pop("reasoning_effort", None)
+
         body: dict[str, Any] = {
             "model": kwargs.pop("model", cfg.model),
             "max_tokens": kwargs.pop("max_tokens", cfg.max_tokens),
             "temperature": kwargs.pop("temperature", cfg.temperature),
             **kwargs,
         }
+        if effort is not None:
+            body.update(effort_kwargs(self.api_style, effort))
         if stream:
             body["stream"] = True
             if self.api_style == "openai":
@@ -234,12 +243,16 @@ class LLMClient:
         cfg = self.config
 
         if kwargs.get("tools"):
+            # Translate effort before building (mirrors _request_body).
+            effort = kwargs.pop("reasoning_effort", None)
             body: dict[str, Any] = {
                 "model": kwargs.get("model", cfg.model),
                 "max_tokens": kwargs.get("max_tokens", cfg.max_tokens),
                 "temperature": kwargs.get("temperature", cfg.temperature),
                 "tools": kwargs["tools"],
             }
+            if effort is not None:
+                body.update(effort_kwargs(self.api_style, effort))
             if self.api_style == "anthropic":
                 body["messages"] = messages
                 if system:

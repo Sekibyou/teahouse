@@ -1,6 +1,7 @@
 """
 User CRUD operations.
 """
+import json
 import re
 from typing import Optional
 
@@ -123,6 +124,29 @@ async def update_user(
         tuple(values),
     )
     return cur.rowcount > 0
+
+
+async def get_preferences(user_id: str) -> dict:
+    """Return the user's preferences JSON blob as a dict (``{}`` if none)."""
+    row = await fetch_one("SELECT preferences FROM users WHERE id = ?", (user_id,))
+    if not row or not row.get("preferences"):
+        return {}
+    try:
+        parsed = json.loads(row["preferences"])
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+async def set_preference(user_id: str, key: str, value) -> dict:
+    """Set one key in the user's preferences and return the updated dict."""
+    prefs = await get_preferences(user_id)
+    prefs[key] = value
+    await execute(
+        "UPDATE users SET preferences = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(prefs, ensure_ascii=False), current_timestamp(), user_id),
+    )
+    return prefs
 
 
 async def list_users() -> list[dict]:
