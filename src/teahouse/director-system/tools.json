@@ -544,5 +544,26 @@
         "message"
       ]
     }
+  },
+  {
+    "name": "DeleteSubSession",
+    "description": "删除一个子会话（废弃其 JSONL 与元数据文件）并广播 session_destroyed。导演与沙盒均可调用。",
+    "usage": "当某个子会话的生命周期理应结束时调用本工具彻底回收，释放其后台生成与磁盘占用。\n\n参数：\n- `session_id`（必填）：要删除的子会话 id（来自 StartSubSession 的返回值）。\n- `abort`（可选，布尔，默认 true）：删除前是否先中断该会话进行中的一轮生成。默认 true 避免残留后台任务。\n\n使用建议：\n1. **用户明确要求清理时**：执行删除。\n2. **一次性侦查任务完成后**：如只是搜索某个关键信息、读完它落在 temp/ 的报告确认无用后，可立即删除。\n3. **可能继续追加的任务**：如总结、批量修改等，初始任务完成后可能还要追加要求（再经 SendToSubSession 投递），此类**不建议立即删除**，视任务节奏再定。\n\n注意：\n- 本工具**只销毁子会话**。主会话（main）的清理用 `/clear`（导演栏输入）或走 API，不要用本工具传 main。\n- 删除前请确认该会话已无你尚未读取的产出。删除不可恢复。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "要删除的子会话 id"
+        },
+        "abort": {
+          "type": "boolean",
+          "description": "删除前是否中断该会话进行中的生成（默认 true）"
+        }
+      },
+      "required": [
+        "session_id"
+      ]
+    }
   }
 ]

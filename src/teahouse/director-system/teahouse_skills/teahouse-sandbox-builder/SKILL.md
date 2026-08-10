@@ -285,35 +285,64 @@ Teahouse.runTool([
 
 与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runTool()`**。
 
+**🚫 runTool 禁止用于子会话**：`runTool` 走的是"确定批量执行"通道，**不经过导演 LLM**，天然没有"派发一个独立 agent 干活"的能力。因此**禁止用 runTool 创建、管理、删除子会话**（`StartSubSession` / `SendToSubSession` / `DeleteSubSession` 这三个导演工具在 runTool 里不提供对应语义）。创建和管理子会话一律用 **`Teahouse.sessionCreate` / `sessionSend` / `sessionDestroy`** API（见下一节"子会话"）。对照表：
+
+| 需求 | 用 runTool ❌ | 用 Teahouse 子会话 API ✅ |
+|---|---|---|
+| 想跑一组确定的批处理（开场、选项推进、git 提交、按顺序 Write/Generate） | ✅ 可以，本意就是干这个 | 不必 —— 无谓开一个 agent 太浪费 |
+| 想委派一个**独立 agent** 去做一次性任务（总结、改设定、探索某设定、批量润色） | ❌ runTool 不经过 LLM，给不了独立 agent | `sessionCreate` 建号 → `sessionSend` 投任务 → 等 `session_done` → `sessionDestroy` |
+| 给子会话设工具权限 | ❌ | `sessionCreate({ enabled_tools: [...] })` |
+| 向子会话追加指令 / 催办 | ❌ | `sessionSend(sid, message)` |
+| 得知子会话做完了 | ❌ | 订阅 `Teahouse.on("session_done", fn)` |
+| 回收 / 强停子会话 | ❌ | `sessionDestroy(sid, abort?)` |
+
+一句话：**runTool 是"我自己按计划连做几步"，子会话是"我开一个 agent 替我想/做"**——两者分工别混。子会话相关操作只走 `Teahouse.session*` API。
+
 ### 子会话（sub-session）— 一次性导演子任务
 
 适合：一次性的总结、改设定、探索某设定、批量润色。子会话**独立上下文、受限工具**,干完可销毁,**不污染主会话历史**——搭建造型阶段测试子任务不会误伤正在进行的搭建主对话。导演自己也可在子会话里开子 agent 探索。
 
+**沙盒建子会话 ≠ 导演 `StartSubSession`**：沙盒的 `sessionCreate` 只**开一个空档**给你手动操作——它不传任务、不记录调用方、也不自动唤醒你。所以沙盒侧的"自动化委派"必须自己走完三步：**①建号拿 sid → ②注入任务 + 订阅完成信号 → ③等信号处理收尾**。切记子会话完成后**不会通知到沙盒**，靠的是你订阅的 `session_done` 事件——不要假设它自己会回来找你。
+
 ```js
-// 1. 开启子会话（默认只读基础工具；按任务传更大 enabled_tools）
-const created = await Teahouse.sessionCreate({
-  enabled_tools: ["Read", "Glob", "Grep", "GetRuntimeVars", "SetRuntimeVar", "Report", "Generate", "EndSession"] // e.g. 允许改变量+生成正文
-})
-if (!created.ok) throw new Error(created.error)
-const sid = created.session_id
+var sid;
 
-// 2. 给该子会话补发任务指令（会开启一个导演 SSE 流,期间导演在该会话内工作）
-Teahouse.sessionSend(sid, "把第 3~5 章总结为《宗门势力》设定,结论写入 Report temp/summary-1.md,完成后用 EndSession")
-// 用户可在导演栏切到该子会话看到思考/工具过程,也能直接打字介入
-
-// 3. 订阅结束信号:子会话导演调 EndSession 后触发(只发信号,不销毁)
-Teahouse.on("session_done", async (data) => {
-  if (data.session_id !== sid) return
-  console.log("子会话完成:", sid)
-  await Teahouse.sessionDestroy(sid)   // 干完回收;若 mid-run 想强停,传 true
+// ① 创建子会话 + 设立权限,拿到 sid
+//   enabled_tools 未给 = 默认只读基础集(Read/Glob/Grep/GetRuntimeVars/Report/EndSession);
+//   按任务放开权限,例如允许改变量/写 temp 草稿/生成正文:
+Teahouse.sessionCreate({
+  enabled_tools: ["Read", "Glob", "Grep", "GetRuntimeVars", "SetRuntimeVar", "Report", "Generate", "EndSession"]
+}).then(function(created) {
+  // 注意：返回统一为 {ok, data|error}（与 readText 等一致）。成功用 created.ok 判断，
+  //       session_id 在 created.data.session_id。
+  if (!created.ok) throw new Error(created.error)
+  sid = created.data.session_id
+  startTask();          // ② 号建好才注入任务,别在拿到 sid 前发
+  listenDone();         // ③ 同时挂上完成信号监听
 })
+
+// ② 注入任务文字(投进子会话后台循环即开跑);用户可在导演栏切到该会话看思考/工具过程,也能直接打字介入
+function startTask() {
+  Teahouse.sessionSend(sid, "把第 3~5 章总结为《宗门势力》设定,结论写入 Report temp/summary-1.md,完成后用 EndSession")
+}
+
+// ③ 等待完成信号以对接 —— 子会话导演调 EndSession 后触发(只发信号、不销毁会话)
+function listenDone() {
+  Teahouse.on("session_done", function(data) {
+    if (data.session_id !== sid) return
+    Teahouse.sessionDestroy(sid);  // 干完回收;若 mid-run 想强停,传 true
+    // 对接产出:Read 子会话 report 用,或重新拉楼层(它若 Generate 了正文,output.refresh 会推)
+  })
+}
 ```
 
-API：
-- `Teahouse.sessionCreate(opts)` → `Promise<{session_id?, ok, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/GetRuntimeVars/Report/EndSession)。
-- `Teahouse.sessionSend(session_id, message)` → 把消息补发给指定子会话(等价于向该会话发一条 user 消息,但隔离上下文)。
-- `Teahouse.sessionDestroy(session_id, abort?)` → 销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。
-- 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。
+**等待期间不要傻等**：装完"建 → 送 → 挂"之后立即放回控制权,别在 `session_done` 到达前做会与之冲突的事；若子会话产出了正文/文件,宿主会照常推 `output.refresh`,沙盒据此重渲染即可。
+
+API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成败、`res.error` 取错误理由）：
+- `Teahouse.sessionCreate(opts)` → `Promise<{ok, data:{session_id, enabled_tools}, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/GetRuntimeVars/Report/EndSession)。只建号、不投任务;成功同步落盘 meta,**创建后即可立即 `sessionSend`,无需等就绪**。
+- `Teahouse.sessionSend(session_id, message)` → `Promise<{ok, data:true, error?}>`,把消息补发给指定子会话(等价于向该会话发一条 user 消息,但隔离上下文);任务与追加指令都走它。
+- `Teahouse.sessionDestroy(session_id, abort?)` → `Promise<{ok, data:true, error?}>`,销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。回收要你主动调,`session_done` 不会销毁。
+- 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。**注意**:`sessionSend` 成功时返回的是 `{ok:true, data:true}`,不是 `true` 裸布尔——沙盒侧务必用 `res.ok` 判断,不要写 `res === true` 或 `res.ok === undefined` 这类旧假设。
 
 **权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、`.teahouse/dyn_settings/` 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
 

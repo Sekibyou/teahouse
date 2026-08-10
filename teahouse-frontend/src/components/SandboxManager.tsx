@@ -267,11 +267,14 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
           break
         }
         case "sessionCreate": {
-          // { enabled_tools?: string[] } → creates a child sub-session, returns session_id.
+          // { enabled_tools?: string[] } → creates a child sub-session, returns {session_id}.
           if (instanceId) {
             const opts = (_args[0] as { enabled_tools?: string[] } | undefined) || {}
             const res = await instancesApi.createSession(instanceId, opts.enabled_tools)
-            result = res.ok ? res.data : { ok: false, error: res.error }
+            // 统一返回 {ok, data|error}：成功时包装为 {ok:true, data:{session_id, enabled_tools}}，沙盒端用 res.ok 判断。
+            result = res.ok ? { ok: true, data: res.data } : { ok: false, error: res.error }
+          } else {
+            result = { ok: false, error: "缺少实例上下文，无法创建子会话" }
           }
           break
         }
@@ -281,7 +284,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
           const sid = p?.session_id || p?.sessionId
           if (instanceId && sid && p?.message) {
             useSessionStore.getState().setPendingSessionSend({ sessionId: sid, message: p.message })
-            result = true
+            result = { ok: true, data: true }
           } else {
             result = { ok: false, error: "sessionSend requires {session_id, message}" }
           }
@@ -293,7 +296,7 @@ export function SandboxManager({ instanceId, instanceName, onSend }: SandboxMana
           const sid = p?.session_id || p?.sessionId
           if (instanceId && sid) {
             const res = await instancesApi.destroySession(instanceId, sid, !!p?.abort)
-            result = res.ok ? true : { ok: false, error: res.error }
+            result = res.ok ? { ok: true, data: true } : { ok: false, error: res.error }
           } else {
             result = { ok: false, error: "sessionDestroy requires {session_id}" }
           }

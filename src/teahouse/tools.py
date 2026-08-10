@@ -618,6 +618,29 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
     return f"Session {sid or '(main)'} marked done and parent notified. The session is NOT destroyed — destroy it explicitly if the caller wants to reclaim it."
 
 
+async def execute_delete_sub_session(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
+    """Director tool: destroy a sub-session (delete its JSONL + meta) and broadcast session_destroyed.
+
+    ``abort=true`` (default) first cancels any in-flight /v1/chat for that session.
+    Works for child sessions; the main session is off-limits (use /clear instead).
+    """
+    from .sessions import MAIN_SESSION_ID, destroy as _destroy
+
+    target = args.get("session_id", "")
+    if not target:
+        return "Error: DeleteSubSession requires a session_id."
+    if target == MAIN_SESSION_ID:
+        return f"Error: DeleteSubSession only destroys sub-sessions. Wipe the main session with /clear (or the session API) instead of {target}."
+
+    if args.get("abort", True):
+        from .session_tracker import abort_session_requests
+        await abort_session_requests(instance_dir.name, target)
+
+    _destroy(instance_dir, target)
+    state.broadcast("session_destroyed", {"instance_id": instance_id or instance_dir.name, "session_id": target})
+    return f"Sub-session {target} destroyed and reclaimed."
+
+
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     """Edit a file by replacing a range of lines. Use after Read to confirm line numbers.
 
@@ -1411,6 +1434,7 @@ TOOL_EXECUTORS = {
     "EndSession": execute_end_session,
     "StartSubSession": execute_start_sub_session,
     "SendToSubSession": execute_send_to_sub_session,
+    "DeleteSubSession": execute_delete_sub_session,
 }
 
 # Sub-session default tool grants. A child session may only call the tools on
@@ -1457,7 +1481,7 @@ async def execute_tool(
                 result = await executor(instance_dir, args, user_id, run_uuid)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
-            elif name in ("EndSession", "StartSubSession", "SendToSubSession"):
+            elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession"):
                 result = await executor(instance_dir, args, session_id, instance_id, user_id)
             else:
                 result = await executor(instance_dir, args)
