@@ -736,6 +736,7 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     """Search file contents with a regex pattern within the instance directory.
 
     Only searches text files (extensions: .md, .yaml, .yml, .json, .txt, .py, .js, .ts, .css, .html).
+    Args['path'] (optional): restrict search to a single file or directory (relative to instance root).
     Returns matching file paths with line counts, sorted by match count descending.
     """
     pattern = args["pattern"]
@@ -746,8 +747,25 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     except _re.error as e:
         return f"Error: invalid regex pattern '{pattern}': {e}"
 
+    # Resolve the optional scope: a single file or a directory under the instance root.
+    scope = args.get("path")
+    if scope:
+        base = Path(instance_dir / str(scope))
+        base = base.resolve()
+        instance_root = instance_dir.resolve()
+        if not (base == instance_root or instance_root in base.parents):
+            return f"Error: path '{scope}' is outside the instance directory, refusing to search"
+        if base.is_file():
+            wrapper: list[Path] = [base]
+        elif base.is_dir():
+            wrapper = [p for p in base.rglob("*")]
+        else:
+            return f"Error: path '{scope}' does not exist"
+    else:
+        wrapper = [p for p in instance_dir.rglob("*")]
+
     results: list[tuple[str, int]] = []
-    for filepath in instance_dir.rglob("*"):
+    for filepath in wrapper:
         if not filepath.is_file():
             continue
         if filepath.suffix not in text_extensions:
