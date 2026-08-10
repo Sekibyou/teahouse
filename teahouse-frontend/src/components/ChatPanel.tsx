@@ -1513,7 +1513,9 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
             <span>
               最新楼层: <span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-              （共 {floorsStats.total_floors} 层{floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
+              （共 {floorsStats.total_confirmed} 正式层
+              {floorsStats.total_drafts > 0 && <span> + {floorsStats.total_drafts} 草稿层</span>}
+              {floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
             </span>
             {floorsStats.last_summary_start != null ? (
               <span>

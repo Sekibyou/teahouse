@@ -44,6 +44,11 @@ def get_floors_stats(dir_path: Path) -> dict | None:
     The canonical floor history is `.teahouse/output/floors/`. Caller may pass
     that dir directly (already a "floors" dir), or an instance root — in which
     case the canonical location is resolved.
+
+    Confirmed floors match `floor-<N>.md`; draft floors match
+    `floor-<N>-draft.md` (in-progress, not yet finalized). `latest_floor` is the
+    highest working floor number — it reflects the draft if the newest draft's
+    number exceeds the newest confirmed floor.
     """
     # If given the floors dir itself (name == "floors"), use it directly and
     # derive the instance root; otherwise treat it as an instance root and
@@ -59,18 +64,32 @@ def get_floors_stats(dir_path: Path) -> dict | None:
     if not canonical.is_dir():
         return None
 
-    files = sorted([f for f in canonical.iterdir() if f.is_file() and not f.name.startswith(".")])
-    floors = sorted([f for f in files if re.match(r"^floor-\d+\.md$", f.name)])
+    files = [f for f in canonical.iterdir() if f.is_file() and not f.name.startswith(".")]
 
-    newest_floor_num = int(floors[-1].stem.split("-")[1]) if floors else None
-    total_floors = len(floors)
+    # Confirmed numbers via regex on file name, drafts via -draft suffix.
+    confirmed_nums = [int(f.stem.split("-")[1]) for f in files if re.match(r"^floor-\d+\.md$", f.name)]
+    draft_nums = [int(f.stem.split("-")[1]) for f in files if re.match(r"^floor-\d+-draft\.md$", f.name)]
+
+    total_confirmed = len(confirmed_nums)
+    total_drafts = len(draft_nums)
+    newest_confirmed = max(confirmed_nums) if confirmed_nums else None
+    newest_draft = max(draft_nums) if draft_nums else None
+
+    # `latest_floor` = highest working floor number. A draft saturates at its
+    # own number (draft for a *future* floor), never above the newest confirmed.
+    if newest_draft is not None and newest_confirmed is not None:
+        latest_floor = max(newest_confirmed, newest_draft)
+    elif newest_draft is not None:
+        latest_floor = newest_draft
+    else:
+        latest_floor = newest_confirmed
 
     # Archive boundary ("summarized to floor N") is maintained by the backend in
-    # root summary/index.json on GitCommit(type=summary) — not derived from file
-    # names. Falls back to "nothing summarized" for older instances.
+    # <dyn_settings>/summary/index.json on GitCommit(type=summary) — not derived
+    # from file names. Falls back to "nothing summarized" for older instances.
     last_sum_start = None
     last_sum_end = None
-    index_path = instance_dir / "summary" / "index.json"
+    index_path = instance_dir / ".teahouse" / "dyn_settings" / "summary" / "index.json"
     if index_path.is_file():
         try:
             idx = json.loads(index_path.read_text(encoding="utf-8"))
@@ -83,18 +102,22 @@ def get_floors_stats(dir_path: Path) -> dict | None:
         except Exception:
             last_sum_start = last_sum_end = None
 
+    # Unsummarized counts only confirmed floors (unfinalized drafts don't accrue
+    # archive debt). If no archive boundary, all confirmed floors are pending.
     unsummarized = 0
-    if newest_floor_num and last_sum_end is not None:
-        unsummarized = max(0, newest_floor_num - last_sum_end)
-    elif newest_floor_num and last_sum_end is None:
-        unsummarized = newest_floor_num
+    if total_confirmed and last_sum_end is not None:
+        unsummarized = max(0, total_confirmed - last_sum_end)
+    elif total_confirmed and last_sum_end is None:
+        unsummarized = max(0, total_confirmed - last_sum_start) if last_sum_start else total_confirmed
 
-    if newest_floor_num is None:
+    if latest_floor is None:
         return None
 
     return {
-        "latest_floor": newest_floor_num,
-        "total_floors": total_floors,
+        "latest_floor": latest_floor,
+        "total_confirmed": total_confirmed,
+        "total_drafts": total_drafts,
+        "total_floors": total_confirmed + total_drafts,
         "last_summary_start": last_sum_start,
         "last_summary_end": last_sum_end,
         "unsummarized": unsummarized,
@@ -107,15 +130,18 @@ def _floors_summary(dir_path: Path) -> str:
     if stats is None:
         return "floors/"
 
+    floor_bits = [f"{stats['total_confirmed']} confirmed floors"]
+    if stats["total_drafts"]:
+        floor_bits.append(f"{stats['total_drafts']} draft{'s' if stats['total_drafts'] != 1 else ''}")
     parts = []
-    parts.append(f"Latest floor: {stats['latest_floor']} ({stats['total_floors']} floors)")
+    parts.append(f"Latest floor: {stats['latest_floor']} ({', '.join(floor_bits)})")
     if stats["last_summary_start"] is not None:
         if stats["last_summary_start"] == stats["last_summary_end"]:
             parts.append(f"Last summary covered floor {stats['last_summary_start']}")
         else:
             parts.append(f"Last summary covered floors {stats['last_summary_start']}~{stats['last_summary_end']}")
     if stats["unsummarized"] > 0:
-        parts.append(f"{stats['unsummarized']} floors unsummarized")
+        parts.append(f"{stats['unsummarized']} confirmed floors unsummarized")
 
     return f"floors/  ({'; '.join(parts)})"
 
@@ -155,6 +181,7 @@ def _scan_tree(instance_dir: Path) -> str:
             lines.append(f"{connector}{entry.name}")
 
     lines.append("(This simplified tree shows only the instance root structure. Use Glob/Read tools to explore directory contents in full detail.)")
+    lines.append("(Note: this tree and the floors/ stats are rebuilt fresh on every request — they are not a stale snapshot. Files, drafts, and the archive boundary always reflect current disk state, so re-check them if something seems outdated.)")
 
     return "\n".join(lines)
 

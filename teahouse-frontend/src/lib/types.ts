@@ -211,6 +211,8 @@ export interface TextStyleRule {
 // Floors stats from SSE floors_changed event
 export interface FloorsStats {
   latest_floor: number | null
+  total_confirmed: number
+  total_drafts: number
   total_floors: number
   last_summary_start: number | null
   last_summary_end: number | null
