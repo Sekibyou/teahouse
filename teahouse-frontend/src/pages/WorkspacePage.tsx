@@ -343,6 +343,21 @@ export function WorkspacePage() {
         })
       }
     },
+
+    // Periodic backstop: backend broadcasts that don't exist (e.g. Generate
+    // dump_payload) never fire file_changed, so poll the tree every 5s and only
+    // apply when it actually changed. Keeps the tree fresh without spraying
+    // git/editor refreshes on an idle workspace. The dirty-check lives in the
+    // hook; onPollTick receives the already-fetched tree, so no double fetch.
+    pollIntervalMs: 5000,
+    onPollFetch: async () => {
+      const res = await instancesApi.listFiles(instId!)
+      return res.ok ? (res.data ?? []) : []
+    },
+    onPollTick: (tree: FileTreeNode[]) => {
+      setFileTree(tree)
+      if (instId) useGitStore.getState().fetchGitStatus(instId)
+    },
   })
 
   const toggleExpand = (path: string) => {

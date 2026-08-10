@@ -973,6 +973,10 @@ async def execute_generate(
             payload_full.write_text(
                 json.dumps(payload_obj, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            state.broadcast(
+                "file_changed",
+                {"path": dump_payload_str, "tool": "Generate.dump", "instance_id": instance_dir.name},
+            )
         except ValueError as e:
             return f"Error: dump_payload_path 路径无效: {e}"
         except Exception as e:

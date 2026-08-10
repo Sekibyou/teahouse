@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { API_BASE_URL } from "@/lib/api"
+import type { FileTreeNode } from "@/lib/types"
 import { useGitStore } from "@/stores/gitStore"
 
 interface SSERefreshOptions {
@@ -17,6 +18,15 @@ interface SSERefreshOptions {
   instanceId: string | undefined
   /** The instance name (directory name) as fallback match for tool-executor broadcasts. */
   instanceName: string | undefined
+  /** Optional periodic file-tree polling as a backstop for backend broadcasts
+   * that are missing (e.g. Generate dump_payload). When set, every tick fetches
+   * the tree via onPollFetch, compares it against the previous snapshot, and
+   * only fires onPollTick when the tree actually changed. */
+  pollIntervalMs?: number
+  /** Fetches the current file tree for the poll dirty-check. */
+  onPollFetch?: () => Promise<FileTreeNode[]>
+  /** Called when the poll detects a tree change, with the freshly-fetched tree. */
+  onPollTick?: (tree: FileTreeNode[]) => void
 }
 
 const DEBOUNCE_MS = 200
@@ -45,16 +55,30 @@ export function useSSERefresh({
   onSessionEvent,
   instanceId,
   instanceName,
+  pollIntervalMs,
+  onPollFetch,
+  onPollTick,
 }: SSERefreshOptions) {
   const esRef = useRef<EventSource | null>(null)
   const fileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastFilePathRef = useRef<string>("")
+  const lastTreeKeyRef = useRef<string>("")
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Latest poll callbacks, read via ref so the interval never has to re-arm
+  // when their identity changes (stable across renders).
+  const pollRefs = useRef({ onPollFetch, onPollTick })
+  pollRefs.current.onPollFetch = onPollFetch
+  pollRefs.current.onPollTick = onPollTick
 
   useEffect(() => {
     if (!instanceId) return
 
     let stopped = false
+
+    // A stable snapshot key for the tree, so identical polls are no-ops.
+    const treeKey = (nodes: FileTreeNode[]): string =>
+      nodes.map((n) => (n.children?.length ? `dir:${n.path}` : `file:${n.path}`)).sort().join("\n")
 
     const debouncedFileChange = (path: string) => {
       lastFilePathRef.current = path
@@ -152,10 +176,33 @@ export function useSSERefresh({
       }
     }
 
+    if (pollIntervalMs && pollIntervalMs > 0 && onPollFetch && onPollTick) {
+      const tick = async () => {
+        try {
+          const tree = await pollRefs.current.onPollFetch!()
+          if (!tree) return
+          const key = treeKey(tree)
+          if (key !== lastTreeKeyRef.current) {
+            lastTreeKeyRef.current = key
+            pollRefs.current.onPollTick!(tree)
+          }
+        } catch {
+          // transient error — skip this tick
+        }
+      }
+      // Seed baseline on start so the first real change is detected.
+      tick()
+      pollTimerRef.current = setInterval(tick, pollIntervalMs)
+    }
+
     connect()
 
     return () => {
       stopped = true
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
       if (esRef.current) {
         esRef.current.close()
         esRef.current = null
@@ -169,5 +216,5 @@ export function useSSERefresh({
         wsTimerRef.current = null
       }
     }
-  }, [instanceId, instanceName, onToolRun, onGenerateProgress, onSessionEvent])
+  }, [instanceId, instanceName, onToolRun, onGenerateProgress, onSessionEvent, pollIntervalMs])
 }
