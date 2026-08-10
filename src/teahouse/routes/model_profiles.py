@@ -24,7 +24,7 @@ class CreateProfileRequest(BaseModel):
     name: str
     match_pattern: Optional[str] = None
     temperature: float = 0.7
-    max_tokens: int = 8192
+    max_tokens: int = 50000
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None

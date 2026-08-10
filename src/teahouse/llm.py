@@ -176,7 +176,7 @@ class LLMClient:
     def _api_url(self) -> str:
         return normalize_api_url(self.config.url, self.api_style)
 
-    def _client(self, timeout: float = 300) -> httpx.AsyncClient:
+    def _client(self, timeout: float | None = None) -> httpx.AsyncClient:
         """Shared httpx client with native connect/read retry.
 
         httpx's transport-level retry covers ConnectError/ConnectTimeout/ReadTimeout

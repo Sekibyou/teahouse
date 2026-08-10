@@ -844,7 +844,7 @@ async def execute_generate(
             key=provider["api_key"],
             model=model["model_name"],
             api_style=provider["api_format"],
-            max_tokens=profile["max_tokens"] if profile else 8192,
+            max_tokens=profile["max_tokens"] if profile else 50000,
             temperature=profile["temperature"] if profile else 0.7,
             top_p=profile.get("top_p") if profile else None,
             frequency_penalty=profile.get("frequency_penalty") if profile else None,

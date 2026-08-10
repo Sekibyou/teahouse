@@ -227,7 +227,7 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         key=provider["api_key"],
         model=model["model_name"],
         api_style=provider["api_format"],
-        max_tokens=profile["max_tokens"] if profile else 8192,
+        max_tokens=profile["max_tokens"] if profile else 50000,
         temperature=profile["temperature"] if profile else 0.7,
         top_p=profile.get("top_p") if profile else None,
         frequency_penalty=profile.get("frequency_penalty") if profile else None,
@@ -253,7 +253,7 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
         key=cfg["api_key"],
         model=cfg["model_name"],
         api_style=cfg["api_format"],
-        max_tokens=cfg["max_tokens"],
+        max_tokens=cfg["max_tokens"] if cfg["max_tokens"] else 50000,
         temperature=cfg["temperature"],
     ), max_retries=_global_max_retries())
 

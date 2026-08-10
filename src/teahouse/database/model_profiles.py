@@ -13,7 +13,7 @@ async def create_profile(
     name: str,
     match_pattern: Optional[str] = None,
     temperature: float = 0.7,
-    max_tokens: int = 8192,
+    max_tokens: int = 50000,
     top_p: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     presence_penalty: Optional[float] = None,
@@ -117,7 +117,7 @@ async def ensure_builtin_profile(user_id: str) -> dict:
         user_id=user_id,
         name="默认",
         temperature=0.7,
-        max_tokens=8192,
+        max_tokens=50000,
     )
 
 
