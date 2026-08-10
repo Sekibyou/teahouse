@@ -90,6 +90,7 @@ class SessionLoop:
         self.user_id = user_id
         self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
         self._interrupted = False
+        self._interrupt_reason: str | None = None  # "user" | "endsession"
         self._task: asyncio.Task | None = None
         # Session-wide monotonic order watermark. Initialised from the current
         # on-disk record count and bumped by every append AND every in-memory
@@ -126,13 +127,14 @@ class SessionLoop:
         self._broadcast_user_queued(queue_id, content, order)
         self._queue.put_nowait((queue_id, content, order))
 
-    def interrupt(self) -> None:
+    def interrupt(self, reason: str = "user") -> None:
         """Set the interrupt flag and cancel the in-flight tool-loop task.
 
         The loop will pick up the flag on the next iteration, persist an
         interruption record, and then drain the queue.
         """
         self._interrupted = True
+        self._interrupt_reason = reason
         if self._task is not None and not self._task.done():
             self._task.cancel()
 
@@ -158,12 +160,12 @@ class SessionLoop:
         return loop
 
     @classmethod
-    def interrupt_session(cls, instance_dir_name: str, session_id: str) -> None:
+    def interrupt_session(cls, instance_dir_name: str, session_id: str, reason: str = "user") -> None:
         """Interrupt a running session loop by (instance_name, session_id)."""
         key = (instance_dir_name, session_id)
         loop = cls._loops.get(key)
         if loop is not None:
-            loop.interrupt()
+            loop.interrupt(reason)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -175,16 +177,23 @@ class SessionLoop:
         while True:
             # 1. Handle interruption
             if self._interrupted:
+                reason = self._interrupt_reason or "user"
                 self._interrupted = False
+                self._interrupt_reason = None
                 _event_log(self.instance_dir, self.session_id, "loop_interrupted", {})
                 order = self.next_order()
+                interrupted_msg = (
+                    "[auto] interrupted by EndSession tool"
+                    if reason == "endsession"
+                    else "[auto] user interrupted"
+                )
                 sessions.append_user(
                     self.instance_dir,
-                    "[auto] user interrupted",
+                    interrupted_msg,
                     session_id=self.session_id,
                     order=order,
                 )
-                self._broadcast_user_msg(None, "[auto] user interrupted", order)
+                self._broadcast_user_msg(None, interrupted_msg, order)
                 self._broadcast_done()
 
             # 2. Drain queue. Messages are NOT yet persisted — enqueue() only

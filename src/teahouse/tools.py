@@ -618,6 +618,7 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
 
     from .session_tracker import task_tracker
     from .session_loop import SessionLoop
+    from .sessions import MAIN_SESSION_ID as _MAIN
 
     # Wake the parent by enqueuing an auto wake message. The parent's loop will
     # persist it and start processing.
@@ -634,6 +635,17 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
         "running": task_tracker.running_sessions(instance_dir.name),
     }
     state.broadcast("session_done", payload)
+
+    # Force-interrupt THIS session's own running tool loop (mirrors the frontend
+    # ESC / stop button) so the model cannot keep streaming tail text / a summary
+    # after EndSession — otherwise a leftover message would re-create the JSONL
+    # after the caller destroys the session. SessionLoop cancellation delivers
+    # end-of-round flush via GeneratorExit; the loop then persists the reason text.
+    # Only meaningful for a real child session (EndSession targets a running loop
+    # other than the caller's own); guard against an empty / main sid.
+    if sid and sid != _MAIN:
+        SessionLoop.interrupt_session(instance_dir.name, sid, reason="endsession")
+
     return f"Session {sid or '(main)'} marked done and parent notified. The session is NOT destroyed — destroy it explicitly if the caller wants to reclaim it."
 
 

@@ -42,16 +42,29 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
 /**
  * 识别固定格式的 `[auto]` 系统消息并归类，以便前端用特殊标记渲染而非普通气泡。
  * - "interrupt"   : 用户打断（"[auto] user interrupted"）
+ * - "endsession"  : 子会话经 EndSession 被后端强制中断（"[auto] interrupted by EndSession tool"）
  * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
  * 其它消息返回 null（普通 user 气泡）。
  */
-export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "session_done"; sid: string } | null {
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | null {
   if (!content.startsWith("[auto] ")) return null
   const trimmed = content.slice("[auto] ".length)
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
+  if (trimmed.trim() === "interrupted by EndSession tool") return { kind: "endsession" }
   const sidMatch = trimmed.match(/session-([0-9a-fA-F]{4,})/)
   if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
   return null
+}
+
+/** 把 autoMsgKind 的结果映射为 RichMessage 上的 autoKind / autoSid 字段。 */
+export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>) {
+  if (auto.kind === "session_done") {
+    return { autoKind: "session_done" as const, autoSid: auto.sid }
+  }
+  if (auto.kind === "endsession") {
+    return { autoKind: "endsession" as const }
+  }
+  return { autoKind: "interrupt" as const }
 }
 
 /**

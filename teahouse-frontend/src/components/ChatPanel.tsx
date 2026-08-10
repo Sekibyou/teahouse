@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Loader2, X, CheckCircle2 } from "lucide-react"
+import { Loader2, X, CheckCircle2, Flag } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
@@ -9,7 +9,7 @@ import type { FloorsStats } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
@@ -175,17 +175,34 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         try {
           const data = JSON.parse(e.data)
           if (instId && data.instance_id !== instId) return
-          // Refresh the session list (merge, keep others) and if the destroyed
-          // session was active, fall back to main. The destroyed sid is dropped.
+          const destroyedSid = data.session_id as string
+          if (!destroyedSid) return
+          // (1) 事件只负责告诉我们"谁被删了"。真实会话列表以服务端为准，主动拉一次
+          //     (删除可能是导演 DeleteSubSession 或沙盒 sessionDestroy 触发的)。
+          // (2) 用一个"上一个真实会话"记录当前丢失前的位置——切换时若活跃会话已消失，
+          //     就落到列表里它前面的那个真实会话（不存在则主会话）。
           instancesApi.listSessions(instId!).then(res => {
-            if (res.ok) {
-              setSessionList(prev => mergeServerSessions(prev, res.data?.sessions || []).filter(s => s.session_id !== data.session_id))
+            if (!res.ok) return
+            const fresh = res.data?.sessions || []
+            const nextList = mergeServerSessions(
+              sessionListRef.current.filter(s => s.session_id !== destroyedSid),
+              fresh
+            )
+            setSessionList(nextList)
+            refreshSessionsStatus()
+            // (3) 无论切换是主动（点击标签）还是被动（被删），都走同一条 switchSession，
+            //     由它统一负责内容缓存、校验与重新加载 —— 不在这里特例 setActiveSid。
+            if (activeSidRef.current === destroyedSid) {
+              const idx = nextList.findIndex(s => s.session_id === destroyedSid)
+              const prev = nextList[idx - 1] ?? nextList[nextList.length - 1]
+              switchSessionRef.current(prev?.session_id ?? MAIN_SID)
             }
-          }).catch(() => {})
-          refreshSessionsStatus()
-          if (activeSidRef.current === data.session_id) {
-            setActiveSid(MAIN_SID)
-          }
+          }).catch(() => {
+            // 拉取失败也要兜底切走，避免停留在已消失的会话上。
+            if (activeSidRef.current === destroyedSid) {
+              switchSessionRef.current(MAIN_SID)
+            }
+          })
         } catch {
           // ignore malformed events
         }
@@ -284,11 +301,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                 id: nextId(), role: "user", content: data.content as string,
                 reasoning: "", status: "done", order: typeof order === "number" ? order : 0,
                 sub: null, subRank: 0,
-                ...(auto
-                  ? auto.kind === "session_done"
-                    ? { autoKind: "session_done" as const, autoSid: auto.sid }
-                    : { autoKind: "interrupt" as const }
-                  : {}),
+                ...(auto ? autoKindFields(auto) : {}),
               }
               setMessagesFor(sid, (prev) => insertBubbleSorted(prev, userMsg))
             }
@@ -326,11 +339,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
               order,
               sub: null,
               subRank: 0,
-              ...(auto
-                ? auto.kind === "session_done"
-                  ? { autoKind: "session_done" as const, autoSid: auto.sid }
-                  : { autoKind: "interrupt" as const }
-                : {}),
+              ...(auto ? autoKindFields(auto) : {}),
             }
             setMessagesFor(sid, (prev) => insertBubbleSorted(prev, queuedMsg))
             scrollToBottom()
@@ -648,11 +657,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       order,
       sub,
       subRank,
-      ...(auto && rec.role === "user"
-        ? auto.kind === "session_done"
-          ? { autoKind: "session_done" as const, autoSid: auto.sid }
-          : { autoKind: "interrupt" as const }
-        : {}),
+      ...(auto && rec.role === "user" ? autoKindFields(auto) : {}),
     }
   }
 
@@ -771,6 +776,12 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
       loadHistory(true, sid)
     }
   }, [activeSid, messages, loadHistory, clearSessionNew, refreshSessionsStatus])
+
+  // Latest switchSession, exposed via ref so once-created SSE listeners can drive
+  // a passive switch (e.g. session_destroyed) through the SAME unified path as a
+  // user clicking a tab — without capturing a stale closure. Mirrors loadHistoryRef.
+  const switchSessionRef = useRef(switchSession)
+  switchSessionRef.current = switchSession
 
   /**
    * Merge a freshly-listed set of server sessions into the current list WITHOUT
@@ -1240,6 +1251,11 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
                         <>
                           <X className="h-3 w-3 text-muted-foreground/60" />
                           <span>用户中断了生成</span>
+                        </>
+                      ) : msg.autoKind === "endsession" ? (
+                        <>
+                          <Flag className="h-3 w-3 text-muted-foreground/60" />
+                          <span>会话经 EndSession 结束</span>
                         </>
                       ) : (
                         <>
