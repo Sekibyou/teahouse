@@ -37,7 +37,7 @@ system: |
   ————根目录下 teahouse.md 内容开始————
   {{teahouse.md}}
   ————根目录下 teahouse.md 内容结束————
-  *注意：你无需调用 Read tool 来阅读 teahouse.md，因为它是实时注入的，你在上面看到的就是最新版本
+  *注意：如需修改 teahouse.md，你需调用 Read tool 来阅读原文。因为虽然它是实时注入的，但其变量、注释和切片占位符会被解析，你看到的是解析后的结果
   ————behavior 开始————
   ${teahouse.behavior}
   ————behavior 结束————

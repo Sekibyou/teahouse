@@ -10,6 +10,15 @@ alone. If the name is NOT in var_map, the literal `${name}` is kept unchanged (�
 `teahouse.xxx` values exist only during director system-prompt assembly; elsewhere they
 are ordinary missing variables and render literally (naturally 不泄露内部提示词).
 
+`${!-- ... --}` comments: writer/director-facing metadata inside setting files that is
+stripped to empty on every AI-facing resolve (system prompt / Generate), so the writer
+LLM never sees it while the director (via Read) does. Must be `$` `{` then `!-- ` — the
+space is the key distinguisher from a real variable (names bar whitespace). The body may
+contain bare `}` and spans braces freely; it closes at the first `--}`. A `--}`-less
+comment degrades to its literal. Escaped with a leading backslash (`\${!-- ... --}`) it
+renders verbatim. Write/Edit persistence (resolve_placeholders) does NOT strip it — that
+surface is where you WANT the comment to stay on disk for the director to read.
+
 Two surfaces only AI consumes auto-resolve BOTH `${}` and `{{}}`:
   - Generate yaml (sent to the writer LLM)
   - Director system prompt / preset template assembly (no-cache variable snapshot)
@@ -168,7 +177,15 @@ def _restore_escaped_placeholders(text: str, literals: list[str]) -> str:
 
 
 def _substitute_variable_literals(text: str, var_map: dict) -> str:
-    """One pass of ${name} substitution. Missing variables render literally."""
+    """One pass of ${name} substitution. Missing variables render literally.
+
+    ${!-- ... --} comment blocks are stripped first (body may contain bare `}`,
+    which the single-line _VARIABLE_RE would otherwise truncate on). The primary
+    comment path is resolve_conditional_slices — this pre-strip is a defensive
+    backstop for surfaces that go through the regex pass alone.
+    """
+    text = _strip_comments(text)
+
     def _replacer(match: re.Match) -> str:
         name = match.group(1).strip()
         if name in var_map:
@@ -543,6 +560,58 @@ def _resolve_one_block(inner: str, var_map: dict) -> str:
     return "${" + inner + "}"  # 原样显示
 
 
+# ---------------------------------------------------------------------------
+# 注释语法 — ${!-- ... --}   →  解析时剥掉（替换为空）
+#
+# 复用变量占位符的识别外壳：`$` 后跟 `{`，但 `{` 后必须紧跟 `!-- `（三个
+# 字符后一个空格——空格是与真实变量的关键区分，变量名禁止空白）。命中注释
+# 前缀即进入**注释模式**：忽略所有嵌套深度（正文可含任意字符，包括裸 `}`），
+# 线性查找第一个 `--}` 作为闭合，整段剥掉返回空串。找不到 `--}` 则保守回退
+# 字面量原样保留。
+#
+# 用途：写在与导演相关的设定里，导演 Read 原始文件可见，正文 bot 收到的注入
+# 文本已被剥净。`\${!-- ... --}`（转义）仍由 _hide_escaped_placeholders 保护为
+# 字面量显示。Write/Edit 落盘（resolve_placeholders 路径）不剥——落盘正是要
+# 保留注释供导演读的时机。
+# ---------------------------------------------------------------------------
+_COMMENT_OPEN = "!-- "
+_COMMENT_CLOSE = "--}"
+
+
+def _find_comment_end(text: str, start: int) -> int:
+    """Find the index just after `--}` closing a comment starting at `start`.
+
+    Linear scan ignoring all brace depth (comment body may contain bare `}`).
+    Returns -1 when no `--}` is found within the text.
+    """
+    return text.find(_COMMENT_CLOSE, start)
+
+
+def _strip_comments(text: str) -> str:
+    """Remove every `${!-- ... --}` comment block (replaced with empty string).
+
+    Pure text transform, no var resolution — used as a defensive backstop by the
+    regex-only variable pass. The primary strip happens text[start:...]. Comments
+    without a closing `--}` are kept verbatim.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
+            if text.startswith(_COMMENT_OPEN, i + 2):
+                end = _find_comment_end(text, i + 2 + len(_COMMENT_OPEN))
+                if end == -1:
+                    out.append(text[i])
+                    i += 1
+                    continue
+                i = end + len(_COMMENT_CLOSE)
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
 def resolve_conditional_slices(text: str, var_map: dict) -> str:
     """Replace every multi-line `${ ... }` conditional-slice block in `text`.
 
@@ -550,12 +619,27 @@ def resolve_conditional_slices(text: str, var_map: dict) -> str:
     multi-line block isn't truncated at the first `}`. Returns text with matched
     code/variable blocks materialized (or kept literal on failure); ${name} and
     {{path}} placeholders produced here are expanded by the caller's next pass.
+
+    `${!-- ... --}` comment blocks (see _COMMENT_OPEN/_COMMENT_CLOSE) are stripped
+    to empty here, before variable/code-block resolution — body may contain bare `}`.
     """
     out: list[str] = []
     i = 0
     n = len(text)
     while i < n:
         if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
+            # ${!-- ... --}  注释：`{` 后必须紧跟 `!-- `（含空格）才命中。
+            # 必须用原文前缀检测而非 inner——inner 会被正文裸 `}` 截断。
+            if text.startswith(_COMMENT_OPEN, i + 2):
+                end = _find_comment_end(text, i + 2 + len(_COMMENT_OPEN))
+                if end == -1:
+                    # 没有闭合 `--}` — 保守回退字面量（保持原样）
+                    out.append(text[i])
+                    i += 1
+                    continue
+                # 剥掉整段（不含 `}$` 本身之外的任何字符），替换为空
+                i = end + len(_COMMENT_CLOSE)
+                continue
             depth = 0
             k = i + 1
             closed = False
@@ -618,6 +702,11 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     # ${teahouse.*} / ${name} 变量值在循环内才注入，注入后可能出现新的 \{{...}}，
     # 所以隐藏要**在每次迭代里重复做**（把新增的转发给哨兵），循环稳定后统一还原。
     esc_literals: list[str] = []
+    # 入口预隐藏一次：把首轮的 \${...} / \${!-- ... --} 先变成哨兵，否则
+    # resolve_conditional_slices（第 1 步）会在隐藏（原第 2 步）之前把它们当
+    # 普通变量/注释解开——既有的转义对 $ 占位符失效 bug。
+    text, pre = _hide_escaped_placeholders(text)
+    esc_literals.extend(pre)
     for _ in range(max_depth):
         before = text
         text = resolve_conditional_slices(text, var_map)
