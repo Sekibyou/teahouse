@@ -35,6 +35,17 @@ class DbConfig(BaseModel):
     workspace_base: str = Field(default="data", description="Workspace data directory path")
 
 
+def _project_root() -> Path:
+    """Absolute project root (two levels above this package's directory).
+
+    Deterministic anchor so config/db/workspace paths do NOT depend on the
+    process CWD — which previously let a service started from a subdirectory
+    (e.g. ``src/``) silently create an empty `data/teahouse.db` shell and a
+    duplicate config next to it, distinct from the real one at the project root.
+    """
+    return Path(__file__).resolve().parents[2]
+
+
 class Config(BaseModel):
     jwt_secret: str = Field(description="JWT signing key, auto-generated on first run")
     master_key: str = Field(default="", description="Master key for LLM API key encryption; auto-generated if empty")
@@ -44,7 +55,21 @@ class Config(BaseModel):
 
     @classmethod
     def default_path(cls) -> Path:
-        return Path("teahouse.yaml")
+        return _project_root() / "teahouse.yaml"
+
+    def _anchor_paths(self) -> None:
+        """Resolve relative db/workspace paths against the project root.
+
+        Makes the service CWD-independent: db path and workspace_base are
+        anchored to the project root instead of whatever directory the process
+        was launched from (see _project_root for the failure this prevents).
+        Absolute paths configured explicitly are respected as-is.
+        """
+        root = _project_root()
+        if not os.path.isabs(self.db.path):
+            self.db.path = str(root / self.db.path)
+        if not os.path.isabs(self.db.workspace_base):
+            self.db.workspace_base = str(root / self.db.workspace_base)
 
     @classmethod
     def load_or_create(cls, path: Optional[Path] = None) -> "Config":
@@ -69,6 +94,7 @@ class Config(BaseModel):
                     yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
                     print(f"[teahouse] config auto-migrated at {path}")
 
+            cfg._anchor_paths()
             return cfg
 
         # first run: generate jwt secret and master key only (no default LLM config)
@@ -86,6 +112,7 @@ class Config(BaseModel):
                 sort_keys=False,
             )
         print(f"[teahouse] config created at {path}")
+        cfg._anchor_paths()
         return cfg
 
 
