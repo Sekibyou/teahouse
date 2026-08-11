@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import {
-  Server, Cpu, Sliders, X, Loader2, Plus, Pencil, Trash2,
+  Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   CheckCircle2, AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
 } from "lucide-react"
@@ -13,6 +13,7 @@ import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel,
 import { SlotCard } from "@/components/SlotCard"
 import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 
 interface SettingsDialogProps {
@@ -93,6 +94,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const onClose = onCloseProp ?? closeSettings
   const defaultTab = (defaultTabProp ?? storeDefaultTab) as TabKey | undefined
   const [tab, setTab] = useState<TabKey>("models")
+  const isMobile = useIsMobile()
+  const [tabMenuOpen, setTabMenuOpen] = useState(false)
 
   // ─── Provider state ───
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -703,22 +706,76 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div
+        className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/40 flex items-center justify-center"}`}
+        onClick={onClose}
+      >
         <div
-          className="bg-background rounded-lg shadow-xl flex flex-col overflow-hidden"
-          style={{ width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }}
+          className={`flex flex-col overflow-hidden ${isMobile
+            ? "h-full w-full"
+            : "bg-background rounded-lg shadow-xl"
+          }`}
+          style={
+            isMobile
+              ? undefined
+              : { width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }
+          }
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
-            <div className="flex items-center gap-2">
-              <Cpu className="h-4 w-4 text-primary" />
-              <span className="font-semibold">设置</span>
+          {isMobile ? (
+            <div className="relative h-10 border-b border-border flex items-center justify-center shrink-0 z-10">
+              {/* Left: back arrow (close) */}
+              <button
+                className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
+                onClick={onClose}
+                aria-label="返回"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="font-semibold text-sm">设置</span>
+              {/* Right: tab dropdown trigger */}
+              <div className="absolute right-1">
+                <button
+                  className="p-2 rounded hover:bg-muted flex items-center gap-1 text-sm"
+                  onClick={() => setTabMenuOpen((v) => !v)}
+                  aria-label="切换设置分类"
+                >
+                  {(() => { const cur = TAB_ITEMS.find((t) => t.key === tab); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
+                </button>
+                {tabMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setTabMenuOpen(false)} />
+                    <div className="absolute right-1 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[150px]">
+                      {TAB_ITEMS.map(({ key, Icon, label }) => (
+                        <button
+                          key={key}
+                          className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-muted ${
+                            tab === key ? "text-primary font-medium" : "text-foreground"
+                          }`}
+                          onClick={() => { setTab(key); setTabMenuOpen(false) }}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="flex-1">{label}</span>
+                          {tab === key && <Check className="h-4 w-4 shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-            <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-primary" />
+                <span className="font-semibold">设置</span>
+              </div>
+              <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
 
           {/* Error bar */}
           {error && (
@@ -731,7 +788,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
           {/* Body: sidebar + content */}
           <div className="flex flex-1 overflow-hidden">
-            {/* Left sidebar */}
+            {/* Left sidebar (desktop only; mobile uses the top tab dropdown) */}
+            {!isMobile && (
             <div className="w-44 shrink-0 border-r border-border flex flex-col bg-muted/10">
               <div className="flex flex-col gap-0.5 p-2">
                 {TAB_ITEMS.map(({ key, Icon, label }) => (
@@ -748,6 +806,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                 ))}
               </div>
             </div>
+            )}
 
             {/* Right content */}
             <div className="flex-1 overflow-auto relative">

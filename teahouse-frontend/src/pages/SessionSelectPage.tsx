@@ -750,8 +750,8 @@ function MobileMain({
   const [showMenu, setShowMenu] = useState(false)
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <header className="h-10 border-b border-border flex items-center justify-between px-3 shrink-0">
-        <span className="font-serif font-semibold text-sm">Teahouse</span>
+      <header className="h-10 relative border-b border-border flex items-center justify-between px-3 shrink-0">
+        <span className="font-serif font-semibold text-sm">LowStar's Teahouse</span>
         <button
           className="p-1 rounded hover:bg-muted"
           onClick={() => setShowMenu(!showMenu)}
