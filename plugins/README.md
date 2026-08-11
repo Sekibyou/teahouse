@@ -13,13 +13,3 @@ my-plugin/
   frontend/        可选 — 前端配置面板
     index.html
 ```
-
-## 测试
-
-开发阶段可使用 `mock-service` 插件测试：
-
-1. 复制 `tests/mock-service-plugin/` 到 `data/{用户名}/plugins/`
-2. 启动 mock echo 服务：`python tests/mock_echo_server.py`
-3. 在「设置 → 管理插件」中启用并配置 token
-
-详见 `tests/sandbox-design.md` 中的插件系统设计文档。
