@@ -104,6 +104,14 @@ export function WorkspacePage() {
 
   const instId = activeInstance?.id
 
+  // 进入 workspace 时按视口设置默认模式：移动端默认游玩，宽屏默认后台。
+  // 用 ref 仅在首次挂载（进入）时生效，不随用户后续切换或窗口 resize 覆盖。
+  const defaultModeAppliedRef = useRef(false)
+  if (!defaultModeAppliedRef.current) {
+    defaultModeAppliedRef.current = true
+    useViewModeStore.getState().setMode(isMobile ? "play" : "backstage")
+  }
+
   // 沙盒唤起导演栏：移动端切到全屏导演面板，桌面端展开折叠的 ChatPanel。
   const openDirector = useCallback(() => {
     if (isMobile) setFullscreenPanel("director")
