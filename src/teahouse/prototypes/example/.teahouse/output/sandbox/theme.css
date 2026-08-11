@@ -1,0 +1,409 @@
+/* ============================================================
+   Teahouse Sandbox Theme — 小说阅读版式（灰石镇原型）
+   宽屏：居中限制 760px；窄屏：全宽 90%
+   注意：iframe 内没有 oklch polyfill，一律用 rgba()/hex 颜色。
+
+   主题换肤：颜色一律走 CSS 变量。暗色为默认（:root），亮色由
+   html[data-theme="light"] 覆盖。theme-proxy.js 订阅宿主
+   theme.change 并切换 data-theme，从而让正文与组件同步换肤。
+   ============================================================ */
+
+/* ---- 主题变量（暗色默认） ---- */
+:root {
+  /* 表面/底色（层级 1=页面底 2=提升 3=面板） */
+  --bg: #17161f;
+  --bg-elevated: #1e1d29;
+  --bg-floating: #1e1d29;
+  --panel: rgba(12, 12, 28, 0.97);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --fab-bg: rgba(20, 20, 40, 0.92);
+  --input-bg: rgba(16, 16, 36, 0.92);
+  --control-bg: rgba(255, 255, 255, 0.06);
+  --control-hover: rgba(255, 255, 255, 0.1);
+
+  /* 前景文本层级 1=最强 2=常规 3=次 4=弱 */
+  --text: #d9d4c8;
+  --text-strong: #f0ece2;
+  --text-soft: #b8b3a6;
+  --text-dim: rgba(255, 255, 255, 0.45);
+  --panel-text: #ffffff;
+  --panel-text-soft: rgba(255, 255, 255, 0.8);
+  --panel-text-dim: rgba(255, 255, 255, 0.45);
+
+  /* 分隔线层级 1=常规 2=强 */
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --control-border: rgba(255, 255, 255, 0.14);
+  --focus-ring: rgba(96, 165, 250, 0.5);
+
+  /* 主强调 accent —— 三种用途分离：
+       --accent 只作文字/边线/勾勾；实心块(按钮/角标)用 --accent-fill + --accent-filled-text */
+  --accent: #60a5fa;
+  --accent-text: #bcd4ff;
+  --accent-soft: rgba(96, 165, 250, 0.16);
+  --accent-fill: #60a5fa;
+  --accent-filled-text: #0b1220;
+
+  /* 语义色（成功/危险/警示）—— 与 accent 同构：文字 / 实心底+字 / 柔和底 */
+  --success: #4ade80;
+  --success-text: #7ee0a2;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --success-fill: #4ade80;
+  --success-filled-text: #0b1a10;
+  --danger: #f87171;
+  --danger-text: #fca5a5;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger-fill: #f87171;
+  --danger-filled-text: #1c0a0a;
+  --warn: #fcd34d;
+  --warn-text: #fde68a;
+  --warn-soft: rgba(252, 211, 77, 0.14);
+  --link: #7ea6f4;
+  --link-hover: #a8c4fa;
+
+  /* 代码块 */
+  --code-bg: rgba(255, 255, 255, 0.08);
+  --pre-bg: rgba(0, 0, 0, 0.32);
+
+  /* ---- 浮层层级规范（z-index 唯一权威）----
+     规则：触发器按钮 < 常驻工具条 < 弹窗面板
+       --z-trigger：悬浮球/齿轮等「打开弹窗的按钮」
+       --z-bar：    常驻工具条（底部输入条等）
+       --z-panel：  弹窗面板，永远置顶
+     任何「触发器+弹窗」组件一律引用此变量，禁止手写数字；
+     同层之间按 DOM 挂载顺序，后注册者在上。 */
+  --z-trigger: 400;
+  --z-bar: 450;
+  --z-panel: 500;
+
+  /* 效果（主题中立，不随亮暗变） */
+  --shadow-fab: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.6);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+  --ease: 0.2s;
+}
+
+/* ---- th- 控件类：组件挂此类即得统一外观 + 亮暗跟随 ----
+   th-btn     主按钮（主色实心填充 + hover 提亮）
+   th-btn-ghost 次按钮（透明底 + 描边，hover 垫淡色）
+   th-ip      输入框（圆角 + 边框 + 聚焦环）
+   th-chip    角标/小徽章（主色柔和底 + 主色文字）
+   th-chip-plain  小型中性徽章
+   th-icon    图标按钮（透明底 + hover 垫底）
+   使用方式 <button class="th-btn"> / <input class="th-ip"> 等。
+   颜色走上面的语义变量；尺寸/圆角走 --radius-*。 */
+
+.th-btn {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent-fill);
+  color: var(--accent-filled-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease), opacity var(--ease);
+}
+.th-btn:hover:not(:disabled) { opacity: 0.88; }
+.th-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.th-btn-ghost {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--panel-text-soft);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease);
+}
+.th-btn-ghost:hover:not(:disabled) { background: var(--control-bg); color: var(--panel-text); }
+.th-btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.th-ip {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--panel-text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.th-ip:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-ring); }
+
+.th-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.th-chip-plain {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  color: var(--panel-text-soft);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.th-icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--ease);
+}
+.th-icon:hover { background: var(--control-bg); }
+.th-icon-stroke { color: var(--warn); }
+.th-icon-dim { color: var(--panel-text-dim); }
+
+/* ---- 开关 Switch：隐藏原生 checkbox，自定义轨道+滑块 ----
+   用法 <label class="th-switch"><input type="checkbox"><span class="th-switch-track"></span>文字</label>
+   选中态：轨道 accent 填充、滑块平移；未选中：轨道 control-bg、滑块 text-soft。
+   颜色走语义变量，亮暗主题自动跟随。 */
+.th-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--panel-text-soft);
+  white-space: nowrap;
+}
+.th-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.th-switch .th-switch-track {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  transition: background var(--ease), border-color var(--ease);
+}
+.th-switch .th-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--panel-text-soft);
+  transition: transform var(--ease), background var(--ease);
+}
+.th-switch input:checked + .th-switch-track {
+  background: var(--accent-fill);
+  border-color: var(--accent);
+}
+.th-switch input:checked + .th-switch-track::after {
+  transform: translateX(14px);
+  background: var(--accent-filled-text);
+}
+.th-switch input:focus-visible + .th-switch-track {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+
+/* ---- 亮色主题覆盖 ---- */
+html[data-theme="light"] {
+  --bg: #f5f4f0;
+  --bg-elevated: #ffffff;
+  --bg-floating: #ffffff;
+  --panel: rgba(255, 255, 255, 0.97);
+  --panel-border: rgba(0, 0, 0, 0.12);
+  --fab-bg: rgba(252, 252, 253, 0.94);
+  --input-bg: rgba(252, 252, 253, 0.94);
+  --control-bg: rgba(0, 0, 0, 0.05);
+  --control-hover: rgba(0, 0, 0, 0.08);
+
+  --text: #3d3a3a;
+  --text-strong: #1f1d1d;
+  --text-soft: #6b675f;
+  --text-dim: rgba(0, 0, 0, 0.45);
+  --panel-text: #1f1d1d;
+  --panel-text-soft: rgba(0, 0, 0, 0.75);
+  --panel-text-dim: rgba(0, 0, 0, 0.45);
+
+  --border: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.22);
+  --control-border: rgba(0, 0, 0, 0.14);
+  --focus-ring: rgba(37, 99, 235, 0.35);
+
+  --accent: #2563eb;
+  --accent-text: #1e40af;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+  --accent-fill: #93c5fd;
+  --accent-filled-text: #0f1b3d;
+
+  --success: #16a34a;
+  --success-text: #15803d;
+  --success-soft: rgba(22, 163, 74, 0.12);
+  --success-fill: #22c55e;
+  --success-filled-text: #06210f;
+  --danger: #dc2626;
+  --danger-text: #b91c1c;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --danger-fill: #ef4444;
+  --danger-filled-text: #150404;
+  --warn: #d97706;
+  --warn-text: #b45309;
+  --warn-soft: rgba(217, 119, 6, 0.12);
+  --link: #1d4ed8;
+  --link-hover: #1e40af;
+
+  --code-bg: rgba(0, 0, 0, 0.07);
+  --pre-bg: rgba(0, 0, 0, 0.06);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  min-height: 100%;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif;
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--text);
+  background-color: var(--bg);
+  overflow-x: hidden;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* ---- 内容容器 — 小说居中版式 ---- */
+.teahouse-content {
+  width: min(90%, 760px);
+  margin: 0 auto;
+  padding: 3rem 0.5rem 8rem;
+}
+
+/* ---- 章节容器 ---- */
+.teahouse-chapter-body {
+  font-size: 17px;
+  line-height: 2;
+  text-align: justify;
+}
+
+.teahouse-chapter-body p {
+  margin: 0 0 1em;
+}
+
+/* 正文内标题（居中） */
+.teahouse-chapter-body h1,
+.teahouse-chapter-body h2,
+.teahouse-chapter-body h3 {
+  text-align: center;
+  margin: 1.8em 0 1em;
+  font-weight: 700;
+  color: var(--text-strong);
+  text-indent: 0;
+}
+.teahouse-chapter-body h1 { font-size: 1.4em; }
+.teahouse-chapter-body h2 { font-size: 1.2em; }
+.teahouse-chapter-body h3 { font-size: 1.05em; }
+
+/* 页内分隔 */
+.teahouse-chapter-body hr {
+  margin: 2.5em auto;
+  width: 45%;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* 引用 — 用作"地点标记"：像普通一行文字，无缩进、紧凑高度。
+   保留一条纤细的左侧竖线提示这是地点标记，仅留左侧一点空间给竖线。 */
+.teahouse-chapter-body blockquote {
+  margin: 0.3em 0 0.9em;
+  padding: 0 0 0 0.8em;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-soft);
+  font-style: normal;
+  line-height: 1.8;
+  text-indent: 0;
+}
+
+.teahouse-chapter-body a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.teahouse-chapter-body a:hover { color: var(--link-hover); }
+
+.teahouse-chapter-body pre,
+.teahouse-chapter-body code {
+  font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
+  font-size: 0.85em;
+  text-indent: 0;
+}
+.teahouse-chapter-body code {
+  padding: 0.12em 0.35em;
+  background: var(--code-bg);
+  border-radius: 3px;
+}
+.teahouse-chapter-body pre {
+  margin: 1.2em 0;
+  padding: 1em 1.2em;
+  background: var(--pre-bg);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.teahouse-chapter-body pre code { padding: 0; background: none; }
+
+.teahouse-chapter-body ul,
+.teahouse-chapter-body ol { margin: 0.8em 0 0.8em 2.4em; text-indent: 0; }
+
+/* ---- UI 层 ---- */
+.teahouse-ui-layer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+.teahouse-ui-layer > * {
+  pointer-events: auto;
+}
+
+/* ---- 窄屏适配 ---- */
+@media (max-width: 480px) {
+  .teahouse-chapter-body { font-size: 16px; }
+}

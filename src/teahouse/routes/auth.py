@@ -78,14 +78,15 @@ async def api_register(body: RegisterRequest):
 
     # Auto-register all built-in prototypes for the new user
     try:
-        from ..database.workspaces import list_prototypes, create_prototype, list_builtin_prototype_dirs, read_prototype_readme
+        from ..database.workspaces import list_prototypes, create_prototype, list_builtin_prototype_dirs, read_prototype_readme, BUILTIN_PROTOTYPE_REGISTRY
         from pathlib import Path
         builtin_dirs = list_builtin_prototype_dirs()
         existing = await list_prototypes()
         for proto_dir in builtin_dirs:
-            name = proto_dir.name
+            name = BUILTIN_PROTOTYPE_REGISTRY.get(proto_dir.name, proto_dir.name)
             readme = read_prototype_readme(proto_dir)
-            description = readme.strip().split("\n")[0].lstrip("#").strip() if readme else name
+            description = "" if proto_dir.name in BUILTIN_PROTOTYPE_REGISTRY \
+                else (readme.strip().split("\n")[0].lstrip("#").strip() if readme else name)
             source_path = str(proto_dir.resolve())
 
             if not any(p["is_builtin"] and Path(p["source_path"]).resolve() == proto_dir.resolve() for p in existing):

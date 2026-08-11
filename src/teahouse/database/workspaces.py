@@ -32,6 +32,27 @@ BLANK_PROTOTYPE_DIR = Path(__file__).parent.parent / "prototypes" / "blank"
 PROTOTYPES_DIR = Path(__file__).parent.parent / "prototypes"
 
 
+def _load_builtin_prototype_registry() -> dict[str, str]:
+    """Read prototypes/registry.json into a folder-name -> title map."""
+    reg_path = PROTOTYPES_DIR / "registry.json"
+    try:
+        if reg_path.exists():
+            import json
+            data = json.loads(reg_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+# Built-in prototype title registry: folder-name -> display title.
+# Optional file at PROTOTYPES_DIR/registry.json. Prototypes listed here show
+# only this title (no README-derived subtitle); unlisted ones fall back to
+# their folder name.
+BUILTIN_PROTOTYPE_REGISTRY: dict[str, str] = _load_builtin_prototype_registry()
+
+
 def _user_dir(safe_name: str, base_path: Path) -> Path:
     return base_path / safe_name
 

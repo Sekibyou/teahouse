@@ -37,6 +37,7 @@ from .database.workspaces import (
     list_builtin_prototype_dirs,
     read_prototype_readme,
     get_instance,
+    BUILTIN_PROTOTYPE_REGISTRY,
 )
 from .routes.auth import router as auth_router
 from .routes.llm_configs import router as llm_configs_router
@@ -103,9 +104,10 @@ async def lifespan(app: FastAPI):
 
         # Register or update built-in prototypes
         for proto_dir in builtin_dirs:
-            name = proto_dir.name
+            name = BUILTIN_PROTOTYPE_REGISTRY.get(proto_dir.name, proto_dir.name)
             readme = read_prototype_readme(proto_dir)
-            description = readme.strip().split("\n")[0].lstrip("#").strip() if readme else name
+            description = "" if proto_dir.name in BUILTIN_PROTOTYPE_REGISTRY \
+                else (readme.strip().split("\n")[0].lstrip("#").strip() if readme else name)
             source_path = str(proto_dir.resolve())
 
             if proto_dir.resolve() in existing_paths:

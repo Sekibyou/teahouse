@@ -1,0 +1,6 @@
+.sessions/
+temp/
+# Static settings: ignore all content EXCEPT the README placeholder (so the seed
+# file ships/tracks but creator-added static content stays out of instance git)
+static_settings/*
+!static_settings/README.md
