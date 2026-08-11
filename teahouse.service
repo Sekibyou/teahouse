@@ -1,0 +1,17 @@
+[Unit]
+Description=Teahouse — Novel / Text Adventure Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lowstar
+WorkingDirectory=/home/lowstar/projects/teahouse
+ExecStart=/home/lowstar/projects/teahouse/run-server.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
