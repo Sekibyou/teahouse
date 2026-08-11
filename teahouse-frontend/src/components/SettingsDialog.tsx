@@ -14,6 +14,7 @@ import { SlotCard } from "@/components/SlotCard"
 import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 
 interface SettingsDialogProps {
@@ -69,6 +70,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const defaultTab = (defaultTabProp ?? storeDefaultTab) as TabKey | undefined
   const [tab, setTab] = useState<TabKey>("models")
   const isMobile = useIsMobile()
+  useDialogBackClose(open, onClose)
   const [tabMenuOpen, setTabMenuOpen] = useState(false)
 
   // ─── Provider state ───

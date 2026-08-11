@@ -23,6 +23,7 @@ import { GitDialog } from "@/components/GitDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { FileTreeNode } from "@/lib/types"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
@@ -44,6 +45,7 @@ export function WorkspacePage() {
   const [showFileTree, setShowFileTree] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | null>(null)
+  useDialogBackClose(fullscreenPanel === "director", () => setFullscreenPanel(null))
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     return saved ? saved === "dark" : true

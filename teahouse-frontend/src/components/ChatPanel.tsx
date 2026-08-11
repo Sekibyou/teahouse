@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Loader2, X, CheckCircle2, Flag } from "lucide-react"
-import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, API_BASE_URL } from "@/lib/api"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi } from "@/lib/api"
+import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -197,7 +198,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
     const connect = () => {
       if (stopped) return
-      const es = new EventSource(`${API_BASE_URL}/events`)
+      const es = new EventSource(`${getApiBaseUrl()}/events`)
       floorsESRef.current = es
 
       es.addEventListener("floors_changed", (e: MessageEvent) => {

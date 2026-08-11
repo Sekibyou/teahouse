@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { gitApi } from "@/lib/api"
 import type { GitStatus, GitBranch, GitLogEntry, GitFileStatus } from "@/lib/types"
 import {
@@ -60,6 +61,7 @@ function nextTempName(): string {
 
 export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
   const isMobile = useIsMobile()
+  useDialogBackClose(open, onClose)
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { API_BASE_URL } from "@/lib/api"
+import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import type { FileTreeNode } from "@/lib/types"
 import { useGitStore } from "@/stores/gitStore"
 
@@ -107,7 +107,7 @@ export function useSSERefresh({
     const connect = () => {
       if (stopped) return
 
-      const es = new EventSource(`${API_BASE_URL}/events`)
+      const es = new EventSource(`${getApiBaseUrl()}/events`)
       esRef.current = es
 
       es.addEventListener("file_changed", (e: MessageEvent) => {

@@ -15,6 +15,7 @@ import { useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { CoverWithFetch } from "@/components/Cover"
 import type { Prototype, Instance } from "@/lib/types"
 
@@ -498,6 +499,7 @@ function InstanceDialog({
   onClose: () => void
 }) {
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
+  useDialogBackClose(true, onClose)
 
   // Mobile: fullscreen sheet; desktop: centered modal above a dimmed backdrop.
   const outer = isMobile
@@ -854,6 +856,7 @@ function Bookshelf({
 }) {
   const [selected, setSelected] = useState<Prototype | null>(null)
   const mobile = useIsMobile()
+  useDialogBackClose(true, onClose)
 
   // Render the dialog only while the selected prototype still exists, so a
   // delete while it's open simply dismisses it (no effect / cascading render).
@@ -992,6 +995,8 @@ function PrototypeDetailDialog({
   const [instanceName, setInstanceName] = useState("")
   const [error, setError] = useState("")
   const [creating, setCreating] = useState(false)
+  // 详情是书架子层级：系统返回先关详情（回书架），再关书架（回大厅）
+  useDialogBackClose(true, onClose)
 
   // Load README for the selected prototype (dialog remounts per prototype with
   // fresh initial state, so no synchronous reset here).

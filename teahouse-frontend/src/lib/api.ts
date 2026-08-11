@@ -1,8 +1,8 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
+import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse, FloorsStats } from "./types"
 import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTypes"
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
 const REQUEST_TIMEOUT = 15000
 
 interface RequestResult<T> {
@@ -32,7 +32,7 @@ async function request<T>(
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
       ...options,
       signal: controller.signal,
       headers,
@@ -131,7 +131,7 @@ export const prototypesApi = {
 
   downloadUrl: (id: string) => {
     const token = getAuthToken()
-    return `${API_BASE_URL}/api/prototypes/${id}/download?token=${encodeURIComponent(token || "")}`
+    return `${getApiBaseUrl()}/api/prototypes/${id}/download?token=${encodeURIComponent(token || "")}`
   },
 
   getReadme: async (id: string) => {
@@ -148,7 +148,7 @@ export const prototypesApi = {
     form.append("file", file)
     const headers: Record<string, string> = {}
     if (token) headers["Authorization"] = `Bearer ${token}`
-    const res = await fetch(`${API_BASE_URL}/api/prototypes/import`, {
+    const res = await fetch(`${getApiBaseUrl()}/api/prototypes/import`, {
       method: "POST",
       headers,
       body: form,
@@ -228,7 +228,7 @@ export const instancesApi = {
     form.append("file", file)
     const headers: Record<string, string> = {}
     if (token) headers["Authorization"] = `Bearer ${token}`
-    const res = await fetch(`${API_BASE_URL}/api/instances/${instanceId}/files/upload?path=${encodeURIComponent(path)}`, {
+    const res = await fetch(`${getApiBaseUrl()}/api/instances/${instanceId}/files/upload?path=${encodeURIComponent(path)}`, {
       method: "POST",
       headers,
       body: form,
@@ -371,7 +371,7 @@ export const chatApi = {
    *  slot_id: "director" | "writer" — which model slot to use. */
   sendStream: async (messages: Record<string, unknown>[], signal?: AbortSignal, slotId?: string) => {
     const token = getAuthToken()
-    const response = await fetch(`${API_BASE_URL}/v1/chat`, {
+    const response = await fetch(`${getApiBaseUrl()}/v1/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -392,7 +392,7 @@ export const chatApi = {
    *  via session_event SSE broadcast. */
   sendDirectorMessage: async (messages: { role: string; content: string }[], instanceId: string, sessionId?: string) => {
     const token = getAuthToken()
-    const response = await fetch(`${API_BASE_URL}/v1/chat`, {
+    const response = await fetch(`${getApiBaseUrl()}/v1/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -640,7 +640,7 @@ export const pluginsApi = {
     const token = getAuthToken()
     const headers: Record<string, string> = {}
     if (token) headers["Authorization"] = `Bearer ${token}`
-    return fetch(`${API_BASE_URL}/api/plugins/preview`, {
+    return fetch(`${getApiBaseUrl()}/api/plugins/preview`, {
       method: "POST",
       headers,
       body: form,
