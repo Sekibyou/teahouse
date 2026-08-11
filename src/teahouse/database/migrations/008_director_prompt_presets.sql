@@ -18,4 +18,3 @@ ALTER TABLE llm_slot_bindings ADD COLUMN prompt_preset_id TEXT REFERENCES direct
 ALTER TABLE llm_providers ADD COLUMN model_fetch_url TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE model_profiles ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE director_prompt_presets ADD COLUMN match_pattern TEXT;
