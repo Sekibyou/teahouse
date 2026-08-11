@@ -8,6 +8,10 @@ Directory layout:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import os
 import json
 import base64
@@ -272,8 +276,8 @@ def copy_instance(
     try:
         git_init(target_dir)
         git_initial_commit(target_dir)
-    except Exception:
-        pass  # git not available — instance works without version control
+    except Exception as e:
+        logger.warning("Failed to init git for copied instance %s: %s", target_dir, e)
 
     return str(target_dir.resolve())
 
@@ -304,8 +308,8 @@ def instantiate_prototype(proto: dict, target_dir: Path, base_path: Path) -> Non
     try:
         git_init(target_dir)
         git_initial_commit(target_dir)
-    except Exception:
-        pass  # git not available — instance works without version control
+    except Exception as e:
+        logger.warning("Failed to init git for new instance %s: %s", target_dir, e)
 
 
 def list_builtin_prototype_dirs() -> list[Path]:

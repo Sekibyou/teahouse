@@ -33,6 +33,17 @@ def _git_run(args: list[str], cwd: Path) -> str:
         env = os.environ.copy()
         env["GIT_PAGER"] = "cat"
         env["GIT_TERMINAL_PROMPT"] = "0"
+        # Ensure git identity is always available, even when ~/.gitconfig is missing
+        for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+            if key not in env:
+                try:
+                    val = subprocess.run(
+                        ["git", "config", "--global", key.removeprefix("GIT_").lower().replace("_", ".")],
+                        capture_output=True, text=True, timeout=5,
+                    ).stdout.strip()
+                except Exception:
+                    val = ""
+                env[key] = val if val else "teahouse"
         # Disable path quoting so CJK filenames don't get octal-escaped
         args = ["-c", "core.quotepath=false"] + args
         import time
