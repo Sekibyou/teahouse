@@ -1077,7 +1077,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               {p.presence_penalty != null && <span>pres_pen: {p.presence_penalty}</span>}
                             </div>
                           </div>
-                          <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                          <div className={`flex items-center gap-0.5 shrink-0 transition-opacity ml-2${isMobile ? "" : " opacity-0 group-hover:opacity-100"}`}>
                             <Button variant="ghost" size="icon-xs" onClick={() => openProfileEdit(p)} title="编辑">
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -1179,7 +1179,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               {p.template_yaml ? p.template_yaml.slice(0, 100) + (p.template_yaml.length > 100 ? "..." : "") : "（空模板）"}
                             </div>
                           </div>
-                          <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                          <div className={`flex items-center gap-0.5 shrink-0 transition-opacity ml-2${isMobile ? "" : " opacity-0 group-hover:opacity-100"}`}>
                             <Button variant="ghost" size="icon-xs" onClick={() => openPresetEdit(p)} title="编辑">
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
