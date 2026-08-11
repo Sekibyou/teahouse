@@ -463,30 +463,40 @@ export function WorkspacePage() {
           ) : (
             /* Backstage mode — textarea editor */
             <div className="flex-1 flex flex-col min-h-0">
-              {selectedFile ? (
-                <>
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-                    <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isDirty && <span className="text-xs text-orange-500">未保存</span>}
-                      <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
-                        {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                        保存
-                      </Button>
-                    </div>
+              {/* 顶部栏始终显示：文件树按钮 + 文件名 + 保存 */}
+              <div className="flex items-center gap-2 px-2 h-14 border-b border-border shrink-0">
+                <button
+                  className="p-1 rounded hover:bg-muted shrink-0"
+                  onClick={() => setShowFileTree(true)}
+                  title="文件树"
+                >
+                  <FolderTree className="h-5 w-5" />
+                </button>
+                <span className="flex-1 text-sm text-muted-foreground truncate">
+                  {selectedFile ?? "未选择文件"}
+                </span>
+                {selectedFile && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isDirty && <span className="text-xs text-orange-500">未保存</span>}
+                    <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
+                      {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                      保存
+                    </Button>
                   </div>
-                  <textarea
-                    className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
-                    value={editedContent}
-                    onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
-                    spellCheck={false}
-                  />
-                </>
+                )}
+              </div>
+              {selectedFile ? (
+                <textarea
+                  className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
+                  value={editedContent}
+                  onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
+                  spellCheck={false}
+                />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-muted-foreground">
                   <div className="text-center">
                     <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                    <p className="text-sm">点击左上角文件图标选择文件</p>
+                    <p className="text-sm">点击左上角文件按钮选择文件</p>
                   </div>
                 </div>
               )}
@@ -540,18 +550,6 @@ export function WorkspacePage() {
         )}
 
         {/* Floating balls + bottom bar */}
-        {/* Top-left: file tree trigger (only in backstage mode) */}
-        {mode === "backstage" && !fullscreenPanel && (
-          <div className="fixed top-3 left-3 z-30">
-            <button
-              className="w-10 h-10 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-              onClick={() => setShowFileTree(true)}
-            >
-              <File className="h-5 w-5" />
-            </button>
-          </div>
-        )}
-
         {/* Top-right: menu trigger */}
         {!fullscreenPanel && (
           <div className="fixed top-3 right-3 z-30">
@@ -560,7 +558,7 @@ export function WorkspacePage() {
               onClick={() => setShowMobileMenu(!showMobileMenu)}
             >
               {mode === "play" ? <Gamepad2 className="h-3.5 w-3.5" /> : <Wrench className="h-3.5 w-3.5" />}
-              <span>{mode === "play" ? "游玩" : "后台"}</span>
+              {mode === "backstage" && <span>后台</span>}
               <Menu className="h-3.5 w-3.5" />
             </button>
 
