@@ -10,12 +10,12 @@
     ————历史正文结束————
 
     ————生成要求开始————
-    {{static_settings\完整章节生成要求.md}}
+    {{static_settings/完整章节生成要求.md}}
     ————生成要求结束————
 
     ————设定开始————
-    {{.teahouse\dyn_settings\characters.md}}
-    {{static_settings\world.md}}
+    {{.teahouse/dyn_settings/characters.md}}
+    {{static_settings/world.md}}
     ————设定结束————
 
 - role: user
