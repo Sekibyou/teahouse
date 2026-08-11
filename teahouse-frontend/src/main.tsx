@@ -3,10 +3,24 @@ import './index.css'
 import { AppRouter } from './router'
 import { Toaster } from 'sonner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { useIsMobile } from './hooks/useMediaQuery'
+
+function AppToaster() {
+  const isMobile = useIsMobile()
+  return (
+    <Toaster
+      position={isMobile ? 'bottom-center' : 'top-center'}
+      richColors
+      // 移动端悬浮球分布在左下(bottom-6 left-3)与右上(top-3 right-3)，
+      // 用 bottom-center 抬到中下部中央，避开上下两处密集交互区
+      mobileOffset={isMobile ? { bottom: 96 } : undefined}
+    />
+  )
+}
 
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
-    <Toaster position="top-center" richColors />
+    <AppToaster />
     <AppRouter />
   </ErrorBoundary>,
 )
