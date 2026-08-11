@@ -279,7 +279,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
   return (
     <div
-      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/40 flex items-center justify-center"}`}
+      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-background/70 backdrop-blur-lg flex items-center justify-center"}`}
       onClick={onClose}
     >
       <div

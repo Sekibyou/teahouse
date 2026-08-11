@@ -72,47 +72,49 @@ export function MainLayout() {
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       <header className="h-14 border-b border-border flex items-center justify-between px-5 shrink-0 relative z-[60] bg-background">
         <div className="flex items-center gap-3 min-w-0">
-          {activeInstance && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setActiveInstance(null)
-                navigate("/", { replace: true })
-              }}
-              title="返回会话选择"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          )}
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="font-semibold whitespace-nowrap">LowStar's Teahouse</span>
             <span className="text-xs text-muted-foreground truncate">基于 Harness 的交互式小说创作引擎</span>
           </div>
           {activeInstance && (
-            <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0">
-              <button
-                className={`px-3 py-1 text-xs font-medium transition-colors ${
-                  mode === "play"
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-muted text-muted-foreground"
-                }`}
-                onClick={() => useViewModeStore.getState().setMode("play")}
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => {
+                  setActiveInstance(null)
+                  navigate("/", { replace: true })
+                }}
+                title="返回会话选择"
               >
-                <Gamepad2 className="h-3.5 w-3.5 inline mr-1" />
-                游玩
-              </button>
-              <button
-                className={`px-3 py-1 text-xs font-medium transition-colors ${
-                  mode === "backstage"
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-muted text-muted-foreground"
-                }`}
-                onClick={() => useViewModeStore.getState().setMode("backstage")}
-              >
-                <Wrench className="h-3.5 w-3.5 inline mr-1" />
-                后台
-              </button>
+                <ArrowLeft className="h-3.5 w-3.5" />
+                返回大厅
+              </Button>
+              <div className="flex items-center rounded-md border border-border overflow-hidden">
+                <button
+                  className={`px-3 py-1 text-xs font-medium transition-colors ${
+                    mode === "play"
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-muted text-muted-foreground"
+                  }`}
+                  onClick={() => useViewModeStore.getState().setMode("play")}
+                >
+                  <Gamepad2 className="h-3.5 w-3.5 inline mr-1" />
+                  游玩
+                </button>
+                <button
+                  className={`px-3 py-1 text-xs font-medium transition-colors ${
+                    mode === "backstage"
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-muted text-muted-foreground"
+                  }`}
+                  onClick={() => useViewModeStore.getState().setMode("backstage")}
+                >
+                  <Wrench className="h-3.5 w-3.5 inline mr-1" />
+                  后台
+                </button>
+              </div>
             </div>
           )}
         </div>
