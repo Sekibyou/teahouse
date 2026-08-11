@@ -1,6 +1,6 @@
 import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench } from "lucide-react"
 import { useEffect } from "react"
-import { Outlet, useNavigate } from "react-router-dom"
+import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { useAuth, useAuthActions } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
@@ -15,6 +15,7 @@ export function MainLayout() {
   const { isAuthenticated, isLoading, user } = useAuth()
   const { clearAuth } = useAuthActions()
   const navigate = useNavigate()
+  const location = useLocation()
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const { mode } = useViewModeStore()
@@ -76,7 +77,10 @@ export function MainLayout() {
             <span className="font-semibold whitespace-nowrap">LowStar's Teahouse</span>
             <span className="text-xs text-muted-foreground truncate">基于 Harness 的交互式小说创作引擎</span>
           </div>
-          {activeInstance && (
+          {/* 这两个按钮只在 workspace 内显示：用路由判断，而不是仅靠 activeInstance，
+              否则用浏览器后退/直接改回大厅 URL 时，persist 的 activeInstance 仍在，
+              按钮不会随之消失。 */}
+          {activeInstance && location.pathname.startsWith("/workspace") && (
             <div className="flex items-center gap-2 shrink-0">
               <Button
                 variant="outline"
