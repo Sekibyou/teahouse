@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse } from "./types"
 import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
@@ -138,6 +138,10 @@ export const prototypesApi = {
     return get<{ metadata: Record<string, unknown>; readme: string }>(`/api/prototypes/${id}/readme`)
   },
 
+  getCover: async (id: string) => {
+    return get<CoverResponse>(`/api/prototypes/${id}/cover`)
+  },
+
   import: async (file: File) => {
     const token = getAuthToken()
     const form = new FormData()
@@ -193,6 +197,10 @@ export const instancesApi = {
     return post<Instance>(`/api/instances/${id}/copy`, { name })
   },
 
+  rename: async (id: string, name: string) => {
+    return patch<Instance>(`/api/instances/${id}`, { name })
+  },
+
   // File operations
   listFiles: async (instanceId: string) => {
     return get<FileTreeNode[]>(`/api/instances/${instanceId}/files`)
@@ -204,6 +212,10 @@ export const instancesApi = {
 
   readAsset: async (instanceId: string, path: string) => {
     return get<{ path: string; mime: string; data: string }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(path)}`)
+  },
+
+  getCover: async (instanceId: string) => {
+    return get<CoverResponse>(`/api/instances/${instanceId}/cover`)
   },
 
   writeFile: async (instanceId: string, path: string, content: string) => {

@@ -72,8 +72,8 @@ export function MainLayout() {
   // Desktop header with full navigation
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
-      <header className="h-12 border-b border-border flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-3">
+      <header className="h-14 border-b border-border flex items-center justify-between px-5 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
           {activeInstance && (
             <Button
               variant="ghost"
@@ -87,9 +87,12 @@ export function MainLayout() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
           )}
-          <span className="font-semibold">LowStar's Teahouse</span>
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="font-semibold whitespace-nowrap">LowStar's Teahouse</span>
+            <span className="text-xs text-muted-foreground truncate">基于 Harness 的交互式小说创作引擎</span>
+          </div>
           {activeInstance && (
-            <div className="flex items-center rounded-md border border-border overflow-hidden">
+            <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0">
               <button
                 className={`px-3 py-1 text-xs font-medium transition-colors ${
                   mode === "play"

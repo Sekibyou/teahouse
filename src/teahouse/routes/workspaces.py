@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..state import state
 from ..tools import execute_tool
@@ -37,11 +37,13 @@ from ..database.workspaces import (
     list_file_tree,
     read_text,
     read_asset,
+    read_prototype_cover,
     TextDecodeError,
     write_file,
     delete_file_or_dir,
     create_file_or_dir,
     update_floor_count,
+    update_instance_name,
     update_summary_index,
     read_sandbox_vars,
     write_sandbox_vars,
@@ -102,6 +104,10 @@ class StartInstanceRequest(BaseModel):
 
 class CopyInstanceRequest(BaseModel):
     name: str
+
+
+class RenameInstanceRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
 
 
 class FileCreateRequest(BaseModel):
@@ -327,6 +333,27 @@ async def get_prototype_readme(prototype_id: str, user: UserInfo = Depends(requi
     return {"metadata": metadata, "readme": readme}
 
 
+@router.get("/prototypes/{prototype_id}/cover")
+async def get_prototype_cover(prototype_id: str, user: UserInfo = Depends(require_user)):
+    """Read prototype cover image (cover.jpg / .png at root) as base64.
+
+    Response: {"mime", "data", "size"} where `data` is a bare base64 payload and
+    `size` is [width, height] for images (null otherwise); callers build
+    `data:{mime};base64,{data}`. The size drives the masonry layout so each cover
+    keeps its intrinsic aspect ratio. 404 when the prototype has no cover.
+    """
+    u = await require_user_info(user)
+    proto = await get_prototype(prototype_id)
+    if not proto:
+        raise HTTPException(status_code=404, detail="Prototype not found")
+
+    cover = read_prototype_cover(proto["source_path"], bool(proto["is_builtin"]))
+    if cover is None:
+        raise HTTPException(status_code=404, detail="Cover not found")
+    mime, data, size = cover
+    return {"mime": mime, "data": data, "size": size}
+
+
 @router.post("/prototypes/import")
 async def import_prototype(
     file: UploadFile = File(...),
@@ -488,6 +515,26 @@ async def copy_my_instance(
     return await create_instance(u["id"], inst["prototype_id"], body.name, dir_path)
 
 
+@router.patch("/instances/{instance_id}")
+async def rename_my_instance(
+    instance_id: str,
+    body: RenameInstanceRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Rename an instance (display name only; the on-disk directory is untouched)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    if inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    renamed = await update_instance_name(instance_id, body.name.strip() or inst["name"])
+    if not renamed:
+        raise HTTPException(status_code=500, detail="Failed to rename instance")
+    return renamed
+
+
 # ===== File operations =====
 
 def _resolve_instance_dir(inst: dict) -> Path:
@@ -551,12 +598,35 @@ async def get_instance_asset(
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        mime, data = read_asset(instance_dir, path)
-        return {"path": path, "mime": mime, "data": data}
+        mime, data, size = read_asset(instance_dir, path)
+        return {"path": path, "mime": mime, "data": data, "size": size}
     except (FileNotFoundError, IsADirectoryError):
         raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/instances/{instance_id}/cover")
+async def get_instance_cover(instance_id: str, user: UserInfo = Depends(require_user)):
+    """Read an instance's cover image (cover.jpg / .png at root) as base64.
+
+    Response: {"mime", "data", "size"} where `size` is [width, height] for images
+    (null otherwise). Size drives the masonry layout so each cover keeps its
+    intrinsic aspect ratio. 404 when the instance has no cover.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    for name in ("cover.jpg", "cover.png"):
+        try:
+            mime, data, size = read_asset(instance_dir, name)
+        except (FileNotFoundError, IsADirectoryError, ValueError):
+            continue
+        return {"mime": mime, "data": data, "size": size}
+    raise HTTPException(status_code=404, detail="Cover not found")
 
 
 @router.put("/instances/{instance_id}/files/content")

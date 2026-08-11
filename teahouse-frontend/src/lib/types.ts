@@ -1,5 +1,12 @@
 // Shared types for prototypes, instances, and file tree
 
+export interface CoverResponse {
+  mime: string
+  data: string
+  /** [width, height] for images, null otherwise. Drives masonry layout. */
+  size: [number, number] | null
+}
+
 export interface User {
   user_id: string
   username: string

@@ -198,6 +198,15 @@ async def update_floor_count(instance_id: str, count: int) -> None:
     )
 
 
+async def update_instance_name(instance_id: str, name: str) -> dict | None:
+    """Update an instance's display name. Returns the updated instance or None."""
+    await execute(
+        "UPDATE instances SET name = ?, updated_at = ? WHERE id = ?",
+        (name, current_timestamp(), instance_id),
+    )
+    return await get_instance(instance_id)
+
+
 def summary_file_name(start: int, end: int) -> str:
     """Return the summary ledger file name for covering floors start..end (inclusive).
 
@@ -414,16 +423,117 @@ def _detect_mime(raw: bytes, filename: str) -> str:
     return guessed or "application/octet-stream"
 
 
-def read_asset(instance_dir: Path, file_path: str) -> tuple[str, str]:
+def _image_size(raw: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from PNG/JPEG/WebP headers without a decoder.
+
+    Returns None for non-image or unknown formats. Used to drive the frontend's
+    masonry layout so each cover keeps its intrinsic aspect ratio; no Pillow
+    dependency is introduced.
+    """
+    try:
+        # PNG: IHDR chunk at fixed offset; width/height are big-endian u32.
+        if raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) >= 24:
+            return (
+                int.from_bytes(raw[16:20], "big"),
+                int.from_bytes(raw[20:24], "big"),
+            )
+        # JPEG: scan markers for an SOFn segment.
+        if raw.startswith(b"\xff\xd8"):
+            i = 2
+            while i + 9 < len(raw):
+                if raw[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = raw[i + 1]
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    seg_len = int.from_bytes(raw[i + 2 : i + 4], "big")
+                    if i + 9 < len(raw):
+                        return (
+                            int.from_bytes(raw[i + 7 : i + 9], "big"),
+                            int.from_bytes(raw[i + 5 : i + 7], "big"),
+                        )
+                    return None
+                # Standalone marker (no length) — skip 2 bytes.
+                if marker in (0x01, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9):
+                    i += 2
+                    continue
+                if marker == 0x00 or marker == 0xFF:
+                    i += 1
+                    continue
+                seg_len = int.from_bytes(raw[i + 2 : i + 4], "big")
+                i += 2 + seg_len
+            return None
+        # WebP: VP8/VP8L/VP8X.
+        if raw.startswith(b"RIFF") and len(raw) >= 30 and raw[8:12] == b"WEBP":
+            fmt = raw[12:16]
+            if fmt in (b"VP8X",) and len(raw) >= 30:
+                w = 1 + int.from_bytes(raw[24:27], "little")
+                h = 1 + int.from_bytes(raw[27:30], "little")
+                return w, h
+            if fmt == b"VP8 " and len(raw) >= 30:
+                w = int.from_bytes(raw[26:28], "little")
+                h = int.from_bytes(raw[28:30], "little")
+                return w, h
+            if fmt == b"VP8L" and len(raw) >= 25:
+                b = raw[21:25]
+                bits = int.from_bytes(b, "little")
+                w = (bits & 0x3FFF) + 1
+                h = ((bits >> 14) & 0x3FFF) + 1
+                return w, h
+            return None
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
+def read_asset(instance_dir: Path, file_path: str) -> tuple[str, str, tuple[int, int] | None]:
     """Read a binary asset's contents.
 
-    Returns (mime, base64_data) where base64_data has no prefix; callers build
-    `data:{mime};base64,{data}`. Any file type is accepted — MIME is detected
-    from magic bytes, so the caller's extension is not trusted/required.
+    Returns (mime, base64_data, size) where base64_data has no prefix; callers
+    build `data:{mime};base64,{data}`, and `size` is (width, height) for images
+    (None otherwise). Any file type is accepted — MIME is detected from magic
+    bytes, so the caller's extension is not trusted/required.
     """
     full = _resolve_full(instance_dir, file_path)
     raw = full.read_bytes()
-    return _detect_mime(raw, full.name), base64.b64encode(raw).decode("ascii")
+    return _detect_mime(raw, full.name), base64.b64encode(raw).decode("ascii"), _image_size(raw)
+
+
+def read_prototype_cover(source_path: str, is_builtin: bool) -> tuple[str, str, tuple[int, int] | None] | None:
+    """Read a prototype's cover image (cover.jpg / cover.png at root).
+
+    Mirrors the README dual-branch pattern: built-in prototypes store files on
+    disk under `source_path` (a directory), user-created prototypes pack them
+    inside the `.teabrew` zip. Returns (mime, base64_data, size) or None when no
+    cover exists — `size` being (width, height) for images. Callers build
+    `data:{mime};base64,{data}`.
+    """
+    source = Path(source_path).resolve()
+
+    def _pick(candidates: list[Path]) -> bytes | None:
+        for c in candidates:
+            try:
+                return c.read_bytes()
+            except OSError:
+                continue
+        return None
+
+    if is_builtin:
+        raw = _pick([source / "cover.jpg", source / "cover.png"])
+        if raw is None:
+            return None
+        return _detect_mime(raw, source.name), base64.b64encode(raw).decode("ascii"), _image_size(raw)
+
+    if not source.is_file():
+        return None
+    with zipfile.ZipFile(source, "r") as zf:
+        for name in ("cover.jpg", "cover.png"):
+            try:
+                raw = zf.read(name)
+            except KeyError:
+                continue
+            return _detect_mime(raw, name), base64.b64encode(raw).decode("ascii"), _image_size(raw)
+    return None
 
 
 def write_file(instance_dir: Path, file_path: str, content: str) -> None:
