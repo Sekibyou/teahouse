@@ -158,7 +158,7 @@
   var menu = document.createElement('div');
   menu.id = 'teahouse-mode-menu';
   menu.style.cssText =
-    'position:absolute;bottom:calc(100% + 8px);left:0;z-index:50;' +
+    'position:absolute;bottom:calc(100% + 8px);left:0;z-index:var(--z-panel);' +
     'min-width:176px;padding:4px;' +
     'background:var(--panel);color:var(--panel-text);' +
     'border:1px solid var(--panel-border);border-radius:12px;' +

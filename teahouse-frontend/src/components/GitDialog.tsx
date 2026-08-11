@@ -3,10 +3,11 @@ import {
   GitBranch as GitBranchIcon, GitCommitHorizontal, Loader2,
   CheckCircle2, AlertCircle, X, GitFork,
   History, FileText, FilePlus, FileMinus, FileEdit,
-  Save, Trash2, Pencil, CornerDownRight, Undo2,
+  Save, Trash2, Pencil, CornerDownRight, Undo2, ChevronLeft,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { gitApi } from "@/lib/api"
 import type { GitStatus, GitBranch, GitLogEntry, GitFileStatus } from "@/lib/types"
 import {
@@ -58,6 +59,7 @@ function nextTempName(): string {
 }
 
 export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
+  const isMobile = useIsMobile()
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -274,40 +276,71 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   })()
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/40 flex items-center justify-center"}`}
+      onClick={onClose}
+    >
       <div
-        className="bg-background rounded-lg shadow-xl flex flex-col overflow-hidden"
-        style={{ width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }}
+        className={`flex flex-col overflow-hidden ${isMobile
+          ? "h-full w-full"
+          : "bg-background rounded-lg shadow-xl"
+        }`}
+        style={
+          isMobile
+            ? undefined
+            : { width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }
+        }
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
-          <div className="flex items-center gap-2">
-            <GitBranchIcon className="h-4 w-4 text-primary" />
-            <span className="font-semibold">版本控制</span>
-            <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
-              {currentBranch}
-            </span>
-            {hasUncommitted && (
-              <span className="flex items-center gap-1 text-[10px] text-yellow-500">
-                <AlertCircle className="h-3 w-3" />
-                有未提交变更
-              </span>
-            )}
-            {!hasUncommitted && gitStatus && (
-              <span className="flex items-center gap-1 text-[10px] text-green-500">
-                <CheckCircle2 className="h-3 w-3" />
-                干净
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-            <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
-              <X className="h-4 w-4" />
+        {isMobile ? (
+          <div className="relative h-10 border-b border-border flex items-center justify-center shrink-0 z-10">
+            <button
+              className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
+              onClick={onClose}
+              aria-label="返回"
+            >
+              <ChevronLeft className="h-5 w-5" />
             </button>
+            <span className="font-semibold text-sm">版本控制</span>
+            <span className="absolute right-2 flex items-center gap-2">
+              {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              {hasUncommitted ? (
+                <span className="flex items-center gap-1 text-[10px] text-yellow-500">
+                  <AlertCircle className="h-3 w-3" />
+                </span>
+              ) : (null)}
+            </span>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
+            <div className="flex items-center gap-2">
+              <GitBranchIcon className="h-4 w-4 text-primary" />
+              <span className="font-semibold">版本控制</span>
+              <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
+                {currentBranch}
+              </span>
+              {hasUncommitted && (
+                <span className="flex items-center gap-1 text-[10px] text-yellow-500">
+                  <AlertCircle className="h-3 w-3" />
+                  有未提交变更
+                </span>
+              )}
+              {!hasUncommitted && gitStatus && (
+                <span className="flex items-center gap-1 text-[10px] text-green-500">
+                  <CheckCircle2 className="h-3 w-3" />
+                  干净
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Error bar */}
         {error && (
@@ -318,13 +351,13 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
           </div>
         )}
 
-        {/* Body: sidebar + content */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left sidebar */}
-          <div className="w-44 shrink-0 border-r border-border flex flex-col bg-muted/10">
-            <div className="flex flex-col gap-0.5 p-2">
+        {/* Body: tab selector + content */}
+        <div className={`flex-1 overflow-hidden ${isMobile ? "flex flex-col" : "flex"}`}>
+          {/* Tab selector — vertical sidebar (desktop) or horizontal bar (mobile) */}
+          {isMobile ? (
+            <div className="shrink-0 border-b border-border flex bg-muted/10">
               <button
-                className={`flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-md transition-colors text-left ${
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm transition-colors ${
                   tab === "graph"
                     ? "bg-accent text-accent-foreground font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -335,7 +368,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                 分支图
               </button>
               <button
-                className={`flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-md transition-colors text-left ${
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm transition-colors ${
                   tab === "commit"
                     ? "bg-accent text-accent-foreground font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -346,7 +379,34 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                 提交管理
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="w-44 shrink-0 border-r border-border flex flex-col bg-muted/10">
+              <div className="flex flex-col gap-0.5 p-2">
+                <button
+                  className={`flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-md transition-colors text-left ${
+                    tab === "graph"
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                  onClick={() => setTab("graph")}
+                >
+                  <GitFork className="h-4 w-4 shrink-0" />
+                  分支图
+                </button>
+                <button
+                  className={`flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-md transition-colors text-left ${
+                    tab === "commit"
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                  onClick={() => setTab("commit")}
+                >
+                  <GitCommitHorizontal className="h-4 w-4 shrink-0" />
+                  提交管理
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Right content */}
           <div className="flex-1 overflow-hidden">
@@ -559,9 +619,9 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
                 {/* ── Tab: 提交管理 ── */}
                 {tab === "commit" && (
-                  <div className="h-full flex">
+                  <div className={`flex-1 overflow-hidden ${isMobile ? "flex flex-col" : "flex"}`}>
                     {/* Left: uncommitted files */}
-                    <div className="flex-1 flex flex-col min-w-0 border-r border-border">
+                    <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? "" : "border-r border-border"}`}>
                       <div className="flex-1 overflow-auto p-4">
                         <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
                           <FileText className="h-3.5 w-3.5" />
@@ -601,7 +661,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                     </div>
 
                     {/* Right: commit form + recent commits */}
-                    <div className="w-96 shrink-0 flex flex-col">
+                    <div className={`shrink-0 flex flex-col ${isMobile ? "flex-1 border-t border-border" : "w-96"}`}>
                       {/* Commit form */}
                       <div className="p-4 border-b border-border space-y-3 shrink-0">
                         <div className="flex gap-2">

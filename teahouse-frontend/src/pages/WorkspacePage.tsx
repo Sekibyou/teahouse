@@ -4,9 +4,9 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
-  Puzzle, PanelLeftOpen, GripVertical, Archive,
+  PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
-  GitBranch, Sun, Moon, Settings, ArrowLeft, ChevronLeft, Upload,
+  GitBranch, Sun, Moon, Settings, ArrowLeft, Upload,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,11 +38,12 @@ export function WorkspacePage() {
   const setChatWidth = useViewModeStore((s) => s.setChatWidth)
   const isMobile = useIsMobile()
   const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
 
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "settings" | "git" | null>(null)
+  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | null>(null)
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     return saved ? saved === "dark" : true
@@ -441,33 +442,13 @@ export function WorkspacePage() {
           </div>
         )}
 
-        {fullscreenPanel === "settings" && (
-          <div className="absolute inset-0 z-50 bg-background flex flex-col">
-            <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
-              <button className="p-1 rounded hover:bg-muted" onClick={() => setFullscreenPanel(null)}>
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-              <span className="font-semibold text-sm">设置</span>
-            </div>
-            <div className="flex-1 overflow-auto p-4">
-              {/* Inline settings content — simplified for mobile */}
-              <MobileSettingsContent
-                activeInstance={activeInstance}
-                onClose={() => setFullscreenPanel(null)}
-              />
-            </div>
-          </div>
-        )}
-
         {fullscreenPanel === "git" && (
-          <div className="absolute inset-0 z-50 bg-background flex flex-col">
-            <GitDialog
-              instanceId={instId!}
-              open={true}
-              onClose={() => setFullscreenPanel(null)}
-              onRefresh={() => { refresh({ editor: false }); setFullscreenPanel(null) }}
-            />
-          </div>
+          <GitDialog
+            instanceId={instId!}
+            open={true}
+            onClose={() => setFullscreenPanel(null)}
+            onRefresh={() => { refresh({ editor: false }); setFullscreenPanel(null) }}
+          />
         )}
 
         {/* Main content area */}
@@ -606,7 +587,7 @@ export function WorkspacePage() {
                   </button>
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { setFullscreenPanel("settings"); setShowMobileMenu(false) }}
+                    onClick={() => { openSettings(); setShowMobileMenu(false) }}
                   >
                     <Settings className="h-4 w-4" />
                     设置
@@ -1161,71 +1142,3 @@ function FileTreeView({
   )
 }
 
-// ============================================================================
-// MobileSettingsContent — simplified settings for mobile overlay
-// ============================================================================
-function MobileSettingsContent({
-  activeInstance,
-  onClose,
-}: {
-  activeInstance: { id: string; name: string } | null
-  onClose: () => void
-}) {
-  const navigate = useNavigate()
-  const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
-  const openSettings = useSettingsDialogStore((s) => s.openSettings)
-
-  return (
-    <div className="space-y-4">
-      {/* Instance info */}
-      {activeInstance && (
-        <div className="p-3 rounded-md border border-border">
-          <p className="text-sm font-medium">{activeInstance.name}</p>
-          <p className="text-xs text-muted-foreground">ID: {activeInstance.id}</p>
-        </div>
-      )}
-
-      {/* Navigation actions */}
-      <div className="space-y-2">
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
-          onClick={() => {
-            openSettings()
-            onClose()
-          }}
-        >
-          <Settings className="h-4 w-4" />
-          完整设置
-        </Button>
-
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
-          onClick={() => {
-            openSettings("plugins")
-            onClose()
-          }}
-        >
-          <Puzzle className="h-4 w-4" />
-          插件管理
-        </Button>
-      </div>
-
-      {/* Exit */}
-      <div className="pt-2 border-t border-border">
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
-          onClick={() => {
-            setActiveInstance(null)
-            navigate("/", { replace: true })
-          }}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          退出到主页
-        </Button>
-      </div>
-    </div>
-  )
-}

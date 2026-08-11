@@ -23,6 +23,22 @@
     return base + (floor.draft ? '（草稿）' : '');
   }
 
+  /* ---------- 窄屏适配：底部输入条与右侧悬浮球不重叠 ----------
+     输入条 width:min(92%,640px) 居中，右缘距右 = (w - min(92%w,640))/2；
+     当 w < 776px 时该留白 < 68px（悬浮球占 right:22px + 46px 宽），两者重叠。
+     窄屏时把右侧两个悬浮球（本组 chapter-fab + var-editor-fab）整体上移 +70px，
+     避开输入条（wrap 顶部约 82px，两球落到 96/164px，留 14px 间隙，原 22px 间距保持）。
+     用 !important 压过组件内联 bottom。 */
+  var responsiveStyle = document.createElement('style');
+  responsiveStyle.textContent =
+    '@media (max-width: 779px){' +
+    '#chapter-fab{bottom:96px !important;}' +
+    '#chapter-fab-panel{bottom:calc(96px + 56px) !important;}' +
+    '#var-editor-fab{bottom:164px !important;}' +
+    '#var-editor-panel{bottom:calc(164px + 56px) !important;}' +
+    '}';
+  document.head.appendChild(responsiveStyle);
+
   /* ---------- 悬浮球按钮 ---------- */
   var fab = document.createElement('button');
   fab.id = 'chapter-fab';
