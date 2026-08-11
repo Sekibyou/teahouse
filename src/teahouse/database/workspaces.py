@@ -546,6 +546,19 @@ def write_file(instance_dir: Path, file_path: str, content: str) -> None:
     full.write_text(content, encoding="utf-8")
 
 
+def write_asset(instance_dir: Path, file_path: str, data: bytes) -> None:
+    """Write binary content to a file. Creates parent directories if needed.
+
+    Mirrors write_file's path-traversal guard but handles arbitrary bytes
+    (images/audio/fonts), not just UTF-8 text.
+    """
+    full = (instance_dir / file_path).resolve()
+    if not str(full).startswith(str(instance_dir.resolve())):
+        raise ValueError("Path traversal detected")
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(data)
+
+
 # ---------------------------------------------------------------------------
 # Runtime vars — .teahouse/runtime_vars.jsonl
 #

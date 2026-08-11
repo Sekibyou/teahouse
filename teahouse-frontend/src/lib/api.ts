@@ -222,6 +222,28 @@ export const instancesApi = {
     return put<{ path: string; status: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(path)}`, { content })
   },
 
+  uploadFile: async (instanceId: string, path: string, file: File) => {
+    const token = getAuthToken()
+    const form = new FormData()
+    form.append("file", file)
+    const headers: Record<string, string> = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    const res = await fetch(`${API_BASE_URL}/api/instances/${instanceId}/files/upload?path=${encodeURIComponent(path)}`, {
+      method: "POST",
+      headers,
+      body: form,
+    })
+    if (res.status === 401) {
+      clearAuth()
+      return { ok: false as const, error: "认证已过期，请重新登录" }
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "上传失败" }))
+      return { ok: false as const, error: err.detail || `请求失败 (${res.status})` }
+    }
+    return { ok: true as const, data: await res.json() as { path: string; size: number; status: string } }
+  },
+
   createEntry: async (instanceId: string, path: string, type: "file" | "directory") => {
     return post<{ path: string; status: string }>(`/api/instances/${instanceId}/files`, { path, type })
   },

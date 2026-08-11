@@ -4,9 +4,9 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
-  Puzzle, PanelLeftOpen, GripVertical, Archive, RefreshCw,
+  Puzzle, PanelLeftOpen, GripVertical, Archive,
   BookOpen, MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
-  GitBranch, Sun, Moon, LogOut, Settings, ArrowLeft, ChevronLeft,
+  GitBranch, Sun, Moon, LogOut, Settings, ArrowLeft, ChevronLeft, Upload,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -69,6 +69,8 @@ export function WorkspacePage() {
   const [saveToast, setSaveToast] = useState<boolean>(false)
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveToastRef = useRef<HTMLSpanElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const uploadPathRef = useRef<string>("")
 
   const showSaveToast = useCallback(() => {
     if (saveToastTimer.current) clearTimeout(saveToastTimer.current)
@@ -240,6 +242,22 @@ export function WorkspacePage() {
       setEditedContent("")
       setIsDirty(false)
     }
+    await refresh({ editor: false, clearDirty: false })
+  }
+
+  const handleUploadClick = (parentPath: string) => {
+    uploadPathRef.current = parentPath
+    fileInputRef.current?.click()
+  }
+
+  const handleUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = "" // 允许重复选择同一文件
+    if (!instId || !file) return
+    const dir = uploadPathRef.current
+    const fullPath = dir ? `${dir}/${file.name}` : file.name
+    const res = await instancesApi.uploadFile(instId, fullPath, file)
+    if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
     await refresh({ editor: false, clearDirty: false })
   }
 
@@ -422,14 +440,11 @@ export function WorkspacePage() {
         {/* Fullscreen panels */}
         {fullscreenPanel === "director" && (
           <div className="absolute inset-0 z-50 bg-background flex flex-col">
-            <div className="h-10 border-b border-border flex items-center gap-2 px-2 shrink-0">
-              <button className="p-1 rounded hover:bg-muted" onClick={() => setFullscreenPanel(null)}>
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-              <span className="font-semibold text-sm">导演</span>
-            </div>
             <div className="flex-1 flex flex-col min-h-0">
-              <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
+              <ChatPanel
+                onGitRefresh={() => refresh({ editor: false })}
+                onClosePanel={() => setFullscreenPanel(null)}
+              />
             </div>
           </div>
         )}
@@ -521,9 +536,14 @@ export function WorkspacePage() {
                 <span className="text-sm font-semibold truncate" title={activeInstance.name}>
                   {activeInstance.name}
                 </span>
-                <button className="p-1 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
-                  <X className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => handleUploadClick("")} title="上传文件到根目录">
+                    <Upload className="h-4 w-4" />
+                  </button>
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
               <div className="flex-1 overflow-auto py-1">
                 {isLoading ? (
@@ -548,6 +568,7 @@ export function WorkspacePage() {
                     onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                     onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
                     onDelete={handleDeleteEntry}
+                    onUpload={handleUploadClick}
                     fileStatuses={fileStatuses}
                     isMobile
                   />
@@ -735,6 +756,12 @@ export function WorkspacePage() {
   // ============================================================================
   return (
     <div ref={containerRef} className="h-full flex overflow-hidden">
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleUploadChange}
+      />
       {/* Left/center area — file tree + editor (backstage) OR output panel (play).
           Both are always mounted to keep SSE connections alive; hidden via CSS. */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -747,13 +774,6 @@ export function WorkspacePage() {
                 {activeInstance.name}
               </span>
               <div className="flex items-center gap-0.5 shrink-0">
-                <button
-                  className="p-0.5 rounded hover:bg-muted"
-                  onClick={() => { if (instId) useGitStore.getState().fetchGitStatus(instId) }}
-                  title="刷新文件状态"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
                 <button
                   className="p-0.5 rounded hover:bg-muted"
                   onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportAuthor(""); setExportVersion("1.0.0"); setExportError("") }}
@@ -774,6 +794,13 @@ export function WorkspacePage() {
                   title="新建文件夹"
                 >
                   <Folder className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-muted"
+                  onClick={() => handleUploadClick("")}
+                  title="上传文件到根目录"
+                >
+                  <Upload className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
@@ -802,6 +829,7 @@ export function WorkspacePage() {
                   onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                   onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
                   onDelete={handleDeleteEntry}
+                  onUpload={handleUploadClick}
                   fileStatuses={fileStatuses}
                 />
               )}
@@ -883,7 +911,10 @@ export function WorkspacePage() {
             style={{ width: `${chatWidth}%` }}
           >
             <div className="flex-1 flex flex-col min-h-0">
-              <ChatPanel onGitRefresh={() => refresh({ editor: false })} />
+              <ChatPanel
+                onGitRefresh={() => refresh({ editor: false })}
+                onClosePanel={() => setChatCollapsed(true)}
+              />
             </div>
           </aside>
         </>
@@ -1009,7 +1040,7 @@ export function WorkspacePage() {
 
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
-  onCreateFile, onCreateFolder, onDelete, fileStatuses, depth = 0, isMobile = false,
+  onCreateFile, onCreateFolder, onDelete, onUpload, fileStatuses, depth = 0, isMobile = false,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -1019,6 +1050,7 @@ function FileTreeView({
   onCreateFile: (parentPath: string) => void
   onCreateFolder: (parentPath: string) => void
   onDelete: (path: string) => void
+  onUpload: (parentPath: string) => void
   fileStatuses: Map<string, string>
   depth?: number
   isMobile?: boolean
@@ -1096,6 +1128,13 @@ function FileTreeView({
                   >
                     <Folder className="h-3 w-3" />
                   </button>
+                  <button
+                    className="p-0.5 rounded hover:bg-muted"
+                    onClick={e => { e.stopPropagation(); onUpload(node.path) }}
+                    title="上传文件到此处"
+                  >
+                    <Upload className="h-3 w-3" />
+                  </button>
                 </>
               )}
               <button
@@ -1119,6 +1158,7 @@ function FileTreeView({
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
               onDelete={onDelete}
+              onUpload={onUpload}
               fileStatuses={fileStatuses}
               depth={depth + 1}
               isMobile={isMobile}

@@ -40,6 +40,7 @@ from ..database.workspaces import (
     read_prototype_cover,
     TextDecodeError,
     write_file,
+    write_asset,
     delete_file_or_dir,
     create_file_or_dir,
     update_floor_count,
@@ -662,6 +663,44 @@ async def save_instance_file(
             {"path": p, "tool": "EditorSave", "instance_id": instance_id},
         )
     return {"path": path, "status": "saved"}
+
+
+# 单个二进制文件上传上限（约 20MB），避免巨大文件一次性打爆内存
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
+@router.post("/instances/{instance_id}/files/upload")
+async def upload_instance_file(
+    instance_id: str,
+    path: str = Query(..., description="目标路径，相对实例根"),
+    file: UploadFile = File(...),
+    user: UserInfo = Depends(require_user),
+):
+    """Upload a single binary file (image/audio/font/…) into the instance.
+
+    Complements GET /files/asset (binary read) and PUT /files/content (text
+    write): this is the only write path for arbitrary bytes — e.g. a creator
+    dropping a cover.{jpg,png,webp} or an asset into assets/. Written to the
+    instance root, so a cover-style name is picked up by the cover reader.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    data = await file.read()
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
+        )
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        write_asset(instance_dir, path, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": path, "size": len(data), "status": "uploaded"}
 
 
 @router.get("/instances/{instance_id}/runtime-vars")
