@@ -5,8 +5,8 @@ import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
   Puzzle, PanelLeftOpen, GripVertical, Archive,
-  BookOpen, MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
-  GitBranch, Sun, Moon, LogOut, Settings, ArrowLeft, ChevronLeft, Upload,
+  MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
+  GitBranch, Sun, Moon, Settings, ArrowLeft, ChevronLeft, Upload,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,7 +15,6 @@ import { instancesApi, gitApi, prototypesApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
-import { useAuthActions } from "@/stores/authStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
@@ -39,7 +38,6 @@ export function WorkspacePage() {
   const setChatWidth = useViewModeStore((s) => s.setChatWidth)
   const isMobile = useIsMobile()
   const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
-  const { clearAuth } = useAuthActions()
 
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
@@ -87,7 +85,6 @@ export function WorkspacePage() {
     }, 1500)
   }, [])
   // Track whether the file content has finished loading
-  const [contentReady, setContentReady] = useState(false)
 
   const [showCreate, setShowCreate] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [createName, setCreateName] = useState("")
@@ -159,8 +156,7 @@ export function WorkspacePage() {
       setEditedContent("")
       setGitHeadContent("")
       setIsDirty(false)
-      setContentReady(false)
-      setSaveToast(null)
+      setSaveToast(false)
       return
     }
     ;(async () => {
@@ -176,14 +172,12 @@ export function WorkspacePage() {
         const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
         setGitHeadContent(headContent)
         setIsDirty(false)
-        setContentReady(true)
       } else {
         // File no longer exists — clear editor
         setSelectedFile(null)
         setFileContent("")
         setEditedContent("")
         setGitHeadContent("")
-        setContentReady(false)
         setIsDirty(false)
       }
     })()
@@ -210,7 +204,8 @@ export function WorkspacePage() {
     if (res.ok) {
       setFileContent(editedContent)
       setIsDirty(false)
-      refresh({ fileTree: false, gitStatus: true, editor: false, clearDirty: false })
+      refresh({ fileTree: false, editor: false, clearDirty: false })
+      if (instId) useGitStore.getState().fetchGitStatus(instId)
       showSaveToast()
     }
     setIsSaving(false)
@@ -299,7 +294,6 @@ export function WorkspacePage() {
     setEditedContent,
     setGitHeadContent,
     setIsDirty,
-    setContentReady,
     setSelectedFile,
   })
 
@@ -341,7 +335,6 @@ export function WorkspacePage() {
             setFileContent("")
             setEditedContent("")
             setGitHeadContent("")
-            setContentReady(false)
             setIsDirty(false)
           }
         })
@@ -370,7 +363,6 @@ export function WorkspacePage() {
             setFileContent("")
             setEditedContent("")
             setGitHeadContent("")
-            setContentReady(false)
             setIsDirty(false)
           }
         })
@@ -460,7 +452,6 @@ export function WorkspacePage() {
             <div className="flex-1 overflow-auto p-4">
               {/* Inline settings content — simplified for mobile */}
               <MobileSettingsContent
-                instId={instId!}
                 activeInstance={activeInstance}
                 onClose={() => setFullscreenPanel(null)}
               />
@@ -1174,17 +1165,14 @@ function FileTreeView({
 // MobileSettingsContent — simplified settings for mobile overlay
 // ============================================================================
 function MobileSettingsContent({
-  instId,
   activeInstance,
   onClose,
 }: {
-  instId: string
   activeInstance: { id: string; name: string } | null
   onClose: () => void
 }) {
   const navigate = useNavigate()
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
-  const { clearAuth } = useAuthActions()
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
 
   return (

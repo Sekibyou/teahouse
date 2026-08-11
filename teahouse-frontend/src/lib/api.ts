@@ -1,5 +1,5 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse, FloorsStats } from "./types"
 import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTypes"
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
@@ -369,7 +369,7 @@ export const chatApi = {
    *  Each chunk has the shape { type: "reasoning" | "text", text: string }.
    *  The stream ends with event: done.
    *  slot_id: "director" | "writer" — which model slot to use. */
-  sendStream: async (messages: { role: string; content: string }[], signal?: AbortSignal, slotId?: string) => {
+  sendStream: async (messages: Record<string, unknown>[], signal?: AbortSignal, slotId?: string) => {
     const token = getAuthToken()
     const response = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: "POST",
@@ -422,7 +422,7 @@ export const gitApi = {
   },
 
   refresh: async (instanceId: string) => {
-    return get<{ git: GitStatus; file_statuses: GitFileStatus[] }>(`/api/instances/${instanceId}/refresh`)
+    return get<{ git: GitStatus; file_statuses: GitFileStatus[]; floors: FloorsStats | null }>(`/api/instances/${instanceId}/refresh`)
   },
 
   commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string }) => {
@@ -615,9 +615,9 @@ export const llmSlotsApi = {
 // Director Prompt Presets API
 export const directorPromptPresetsApi = {
   list: () => get<{ presets: DirectorPromptPreset[] }>("/api/llm/prompt-presets/"),
-  create: (data: { name: string; template_yaml: string }) =>
+  create: (data: { name: string; template_yaml: string; match_pattern?: string | null }) =>
     post<{ preset: DirectorPromptPreset }>("/api/llm/prompt-presets/", data),
-  update: (id: string, data: { name?: string; template_yaml?: string }) =>
+  update: (id: string, data: { name?: string; template_yaml?: string; match_pattern?: string | null }) =>
     put<{ preset: DirectorPromptPreset }>(`/api/llm/prompt-presets/${id}`, data),
   delete: (id: string) => del<{ status: string }>(`/api/llm/prompt-presets/${id}`),
 }

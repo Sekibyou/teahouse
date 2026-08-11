@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
-  CheckCircle2, AlertCircle, Download, Star, FileText, Link2,
+  AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -23,12 +23,6 @@ interface SettingsDialogProps {
 }
 
 type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins"
-
-const API_FORMAT_LABELS: Record<string, string> = {
-  openai: "OpenAI 兼容",
-  openai_strict: "OpenAI 严格",
-  anthropic: "Anthropic",
-}
 
 const API_FORMAT_OPTIONS = [
   { value: "openai", label: "openai" },
@@ -63,26 +57,6 @@ function Field({ label, children, className }: { label: string; children: React.
   )
 }
 
-// ─── Inline modal overlay (reusable) ───
-function EditModal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-20 rounded-lg" onClick={onClose}>
-      <div
-        className="bg-background rounded-lg shadow-xl border border-border w-[500px] max-h-[80%] p-6 space-y-4 overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm">{title}</h3>
-          <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
 export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTab: defaultTabProp }: SettingsDialogProps) {
   const storeOpen = useSettingsDialogStore((s) => s.open)
   const storeDefaultTab = useSettingsDialogStore((s) => s.defaultTab)
@@ -109,8 +83,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [deleteProviderTarget, setDeleteProviderTarget] = useState<string | null>(null)
 
   // ─── Provider model fetch / import state ───
-  const [fetchedModels, setFetchedModels] = useState<Record<string, AvailableModel[]>>({})
-  const [fetchingModels, setFetchingModels] = useState<Record<string, boolean>>({})
   const [importingFromProvider, setImportingFromProvider] = useState<string | null>(null)
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
   const [importModelLoading, setImportModelLoading] = useState(false)
@@ -118,7 +90,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   // ─── Model state ───
   const [models, setModels] = useState<LLMModel[]>([])
-  const [modelsLoading, setModelsLoading] = useState(false)
 
   // ─── Profile state ───
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
@@ -162,7 +133,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // install confirmation (two-phase)
   const [preview, setPreview] = useState<PluginPreview | null>(null)
   const [previewError, setPreviewError] = useState("")
-  const [conflictsAccepted, setConflictsAccepted] = useState(false)
   const [installing, setInstalling] = useState(false)
   const pendingZipRef = useRef<File | null>(null)
   // network allowlist per-plugin panel
@@ -187,7 +157,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // ─── Load all data ───
   const loadAll = useCallback(async () => {
     setProvidersLoading(true)
-    setModelsLoading(true)
     setProfilesLoading(true)
     setPresetsLoading(true)
     setSlotsLoading(true)
@@ -217,7 +186,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     else setError(sRes.error || "加载槽位失败")
 
     setProvidersLoading(false)
-    setModelsLoading(false)
     setProfilesLoading(false)
     setPresetsLoading(false)
     setSlotsLoading(false)
@@ -255,26 +223,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // ─── Provider helpers ───
 
   const getProviderModels = (providerId: string): (LLMModel & { stale?: boolean })[] => {
-    const providerModels = models.filter(m => m.provider_id === providerId)
-    const fetched = fetchedModels[providerId]
-    if (!fetched || fetched.length === 0) return providerModels
-    const fetchedIds = new Set(fetched.map(m => m.id))
-    return providerModels.map(m => ({
-      ...m,
-      stale: m.is_enabled === 1 && !fetchedIds.has(m.model_name),
-    }))
-  }
-
-  const fetchProviderModels = async (providerId: string) => {
-    setFetchingModels(f => ({ ...f, [providerId]: true }))
-    const form = getProviderFormFor(providers.find(p => p.id === providerId)!)
-    const res = await llmProvidersApi.availableModels(providerId, form.model_fetch_url)
-    if (res.ok) {
-      setFetchedModels(f => ({ ...f, [providerId]: res.data!.models }))
-    } else {
-      setError(res.error || "获取模型列表失败")
-    }
-    setFetchingModels(f => ({ ...f, [providerId]: false }))
+    return models.filter(m => m.provider_id === providerId)
   }
 
   // ─── Provider handlers ───
@@ -305,21 +254,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (!p) return
     await llmProvidersApi.update(providerId, { name: editingNameValue.trim(), api_url: p.api_url, api_key: p.api_key, api_format: p.api_format })
     setEditingProviderName(null)
-    await loadAll()
-  }
-
-  const saveProviderField = async (providerId: string, field: string, value: string) => {
-    const p = providers.find(pp => pp.id === providerId)
-    if (!p) return
-    // Build the update payload carefully
-    const updatePayload: Record<string, unknown> = {
-      name: p.name,
-      api_url: p.api_url,
-      api_key: p.api_key,
-      api_format: p.api_format,
-    }
-    updatePayload[field] = value
-    await llmProvidersApi.update(providerId, updatePayload)
     await loadAll()
   }
 
@@ -561,7 +495,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       const res = await pluginsApi.preview(form)
       if (res.ok) {
         pendingZipRef.current = file
-        setConflictsAccepted(false)
         setPreview(res.data)
       } else {
         setPreviewError(res.error || "插件预检失败")
@@ -873,7 +806,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         const form = getProviderFormFor(p)
                         const saveNeeded = isProviderSaveNeeded(p)
                         const providerModels = getProviderModels(p.id)
-                        const isFetching = fetchingModels[p.id]
 
                         return (
                           <div key={p.id} className={`rounded-lg border p-4 space-y-3 ${p.is_enabled ? "border-border" : "border-muted opacity-60"}`}>
@@ -961,11 +893,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                             {/* Model list under provider — always visible */}
                             <div className="border-t border-border pt-3 space-y-1">
-                              {isFetching ? (
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                                  <Loader2 className="h-3 w-3 animate-spin" />正在获取模型列表...
-                                </div>
-                              ) : providerModels.length === 0 ? (
+                              {providerModels.length === 0 ? (
                                 <p className="text-xs text-muted-foreground py-2">暂无已导入模型，请点击 + 按钮批量导入</p>
                               ) : (
                                 providerModels.map(m => (

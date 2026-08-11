@@ -1227,7 +1227,7 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
   return (
     <div
       className="mb-6 break-inside-avoid rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
-      onClick={(e) => { e.stopPropagation(); onSelect() }}
+      onClick={(e) => { e.stopPropagation(); onSelect(proto) }}
     >
       <CoverWithFetch kind="prototype" id={proto.id} name={proto.name} />
       <div className="p-3">

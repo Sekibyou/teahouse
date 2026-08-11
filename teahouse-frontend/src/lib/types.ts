@@ -102,6 +102,7 @@ export interface ModelProfile {
   id: string
   user_id: string
   name: string
+  is_builtin: number
   match_pattern: string | null
   temperature: number
   max_tokens: number
@@ -183,7 +184,7 @@ export interface GitStatus {
   git_initialized: boolean
   current_branch?: string
   branches?: GitBranch[]
-  recent_commits?: { hash: string; author: string; date: string; message: string }[]
+  recent_commits?: GitLogEntry[]
   has_uncommitted?: boolean
   error?: string
 }
@@ -226,5 +227,3 @@ export interface FloorsStats {
   unsummarized: number
   instance_id: string
 }
-
-export type { FileTreeNode, Prototype, Instance, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, SlotBinding, DirectorPromptPreset, AvailableModel, AppSettings }

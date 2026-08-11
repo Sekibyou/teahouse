@@ -180,7 +180,6 @@ export function MonacoEditor({
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
   const disposedRef = useRef(false)
-  const pushingRef = useRef(false)
   const [editorReady, setEditorReady] = useState(false)
   const currentModelRef = useRef<Monaco.editor.ITextModel | null>(null)
 
@@ -226,9 +225,6 @@ export function MonacoEditor({
     const wasReadOnly = editor.getOption(monaco.editor.EditorOption.readOnly)
     editor.updateOptions({ readOnly: true })
     model.setValue(value)
-    // Clear the undo stack — setValue adds an entry but this isn't a user action
-    model.undo = () => { /* no-op */ }
-    model.redo = () => { /* no-op */ }
     editor.updateOptions({ readOnly: wasReadOnly })
   }, [value, editorReady])
 

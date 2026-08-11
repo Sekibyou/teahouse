@@ -18,7 +18,6 @@ interface UseWorkspaceRefreshParams {
   setEditedContent: (v: string) => void
   setGitHeadContent: (v: string) => void
   setIsDirty: (v: boolean) => void
-  setContentReady: (v: boolean) => void
   setSelectedFile: (v: string | null) => void
 }
 
@@ -37,7 +36,6 @@ export function useWorkspaceRefresh({
   setEditedContent,
   setGitHeadContent,
   setIsDirty,
-  setContentReady,
   setSelectedFile,
 }: UseWorkspaceRefreshParams) {
   const paramsRef = useRef({
@@ -47,7 +45,6 @@ export function useWorkspaceRefresh({
     setEditedContent,
     setGitHeadContent,
     setIsDirty,
-    setContentReady,
     setSelectedFile,
   })
   paramsRef.current = {
@@ -57,7 +54,6 @@ export function useWorkspaceRefresh({
     setEditedContent,
     setGitHeadContent,
     setIsDirty,
-    setContentReady,
     setSelectedFile,
   }
 
@@ -104,7 +100,6 @@ export function useWorkspaceRefresh({
         p.setFileContent("")
         p.setEditedContent("")
         p.setGitHeadContent("")
-        p.setContentReady(false)
         p.setIsDirty(false)
       }
     } else if (clearDirty) {

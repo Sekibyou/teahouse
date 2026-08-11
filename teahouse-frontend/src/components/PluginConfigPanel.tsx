@@ -208,7 +208,7 @@ function RenderField({
       )
     case "select":
       return (
-        <Select value={value} onValueChange={(v) => onChange(v)}>
+        <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
           <SelectTrigger className="h-8 text-sm">
             <SelectValue placeholder="选择..." />
           </SelectTrigger>

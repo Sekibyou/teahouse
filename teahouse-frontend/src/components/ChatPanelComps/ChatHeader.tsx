@@ -25,11 +25,11 @@ interface ChatHeaderProps {
   newMsgMap: Record<string, boolean>
   onSwitchSession: (sid: string) => void
   onRefreshSessionList: () => void
-  instId: string | null
+  instId: string | undefined
 
   // Git info
   currentBranch: string
-  latestCommitMsg: string | null
+  latestCommitMsg: string | undefined
   changeCounts: ChangeCounts
   onOpenGitDialog: () => void
 

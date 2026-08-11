@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import {
   GitBranch as GitBranchIcon, GitCommitHorizontal, Loader2,
-  CheckCircle2, AlertCircle, X, RotateCcw, GitFork,
+  CheckCircle2, AlertCircle, X, GitFork,
   History, FileText, FilePlus, FileMinus, FileEdit,
   Save, Trash2, Pencil, CornerDownRight, Undo2,
 } from "lucide-react"
@@ -764,7 +764,7 @@ interface GitGraphViewProps {
   onNodeClick: (hash: string, msg: string, isCurrentHead: boolean, isOnCurrentBranch: boolean, branchName: string) => void
 }
 
-function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeClick }: GitGraphViewProps) {
+function GitGraphView({ commits, branches, currentBranch, onNodeClick }: GitGraphViewProps) {
   const { nodes, edges } = useMemo(() => {
     // Map hash → list of branches pointing to it
     const hashToBranches = new Map<string, string[]>()
@@ -876,7 +876,6 @@ function GitGraphView({ commits, branches, currentBranch, fileStatuses, onNodeCl
       const nodeW = type === "summary" ? 110 : 180
       const isBranchHead = refs.length > 0
       const isHead = isBranchHead && refs.includes(currentBranch)
-      const isHeadOfAny = refs.length > 0
 
       // Check if this is the latest commit on any of its branches
       let isLatestOnAnyBranch = false

@@ -38,7 +38,7 @@ export const useGenerationStore = create<GenerationState>()((set) => ({
 
   resolveApproval: () => set({ approvalData: null }),
 
-  consumeAbortReason: () => {
+  consumeAbortReason: (): AbortReason | null => {
     const reason = useGenerationStore.getState().abortReason
     if (reason) set({ abortReason: null })
     return reason

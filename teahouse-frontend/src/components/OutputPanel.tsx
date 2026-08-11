@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from "react"
-import { FileText } from "lucide-react"
 import { SandboxManager } from "@/components/SandboxManager"
 import { sandboxSrcApi, floorsApi, type FloorEntry } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
@@ -28,7 +27,7 @@ export function OutputPanel({ instanceId, instanceName, onSend, onOpenDirector }
   useSSERefresh({
     instanceId,
     instanceName,
-    onFileChanged: useCallback((path: string) => {
+    onFileChanged: useCallback((_path: string) => {
       setRefresh((v) => v + 1)
     }, []),
     onWorkspaceChanged: useCallback(() => {

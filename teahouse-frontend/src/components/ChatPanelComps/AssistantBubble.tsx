@@ -15,7 +15,6 @@ import { TodoWriteResult } from "./TodoWriteResult"
 export const AssistantBubble = memo(function AssistantBubble({
   message,
   isLatest,
-  isGlobalGenerating,
   isIdle,
 }: {
   message: RichMessage

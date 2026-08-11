@@ -73,10 +73,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number }[]>([])
   const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
   // Track the active streaming assistant per session for session_event-based real-time
-  // rendering. When the frontend sends directly via /v1/chat, `assistantMsg` (let in
-  // _doSend) handles it. When a session is running in background (_drain path) and the
-  // user is watching it, the session_event handler updates this message.
-  const streamingAssistantRef = useRef<Record<string, RichMessage>>({})
   // "有新消息" 标志：后台会话有产出时需要提示，切过去即清。
   const [newMsgMap, setNewMsgMap] = useState<Record<string, boolean>>({})
   const newMsgMapRef = useRef<Record<string, boolean>>({})

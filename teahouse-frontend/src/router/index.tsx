@@ -23,7 +23,7 @@ const router = createBrowserRouter([
 export function AppRouter() {
   return (
     <ErrorBoundary>
-      <RouterProvider router={router} fallbackElement={null} />
+      <RouterProvider router={router} />
     </ErrorBoundary>
   )
 }
