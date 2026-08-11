@@ -335,7 +335,7 @@ async def get_prototype_readme(prototype_id: str, user: UserInfo = Depends(requi
 
 @router.get("/prototypes/{prototype_id}/cover")
 async def get_prototype_cover(prototype_id: str, user: UserInfo = Depends(require_user)):
-    """Read prototype cover image (cover.jpg / .png at root) as base64.
+    """Read prototype cover image (cover.jpg/.jpeg/.png/.webp at root) as base64.
 
     Response: {"mime", "data", "size"} where `data` is a bare base64 payload and
     `size` is [width, height] for images (null otherwise); callers build
@@ -608,7 +608,7 @@ async def get_instance_asset(
 
 @router.get("/instances/{instance_id}/cover")
 async def get_instance_cover(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Read an instance's cover image (cover.jpg / .png at root) as base64.
+    """Read an instance's cover image (cover.jpg/.jpeg/.png/.webp at root) as base64.
 
     Response: {"mime", "data", "size"} where `size` is [width, height] for images
     (null otherwise). Size drives the masonry layout so each cover keeps its
@@ -620,7 +620,7 @@ async def get_instance_cover(instance_id: str, user: UserInfo = Depends(require_
         raise HTTPException(status_code=404, detail="Instance not found")
 
     instance_dir = _resolve_instance_dir(inst)
-    for name in ("cover.jpg", "cover.png"):
+    for name in ("cover.jpg", "cover.jpeg", "cover.png", "cover.webp"):
         try:
             mime, data, size = read_asset(instance_dir, name)
         except (FileNotFoundError, IsADirectoryError, ValueError):

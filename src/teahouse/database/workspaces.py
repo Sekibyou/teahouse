@@ -500,7 +500,7 @@ def read_asset(instance_dir: Path, file_path: str) -> tuple[str, str, tuple[int,
 
 
 def read_prototype_cover(source_path: str, is_builtin: bool) -> tuple[str, str, tuple[int, int] | None] | None:
-    """Read a prototype's cover image (cover.jpg / cover.png at root).
+    """Read a prototype's cover image (cover.jpg/.jpeg/.png/.webp at root).
 
     Mirrors the README dual-branch pattern: built-in prototypes store files on
     disk under `source_path` (a directory), user-created prototypes pack them
@@ -519,7 +519,8 @@ def read_prototype_cover(source_path: str, is_builtin: bool) -> tuple[str, str, 
         return None
 
     if is_builtin:
-        raw = _pick([source / "cover.jpg", source / "cover.png"])
+        cover_names = ("cover.jpg", "cover.jpeg", "cover.png", "cover.webp")
+        raw = _pick([source / n for n in cover_names])
         if raw is None:
             return None
         return _detect_mime(raw, source.name), base64.b64encode(raw).decode("ascii"), _image_size(raw)
@@ -527,7 +528,7 @@ def read_prototype_cover(source_path: str, is_builtin: bool) -> tuple[str, str, 
     if not source.is_file():
         return None
     with zipfile.ZipFile(source, "r") as zf:
-        for name in ("cover.jpg", "cover.png"):
+        for name in ("cover.jpg", "cover.jpeg", "cover.png", "cover.webp"):
             try:
                 raw = zf.read(name)
             except KeyError:
