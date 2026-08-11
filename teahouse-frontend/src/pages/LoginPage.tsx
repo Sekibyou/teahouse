@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useAuthActions } from "@/stores/authStore"
 import { authApi } from "@/lib/api"
-import { getApiBaseUrl, setApiBaseUrl } from "@/lib/apiBaseUrl"
 
 export function LoginPage() {
   const { setAuth } = useAuthActions()
@@ -16,7 +15,6 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const [apiUrl, setApiUrl] = useState(getApiBaseUrl)
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault()
@@ -80,24 +78,6 @@ export function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={isRegister ? handleRegister : handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="apiUrl" className="text-sm font-medium">
-                后端地址
-              </label>
-              <Input
-                id="apiUrl"
-                value={apiUrl}
-                onChange={(e) => {
-                  setApiUrl(e.target.value)
-                  setApiBaseUrl(e.target.value)
-                }}
-                placeholder="http://192.168.x.x:8000 或 http://服务器域名:8000"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-            </div>
-
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium">
                 用户名

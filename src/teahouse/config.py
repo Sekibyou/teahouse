@@ -27,7 +27,7 @@ class LLMConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000, ge=1024, le=65535)
+    port: int = Field(default=8888, ge=1024, le=65535)
 
 
 class DbConfig(BaseModel):
@@ -129,7 +129,7 @@ def _migrate_config(data: dict) -> bool:
         data.setdefault("db", {})["workspace_base"] = "data"
         changed = True
     if "server" not in data:
-        data["server"] = {"host": "0.0.0.0", "port": 8000}
+        data["server"] = {"host": "0.0.0.0", "port": 8888}
         changed = True
     if "jwt_secret" not in data and "secret_key" in data:
         # Carry over existing secret_key to jwt_secret, drop the old name

@@ -1,18 +1,7 @@
-const DEFAULT = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
-const STORAGE_KEY = "apiBaseUrl"
+// 同源部署（后端托管前端）:空字符串 = 相对路径,自动指向当前 origin
+// (如 http://192.168.10.88:8888 )。可用 VITE_API_BASE_URL 覆写指向跨源。
+const DEFAULT = import.meta.env.VITE_API_BASE_URL || ""
 
 export function getApiBaseUrl(): string {
-  try {
-    return localStorage.getItem(STORAGE_KEY) || DEFAULT
-  } catch {
-    return DEFAULT
-  }
-}
-
-export function setApiBaseUrl(url: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, url)
-  } catch {
-    // ignore storage failures
-  }
+  return DEFAULT
 }

@@ -11,7 +11,8 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -924,6 +925,46 @@ async def status():
         "status": "ok",
         "version": "0.1.0",
     }
+
+
+# ---------------------------------------------------------------------------
+# Static frontend hosting (single-port deployment)
+#
+# Serves the built frontend (teahouse-frontend/dist/) from the same origin so
+# a phone can use the whole app at http://<host>:8888 without a separate dev
+# server. API prefixes are excluded and fall through to their own handlers /
+# 404. Absent = dist not built yet, no-op (API-only still works).
+# ---------------------------------------------------------------------------
+
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "teahouse-frontend" / "dist"
+_API_PREFIXES = ("/api", "/v1", "/events", "/docs", "/redoc", "/openapi.json")
+
+
+def _setup_static() -> None:
+    if FRONTEND_DIST.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(FRONTEND_DIST / "assets")),
+            name="frontend-assets",
+        )
+
+
+_setup_static()
+
+
+@app.get("/{full_path:path}")
+async def frontend_spa(full_path: str) -> FileResponse:
+    # Let the real API routers handle these (they're registered earlier, but a
+    # catch-all here must not return HTML for unknown API-ish paths).
+    if full_path.startswith(_API_PREFIXES):
+        raise HTTPException(status_code=404, detail="Not found")
+    if FRONTEND_DIST.is_dir():
+        target = (FRONTEND_DIST / full_path).resolve()
+        # Guard against path traversal outside dist.
+        if target.is_file() and FRONTEND_DIST.resolve() in target.parents:
+            return FileResponse(str(target))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+    raise HTTPException(status_code=404, detail="Frontend not built")
 
 
 # ---------------------------------------------------------------------------
