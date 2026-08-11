@@ -309,7 +309,7 @@ export function SessionSelectPage() {
 
       {/* Copy instance dialog */}
       {instanceToCopy && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="font-semibold">复制实例</h3>
             <p className="text-xs text-muted-foreground">
@@ -501,12 +501,12 @@ function InstanceDialog({
 
   // Mobile: fullscreen sheet; desktop: centered modal above a dimmed backdrop.
   const outer = isMobile
-    ? "fixed inset-0 z-50 bg-background flex flex-col overflow-hidden"
-    : "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    ? "absolute inset-0 z-50 bg-background flex flex-col overflow-hidden"
+    : "absolute inset-0 z-50 flex items-center justify-center p-4 bg-background/70 backdrop-blur-lg"
 
   const shell = isMobile
     ? "flex-1 min-h-0 flex flex-col overflow-hidden"
-    : "bg-background rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+    : "bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-h-[90vh] flex flex-col overflow-hidden relative"
 
   useEffect(() => {
     const cssId = "bbcode-animation-css-readme"
@@ -533,104 +533,200 @@ function InstanceDialog({
 
   return (
     <div className={outer} onClick={isMobile ? undefined : onClose}>
-      {/* Close button — mobile: floating black circle top-left; desktop: X on the cover */}
-      {isMobile ? (
-        <button
-          className="fixed top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
-          onClick={onClose}
-          title="返回"
-          aria-label="返回"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-      ) : null}
-
       <div className={shell} onClick={(e) => e.stopPropagation()}>
-        {/* Cover (fixed height band, object-cover fill) */}
-        <div className="relative shrink-0 h-52 w-full overflow-hidden bg-muted">
-          <CoverWithFetch
-            kind="instance"
-            id={instance.id}
-            name={instance.name}
-            className="h-full"
-          />
-          {!isMobile && (
+        {isMobile ? (
+          /* ===================== 窄屏：纵向三段式 ===================== */
+          <>
             <button
-              className="absolute top-3 right-3 p-2 rounded-full bg-black/30 text-white hover:bg-black/50"
+              className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
+              onClick={onClose}
+              title="返回"
+              aria-label="返回"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+
+            {/* Cover band */}
+            <div className="relative shrink-0 h-52 w-full overflow-hidden bg-muted">
+              <CoverWithFetch
+                kind="instance"
+                id={instance.id}
+                name={instance.name}
+                className="h-full"
+              />
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
+              <div>
+                {renaming ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={renameValue}
+                      onChange={(e) => onRenameValue(e.target.value)}
+                      className="h-9 text-base font-medium"
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === "Enter") onConfirmRename() }}
+                    />
+                    <Button size="sm" onClick={onConfirmRename} disabled={!renameValue.trim()} className="shrink-0">
+                      {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      确定
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-serif font-bold">{instance.name}</h2>
+                    <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onToggleRename} title="改名">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1.5">
+                  {instance.prototype_name && <span>来源：{instance.prototype_name}</span>}
+                  <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{instance.floor_count} 楼</span>
+                  <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
+                </div>
+              </div>
+
+              {/* README */}
+              <div className="flex-1">
+                {readmeLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : htmlContent ? (
+                  <div
+                    className="prose prose-sm dark:prose-invert max-w-none"
+                    dangerouslySetInnerHTML={{ __html: htmlContent }}
+                  />
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    {instance.prototype_id
+                      ? "该原型没有附带 README 介绍。"
+                      : "此实例没有关联的原型介绍。"}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-border p-4 flex items-center gap-2 shrink-0">
+              <Button className="flex-1 gap-2" onClick={onContinue} disabled={actionLoading}>
+                <Play className="h-4 w-4" />
+                开始
+              </Button>
+              <Button variant="outline" onClick={onCopy} disabled={actionLoading} title="复制实例">
+                <Copy className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" className="text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title="删除">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          /* ===================== 横屏：左右分栏 =====================
+             左侧列 = 图片(高度自适应撑满) + 下方功能区(开始/复制/删除)；
+             右侧列 = 标题 + markdown(内部滚动)；两列等高。 */
+          <>
+            {/* Close button — top-right */}
+            <button
+              className="absolute top-3 right-10 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
               title="关闭"
+              aria-label="关闭"
             >
               <X className="h-4 w-4" />
             </button>
-          )}
-        </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
-          <div>
-            {renaming ? (
-              <div className="flex items-center gap-2">
-                <Input
-                  value={renameValue}
-                  onChange={(e) => onRenameValue(e.target.value)}
-                  className="h-9 text-base font-medium"
-                  autoFocus
-                  onKeyDown={(e) => { if (e.key === "Enter") onConfirmRename() }}
-                />
-                <Button size="sm" onClick={onConfirmRename} disabled={!renameValue.trim()} className="shrink-0">
-                  {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                  确定
-                </Button>
+            <div className="flex-1 min-h-0 p-5 grid grid-cols-[1fr_2fr] gap-8 min-w-0">
+              {/* 左侧列(1/3)：写死 1fr 宽，图片铺满该列 */}
+              <div className="min-w-0 self-stretch flex flex-col justify-between min-h-0">
+                {/* 图片：宽=左列宽(1/3)，高=宽×4/3 健康比例；Cover 填满容器，img object-cover 居中裁剪不拉伸 */}
+                <div className="shrink-0 w-full aspect-[3/4] overflow-hidden rounded-xl border border-border bg-card">
+                  <CoverWithFetch
+                    kind="instance"
+                    id={instance.id}
+                    name={instance.name}
+                    driven="width"
+                    className="h-full w-full"
+                  />
+                </div>
+
+                {/* 功能区：名字+meta + 开始 + 复制/删除，位于图片下方、贴底 */}
+                <div className="mt-4 shrink-0 flex flex-col">
+                  {/* 名字 + 改名 */}
+                  {renaming ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={renameValue}
+                        onChange={(e) => onRenameValue(e.target.value)}
+                        className="h-8 text-sm font-medium"
+                        autoFocus
+                        onKeyDown={(e) => { if (e.key === "Enter") onConfirmRename() }}
+                      />
+                      <Button size="sm" onClick={onConfirmRename} disabled={!renameValue.trim()} className="shrink-0">
+                        {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                        确定
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <h2 className="text-base font-serif font-bold truncate">{instance.name}</h2>
+                      <button className="p-1 rounded hover:bg-muted text-muted-foreground shrink-0" onClick={onToggleRename} title="改名">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* meta */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground mt-1">
+                    {instance.prototype_name && <span>来源：{instance.prototype_name}</span>}
+                    <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{instance.floor_count} 楼</span>
+                    <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
+                  </div>
+
+                  {/* 开始 */}
+                  <Button className="w-full gap-2 mt-3" onClick={onContinue} disabled={actionLoading}>
+                    <Play className="h-4 w-4" />
+                    开始
+                  </Button>
+
+                  {/* 复制/删除 — 更小 */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onCopy} disabled={actionLoading} title="复制实例">
+                      <Copy className="h-3.5 w-3.5" />复制
+                    </Button>
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title="删除">
+                      <Trash2 className="h-3.5 w-3.5" />删除
+                    </Button>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-serif font-bold">{instance.name}</h2>
-                <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onToggleRename} title="改名">
-                  <Pencil className="h-4 w-4" />
-                </button>
+
+              {/* 右侧列(2fr)：markdown */}
+              <div className="min-w-0 min-h-0 flex flex-col">
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                  {readmeLoading ? (
+                    <div className="py-10 flex items-center justify-center">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : htmlContent ? (
+                    <div
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      dangerouslySetInnerHTML={{ __html: htmlContent }}
+                    />
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      {instance.prototype_id
+                        ? "该原型没有附带 README 介绍。"
+                        : "此实例没有关联的原型介绍。"}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-            <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1.5">
-              {instance.prototype_name && <span>来源：{instance.prototype_name}</span>}
-              <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{instance.floor_count} 楼</span>
-              <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
             </div>
-          </div>
-
-          {/* README */}
-          <div className="flex-1">
-            {readmeLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : htmlContent ? (
-              <div
-                className="prose prose-sm dark:prose-invert max-w-none"
-                dangerouslySetInnerHTML={{ __html: htmlContent }}
-              />
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                {instance.prototype_id
-                  ? "该原型没有附带 README 介绍。"
-                  : "此实例没有关联的原型介绍。"}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="border-t border-border p-4 flex items-center gap-2 shrink-0">
-          <Button className="flex-1 gap-2" onClick={onContinue} disabled={actionLoading}>
-            <Play className="h-4 w-4" />
-            开始
-          </Button>
-          <Button variant="outline" onClick={onCopy} disabled={actionLoading} title="复制实例">
-            <Copy className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" className="text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title="删除">
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -665,7 +761,7 @@ function MobileMain({
         </button>
         {showMenu && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+            <div className="absolute inset-0 z-40" onClick={() => setShowMenu(false)} />
             <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[140px]">
               <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted" onClick={() => { onToggleTheme(); setShowMenu(false) }}>
                 {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -764,9 +860,9 @@ function Bookshelf({
   const showDialog = !!selected && prototypes.some((p) => p.id === selected.id)
 
   return (
-    <div className="fixed inset-0 z-40">
+    <div className="absolute inset-0 z-40">
       {/* Blur backdrop */}
-      <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 bg-background/70 backdrop-blur-lg" onClick={onClose} />
 
       <div className="absolute inset-0 flex flex-col overflow-hidden px-6 sm:px-10 lg:px-16 py-6 sm:py-8 relative">
         {/* Back arrow — mobile: floating black circle top-left; desktop: inline in the header */}
@@ -781,11 +877,6 @@ function Bookshelf({
         ) : null}
         {/* Bookshelf header */}
         <div className={`flex items-center gap-3 mb-2 shrink-0 ${mobile ? "pl-10" : ""}`}>
-          {!mobile && (
-            <button className="p-2 rounded hover:bg-muted" onClick={onClose} title="关闭书架">
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-          )}
           <h2 className="text-lg sm:text-xl font-serif font-bold">书架 · 选择故事</h2>
           <div className="flex-1" />
           <input
@@ -795,26 +886,58 @@ function Bookshelf({
             className="hidden"
             onChange={onImport}
           />
-          <button
-            className="p-2 rounded hover:bg-muted text-muted-foreground"
-            disabled={importState === "loading"}
-            onClick={() => fileInputRef.current?.click()}
-            title="导入原型"
-          >
-            {importState === "loading" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
-          </button>
+          {!mobile ? (
+            /* 横屏：更明显的导入按钮 + 右上角关闭 */
+            <>
+              <Button
+                variant={prototypes.length === 0 ? "outline" : "secondary"}
+                size="sm"
+                className="gap-1.5"
+                disabled={importState === "loading"}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {importState === "loading" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="h-3.5 w-3.5" />
+                )}
+                导入原型
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={onClose}
+              >
+                <X className="h-3.5 w-3.5" />
+                关闭
+              </Button>
+            </>
+          ) : (
+            <button
+              className="p-2 rounded hover:bg-muted text-muted-foreground"
+              disabled={importState === "loading"}
+              onClick={() => fileInputRef.current?.click()}
+              title="导入原型"
+            >
+              {importState === "loading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+            </button>
+          )}
         </div>
 
         <p className="text-xs text-muted-foreground mb-4 shrink-0">
           挑一本，开始一段新的故事。点击封面查看介绍，点「创建」开始。
         </p>
 
-        {/* Prototype waterfall */}
-        <div className="h-full overflow-y-auto min-h-0">
+        {/* Prototype waterfall — clicking non-card area closes the shelf (landscape) */}
+        <div
+          className="h-full overflow-y-auto min-h-0"
+          onClick={() => { if (!mobile) onClose() }}
+        >
           {prototypes.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center gap-3 py-24">
               <BookOpen className="h-12 w-12 text-muted-foreground opacity-40" />
@@ -921,100 +1044,180 @@ function PrototypeDetailDialog({
 
   // Mobile: fullscreen sheet; desktop: centered modal above the blurred shelf.
   const outer = isMobile
-    ? "fixed inset-0 z-50 bg-background flex flex-col overflow-hidden"
-    : "fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    ? "absolute inset-0 z-50 bg-background flex flex-col overflow-hidden"
+    : "absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-lg p-4"
 
   const shell = isMobile
     ? "flex-1 min-h-0 flex flex-col overflow-hidden"
-    : "bg-background rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+    : "bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-h-[90vh] flex flex-col overflow-hidden relative"
 
   return (
     <div className={outer} onClick={isMobile ? undefined : onClose}>
       <div className={shell} onClick={(e) => e.stopPropagation()}>
-        {/* Close button — mobile: floating black circle top-left; desktop: X on the cover */}
         {isMobile ? (
-          <button
-            className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
-            onClick={onClose}
-            title="返回书架"
-            aria-label="返回书架"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-        ) : null}
-
-        {/* Cover band (fixed height, object-cover) */}
-        <div className="relative shrink-0 h-44 sm:h-60 w-full overflow-hidden bg-muted">
-          <CoverWithFetch kind="prototype" id={prototype.id} name={prototype.name} className="h-full" />
-          {!isMobile && (
+          /* ===================== 窄屏：纵向三段式 ===================== */
+          <>
+            {/* Close button — floating top-left */}
             <button
-              className="absolute top-3 right-3 p-2 rounded-full bg-black/30 text-white hover:bg-black/50"
+              className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
+              onClick={onClose}
+              title="返回书架"
+              aria-label="返回书架"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+
+            {/* Cover band */}
+            <div className="relative shrink-0 h-44 sm:h-60 w-full overflow-hidden bg-muted">
+              <CoverWithFetch kind="prototype" id={prototype.id} name={prototype.name} className="h-full" />
+              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent" />
+              <div className="absolute bottom-0 left-0 right-0 p-3.5 flex items-center gap-2 text-white">
+                <h3 className="font-semibold text-lg truncate">{prototype.name}</h3>
+                {prototype.is_builtin ? (
+                  <span className="text-[10px] text-white/90 bg-white/25 px-1.5 py-0.5 rounded shrink-0">内置</span>
+                ) : null}
+                {!prototype.is_builtin && (
+                  <div className="flex-1 flex items-center justify-end gap-1.5">
+                    <button
+                      className="p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
+                      onClick={() => onDownload(prototype)}
+                      title="下载"
+                    >
+                      <Download className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="p-2 rounded-full bg-black/30 text-white hover:bg-red-600/80 cursor-pointer"
+                      onClick={() => onDeleteProto(prototype)}
+                      title="删除"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* README */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 pb-2">
+              {readmeLoading ? (
+                <div className="py-10 flex items-center justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : htmlContent ? (
+                <div
+                  className="prose prose-sm dark:prose-invert max-w-none"
+                  dangerouslySetInnerHTML={{ __html: htmlContent }}
+                />
+              ) : (
+                <div className="text-sm text-muted-foreground">该原型没有 README 介绍。</div>
+              )}
+            </div>
+
+            {/* Bottom create bar */}
+            <div className="border-t border-border p-4 flex items-end gap-2 shrink-0">
+              <div className="flex-1 min-w-0 flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground">给这个新实例起个名字</label>
+                <Input
+                  value={instanceName}
+                  onChange={(e) => { setInstanceName(e.target.value); setError("") }}
+                  placeholder="实例名称"
+                  onKeyDown={(e) => { if (e.key === "Enter") doCreate() }}
+                />
+                {error && <p className="text-xs text-red-500">{error}</p>}
+              </div>
+              <Button onClick={doCreate} disabled={!instanceName.trim() || creating} className="shrink-0 gap-1.5 h-10 px-4">
+                {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                创建
+              </Button>
+            </div>
+          </>
+        ) : (
+          /* ===================== 横屏：左右分栏 =====================
+             左侧列 = 图片(高度自适应撑满) + 下方功能区；
+             右侧列 = 标题 + markdown(内部滚动)；
+             两列等高，图片高度 + 功能区高度 = markdown 高度。 */
+          <>
+            {/* Close button — top-right */}
+            <button
+              className="absolute top-3 right-10 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
               title="关闭"
+              aria-label="关闭"
             >
               <X className="h-4 w-4" />
             </button>
-          )}
-          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent" />
-          <div className="absolute bottom-0 left-0 right-0 p-3.5 flex items-center gap-2 text-white">
-            <h3 className="font-semibold text-lg truncate">{prototype.name}</h3>
-            {prototype.is_builtin ? (
-              <span className="text-[10px] text-white/90 bg-white/25 px-1.5 py-0.5 rounded shrink-0">内置</span>
-            ) : null}
-            {!prototype.is_builtin && (
-              <div className="flex-1 flex items-center justify-end gap-1.5">
-                <button
-                  className="p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
-                  onClick={() => onDownload(prototype)}
-                  title="下载"
-                >
-                  <Download className="h-4 w-4" />
-                </button>
-                <button
-                  className="p-2 rounded-full bg-black/30 text-white hover:bg-red-600/80 cursor-pointer"
-                  onClick={() => onDeleteProto(prototype)}
-                  title="删除"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+
+            <div className="flex-1 min-h-0 p-5 grid grid-cols-[1fr_2fr] gap-8 min-w-0">
+              {/* 左侧列(1fr)：写死 1fr 宽，图片铺满该列 */}
+              <div className="min-w-0 self-stretch flex flex-col justify-between min-h-0">
+                {/* 图片：宽=左列宽(1/3)，高=宽×4/3 健康比例；Cover 填满容器，img object-cover 居中裁剪不拉伸 */}
+                <div className="shrink-0 w-full aspect-[3/4] overflow-hidden rounded-xl border border-border bg-card">
+                  <CoverWithFetch
+                    kind="prototype"
+                    id={prototype.id}
+                    name={prototype.name}
+                    driven="width"
+                    className="h-full w-full"
+                  />
+                </div>
+
+                {/* 功能区：名字+badge + 创建 + 下载/删除，位于图片下方、贴底 */}
+                <div className="mt-4 shrink-0 flex flex-col">
+                  {/* 名字 + 内置 badge */}
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-base font-serif font-bold truncate">{prototype.name}</h3>
+                    {prototype.is_builtin ? (
+                      <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">内置</span>
+                    ) : null}
+                  </div>
+
+                  <label className="text-xs text-muted-foreground mt-3">给这个新实例起个名字</label>
+                  <Input
+                    className="mt-1"
+                    value={instanceName}
+                    onChange={(e) => { setInstanceName(e.target.value); setError("") }}
+                    placeholder="实例名称"
+                    onKeyDown={(e) => { if (e.key === "Enter") doCreate() }}
+                  />
+                  {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+                  <Button onClick={doCreate} disabled={!instanceName.trim() || creating} className="w-full mt-2 gap-1.5">
+                    {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    创建实例
+                  </Button>
+
+                  {!prototype.is_builtin && (
+                    <div className="flex items-center gap-2 mt-3">
+                      <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={() => onDownload(prototype)}>
+                        <Download className="h-3.5 w-3.5" />下载
+                      </Button>
+                      <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs text-red-500 hover:text-red-500" onClick={() => onDeleteProto(prototype)}>
+                        <Trash2 className="h-3.5 w-3.5" />删除
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* README */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-5">
-          {readmeLoading ? (
-            <div className="py-10 flex items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              {/* 右侧列(2fr)：纯 markdown */}
+              <div className="min-w-0 min-h-0 flex flex-col">
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                  {readmeLoading ? (
+                    <div className="py-10 flex items-center justify-center">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : htmlContent ? (
+                    <div
+                      className="prose prose-sm dark:prose-invert max-w-none"
+                      dangerouslySetInnerHTML={{ __html: htmlContent }}
+                    />
+                  ) : (
+                    <div className="text-sm text-muted-foreground">该原型没有 README 介绍。</div>
+                  )}
+                </div>
+              </div>
             </div>
-          ) : htmlContent ? (
-            <div
-              className="prose prose-sm dark:prose-invert max-w-none"
-              dangerouslySetInnerHTML={{ __html: htmlContent }}
-            />
-          ) : (
-            <div className="text-sm text-muted-foreground">该原型没有 README 介绍。</div>
-          )}
-        </div>
-
-        {/* Bottom create bar: name input (left) + small create button (right) */}
-        <div className="border-t border-border p-4 flex items-end gap-2 shrink-0">
-          <div className="flex-1 min-w-0 flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">给这个新实例起个名字</label>
-            <Input
-              value={instanceName}
-              onChange={(e) => { setInstanceName(e.target.value); setError("") }}
-              placeholder="实例名称"
-              onKeyDown={(e) => { if (e.key === "Enter") doCreate() }}
-            />
-            {error && <p className="text-xs text-red-500">{error}</p>}
-          </div>
-          <Button onClick={doCreate} disabled={!instanceName.trim() || creating} className="shrink-0 gap-1.5 h-10 px-4">
-            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            创建
-          </Button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -1024,7 +1227,7 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
   return (
     <div
       className="mb-6 break-inside-avoid rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
-      onClick={onSelect}
+      onClick={(e) => { e.stopPropagation(); onSelect() }}
     >
       <CoverWithFetch kind="prototype" id={proto.id} name={proto.name} />
       <div className="p-3">

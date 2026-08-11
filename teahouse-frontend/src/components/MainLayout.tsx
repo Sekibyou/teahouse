@@ -72,7 +72,7 @@ export function MainLayout() {
   // Desktop header with full navigation
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
-      <header className="h-14 border-b border-border flex items-center justify-between px-5 shrink-0">
+      <header className="h-14 border-b border-border flex items-center justify-between px-5 shrink-0 relative z-[60] bg-background">
         <div className="flex items-center gap-3 min-w-0">
           {activeInstance && (
             <Button
