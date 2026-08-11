@@ -1,5 +1,6 @@
-import { GitBranch as GitBranchIcon, Edit3 } from "lucide-react"
+import { GitBranch as GitBranchIcon, Edit3, ChevronDown, PanelLeftClose } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 
 interface ChangeCounts {
   added: number
@@ -35,6 +36,9 @@ interface ChatHeaderProps {
   // Auto commit
   autoApproveCommit: boolean
   onAutoApproveChange: (checked: boolean) => void
+
+  // 收起/关闭导演栏（移动端关闭全屏面板，宽屏折叠面板）。可选——不传则不显示。
+  onClosePanel?: () => void
 }
 
 export function ChatHeader({
@@ -56,12 +60,34 @@ export function ChatHeader({
   onOpenGitDialog,
   autoApproveCommit,
   onAutoApproveChange,
+  onClosePanel,
 }: ChatHeaderProps) {
+  const isMobile = useIsMobile()
   return (
     <div className="p-3 border-b border-border shrink-0 space-y-2">
-      {/* Row 1: 导演 + enabled plugin count + model names */}
+      {/* Row 1: 导演 + 内联收起按钮（移动端向下折叠在左；宽屏折叠在右）+ 插件/模型信息 */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">导演</h3>
+        <div className="flex items-center gap-1.5">
+          {isMobile && onClosePanel && (
+            <button
+              className="p-1 -ml-1 rounded hover:bg-muted text-muted-foreground transition-colors"
+              onClick={onClosePanel}
+              title="收起导演面板"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          )}
+          <h3 className="text-sm font-semibold">导演</h3>
+          {!isMobile && onClosePanel && (
+            <button
+              className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
+              onClick={onClosePanel}
+              title="折叠导演面板"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <button
             className="flex items-center gap-1 hover:text-foreground transition-colors"

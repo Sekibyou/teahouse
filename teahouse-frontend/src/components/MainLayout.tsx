@@ -1,4 +1,4 @@
-import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, PanelLeftClose, PanelLeftOpen } from "lucide-react"
+import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench } from "lucide-react"
 import { useEffect } from "react"
 import { Outlet, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -18,8 +18,6 @@ export function MainLayout() {
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const { mode } = useViewModeStore()
-  const chatCollapsed = useViewModeStore((s) => s.chatCollapsed)
-  const toggleChatCollapsed = useViewModeStore((s) => s.toggleChatCollapsed)
   const isMobile = useIsMobile()
   const isDark = useThemeStore((s) => s.isDark)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
@@ -119,22 +117,6 @@ export function MainLayout() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {activeInstance && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1 text-xs"
-              onClick={toggleChatCollapsed}
-              title={chatCollapsed ? "展开导演面板" : "折叠导演面板"}
-            >
-              {chatCollapsed ? (
-                <PanelLeftOpen className="h-3.5 w-3.5" />
-              ) : (
-                <PanelLeftClose className="h-3.5 w-3.5" />
-              )}
-              <span>导演</span>
-            </Button>
-          )}
           <div className="flex items-center gap-2 mr-2 text-sm text-muted-foreground">
             <User className="h-4 w-4" />
             <span>{user?.display_name || user?.username}</span>

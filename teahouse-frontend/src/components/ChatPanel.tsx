@@ -14,7 +14,7 @@ import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
 
-export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
+export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () => void; onClosePanel?: () => void }) {
   const [messages, setMessages] = useState<RichMessage[]>([])
 
   // ── Per-session UI state ─────────────────────────────────────────
@@ -1368,6 +1368,7 @@ export function ChatPanel({ onGitRefresh }: { onGitRefresh?: () => void }) {
         }}
         reasoningEffort={currentEffort}
         onCycleReasoningEffort={cycleSessionEffort}
+        onClosePanel={onClosePanel}
       />
 
       {/* Messages */}
