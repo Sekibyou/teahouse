@@ -106,6 +106,7 @@ export interface ModelProfile {
   match_pattern: string | null
   temperature: number
   max_tokens: number
+  max_context: number
   top_p: number | null
   frequency_penalty: number | null
   presence_penalty: number | null

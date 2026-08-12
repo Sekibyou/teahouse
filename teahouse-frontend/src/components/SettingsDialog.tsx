@@ -98,7 +98,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [profilesLoading, setProfilesLoading] = useState(false)
   const [createProfileOpen, setCreateProfileOpen] = useState(false)
   const [editingProfile, setEditingProfile] = useState<ModelProfile | null>(null)
-  const [profileForm, setProfileForm] = useState({ name: "", match_pattern: "", temperature: 1.0, max_tokens: 4096, top_p: "", frequency_penalty: "", presence_penalty: "" })
+  const [profileForm, setProfileForm] = useState({ name: "", match_pattern: "", temperature: 1.0, max_tokens: 4096, max_context: 131072, top_p: "", frequency_penalty: "", presence_penalty: "" })
   const [profileFormError, setProfileFormError] = useState("")
   const [profileFormSaving, setProfileFormSaving] = useState(false)
   const [deleteProfileTarget, setDeleteProfileTarget] = useState<string | null>(null)
@@ -320,7 +320,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const openProfileCreate = () => {
     setProfileFormError("")
-    setProfileForm({ name: "", match_pattern: "", temperature: 1.0, max_tokens: 4096, top_p: "", frequency_penalty: "", presence_penalty: "" })
+    setProfileForm({ name: "", match_pattern: "", temperature: 1.0, max_tokens: 4096, max_context: 131072, top_p: "", frequency_penalty: "", presence_penalty: "" })
     setEditingProfile(null)
     setCreateProfileOpen(true)
   }
@@ -332,6 +332,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       match_pattern: p.match_pattern || "",
       temperature: p.temperature,
       max_tokens: p.max_tokens,
+      max_context: p.max_context ?? 131072,
       top_p: p.top_p != null ? String(p.top_p) : "",
       frequency_penalty: p.frequency_penalty != null ? String(p.frequency_penalty) : "",
       presence_penalty: p.presence_penalty != null ? String(p.presence_penalty) : "",
@@ -351,6 +352,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       match_pattern: f.match_pattern?.trim() || null,
       temperature: f.temperature,
       max_tokens: f.max_tokens,
+      max_context: f.max_context,
       top_p: f.top_p ? parseFloat(f.top_p) : null,
       frequency_penalty: f.frequency_penalty ? parseFloat(f.frequency_penalty) : null,
       presence_penalty: f.presence_penalty ? parseFloat(f.presence_penalty) : null,
@@ -1011,6 +1013,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           <Field label="Max Tokens">
                             <Input type="number" step="1" min="1" value={profileForm.max_tokens} onChange={e => setProfileForm(f => ({ ...f, max_tokens: parseInt(e.target.value) || 0 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
+                          <Field label="Max Context (自动压缩阈值)">
+                            <Input type="number" step="1" min="1024" value={profileForm.max_context} onChange={e => setProfileForm(f => ({ ...f, max_context: parseInt(e.target.value) || 1024 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
+                          </Field>
                           <Field label="Top P">
                             <Input value={profileForm.top_p} onChange={e => setProfileForm(f => ({ ...f, top_p: e.target.value }))} placeholder="0.0-1.0" className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
@@ -1072,6 +1077,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
                               <span>temp: {p.temperature}</span>
                               <span>max_tokens: {p.max_tokens}</span>
+                              <span>max_ctx: {p.max_context ?? 131072}</span>
                               {p.top_p != null && <span>top_p: {p.top_p}</span>}
                               {p.frequency_penalty != null && <span>freq_pen: {p.frequency_penalty}</span>}
                               {p.presence_penalty != null && <span>pres_pen: {p.presence_penalty}</span>}

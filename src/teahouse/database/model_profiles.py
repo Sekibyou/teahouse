@@ -14,6 +14,7 @@ async def create_profile(
     match_pattern: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 50000,
+    max_context: int = 131072,
     top_p: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     presence_penalty: Optional[float] = None,
@@ -25,10 +26,10 @@ async def create_profile(
     await execute(
         """INSERT INTO model_profiles
            (id, user_id, name, match_pattern, temperature, max_tokens,
-            top_p, frequency_penalty, presence_penalty, is_builtin, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            max_context, top_p, frequency_penalty, presence_penalty, is_builtin, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (profile_id, user_id, name, match_pattern, temperature, max_tokens,
-         top_p, frequency_penalty, presence_penalty, int(is_builtin), now, now),
+         max_context, top_p, frequency_penalty, presence_penalty, int(is_builtin), now, now),
     )
     return await get_profile(profile_id)
 
@@ -52,6 +53,7 @@ async def update_profile(
     match_pattern: Optional[str] = None,  # None = no change; explicitly set to "" to clear
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    max_context: Optional[int] = None,
     top_p: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
     presence_penalty: Optional[float] = None,
@@ -68,6 +70,8 @@ async def update_profile(
         fields.append("temperature = ?"); values.append(temperature)
     if max_tokens is not None:
         fields.append("max_tokens = ?"); values.append(max_tokens)
+    if max_context is not None:
+        fields.append("max_context = ?"); values.append(max_context)
     if top_p is not None:
         fields.append("top_p = ?"); values.append(top_p)
     if frequency_penalty is not None:

@@ -46,11 +46,14 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
  * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
  * 其它消息返回 null（普通 user 气泡）。
  */
-export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | null {
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | null {
+  // Exact [compact] is the user's manual compact command — hide as a system bubble
+  if (content.trim() === "[compact]") return { kind: "compact" }
   if (!content.startsWith("[auto] ")) return null
   const trimmed = content.slice("[auto] ".length)
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
   if (trimmed.trim() === "interrupted by EndSession tool") return { kind: "endsession" }
+  if (trimmed.startsWith("会话已压缩")) return { kind: "auto_continue" }
   const sidMatch = trimmed.match(/session-([0-9a-fA-F]{4,})/)
   if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
   return null
@@ -63,6 +66,12 @@ export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>
   }
   if (auto.kind === "endsession") {
     return { autoKind: "endsession" as const }
+  }
+  if (auto.kind === "compact") {
+    return { autoKind: "compact" as const }
+  }
+  if (auto.kind === "auto_continue") {
+    return { autoKind: "auto_continue" as const }
   }
   return { autoKind: "interrupt" as const }
 }

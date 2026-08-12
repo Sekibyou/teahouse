@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Loader2, X, CheckCircle2, Flag } from "lucide-react"
+import { Loader2, X, CheckCircle2, Flag, ArrowRight } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi } from "@/lib/api"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
@@ -29,6 +29,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     tokenCount: number
     waiting: boolean
     waitingSince: number   // Date.now() when enqueue was sent
+    compacting: boolean    // true during session compact
   }
   const [sessionStateMap, setSessionStateMap] = useState<Record<string, SessionUIState>>({})
   const sessionStateRef = useRef<Record<string, SessionUIState>>({})
@@ -39,14 +40,15 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
   // Convenience getter/setter for the currently-viewed session
   const activeState: SessionUIState = sessionStateMap[activeSid] ?? {
-    running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+    running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
   }
   const isStreaming = activeState.running
   const isWaiting = activeState.waiting && !activeState.running
+  const isCompacting = activeState.compacting
 
   const patchSessionState = useCallback((sid: string, patch: Partial<SessionUIState>) => {
     const prev = sessionStateRef.current[sid] ?? {
-      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
     }
     const next = { ...sessionStateRef.current, [sid]: { ...prev, ...patch } }
     sessionStateRef.current = next
@@ -56,7 +58,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   // Update running+stats from backend-authoritative sources (SSE / API)
   const applyBackendState = useCallback((sid: string, running: boolean, stats?: { elapsed?: number; token_count?: number }) => {
     const prev = sessionStateRef.current[sid] ?? {
-      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0,
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
     }
     // If backend says running, clear any stale waiting flag
     const next: SessionUIState = {
@@ -164,6 +166,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               tokenCount: s?.token_count ?? 0,
               waiting: false,
               waitingSince: 0,
+              compacting: false,
             }
           }
           // Merge with any local waiting state (API doesn't know about waiting)
@@ -468,6 +471,29 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return placed
             }
 
+            // ── Compact events ──
+            if (t === "compact_started") {
+              patchSessionState(sid, { compacting: true })
+              return
+            }
+            if (t === "compact_done") {
+              patchSessionState(sid, { compacting: false })
+              if (data.error) {
+                if (data.error !== "interrupted") {
+                  toast.error(`会话压缩失败: ${data.error}`)
+                }
+              } else {
+                // Reload history so the compact summary record appears
+                setMessages([])
+                messagesBySidRef.current[sid] = []
+                historyCursorRef.current = null
+                historyLoadedRef.current = true
+                loadHistory(true, sid)
+                scrollToBottom()
+              }
+              return
+            }
+
             if (t === "done") {
               // Final done carries force_close semantics: the backend round is
               // over; close every still-open assistant bubble (drop empty ones).
@@ -604,7 +630,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             // events from the same loop will rebuild incomplete messages on
             // an empty slot — and when the user switches back, the stale
             // cached partial list masks the authoritative jsonl history.
-            if (t === "done") {
+            if (t === "done" || t === "compact_done") {
               delete messagesBySidRef.current[sid]
             }
           }
@@ -969,6 +995,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   }
   const COMMANDS: CommandDef[] = [
     { name: "/clear", description: "清空当前对话" },
+    { name: "/compact", description: "压缩当前会话上下文" },
     {
       name: "/think",
       description: "设置思考强度",
@@ -1099,7 +1126,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       const st = sessionStateRef.current[sidNow]
       const running = st?.running === true
       const waiting = st?.waiting === true && !running
-      if (!running && !waiting) return
+      const compacting = st?.compacting === true
+      if (!running && !waiting && !compacting) return
       e.preventDefault()
       handleStop()
     }
@@ -1133,6 +1161,30 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       const label = sid === "main" ? "主会话" : `子会话 ${sid}`
       toast.success(`已清除 ${label} 内容`)
       scrollToBottom()
+      return
+    }
+
+    // /compact command — send [compact] through the normal session loop
+    if (text === "/compact") {
+      setInput("")
+      const inst = getActiveInstance()
+      if (!inst) {
+        toast.error("未选中实例，无法压缩会话")
+        return
+      }
+      setError("")
+      scrollToBottom()
+      patchSessionState(sid, { compacting: true, waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
+      try {
+        await chatApi.sendDirectorMessage(
+          [{ role: "user", content: "[compact]" }],
+          inst.id,
+          sid,
+        )
+      } catch {
+        patchSessionState(sid, { compacting: false, waiting: false })
+        toast.error("压缩请求失败")
+      }
       return
     }
 
@@ -1417,6 +1469,16 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                           <Flag className="h-3 w-3 text-muted-foreground/60" />
                           <span>会话经 EndSession 结束</span>
                         </>
+                      ) : msg.autoKind === "compact" ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/60" />
+                          <span>正在压缩会话上下文…</span>
+                        </>
+                      ) : msg.autoKind === "auto_continue" ? (
+                        <>
+                          <ArrowRight className="h-3 w-3 text-muted-foreground/60" />
+                          <span>会话已压缩，自动继续工作</span>
+                        </>
                       ) : (
                         <>
                           <CheckCircle2 className="h-3 w-3 text-muted-foreground/60" />
@@ -1469,12 +1531,13 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         onInputChange={setInput}
         onKeyDown={handleKeyDown}
         inputRef={inputRef}
-        isStreaming={isStreaming || isWaiting}
+        isStreaming={isStreaming || isWaiting || isCompacting}
         expandedInput={expandedInput}
         onToggleExpand={() => setExpandedInput(v => !v)}
         onSend={handleSend}
         onStop={handleStop}
         onFocus={handleInputFocus}
+        isCompacting={isCompacting}
         filteredCommands={filteredCommands}
         commandIndex={commandIndex}
         onCommandHover={setCommandIndex}

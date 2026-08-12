@@ -246,6 +246,7 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         model=model["model_name"],
         api_style=provider["api_format"],
         max_tokens=profile["max_tokens"] if profile else 50000,
+        max_context=profile.get("max_context", 131072) if profile else 131072,
         temperature=profile["temperature"] if profile else 0.7,
         top_p=profile.get("top_p") if profile else None,
         frequency_penalty=profile.get("frequency_penalty") if profile else None,

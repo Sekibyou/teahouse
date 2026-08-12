@@ -25,6 +25,7 @@ class CreateProfileRequest(BaseModel):
     match_pattern: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 50000
+    max_context: int = 131072
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
@@ -35,6 +36,7 @@ class UpdateProfileRequest(BaseModel):
     match_pattern: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    max_context: Optional[int] = None
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None

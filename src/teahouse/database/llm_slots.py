@@ -111,7 +111,7 @@ async def get_slot_binding_resolved(user_id: str, slot_id: str) -> Optional[dict
             s.slot_id, s.model_id, s.profile_id, s.prompt_preset_id,
             m.name as model_name, m.model_name as model_api_name, m.provider_id as model_provider_id, m.is_enabled,
             p.name as provider_name, p.api_url, p.encrypted_api_key, p.api_format, p.is_enabled as provider_enabled,
-            mp.name as profile_name, mp.temperature, mp.max_tokens, mp.top_p, mp.frequency_penalty, mp.presence_penalty,
+            mp.name as profile_name, mp.temperature, mp.max_tokens, mp.max_context, mp.top_p, mp.frequency_penalty, mp.presence_penalty,
             dpp.name as preset_name, dpp.template_yaml as preset_template_yaml
         FROM llm_slot_bindings s
         LEFT JOIN llm_models m ON s.model_id = m.id

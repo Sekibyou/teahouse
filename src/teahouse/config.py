@@ -18,6 +18,7 @@ class LLMConfig(BaseModel):
     model: str = Field(default="claude-sonnet-5", description="Default model ID")
     api_style: str = Field(default="openai", description="API protocol: anthropic or openai")
     max_tokens: int = Field(default=8192, ge=1)
+    max_context: int = Field(default=131072, ge=1024, description="Maximum context window size in tokens for auto-compact threshold")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float | None = None
     frequency_penalty: float | None = None

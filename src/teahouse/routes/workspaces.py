@@ -1334,6 +1334,44 @@ async def destroy_session(
     return {"status": "ok", "session_id": session_id}
 
 
+@router.post("/instances/{instance_id}/sessions/{session_id}/compact")
+async def compact_session(
+    instance_id: str,
+    session_id: str,
+    user: UserInfo = Depends(require_user),
+):
+    """Manually trigger session compaction. Only allowed when the session is idle."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..session_tracker import task_tracker
+    running = task_tracker.running_sessions(instance_dir.name)
+    if running.get(session_id):
+        raise HTTPException(status_code=409, detail="Session is currently running, cannot compact")
+
+    from ..app import _resolve_slot_client
+    from ..compact import run_compact
+
+    try:
+        client = await _resolve_slot_client(u["id"], "director")
+    except HTTPException:
+        raise HTTPException(status_code=400, detail="Director slot is not configured")
+
+    try:
+        summary = await run_compact(client, instance_dir, session_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Compact failed: {e}")
+
+    if summary is None:
+        return {"status": "ok", "summary_preview": None, "note": "Session was empty, nothing to compact"}
+
+    preview = summary[:200] + ("..." if len(summary) > 200 else "")
+    return {"status": "ok", "summary_preview": preview}
+
+
 # ===== Text style rules =====
 
 

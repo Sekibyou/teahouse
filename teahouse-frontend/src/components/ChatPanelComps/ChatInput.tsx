@@ -22,6 +22,7 @@ interface ChatInputProps {
   onKeyDown: (e: React.KeyboardEvent) => void
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   isStreaming: boolean
+  isCompacting?: boolean
 
   // Expand toggle
   expandedInput: boolean
@@ -66,6 +67,7 @@ export function ChatInput({
   commitPreview,
   onApprove,
   onReject,
+  isCompacting = false,
 }: ChatInputProps) {
   return (
     <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
@@ -138,21 +140,22 @@ export function ChatInput({
                 : "resize-none min-h-[40px] max-h-[120px]"
             }`}
             rows={1}
-            value={input}
+            value={isCompacting ? "正在总结中…" : input}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={onKeyDown}
             onFocus={onFocus}
-            placeholder={isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
+            placeholder={isCompacting ? "正在总结中…" : isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
+            disabled={isCompacting}
           />
           <Button
             size="icon"
             className="shrink-0 self-end h-10 w-10"
-            onClick={isStreaming ? onStop : onSend}
-            disabled={!isStreaming && !input.trim()}
-            variant={isStreaming ? "destructive" : "default"}
-            title={isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
+            onClick={isStreaming || isCompacting ? onStop : onSend}
+            disabled={!(isStreaming || isCompacting) && !input.trim()}
+            variant={isStreaming || isCompacting ? "destructive" : "default"}
+            title={isCompacting ? "停止总结 (Esc)" : isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
           >
-            {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            {isStreaming || isCompacting ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
       )}

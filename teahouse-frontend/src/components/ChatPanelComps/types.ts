@@ -36,7 +36,7 @@ export interface RichMessage {
   /** 后端队列 ID，用于 queued→done 升级匹配 */
   _queue_id?: string
   /** 固定格式 `[auto]` 系统消息的归类（特殊标记渲染）；普通消息无此字段 */
-  autoKind?: "interrupt" | "endsession" | "session_done"
+  autoKind?: "interrupt" | "endsession" | "session_done" | "compact" | "auto_continue"
   /** 当 autoKind==="session_done" 时，提取出的子会话 sid（如 "session-<uuid>"） */
   autoSid?: string
 }

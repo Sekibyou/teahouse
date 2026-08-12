@@ -43,6 +43,7 @@ import uuid
 from pathlib import Path
 
 from . import sessions
+from .compact import estimate_context_tokens, run_compact
 from .session_tracker import task_tracker
 from .state import state
 
@@ -221,6 +222,33 @@ class SessionLoop:
                 _event_log(self.instance_dir, self.session_id, "loop_no_client", {})
                 break
 
+            # ── Pre-flight compact check (85% of max_context) ──
+            # Only for the main session. If we're already close to the limit,
+            # compact before running the tool loop so it doesn't overflow mid-run.
+            if self.session_id == sessions.MAIN_SESSION_ID:
+                max_ctx = client.config.max_context
+                msgs_for_check = sessions.records_to_context(
+                    self.instance_dir, client.api_style, session_id=self.session_id
+                )
+                est = estimate_context_tokens(msgs_for_check)
+                if est > max_ctx * 0.85:
+                    _event_log(self.instance_dir, self.session_id, "compact_preflight", {"est": est, "max": max_ctx})
+                    ok = await self._run_compact_task(client)
+                    if not ok:
+                        self._broadcast_done()
+                        break
+
+            # ── Manual compact command detection ──
+            # If the user sent [compact], run compact instead of the tool loop.
+            is_manual_compact = any(
+                m[1].strip().startswith("[compact]") for m in msgs
+            ) if msgs else False
+            if is_manual_compact and self.session_id == sessions.MAIN_SESSION_ID:
+                _event_log(self.instance_dir, self.session_id, "compact_manual", {})
+                await self._run_compact_task(client)
+                self._broadcast_done()
+                continue  # loop back, queue likely empty
+
             # 5. Load tool permissions
             meta = sessions.load_meta(self.instance_dir, self.session_id)
             enabled_tools = meta.get("enabled_tools") or None
@@ -241,6 +269,72 @@ class SessionLoop:
                 task_tracker.unregister(self.instance_dir.name, self.session_id)
                 task_tracker.stats_clear(self.instance_dir.name, self.session_id)
                 self._task = None
+
+            # ── Post-flight compact check (70% of max_context) ──
+            # After a full work cycle, compact if we crossed the threshold.
+            # Auto-enqueue a continuation so the director picks up where it left off.
+            if self.session_id == sessions.MAIN_SESSION_ID and not self._interrupted:
+                max_ctx = client.config.max_context
+                msgs_for_check = sessions.records_to_context(
+                    self.instance_dir, client.api_style, session_id=self.session_id
+                )
+                est = estimate_context_tokens(msgs_for_check)
+                if est > max_ctx * 0.70:
+                    _event_log(self.instance_dir, self.session_id, "compact_postflight", {"est": est, "max": max_ctx})
+                    ok = await self._run_compact_task(client)
+                    if not ok:
+                        self._broadcast_done()
+                        break
+                    # Auto-continue: enqueue a synthetic message so the loop
+                    # picks it up in step 2 on the next iteration.
+                    self.enqueue("[auto] 会话已压缩。请基于上述总结继续未完成的工作。")
+                    continue  # loop back, drain will pick up the enqueued message
+
+    # ------------------------------------------------------------------
+    # Compact helper — cancellable like the tool loop
+    # ------------------------------------------------------------------
+
+    async def _run_compact_task(self, client) -> bool:
+        """Run ``run_compact`` as a cancellable task. Returns True on success.
+
+        Wraps the compact call in a tracked asyncio Task so that
+        ``interrupt()`` (which cancels ``self._task``) can stop an
+        in-flight compact the same way it stops a tool loop.
+        """
+        compact_task = asyncio.create_task(
+            run_compact(client, self.instance_dir, self.session_id)
+        )
+        self._task = compact_task
+        task_tracker.stats_start(self.instance_dir.name, self.session_id)
+        task_tracker.register(self.instance_dir.name, self.session_id, compact_task)
+        try:
+            await compact_task
+            return True
+        except asyncio.CancelledError:
+            _event_log(self.instance_dir, self.session_id, "compact_interrupted", {})
+            state.broadcast("session_event", {
+                "instance_id": self.instance_dir.name,
+                "session_id": self.session_id,
+                "type": "compact_done",
+                "error": "interrupted",
+                "running": task_tracker.running_sessions(self.instance_dir.name),
+            })
+            self._interrupted = True
+            return False
+        except Exception:
+            _event_log(self.instance_dir, self.session_id, "compact_error", {})
+            state.broadcast("session_event", {
+                "instance_id": self.instance_dir.name,
+                "session_id": self.session_id,
+                "type": "compact_done",
+                "error": "compact LLM call failed",
+                "running": task_tracker.running_sessions(self.instance_dir.name),
+            })
+            return False
+        finally:
+            task_tracker.unregister(self.instance_dir.name, self.session_id)
+            task_tracker.stats_clear(self.instance_dir.name, self.session_id)
+            self._task = None
 
     # ------------------------------------------------------------------
     # Internal helpers
