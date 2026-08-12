@@ -1,4 +1,4 @@
-import { GitBranch as GitBranchIcon, Edit3, ChevronDown, PanelLeftClose } from "lucide-react"
+import { GitBranch as GitBranchIcon, Edit3, ChevronDown, PanelLeftClose, Plus } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 
@@ -25,6 +25,7 @@ interface ChatHeaderProps {
   newMsgMap: Record<string, boolean>
   onSwitchSession: (sid: string) => void
   onRefreshSessionList: () => void
+  onCreateSession: () => void
   instId: string | undefined
 
   // Git info
@@ -53,6 +54,7 @@ export function ChatHeader({
   newMsgMap,
   onSwitchSession,
   onRefreshSessionList,
+  onCreateSession,
   instId,
   currentBranch,
   latestCommitMsg,
@@ -147,6 +149,15 @@ export function ChatHeader({
         {!instId ? null : (
           <button
             className="ml-auto px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
+            onClick={onCreateSession}
+            title="新建子会话"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+        )}
+        {!instId ? null : (
+          <button
+            className="px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
             onClick={onRefreshSessionList}
             title="刷新会话列表"
           >
