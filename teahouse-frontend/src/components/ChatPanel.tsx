@@ -847,6 +847,20 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     }
   }, [instId, sessionList, mergeServerSessions])
 
+  // Manually create a new sub-session.
+  const createSession = useCallback(() => {
+    if (!instId) return
+    instancesApi.createSession(instId).then(res => {
+      if (res.ok) {
+        toast.success(`子会话 ${res.data?.session_id} 已创建`)
+      } else {
+        toast.error("创建子会话失败")
+      }
+    }).catch(() => {
+      toast.error("创建子会话失败")
+    })
+  }, [instId])
+
   /**
    * Session-aware messages setter. Stream closures capture the session that
    * started them; updates always land in that session's cached array, and only
@@ -1353,6 +1367,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         newMsgMap={newMsgMap}
         onSwitchSession={switchSession}
         onRefreshSessionList={refreshSessionList}
+        onCreateSession={createSession}
         instId={instId}
         currentBranch={currentBranch}
         latestCommitMsg={latestCommitMsg}
