@@ -184,17 +184,25 @@ async def sse_events(request: Request) -> EventSourceResponse:
 # Chat endpoint — per-request LLM config from database
 # ---------------------------------------------------------------------------
 
-def _global_max_retries() -> int:
-    cfg = state.config
-    if cfg and cfg.llm:
-        return cfg.llm.max_retries
+async def _user_max_retries(user_id: str | None) -> int:
+    """Per-user LLM request retry budget (users.preferences). Falls back to default."""
+    if user_id:
+        from .database.users import get_preferences
+        prefs = await get_preferences(user_id) or {}
+        v = prefs.get("max_retries")
+        if isinstance(v, int):
+            return int(v)
     return 3
 
 
-def _global_max_tool_rounds() -> int:
-    cfg = state.config
-    if cfg and cfg.llm:
-        return cfg.llm.max_tool_rounds
+async def _user_max_tool_rounds(user_id: str | None) -> int:
+    """Per-user tool-use loop iteration cap (users.preferences). Falls back to default."""
+    if user_id:
+        from .database.users import get_preferences
+        prefs = await get_preferences(user_id) or {}
+        v = prefs.get("max_tool_rounds")
+        if isinstance(v, int):
+            return int(v)
     return 15
 
 class ChatRequest(BaseModel):
@@ -242,7 +250,7 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         top_p=profile.get("top_p") if profile else None,
         frequency_penalty=profile.get("frequency_penalty") if profile else None,
         presence_penalty=profile.get("presence_penalty") if profile else None,
-    ), max_retries=_global_max_retries())
+    ), max_retries=await _user_max_retries(user_id))
 
 
 async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) -> LLMClient:
@@ -265,7 +273,7 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
         api_style=cfg["api_format"],
         max_tokens=cfg["max_tokens"] if cfg["max_tokens"] else 50000,
         temperature=cfg["temperature"],
-    ), max_retries=_global_max_retries())
+    ), max_retries=await _user_max_retries(user_id))
 
 
 async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:
@@ -635,7 +643,7 @@ async def _tool_use_loop(
         else:
             msgs.append({"role": "tool", "tool_call_id": tc_id, "content": result})
 
-    for _round in range(_global_max_tool_rounds()):
+    for _round in range(await _user_max_tool_rounds(user_id)):
         # ── Phase 0: Assign this round's order (session-wide monotonic) ──
         # The order is the stable (order, sub) key stamped onto every SSE event
         # of this round; it must equal the order append_assistant stamps when

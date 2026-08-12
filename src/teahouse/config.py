@@ -18,8 +18,6 @@ class LLMConfig(BaseModel):
     model: str = Field(default="claude-sonnet-5", description="Default model ID")
     api_style: str = Field(default="openai", description="API protocol: anthropic or openai")
     max_tokens: int = Field(default=8192, ge=1)
-    max_retries: int = Field(default=3, ge=0, le=10, description="Max retries on network errors")
-    max_tool_rounds: int = Field(default=15, ge=1, le=200, description="Safety limit for tool use iterations per turn")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float | None = None
     frequency_penalty: float | None = None
