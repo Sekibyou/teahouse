@@ -18,10 +18,12 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 class GlobalSettingsResponse(BaseModel):
     max_retries: int = 3
+    max_tool_rounds: int = 15
 
 
 class UpdateGlobalSettingsRequest(BaseModel):
     max_retries: int | None = Field(default=None, ge=0, le=10)
+    max_tool_rounds: int | None = Field(default=None, ge=1, le=200)
 
 
 # ===== Routes =====
@@ -32,6 +34,7 @@ async def get_settings(_user: UserInfo = Depends(require_user)):
     llm = cfg.llm if cfg else None
     return GlobalSettingsResponse(
         max_retries=llm.max_retries if llm else 3,
+        max_tool_rounds=llm.max_tool_rounds if llm else 15,
     )
 
 
@@ -47,6 +50,8 @@ async def update_settings(body: UpdateGlobalSettingsRequest, _user: UserInfo = D
 
     if body.max_retries is not None:
         data.setdefault("llm", {})["max_retries"] = body.max_retries
+    if body.max_tool_rounds is not None:
+        data.setdefault("llm", {})["max_tool_rounds"] = body.max_tool_rounds
 
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -57,4 +62,5 @@ async def update_settings(body: UpdateGlobalSettingsRequest, _user: UserInfo = D
     llm = state.config.llm
     return GlobalSettingsResponse(
         max_retries=llm.max_retries if llm else 3,
+        max_tool_rounds=llm.max_tool_rounds if llm else 15,
     )

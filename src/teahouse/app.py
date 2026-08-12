@@ -190,6 +190,13 @@ def _global_max_retries() -> int:
         return cfg.llm.max_retries
     return 3
 
+
+def _global_max_tool_rounds() -> int:
+    cfg = state.config
+    if cfg and cfg.llm:
+        return cfg.llm.max_tool_rounds
+    return 15
+
 class ChatRequest(BaseModel):
     messages: list[dict]
     system: str | None = None
@@ -280,8 +287,6 @@ async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:
     # Legacy path
     return await _resolve_llm_config(None, user_id)
 
-
-MAX_TOOL_ROUNDS = 15  # Safety limit for tool use iterations
 
 # Tools that require user approval before execution
 APPROVAL_REQUIRED_TOOLS = {"GitCommit"}
@@ -630,7 +635,7 @@ async def _tool_use_loop(
         else:
             msgs.append({"role": "tool", "tool_call_id": tc_id, "content": result})
 
-    for _round in range(MAX_TOOL_ROUNDS):
+    for _round in range(_global_max_tool_rounds()):
         # ── Phase 0: Assign this round's order (session-wide monotonic) ──
         # The order is the stable (order, sub) key stamped onto every SSE event
         # of this round; it must equal the order append_assistant stamps when

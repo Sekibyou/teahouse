@@ -118,7 +118,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [slotsLoading, setSlotsLoading] = useState(false)
 
   // ─── General settings state ───
-  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3 })
+  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15 })
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsSaved, setSettingsSaved] = useState(false)
@@ -442,7 +442,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const handleSaveSettings = async () => {
     setSettingsSaving(true)
     setSettingsSaved(false)
-    const res = await appSettingsApi.update({ max_retries: appSettings.max_retries })
+    const res = await appSettingsApi.update({ max_retries: appSettings.max_retries, max_tool_rounds: appSettings.max_tool_rounds })
     if (res.ok) {
       setAppSettings(res.data!)
       setSettingsSaved(true)
@@ -1281,6 +1281,41 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               onChange={(e) => {
                                 const v = Math.max(0, Math.min(10, Number(e.target.value) || 0))
                                 setAppSettings({ ...appSettings, max_retries: v })
+                              }}
+                              className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border p-4 space-y-4">
+                        <div>
+                          <label className="text-sm font-medium flex items-center justify-between">
+                            <span>单轮最大调用次数</span>
+                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                              {appSettings.max_tool_rounds}
+                            </span>
+                          </label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            导演工具调用循环的轮数上限，防止单轮陷入过长的工具循环。
+                          </p>
+                          <div className="mt-3 flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={1}
+                              max={200}
+                              value={appSettings.max_tool_rounds}
+                              onChange={(e) => setAppSettings({ ...appSettings, max_tool_rounds: Number(e.target.value) })}
+                              className="flex-1 h-2 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              max={200}
+                              value={appSettings.max_tool_rounds}
+                              onChange={(e) => {
+                                const v = Math.max(1, Math.min(200, Number(e.target.value) || 1))
+                                setAppSettings({ ...appSettings, max_tool_rounds: v })
                               }}
                               className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
