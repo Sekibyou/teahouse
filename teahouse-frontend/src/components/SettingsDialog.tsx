@@ -1013,7 +1013,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           <Field label="Max Tokens">
                             <Input type="number" step="1" min="1" value={profileForm.max_tokens} onChange={e => setProfileForm(f => ({ ...f, max_tokens: parseInt(e.target.value) || 0 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
-                          <Field label="Max Context (自动压缩阈值)">
+                          <Field label="Max Context (自动压缩阈值为此值的70%)">
                             <Input type="number" step="1" min="1024" value={profileForm.max_context} onChange={e => setProfileForm(f => ({ ...f, max_context: parseInt(e.target.value) || 1024 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
                           <Field label="Top P">

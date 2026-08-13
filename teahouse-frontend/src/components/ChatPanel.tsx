@@ -6,9 +6,10 @@ import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
-import type { FloorsStats } from "@/lib/types"
+import type { FloorsStats, ContextUsage } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
+import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
 import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
@@ -192,6 +193,36 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
   // 楼层元数据
   const [floorsStats, setFloorsStats] = useState<FloorsStats | null>(null)
+
+  // 上下文用量（活跃会话）
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null)
+  const refreshContextUsage = useCallback(() => {
+    if (!instId) return
+    instancesApi.contextUsage(instId, activeSid).then(res => {
+      setContextUsage(res.ok ? (res.data ?? null) : null)
+    }).catch(() => {
+      setContextUsage(null)
+    })
+  }, [instId, activeSid])
+  // SSE 事件处理器在 [instId] effect 里注册，闭包会捕获初次渲染的
+  // refreshContextUsage（activeSid=main）。用 ref 让它们总能拿到最新回调，
+  // 避免子会话完成时把主会话用量错误覆盖到 bar 上。
+  const refreshContextUsageRef = useRef(refreshContextUsage)
+  useEffect(() => {
+    refreshContextUsageRef.current = refreshContextUsage
+  })
+
+  useEffect(() => {
+    refreshContextUsage()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instId, activeSid])
+
+  // 兜底轮询：ChatPanel 常驻挂载，事件遗漏也能保持用量新鲜
+  useEffect(() => {
+    if (!instId) return
+    const t = setInterval(refreshContextUsage, 10000)
+    return () => clearInterval(t)
+  }, [instId, refreshContextUsage])
 
   // 初始加载 + SSE 监听楼层变化
   const floorsESRef = useRef<EventSource | null>(null)
@@ -485,6 +516,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             }
             if (t === "compact_done") {
               patchSessionState(sid, { compacting: false })
+              refreshContextUsageRef.current()
               if (data.error) {
                 if (data.error !== "interrupted") {
                   toast.error(`会话压缩失败: ${data.error}`)
@@ -504,6 +536,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             if (t === "done") {
               // Final done carries force_close semantics: the backend round is
               // over; close every still-open assistant bubble (drop empty ones).
+              refreshContextUsageRef.current()
               setMessagesFor(sid, (prev) => {
                 const closer = [...prev]
                 let changed = false
@@ -1677,27 +1710,34 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         }}
       />
 
-      {/* Floor stats footer */}
-      {floorsStats && floorsStats.latest_floor != null && (
+      {/* Floor stats footer + context usage */}
+      {((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
         <div className="px-3 pb-2 shrink-0">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span>
-              最新楼层: <span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-              （共 {floorsStats.total_confirmed} 正式层
-              {floorsStats.total_drafts > 0 && <span> + {floorsStats.total_drafts} 草稿层</span>}
-              {floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
-            </span>
-            {floorsStats.last_summary_start != null ? (
-              <span>
-                | 上次总结: <span className="text-foreground font-mono">
-                  {floorsStats.last_summary_start === floorsStats.last_summary_end
-                    ? `第 ${floorsStats.last_summary_start} 层`
-                    : `第 ${floorsStats.last_summary_start}~${floorsStats.last_summary_end} 层`}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+            {floorsStats && floorsStats.latest_floor != null && (
+              <div className="flex items-center gap-2 min-w-0">
+                <span>
+                  最新楼层: <span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
+                  （共 {floorsStats.total_confirmed} 正式层
+                  {floorsStats.total_drafts > 0 && <span> + {floorsStats.total_drafts} 草稿层</span>}
+                  {floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
                 </span>
-              </span>
-            ) : (
-              <span>| 当前尚无总结</span>
+                {floorsStats.last_summary_start != null ? (
+                  <span>
+                    | 上次总结: <span className="text-foreground font-mono">
+                      {floorsStats.last_summary_start === floorsStats.last_summary_end
+                        ? `第 ${floorsStats.last_summary_start} 层`
+                        : `第 ${floorsStats.last_summary_start}~${floorsStats.last_summary_end} 层`}
+                    </span>
+                  </span>
+                ) : (
+                  <span>| 当前尚无总结</span>
+                )}
+              </div>
             )}
+            <div className="ml-auto shrink-0">
+              <ContextUsageBar usage={contextUsage} />
+            </div>
           </div>
         </div>
       )}

@@ -1434,6 +1434,60 @@ async def compact_session(
     return {"status": "ok", "summary_preview": preview}
 
 
+@router.get("/instances/{instance_id}/context-usage")
+async def get_context_usage(
+    instance_id: str,
+    session_id: str = Query(default="main"),
+    user: UserInfo = Depends(require_user),
+):
+    """Estimate the active session's context usage vs the auto-compact threshold.
+
+    ``threshold`` = resolved director profile's ``max_context`` x 0.7 (the
+    post-flight compact ratio), which the frontend usage bar treats as full.
+    ``status`` is ``danger`` (at/over threshold → auto-compact imminent),
+    ``warning`` (>= 85% of threshold) or ``normal``. When the director slot is
+    not configured, returns nulls so the frontend hides the bar.
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    from ..app import _resolve_slot_client
+    from ..compact import POST_COMPACT_RATIO, estimate_context_tokens
+
+    try:
+        client = await _resolve_slot_client(u["id"], "director")
+    except HTTPException:
+        return {"session_id": session_id, "estimated_tokens": None,
+                "max_context": None, "threshold": None, "status": None}
+
+    max_ctx = client.config.max_context
+    threshold = int(max_ctx * POST_COMPACT_RATIO)
+
+    from .. import sessions
+    msgs = sessions.records_to_context(
+        instance_dir, client.api_style, session_id=session_id
+    )
+    est = estimate_context_tokens(msgs)
+
+    if est >= threshold:
+        status = "danger"
+    elif est >= threshold * 0.85:
+        status = "warning"
+    else:
+        status = "normal"
+
+    return {
+        "session_id": session_id,
+        "estimated_tokens": est,
+        "max_context": max_ctx,
+        "threshold": threshold,
+        "status": status,
+    }
+
+
 # ===== Text style rules =====
 
 

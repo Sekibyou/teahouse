@@ -1,6 +1,6 @@
 import { getAuthToken, clearAuth } from "@/stores/authStore"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
-import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse, FloorsStats } from "./types"
+import type { Prototype, Instance, FileTreeNode, ActiveSession, LLMConfig, LLMProvider, LLMModel, ModelProfile, SlotBindings, DirectorPromptPreset, AvailableModel, AppSettings, GitStatus, GitCommitResult, GitBranchResult, GitLogEntry, GitFileStatus, CoverResponse, FloorsStats, ContextUsage } from "./types"
 import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTypes"
 
 const REQUEST_TIMEOUT = 15000
@@ -305,6 +305,10 @@ export const instancesApi = {
 
   getSessionsStatus: async (instanceId: string) => {
     return get<{ sessions: Record<string, boolean>; stats: Record<string, { elapsed: number; token_count: number }> }>(`/api/instances/${instanceId}/sessions/status`)
+  },
+
+  contextUsage: async (instanceId: string, sessionId = "main") => {
+    return get<ContextUsage>(`/api/instances/${instanceId}/context-usage?session_id=${encodeURIComponent(sessionId)}`)
   },
 
   destroySession: async (instanceId: string, sessionId: string, abort = false) => {

@@ -229,3 +229,12 @@ export interface FloorsStats {
   unsummarized: number
   instance_id: string
 }
+
+export interface ContextUsage {
+  session_id: string
+  estimated_tokens: number | null
+  max_context: number | null
+  /** max_context * 0.7 — the auto-compact threshold the usage bar treats as full */
+  threshold: number | null
+  status: "normal" | "warning" | "danger" | null
+}

@@ -51,6 +51,12 @@ COMPACT_SYSTEM_PROMPT = """\
 - 不要添加"我会继续完成"之类的表态，这是纯信息摘要"""
 
 
+# Post-flight auto-compact trigger: fraction of max_context at which a completed
+# work cycle compacts the session. The frontend usage bar treats this as the
+# "full" mark, so it must stay in sync with session_loop's trigger.
+POST_COMPACT_RATIO = 0.70
+
+
 def estimate_context_tokens(
     messages: list[dict], system_prompt: str = ""
 ) -> int:

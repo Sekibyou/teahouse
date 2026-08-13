@@ -43,7 +43,7 @@ import uuid
 from pathlib import Path
 
 from . import sessions
-from .compact import estimate_context_tokens, run_compact
+from .compact import POST_COMPACT_RATIO, estimate_context_tokens, run_compact
 from .session_tracker import task_tracker
 from .state import state
 
@@ -279,7 +279,7 @@ class SessionLoop:
                     self.instance_dir, client.api_style, session_id=self.session_id
                 )
                 est = estimate_context_tokens(msgs_for_check)
-                if est > max_ctx * 0.70:
+                if est > max_ctx * POST_COMPACT_RATIO:
                     _event_log(self.instance_dir, self.session_id, "compact_postflight", {"est": est, "max": max_ctx})
                     ok = await self._run_compact_task(client)
                     if not ok:
