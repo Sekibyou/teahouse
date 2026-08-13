@@ -309,6 +309,12 @@ export function MonacoEditor({
     glyphMargin: true,
     folding: true,
     matchBrackets: "never",
+    // 中文正文中全角标点（：）（U+FF1A 等）与 ASCII 易混淆，默认高亮会在
+    // 每个全角冒号/括号上画黄色框，纯属噪音——默认关闭，需要时可经 options 覆盖。
+    unicodeHighlight: {
+      ambiguousCharacters: false,
+      invisibleCharacters: false,
+    },
     ...options,
   }), [minimap, readOnly, options])
 
