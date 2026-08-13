@@ -794,6 +794,8 @@ def _is_draft(name: str) -> bool:
 
 
 def _resolve_glob(raw_pattern: str, instance_dir: Path) -> str:
+    # 多平台：反斜杠规范化为正斜杠，与文件切片一致。
+    raw_pattern = raw_pattern.replace("\\", "/")
     # Split off an optional trailing ':lastN' suffix, e.g. 'floors/floor-*.md:last30'.
     pattern = raw_pattern
     last_n: int | None = None
@@ -911,7 +913,8 @@ def _read_full(file_path: str, instance_dir: Path) -> str:
 
 
 def _resolve_file_path(instance_dir: Path, file_path: str) -> Path:
-    full = (instance_dir / file_path).resolve()
+    # 多平台：把反斜杠规范化为正斜杠，Windows 上写惯的 `\` 路径在 Linux 也能解析。
+    full = (instance_dir / file_path.replace("\\", "/")).resolve()
     if not str(full).startswith(str(instance_dir.resolve())):
         raise PlaceholderError(f"Path traversal detected: {file_path}")
     if not full.exists():
