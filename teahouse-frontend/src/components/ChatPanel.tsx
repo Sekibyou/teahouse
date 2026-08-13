@@ -1619,12 +1619,12 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                       )}
                     </div>
                   ) : msg.status === "queued" ? (
-                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
+                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       {msg.content}
                     </div>
                   ) : (
-                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-primary text-primary-foreground">
+                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                       {msg.content}
                     </div>
                   )}

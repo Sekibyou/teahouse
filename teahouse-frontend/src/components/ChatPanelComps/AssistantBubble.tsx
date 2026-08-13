@@ -64,7 +64,7 @@ export const AssistantBubble = memo(function AssistantBubble({
           {blocks!.map((block, i) => {
             if (block.type === "text" && block.text) {
               return (
-                <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-sm prose prose-sm dark:prose-invert prose-chat max-w-none break-words">
+                <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-base prose dark:prose-invert prose-chat max-w-none break-words">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {block.text!}
                   </ReactMarkdown>
@@ -132,7 +132,7 @@ export const AssistantBubble = memo(function AssistantBubble({
 
       {/* Fallback: plain text message (no blocks) */}
       {!hasBlocks && content && (
-        <div className="rounded-lg px-3 py-2 text-sm bg-muted whitespace-pre-wrap break-words">
+        <div className="rounded-lg px-3 py-2 text-base bg-muted whitespace-pre-wrap break-words">
           {content}
         </div>
       )}
