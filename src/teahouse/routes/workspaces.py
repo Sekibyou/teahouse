@@ -1354,7 +1354,12 @@ async def get_session_records(
 
     from ..sessions import load_records, render_records
     records, total = load_records(instance_dir, limit=limit, offset=offset, session_id=session_id)
-    return {"records": render_records(records), "total": total}
+    # `records` here is the pre-render JSONL slice; its length is the record-level
+    # count consumed by this page. `render_records` expands each record into one or
+    # more display bubbles, so the frontend must page by `next_offset` (record
+    # units), not by bubble count — otherwise the cursor drifts and history gets
+    # skipped / prematurely marked loaded.
+    return {"records": render_records(records), "total": total, "next_offset": offset + len(records)}
 
 
 @router.delete("/instances/{instance_id}/sessions/{session_id}")

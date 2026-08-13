@@ -258,7 +258,7 @@ export const instancesApi = {
     if (opts?.limit) params.set("limit", String(opts.limit))
     if (opts?.offset) params.set("offset", String(opts.offset))
     const qs = params.toString()
-    return get<{ records: Record<string, unknown>[]; total: number }>(
+    return get<{ records: Record<string, unknown>[]; total: number; next_offset: number }>(
       `/api/instances/${instanceId}/sessions/${sessionId}${qs ? `?${qs}` : ""}`,
     )
   },

@@ -777,6 +777,11 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       if (!res.ok) return
       const recs = res.data?.records || []
       const total = res.data?.total ?? 0
+      // The backend pages by JSONL *record* but returns records expanded into
+      // one-or-more display bubbles (reasoning + each block). Advance the cursor
+      // by next_offset (record units), never by bubble count — otherwise the
+      // offset drifts past records and the loaded-all check fires too early.
+      const nextOffset = res.data?.next_offset ?? (offset + new Set(recs.map(r => (r as any).order)).size)
       if (replace) {
         const first = recs.map(r => recordToRichMessage(r as any))
         // SSE events may have already appended in-flight (order,sub) bubbles to the
@@ -788,8 +793,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         const merged = [...first, ...sseOnly].sort(compareBubbles)
         messagesBySidRef.current[targetSid] = merged
         setMessages(merged)
-        historyCursorRef.current = first.length
-        historyLoadedRef.current = first.length >= total
+        historyCursorRef.current = nextOffset
+        historyLoadedRef.current = nextOffset >= total
       } else if (recs.length > 0) {
         const more = recs.map(r => recordToRichMessage(r as any))
         const existing = messagesBySidRef.current[targetSid] || []
@@ -797,8 +802,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         const merged = [...more.filter(m => !known.has(`${m.order}|${m.sub}`)), ...existing].sort(compareBubbles)
         messagesBySidRef.current[targetSid] = merged
         setMessages(merged)
-        historyCursorRef.current = (historyCursorRef.current ?? 0) + more.length
-        if (more.length < PAGE_SIZE || (historyCursorRef.current ?? 0) >= total) {
+        historyCursorRef.current = nextOffset
+        if (nextOffset >= total) {
           historyLoadedRef.current = true
         }
       } else {
