@@ -52,6 +52,14 @@
 | `static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，gitignore，只读引用） |
 | `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md） |
 
+## 自建 Skill
+
+导演可以自建 skill（提示词包/方法论）。**实例自建 skill 放 `.teahouse/skills/<名字>/SKILL.md`，同名会覆盖系统内置 skill**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
+
+- **SKILL.md 格式**：开头 YAML frontmatter 写 `name` + `description`（`description` 兼作触发条件，写清「当用户要求 X 时触发」），正文写方法论 + SOP。
+- **加载机制**：系统提示词只注入每个 skill 的 `name` + `description`（正文不注入），导演用 `SkillRead(name)` 按需读全文。
+- **多文件 skill**：`SkillRead` 只读 `SKILL.md`。若拆成 `Step1.md` / `Step2.md` 等分步文件，在 `SKILL.md` 里写清编排规则——「按序逐个用 `Read` 读 `.teahouse/skills/<名字>/StepN.md`，每步完成并落盘、用户确认后才读下一步」。分步文件不在自动扫描范围内，用 `Read` 工具读。
+
 ## 建议设定格式
 
 设定文件（`settings/`）建议采用带明确起止标记的区块格式（如 XML 风格标签），以配合切片工具的 `from=` / `to=` 锚点按区块精确截取、注入上下文：

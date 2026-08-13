@@ -29,6 +29,7 @@
 - **React Router** 路由（布局层路由守卫）
 - **Tailwind CSS v4** + OKLCH 色彩空间 + 暗黑模式
 - **pnpm** 进行包管理，严禁混用npm
+- **前端检查以 `build` 为准**：验证前端改动时直接 `pnpm run build`（即 `tsc -b && vite build`），不要只做 `tsc --noEmit` 之类的语法/类型检查——`tsc -b` 走 project references 全量检查，比 `tsc --noEmit` 严格，后者会漏报错误
 - **⚠️ 禁止使用浏览器原生弹窗**（`alert`、`confirm`、`prompt`），一律使用 `ConfirmDialog` 组件（`@/components/ConfirmDialog`）
 
 ## 项目定位
@@ -259,13 +260,13 @@ teahouse.md          实例配置文件，始终实时注入导演上下文
 static_settings/     长期静态设定（gitignore，不入 git）——背景板、修为分段、势力、时代特征。只读引用，不建议修改
   world.md
   characters.md
-skills/              Skill 包，每个子目录一个 Skill
-  <skill-name>/
-    SKILL.md          Skill 元数据 + 完整指令（Load 阶段读取）
-    examples/         可选，示例文件
-    references/       可选，参考文档
-    scripts/          可选，可执行脚本
 .teahouse/            引擎内部目录
+  skills/             Skill 包，每个子目录一个 Skill（实例自建 skill 放这里，同名覆盖系统 skill）
+    <skill-name>/
+      SKILL.md          Skill 元数据 + 完整指令（Load 阶段读取）
+      examples/         可选，示例文件
+      references/       可选，参考文档
+      scripts/          可选，可执行脚本
   runtime_vars.jsonl   变量系统（文件即状态，SetRuntimeVar/GetRuntimeVars，一变量一行 jsonl，可带 note/change_log）
   dyn_settings/        动态设定（入 git，总结产出）——关系、当前所在地、任务进展等可变状态
     characters.md
@@ -293,7 +294,7 @@ assets/              静态资源（图片、字体、音频等）
 
 系统提示词中通过 `_scan_tree()` 动态注入目录树，规则如下：
 
-- 所有目录都**只显示一行目录名**（不展开），如 `├── static_settings/`、`├── skills/`
+- 所有目录都**只显示一行目录名**（不展开，`.teahouse/` 除外——它被完整展开），如 `├── static_settings/`、`├── .teahouse/`
 - `output/floors/` 显示特殊统计信息，如 `output/floors/  (Latest floor: 009 (9 floors); Last summary covered floors 1~5; 4 floors unsummarized)`
 - 根目录文件逐行列出
 - 排除 `.git`、`__pycache__`、`sessions`、`building` 等内部/元工作目录
