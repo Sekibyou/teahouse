@@ -6,7 +6,7 @@ import {
   ChevronRight, ChevronDown, Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
-  GitBranch, Sun, Moon, Settings, ArrowLeft, Upload,
+  GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -92,8 +92,10 @@ export function WorkspacePage() {
   const [showCreate, setShowCreate] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [createName, setCreateName] = useState("")
 
-  // Rename / delete — not yet implemented, but structure ready
+  // Rename / delete
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<string | null>(null)
+  const [renameName, setRenameName] = useState("")
 
   // Export prototype state
   const [showExportDialog, setShowExportDialog] = useState(false)
@@ -239,6 +241,31 @@ export function WorkspacePage() {
       setFileContent("")
       setEditedContent("")
       setIsDirty(false)
+    }
+    await refresh({ editor: false, clearDirty: false })
+  }
+
+  const handleRenameEntry = (path: string) => {
+    setRenameTarget(path)
+    setRenameName(path.split("/").pop() || "")
+  }
+
+  const confirmRename = async () => {
+    if (!instId || !renameTarget) return
+    const oldPath = renameTarget
+    const newName = renameName.trim()
+    setRenameTarget(null)
+    setRenameName("")
+    if (!newName || newName === oldPath.split("/").pop()) return
+    const res = await instancesApi.renameEntry(instId, oldPath, newName)
+    if (!res.ok) return
+    // Remap the open file if it is the renamed entry or lives under a renamed directory
+    if (selectedFile === oldPath || selectedFile?.startsWith(oldPath + "/")) {
+      const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : ""
+      const newPath = parent ? `${parent}/${newName}` : newName
+      setSelectedFile(
+        selectedFile === oldPath ? newPath : newPath + selectedFile!.slice(oldPath.length),
+      )
     }
     await refresh({ editor: false, clearDirty: false })
   }
@@ -542,6 +569,7 @@ export function WorkspacePage() {
                     onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                     onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
                     onDelete={handleDeleteEntry}
+                    onRename={handleRenameEntry}
                     onUpload={handleUploadClick}
                     fileStatuses={fileStatuses}
                     isMobile
@@ -655,6 +683,29 @@ export function WorkspacePage() {
           </div>
         )}
 
+        {/* Rename dialog */}
+        {renameTarget && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
+            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+              <h3 className="font-semibold">重命名</h3>
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">位置：{renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/"}</p>
+                <Input
+                  value={renameName}
+                  onChange={e => setRenameName(e.target.value)}
+                  placeholder="新名称"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>取消</Button>
+                <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>确定</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Confirm delete dialog */}
         <ConfirmDialog
           open={deleteTarget !== null}
@@ -749,28 +800,28 @@ export function WorkspacePage() {
               </span>
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
-                  className="p-0.5 rounded hover:bg-muted"
+                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportAuthor(""); setExportVersion("1.0.0"); setExportError("") }}
                   title="导出为原型"
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  className="p-0.5 rounded hover:bg-muted"
+                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
                   title="新建文件"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  className="p-0.5 rounded hover:bg-muted"
+                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
                   title="新建文件夹"
                 >
                   <Folder className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  className="p-0.5 rounded hover:bg-muted"
+                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => handleUploadClick("")}
                   title="上传文件到根目录"
                 >
@@ -803,6 +854,7 @@ export function WorkspacePage() {
                   onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                   onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
                   onDelete={handleDeleteEntry}
+                  onRename={handleRenameEntry}
                   onUpload={handleUploadClick}
                   fileStatuses={fileStatuses}
                 />
@@ -932,6 +984,29 @@ export function WorkspacePage() {
         </div>
       )}
 
+      {/* Rename dialog */}
+      {renameTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
+          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold">重命名</h3>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">位置：{renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/"}</p>
+              <Input
+                value={renameName}
+                onChange={e => setRenameName(e.target.value)}
+                placeholder="新名称"
+                autoFocus
+                onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>取消</Button>
+              <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>确定</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirm delete dialog */}
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -1014,7 +1089,7 @@ export function WorkspacePage() {
 
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
-  onCreateFile, onCreateFolder, onDelete, onUpload, fileStatuses, depth = 0, isMobile = false,
+  onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -1024,6 +1099,7 @@ function FileTreeView({
   onCreateFile: (parentPath: string) => void
   onCreateFolder: (parentPath: string) => void
   onDelete: (path: string) => void
+  onRename: (path: string) => void
   onUpload: (parentPath: string) => void
   fileStatuses: Map<string, string>
   depth?: number
@@ -1089,21 +1165,21 @@ function FileTreeView({
               {node.type === "directory" && (
                 <>
                   <button
-                    className="p-0.5 rounded hover:bg-muted"
+                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onCreateFile(node.path) }}
                     title="新建文件"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
                   <button
-                    className="p-0.5 rounded hover:bg-muted"
+                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onCreateFolder(node.path) }}
                     title="新建文件夹"
                   >
                     <Folder className="h-3 w-3" />
                   </button>
                   <button
-                    className="p-0.5 rounded hover:bg-muted"
+                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onUpload(node.path) }}
                     title="上传文件到此处"
                   >
@@ -1112,7 +1188,14 @@ function FileTreeView({
                 </>
               )}
               <button
-                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500"
+                className="p-0.5 rounded hover:bg-muted cursor-pointer"
+                onClick={e => { e.stopPropagation(); onRename(node.path) }}
+                title="重命名"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500 cursor-pointer"
                 onClick={e => { e.stopPropagation(); onDelete(node.path) }}
                 title="删除"
               >
@@ -1132,6 +1215,7 @@ function FileTreeView({
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
               onDelete={onDelete}
+              onRename={onRename}
               onUpload={onUpload}
               fileStatuses={fileStatuses}
               depth={depth + 1}

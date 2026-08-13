@@ -43,6 +43,7 @@ from ..database.workspaces import (
     write_asset,
     delete_file_or_dir,
     create_file_or_dir,
+    rename_file_or_dir,
     update_floor_count,
     update_instance_name,
     update_summary_index,
@@ -118,6 +119,10 @@ class FileCreateRequest(BaseModel):
 
 class FileWriteRequest(BaseModel):
     content: str
+
+
+class FileRenameRequest(BaseModel):
+    new_name: str
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +817,38 @@ async def delete_instance_entry(
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/instances/{instance_id}/files/rename")
+async def rename_instance_entry(
+    instance_id: str,
+    body: FileRenameRequest,
+    path: str = Query(..., description="Path relative to instance root"),
+    user: UserInfo = Depends(require_user),
+):
+    """Rename a file or directory (same parent, new basename)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        new_path = rename_file_or_dir(instance_dir, path, body.new_name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not found")
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=f"目标已存在：{e}")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state.broadcast(
+        "file_changed",
+        {"path": new_path, "tool": "RenameFile", "instance_id": instance_id},
+    )
+    return {"path": new_path, "status": "renamed"}
 
 
 class ToolsRunStep(BaseModel):

@@ -252,6 +252,13 @@ export const instancesApi = {
     return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(path)}`)
   },
 
+  renameEntry: async (instanceId: string, path: string, newName: string) => {
+    return patch<{ path: string; status: string }>(
+      `/api/instances/${instanceId}/files/rename?path=${encodeURIComponent(path)}`,
+      { new_name: newName },
+    )
+  },
+
   // Director session memory (.sessions/) — unified for all sessions
   getSessionMemory: async (instanceId: string, sessionId: string = "main", opts?: { limit?: number; offset?: number }) => {
     const params = new URLSearchParams()

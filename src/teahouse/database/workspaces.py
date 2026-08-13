@@ -741,6 +741,21 @@ def create_file_or_dir(instance_dir: Path, file_path: str, item_type: str) -> No
         full.write_text("", encoding="utf-8")
 
 
+def rename_file_or_dir(instance_dir: Path, file_path: str, new_name: str) -> str:
+    """Rename a file or directory (same parent, new basename). Returns the new relative path."""
+    full = _resolve_full(instance_dir, file_path)
+    if not full.exists():
+        raise FileNotFoundError(file_path)
+    new_name = new_name.strip()
+    if not new_name or "/" in new_name or "\\" in new_name:
+        raise ValueError("新名称不能为空，且不能包含路径分隔符")
+    new_full = full.parent / new_name
+    if new_full.exists():
+        raise FileExistsError(new_name)
+    full.rename(new_full)
+    return str(new_full.relative_to(instance_dir.resolve())).replace("\\", "/")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
