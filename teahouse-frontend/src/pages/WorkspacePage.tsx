@@ -64,8 +64,12 @@ export function WorkspacePage() {
   const [fileContent, setFileContent] = useState("")
   const [editedContent, setEditedContent] = useState("")
   const [isDirty, setIsDirty] = useState(false)
+  // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
+  const [editorEpoch, setEditorEpoch] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const initialLoadRef = useRef(true)
+  // 文件加载/重载请求序号，丢弃过期响应（快速连点不同文件防串号）
+  const loadSeqRef = useRef(0)
   const [isSaving, setIsSaving] = useState(false)
   const [saveToast, setSaveToast] = useState<boolean>(false)
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -154,39 +158,15 @@ export function WorkspacePage() {
   // Diff content from git HEAD (null = new file → treat as empty for diff)
   const [gitHeadContent, setGitHeadContent] = useState<string | null>(null)
 
-  // Load file content when selected
+  // File content is loaded by `openFile` (load-first + key remount). Reset the
+  // editor state whenever the instance changes.
   useEffect(() => {
-    if (!instId || !selectedFile) {
-      setFileContent("")
-      setEditedContent("")
-      setGitHeadContent("")
-      setIsDirty(false)
-      setSaveToast(false)
-      return
-    }
-    ;(async () => {
-      const [fileRes, headRes] = await Promise.all([
-        instancesApi.readText(instId, selectedFile),
-        gitApi.showFile(instId, selectedFile),
-      ])
-      if (fileRes.ok) {
-        const diskContent = fileRes.data!.content
-        setFileContent(diskContent)
-        setEditedContent(diskContent)
-        // git HEAD content: null if file doesn't exist in HEAD (new/untracked)
-        const headContent = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
-        setGitHeadContent(headContent)
-        setIsDirty(false)
-      } else {
-        // File no longer exists — clear editor
-        setSelectedFile(null)
-        setFileContent("")
-        setEditedContent("")
-        setGitHeadContent("")
-        setIsDirty(false)
-      }
-    })()
-  }, [instId, selectedFile])
+    setSelectedFile(null)
+    setFileContent("")
+    setEditedContent("")
+    setGitHeadContent("")
+    setIsDirty(false)
+  }, [instId])
 
   // Ctrl+S to save
   useEffect(() => {
@@ -209,7 +189,6 @@ export function WorkspacePage() {
     if (res.ok) {
       setFileContent(editedContent)
       setIsDirty(false)
-      refresh({ fileTree: false, editor: false, clearDirty: false })
       if (instId) useGitStore.getState().fetchGitStatus(instId)
       showSaveToast()
     }
@@ -224,7 +203,7 @@ export function WorkspacePage() {
     await instancesApi.createEntry(instId, fullPath, showCreate.type)
     setShowCreate(null)
     setCreateName("")
-    await refresh({ editor: false, clearDirty: false })
+    await refresh()
   }
 
   const handleDeleteEntry = async (path: string) => {
@@ -242,7 +221,7 @@ export function WorkspacePage() {
       setEditedContent("")
       setIsDirty(false)
     }
-    await refresh({ editor: false, clearDirty: false })
+    await refresh()
   }
 
   const handleRenameEntry = (path: string) => {
@@ -267,7 +246,7 @@ export function WorkspacePage() {
         selectedFile === oldPath ? newPath : newPath + selectedFile!.slice(oldPath.length),
       )
     }
-    await refresh({ editor: false, clearDirty: false })
+    await refresh()
   }
 
   const handleUploadClick = (parentPath: string) => {
@@ -283,7 +262,7 @@ export function WorkspacePage() {
     const fullPath = dir ? `${dir}/${file.name}` : file.name
     const res = await instancesApi.uploadFile(instId, fullPath, file)
     if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
-    await refresh({ editor: false, clearDirty: false })
+    await refresh()
   }
 
   const handleExport = async () => {
@@ -315,17 +294,63 @@ export function WorkspacePage() {
   const isDirtyRef = useRef(isDirty)
   isDirtyRef.current = isDirty
 
+  // Keep refs for the loaded baseline + git HEAD so async reloads can compare
+  // against current state without taking a dependency on them.
+  const fileContentRef = useRef(fileContent)
+  fileContentRef.current = fileContent
+  const gitHeadContentRef = useRef(gitHeadContent)
+  gitHeadContentRef.current = gitHeadContent
+
+  // Load a file (content + git HEAD) then open it. Loads first so Monaco mounts
+  // once with the correct defaultValue and a clean undo stack.
+  const openFile = useCallback(async (path: string) => {
+    if (!instId || path === selectedFileRef.current) return
+    const seq = ++loadSeqRef.current
+    const [fileRes, headRes] = await Promise.all([
+      instancesApi.readText(instId, path),
+      gitApi.showFile(instId, path),
+    ])
+    if (seq !== loadSeqRef.current) return // stale response
+    if (!fileRes.ok) return // file gone; keep current selection
+    setFileContent(fileRes.data!.content)
+    setEditedContent(fileRes.data!.content)
+    setGitHeadContent(headRes.ok && headRes.data?.content != null ? headRes.data.content : "")
+    setIsDirty(false)
+    setSelectedFile(path)
+  }, [instId])
+
+  // Reload the open file from disk (external change). Remounts only when content
+  // or git HEAD actually changed, so unrelated git commits don't reset the editor.
+  const reloadOpenFile = useCallback(async () => {
+    if (!instId) return
+    const path = selectedFileRef.current
+    if (!path) return
+    const seq = ++loadSeqRef.current
+    const [fileRes, headRes] = await Promise.all([
+      instancesApi.readText(instId, path),
+      gitApi.showFile(instId, path),
+    ])
+    if (seq !== loadSeqRef.current) return
+    if (!fileRes.ok) {
+      setSelectedFile(null)
+      setFileContent("")
+      setEditedContent("")
+      setGitHeadContent("")
+      setIsDirty(false)
+      return
+    }
+    const content = fileRes.data!.content
+    const head = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
+    if (content === fileContentRef.current && head === gitHeadContentRef.current) return
+    setFileContent(content)
+    setEditedContent(content)
+    setGitHeadContent(head)
+    setIsDirty(false)
+    setEditorEpoch((e) => e + 1)
+  }, [instId])
+
   // Unified refresh hook
-  const refresh = useWorkspaceRefresh({
-    instId,
-    selectedFileRef,
-    loadFileTree,
-    setFileContent,
-    setEditedContent,
-    setGitHeadContent,
-    setIsDirty,
-    setSelectedFile,
-  })
+  const refresh = useWorkspaceRefresh({ instId, loadFileTree })
 
   // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
   useSSERefresh({
@@ -335,67 +360,27 @@ export function WorkspacePage() {
       if (!path) {
         // empty path means the changed file is the currently open one
         // AND it's dirty — just refresh tree + git, skip editor
-        refresh({ editor: false })
+        refresh()
         return
       }
       const currentFile = selectedFileRef.current
       if (currentFile && path === currentFile && isDirtyRef.current) {
         // Dirty file was modified externally — refresh tree + git but
         // preserve user's unsaved edits in the editor.
-        refresh({ editor: false })
+        refresh()
         return
       }
-      // Refresh tree + git, AND reload editor if this file is open
-      refresh({ editor: false })
+      refresh()
       if (currentFile && path === currentFile) {
-        // Update editor content in-place without unmounting Monaco.
-        instancesApi.readText(instId!, currentFile).then(fileRes => {
-          if (fileRes.ok) {
-            setFileContent(fileRes.data!.content)
-            setEditedContent(fileRes.data!.content)
-            setIsDirty(false)
-            gitApi.showFile(instId!, currentFile).then(headRes => {
-              if (headRes.ok) {
-                setGitHeadContent(headRes.data?.content ?? "")
-              }
-            })
-          } else {
-            // File no longer exists — clear editor
-            setSelectedFile(null)
-            setFileContent("")
-            setEditedContent("")
-            setGitHeadContent("")
-            setIsDirty(false)
-          }
-        })
+        reloadOpenFile()
       }
     },
     onWorkspaceChanged: () => {
-      // Full refresh: tree + git status, then re-read editor content
-      // in-place without unmounting Monaco (avoids "InstantiationService
-      // has been disposed" when events arrive rapidly).
-      refresh({ editor: false })
-      const currentFile = selectedFileRef.current
-      if (currentFile && instId) {
-        instancesApi.readText(instId, currentFile).then(fileRes => {
-          if (fileRes.ok) {
-            setFileContent(fileRes.data!.content)
-            setEditedContent(fileRes.data!.content)
-            setIsDirty(false)
-            gitApi.showFile(instId, currentFile).then(headRes => {
-              if (headRes.ok) {
-                setGitHeadContent(headRes.data?.content ?? "")
-              }
-            })
-          } else {
-            // File no longer exists — clear editor
-            setSelectedFile(null)
-            setFileContent("")
-            setEditedContent("")
-            setGitHeadContent("")
-            setIsDirty(false)
-          }
-        })
+      // Full refresh: tree + git status, then reload the open file if it isn't
+      // dirty (external commit / branch switch). Dirty edits are preserved.
+      refresh()
+      if (selectedFileRef.current && !isDirtyRef.current) {
+        reloadOpenFile()
       }
     },
 
@@ -464,7 +449,7 @@ export function WorkspacePage() {
           <div className="absolute inset-0 z-50 bg-background flex flex-col">
             <div className="flex-1 flex flex-col min-h-0">
               <ChatPanel
-                onGitRefresh={() => refresh({ editor: false })}
+                onGitRefresh={() => refresh()}
                 onClosePanel={() => setFullscreenPanel(null)}
               />
             </div>
@@ -476,7 +461,7 @@ export function WorkspacePage() {
             instanceId={instId!}
             open={true}
             onClose={() => setFullscreenPanel(null)}
-            onRefresh={() => { refresh({ editor: false }); setFullscreenPanel(null) }}
+            onRefresh={() => { refresh(); setFullscreenPanel(null) }}
           />
         )}
 
@@ -558,13 +543,8 @@ export function WorkspacePage() {
                     selectedFile={selectedFile}
                     onToggle={toggleExpand}
                     onSelect={(path) => {
-                      if (path === selectedFile) return
-                      setEditedContent("")
-                      setFileContent("")
-                      setGitHeadContent("")
-                      setIsDirty(false)
-                      setSelectedFile(path)
                       setShowFileTree(false)
+                      openFile(path)
                     }}
                     onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                     onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
@@ -842,14 +822,7 @@ export function WorkspacePage() {
                   selectedFile={selectedFile}
                   onToggle={toggleExpand}
                   onSelect={(path) => {
-                    if (path === selectedFile) return
-                    // Reset content immediately so the editor shows a blank
-                    // slate while the new file loads.
-                    setEditedContent("")
-                    setFileContent("")
-                    setGitHeadContent("")
-                    setIsDirty(false)
-                    setSelectedFile(path)
+                    openFile(path)
                   }}
                   onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
                   onCreateFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName("") }}
@@ -880,8 +853,9 @@ export function WorkspacePage() {
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
                   <MonacoEditor
+                    key={`${selectedFile}#${editorEpoch}`}
                     path={selectedFile}
-                    value={editedContent}
+                    defaultValue={fileContent}
                     original={gitHeadContent ?? ""}
                     onSave={handleSave}
                     onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
@@ -938,7 +912,7 @@ export function WorkspacePage() {
           >
             <div className="flex-1 flex flex-col min-h-0">
               <ChatPanel
-                onGitRefresh={() => refresh({ editor: false })}
+                onGitRefresh={() => refresh()}
                 onClosePanel={() => setChatCollapsed(true)}
               />
             </div>

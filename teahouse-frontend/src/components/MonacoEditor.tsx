@@ -214,7 +214,9 @@ function computeLineDecorations(original: string, modified: string): Monaco.edit
 
 export interface MonacoEditorProps {
   height?: string | number
-  value: string
+  /** Content to seed the buffer on mount. Uncontrolled: the editor owns the
+   *  buffer afterwards; external changes arrive via a `key` remount. */
+  defaultValue?: string
   onChange?: (value: string) => void
   /** Original (saved) value — enables inline diff gutters */
   original?: string
@@ -232,7 +234,7 @@ export interface MonacoEditorProps {
 
 export function MonacoEditor({
   height = "100%",
-  value,
+  defaultValue = "",
   onChange,
   original,
   path,
@@ -248,6 +250,8 @@ export function MonacoEditor({
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
   const [editorReady, setEditorReady] = useState(false)
+  // The editor's own buffer, mirrored only to drive diff decorations.
+  const [currentValue, setCurrentValue] = useState(defaultValue)
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
@@ -255,38 +259,9 @@ export function MonacoEditor({
     defineThemes(monaco)
     monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
 
-    // The library creates a model for `path`; the value effect below keeps it
-    // in sync when content loads async or a file switch hands us a new path.
     setEditorReady(true)
     onMount?.(editor, monaco)
   }, [])  // only on initial mount
-
-  // Push value into the model when it changes (e.g. file content loaded async
-  // after the editor has already mounted with the same path but empty value,
-  // or when switching between files where the new file's content hasn't loaded yet).
-  // Must NOT use model.setValue(): it clears the whole undo stack
-  // (textModel._commandManager.clear()), so Ctrl+Z stops working after any
-  // SSE refresh / file switch that re-pushes content. executeEdits keeps the
-  // undo stack intact and lands the sync as a single undo step; pushUndoStop
-  // closes that step so the next user edit starts fresh.
-  // Note: executeEdits is a no-op on a readOnly editor, so don't wrap with a
-  // readOnly toggle.
-  useEffect(() => {
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco || !editorReady) return
-
-    const model = editor.getModel()
-    if (!model) return
-
-    if (model.getValue(monaco.editor.EndOfLinePreference.LF) === value) return
-
-    editor.executeEdits(
-      "teahouse-sync",
-      [{ range: model.getFullModelRange(), text: value, forceMoveMarkers: true }],
-    )
-    editor.pushUndoStop()
-  }, [value, editorReady])
 
   // Theme following via MutationObserver
   useEffect(() => {
@@ -322,10 +297,11 @@ export function MonacoEditor({
     const editor = editorRef.current
     if (!editor) return
 
-    // Normalize trailing newlines for comparison — Monaco models always end with \n,
-    // which can cause a spurious empty-line diff when original lacks a trailing newline.
-    const norm = (s: string | undefined) => (s || "").replace(/\r\n/g, "\n").trimEnd()
-    const normalizedValue = norm(value)
+    // Normalize line endings only. Trailing newline is a real content
+    // difference, so it is preserved (no trimEnd) — unlike the old
+    // spurious-empty-line workaround that hid a real change.
+    const norm = (s: string | undefined) => (s || "").replace(/\r\n/g, "\n")
+    const normalizedValue = norm(currentValue)
     const normalizedOriginal = norm(original)
 
     if (normalizedValue === normalizedOriginal) {
@@ -341,7 +317,7 @@ export function MonacoEditor({
       decorationsRef.current.clear()
     }
     decorationsRef.current = editor.createDecorationsCollection(decs)
-  }, [editorReady, value, original])
+  }, [editorReady, currentValue, original])
 
   const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
     minimap: { enabled: minimap },
@@ -371,12 +347,17 @@ export function MonacoEditor({
         height="100%"
         path={path}
         language={language}
+        defaultValue={defaultValue}
         loading={
           <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
             正在加载编辑器…
           </div>
         }
-        onChange={(val) => onChange?.(val || "")}
+        onChange={(val) => {
+          const v = val || ""
+          setCurrentValue(v)
+          onChange?.(v)
+        }}
         theme={isDarkMode() ? DARK_THEME : LIGHT_THEME}
         onMount={handleMount}
         options={mergedOptions}
