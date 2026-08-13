@@ -80,6 +80,11 @@ interface LineChangeBlock {
   modEnd: number
 }
 
+type DiffOp =
+  | { type: "equal"; a: number; b: number }
+  | { type: "insert"; b: number }
+  | { type: "delete"; a: number }
+
 function splitLines(s: string): string[] {
   return s === "" ? [] : s.split("\n")
 }
@@ -115,7 +120,7 @@ function diffLines(orig: string[], mod: string[]): LineChangeBlock[] {
     }
   }
 
-  const ops: Array<{ type: "equal" | "insert" | "delete"; a: number; b: number }> = []
+  const ops: DiffOp[] = []
   let x = n
   let y = m
   for (let i = trace.length - 1; i >= 1; i--) {
@@ -140,12 +145,13 @@ function diffLines(orig: string[], mod: string[]): LineChangeBlock[] {
     let firstIns = -1
     let lastIns = -1
     while (i < ops.length && ops[i].type !== "equal") {
-      if (ops[i].type === "delete") {
-        if (firstDel < 0) firstDel = ops[i].a
-        lastDel = ops[i].a
+      const op = ops[i]
+      if (op.type === "delete") {
+        if (firstDel < 0) firstDel = op.a
+        lastDel = op.a
       } else {
-        if (firstIns < 0) firstIns = ops[i].b
-        lastIns = ops[i].b
+        if (firstIns < 0) firstIns = op.b
+        lastIns = op.b
       }
       i++
     }
