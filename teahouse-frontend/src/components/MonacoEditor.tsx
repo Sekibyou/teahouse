@@ -71,75 +71,137 @@ function isDarkMode(): boolean {
   return document.documentElement.classList.contains("dark")
 }
 
-// ---- Inline diff decorations via headless Monaco DiffEditor ----
+// ---- Inline diff decorations via synchronous line diff ----
 
-async function computeLineDecorations(
-  monaco: typeof Monaco,
-  original: string,
-  modified: string,
-  language: string,
-): Promise<Monaco.editor.IModelDeltaDecoration[]> {
-  const container = document.createElement("div")
-  let diffEditor: Monaco.editor.IStandaloneDiffEditor | null = null
-  let originalModel: Monaco.editor.ITextModel | null = null
-  let modifiedModel: Monaco.editor.ITextModel | null = null
-  let vm: Monaco.editor.IDiffEditorViewModel | null = null
+interface LineChangeBlock {
+  origStart: number
+  origEnd: number
+  modStart: number
+  modEnd: number
+}
 
-  try {
-    diffEditor = monaco.editor.createDiffEditor(container, {
-      diffAlgorithm: "advanced",
-      ignoreTrimWhitespace: false,
-    })
-    originalModel = monaco.editor.createModel(original, language)
-    modifiedModel = monaco.editor.createModel(modified, language)
-    vm = diffEditor.createViewModel({ original: originalModel, modified: modifiedModel })
-    diffEditor.setModel(vm)
+function splitLines(s: string): string[] {
+  return s === "" ? [] : s.split("\n")
+}
 
-    await vm.waitForDiff()
-    const changes = diffEditor.getLineChanges()
-    if (!changes) return []
+// Myers O(ND) line diff, returning 1-based inclusive change blocks. We use this
+// instead of a headless monaco createDiffEditor: that path is async
+// (worker-backed) and creating/disposing one per keystroke races with editor
+// disposal, intermittently throwing "InstantiationService has been disposed".
+// A plain line diff is synchronous, has no editor/worker lifecycle, and yields
+// the same gutter decorations.
+function diffLines(orig: string[], mod: string[]): LineChangeBlock[] {
+  const n = orig.length
+  const m = mod.length
+  const max = n + m
+  const off = max
+  const v = new Int32Array(2 * max + 1)
+  const trace: Int32Array[] = []
 
-    return changes.flatMap(c => {
-      const decs: Monaco.editor.IModelDeltaDecoration[] = []
-
-      const origLen = c.originalEndLineNumber - c.originalStartLineNumber + 1
-      const modLen = c.modifiedEndLineNumber - c.modifiedStartLineNumber + 1
-      const isDelete = origLen > 0 && modLen === 0
-      const isInsert = origLen === 0 && modLen > 0
-
-      const replaced = Math.min(origLen, modLen)
-
-      for (let ln = c.modifiedStartLineNumber; ln <= c.modifiedEndLineNumber; ln++) {
-        const offset = ln - c.modifiedStartLineNumber
-        const type = isDelete ? "deleted"
-          : isInsert ? "added"
-          : offset < replaced ? "modified"
-          : "added"
-
-        decs.push({
-          range: { startLineNumber: ln, startColumn: 1, endLineNumber: ln, endColumn: 1 },
-          options: {
-            isWholeLine: true,
-            className: type === "deleted" ? "monaco-diff-deleted-line"
-              : type === "added" ? "monaco-diff-added-line"
-              : "monaco-diff-modified-line",
-            glyphMarginClassName: type === "deleted" ? "monaco-diff-glyph-deleted"
-              : type === "added" ? "monaco-diff-glyph-added"
-              : "monaco-diff-glyph-modified",
-            glyphMarginHoverMessage: {
-              value: type === "deleted" ? "删除行" : type === "added" ? "新增行" : "修改行",
-            },
-          },
-        })
+  let d = 0
+  outer: for (d = 0; d <= max; d++) {
+    trace.push(v.slice())
+    for (let k = -d; k <= d; k += 2) {
+      let x
+      if (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1])) {
+        x = v[off + k + 1]
+      } else {
+        x = v[off + k - 1] + 1
       }
-      return decs
-    })
-  } finally {
-    vm?.dispose()
-    diffEditor?.dispose()
-    originalModel?.dispose()
-    modifiedModel?.dispose()
+      let y = x - k
+      while (x < n && y < m && orig[x] === mod[y]) { x++; y++ }
+      v[off + k] = x
+      if (x >= n && y >= m) break outer
+    }
   }
+
+  const ops: Array<{ type: "equal" | "insert" | "delete"; a: number; b: number }> = []
+  let x = n
+  let y = m
+  for (let i = trace.length - 1; i >= 1; i--) {
+    const vv = trace[i]
+    const k = x - y
+    const prevK = k === -i || (k !== i && vv[off + k - 1] < vv[off + k + 1]) ? k + 1 : k - 1
+    const prevX = vv[off + prevK]
+    const prevY = prevX - prevK
+    while (x > prevX && y > prevY) { ops.push({ type: "equal", a: x - 1, b: y - 1 }); x--; y-- }
+    if (x === prevX) { ops.push({ type: "insert", b: y - 1 }); y-- }
+    else { ops.push({ type: "delete", a: x - 1 }); x-- }
+  }
+  while (x > 0 && y > 0) { ops.push({ type: "equal", a: x - 1, b: y - 1 }); x--; y-- }
+  ops.reverse()
+
+  const blocks: LineChangeBlock[] = []
+  let i = 0
+  while (i < ops.length) {
+    if (ops[i].type === "equal") { i++; continue }
+    let firstDel = -1
+    let lastDel = -1
+    let firstIns = -1
+    let lastIns = -1
+    while (i < ops.length && ops[i].type !== "equal") {
+      if (ops[i].type === "delete") {
+        if (firstDel < 0) firstDel = ops[i].a
+        lastDel = ops[i].a
+      } else {
+        if (firstIns < 0) firstIns = ops[i].b
+        lastIns = ops[i].b
+      }
+      i++
+    }
+    // 1-based inclusive; empty side encoded as start = end + 1.
+    blocks.push({
+      origStart: firstDel >= 0 ? firstDel + 1 : 1,
+      origEnd: firstDel >= 0 ? lastDel + 1 : 0,
+      modStart: firstIns >= 0 ? firstIns + 1 : 1,
+      modEnd: firstIns >= 0 ? lastIns + 1 : 0,
+    })
+  }
+  return blocks
+}
+
+function computeLineDecorations(original: string, modified: string): Monaco.editor.IModelDeltaDecoration[] {
+  const origLines = splitLines(original)
+  const modLines = splitLines(modified)
+  // Guard against pathological memory: the Myers trace grows with the edit
+  // distance, so two large, mostly-different files would balloon it. Beyond
+  // this size we skip the inline gutter diff rather than risk a hang.
+  if (origLines.length + modLines.length > 4000) return []
+  return diffLines(origLines, modLines).flatMap(c => {
+    const decs: Monaco.editor.IModelDeltaDecoration[] = []
+
+    const origLen = c.origEnd - c.origStart + 1
+    const modLen = c.modEnd - c.modStart + 1
+    const isDelete = origLen > 0 && modLen === 0
+    const isInsert = origLen === 0 && modLen > 0
+
+    const replaced = Math.min(origLen, modLen)
+
+    for (let ln = c.modStart; ln <= c.modEnd; ln++) {
+      const offset = ln - c.modStart
+      const type = isDelete ? "deleted"
+        : isInsert ? "added"
+        : offset < replaced ? "modified"
+        : "added"
+
+      decs.push({
+        range: { startLineNumber: ln, startColumn: 1, endLineNumber: ln, endColumn: 1 },
+        options: {
+          isWholeLine: true,
+          className: type === "deleted" ? "monaco-diff-deleted-line"
+            : type === "added" ? "monaco-diff-added-line"
+            : "monaco-diff-modified-line",
+          glyphMarginClassName: type === "deleted" ? "monaco-diff-glyph-deleted"
+            : type === "added" ? "monaco-diff-glyph-added"
+            : "monaco-diff-glyph-modified",
+          glyphMarginHoverMessage: {
+            value: type === "deleted" ? "删除行" : type === "added" ? "新增行" : "修改行",
+          },
+        },
+      })
+    }
+    return decs
+  })
 }
 
 // ---- Editor component ----
@@ -179,15 +241,7 @@ export function MonacoEditor({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
-  const disposedRef = useRef(false)
   const [editorReady, setEditorReady] = useState(false)
-  const currentModelRef = useRef<Monaco.editor.ITextModel | null>(null)
-
-  // Reset disposed flag on mount, set on unmount
-  useEffect(() => {
-    disposedRef.current = false
-    return () => { disposedRef.current = true }
-  }, [])
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
@@ -195,12 +249,8 @@ export function MonacoEditor({
     defineThemes(monaco)
     monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
 
-    // The library creates a model with the correct URI since we pass
-    // `path` to <Editor>, but the value may still be empty. The
-    // value-push effect below will fill in the content without adding
-    // to the undo stack, so Ctrl+Z doesn't go back to an empty file.
-    currentModelRef.current = editor.getModel()
-
+    // The library creates a model for `path`; the value effect below keeps it
+    // in sync when content loads async or a file switch hands us a new path.
     setEditorReady(true)
     onMount?.(editor, monaco)
   }, [])  // only on initial mount
@@ -264,8 +314,7 @@ export function MonacoEditor({
   useEffect(() => {
     if (!editorReady) return
     const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco) return
+    if (!editor) return
 
     // Normalize trailing newlines for comparison — Monaco models always end with \n,
     // which can cause a spurious empty-line diff when original lacks a trailing newline.
@@ -281,24 +330,12 @@ export function MonacoEditor({
       return
     }
 
-    let cancelled = false
-    computeLineDecorations(monaco, normalizedOriginal, normalizedValue, language).then(decs => {
-      if (cancelled || disposedRef.current) return
-      if (decorationsRef.current) {
-        decorationsRef.current.clear()
-      }
-      // Guard: editor may have been disposed between when we started the diff
-      // computation and now (e.g. rapid file switching). createDecorationsCollection
-      // on a disposed editor throws "InstantiationService has been disposed".
-      try {
-        decorationsRef.current = editor.createDecorationsCollection(decs)
-      } catch {
-        // editor disposed — decorations are irrelevant
-      }
-    })
-
-    return () => { cancelled = true }
-  }, [editorReady, value, original, language])
+    const decs = computeLineDecorations(normalizedOriginal, normalizedValue)
+    if (decorationsRef.current) {
+      decorationsRef.current.clear()
+    }
+    decorationsRef.current = editor.createDecorationsCollection(decs)
+  }, [editorReady, value, original])
 
   const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
     minimap: { enabled: minimap },
