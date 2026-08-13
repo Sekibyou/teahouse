@@ -112,6 +112,20 @@ def load_tools(path: Path | None = None, user_id: str | None = None) -> list[dic
     return TOOLS
 
 
+def load_tools_summary() -> list[dict]:
+    """Return ``[{name, short}]`` for the builtin tools.
+
+    Used by the frontend's permission autocomplete (sub-session tool picker).
+    ``short`` is a one-line label from tools.json; falls back to ``description``
+    when a tool lacks a ``short`` field.
+    """
+    raw = json.loads(_TOOLS_JSON_PATH.read_text(encoding="utf-8"))
+    return [
+        {"name": t["name"], "short": t.get("short") or t.get("description", "")}
+        for t in raw
+    ]
+
+
 async def load_tools_usage(path: Path | None = None, user_id: str | None = None) -> str:
     """Build the natural-language tool usage guide from tools.json.
 
@@ -567,6 +581,9 @@ async def execute_start_sub_session(instance_dir: Path, args: dict[str, Any], se
     if effort:
         meta["reasoning_effort"] = effort
     _write_meta(instance_dir, child, meta)
+    # 立即产出空 JSONL，使会话在 list_sessions 中立即可见
+    from .sessions import resolve_session_path
+    resolve_session_path(instance_dir, child).touch(exist_ok=True)
 
     # Enqueue the task into the child's session loop. The loop persists it to
     # jsonl and starts processing immediately.
@@ -1547,11 +1564,17 @@ TOOL_EXECUTORS = {
 # Sub-session default tool grants. A child session may only call the tools on
 # its `enabled_tools` list; if the list is absent, these read-only + bookkeeping
 # tools are the baseline. Report is always allowed (its only output is temp/).
+# Read-only toolset: 文件读取/搜索、Skill 教学、变量读取、git 只读（log/diff/status）。
+# 写正式区（Write/Edit/Generate/GitCommit 等）一律不默认给，需要显式 add。
 SUB_SESSION_BASE_TOOLS = {
     "Read",
     "Glob",
     "Grep",
+    "SkillRead",
     "GetRuntimeVars",
+    "GitStatus",
+    "GitLog",
+    "GitDiff",
     "Report",
     "EndSession",
 }

@@ -827,6 +827,18 @@ class ToolsRunRequest(BaseModel):
 _MAX_INLINE_STEPS = 50
 
 
+@router.get("/tools")
+async def list_available_tools(user: UserInfo = Depends(require_user)):
+    """Return builtin tool ``[{name, short}]`` for the frontend permission autocomplete.
+
+    Sources from tools.json (the single source of truth). ``short`` is a one-line
+    label; falls back to ``description`` when absent.
+    """
+    from ..tools import load_tools_summary
+    await require_user_info(user)
+    return {"tools": load_tools_summary()}
+
+
 @router.post("/instances/{instance_id}/tools/run")
 async def run_instance_tools(
     instance_id: str,
@@ -1117,7 +1129,7 @@ async def create_session(
     """Create a session for the instance. Returns its session_id.
 
     ``enabled_tools`` sets the session's tool allow-list. When omitted, the
-    read-only baseline (Read/Glob/Grep/GetRuntimeVars/Report/EndSession) applies.
+    read-only baseline (Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession) applies.
     ``reasoning_effort`` (optional) sets the child session's thinking strength.
     """
     u = await require_user_info(user)
@@ -1128,18 +1140,21 @@ async def create_session(
 
     from ..tools import SUB_SESSION_BASE_TOOLS
     from ..reasoning import validate_effort
-    from ..sessions import MAIN_SESSION_ID, ensure_meta
+    from ..sessions import MAIN_SESSION_ID, ensure_meta, resolve_session_path
     session_id = f"session-{uuid.uuid4().hex[:4]}"
     enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
     meta = {"enabled_tools": enabled}
     if validate_effort(body.reasoning_effort):
         meta["reasoning_effort"] = validate_effort(body.reasoning_effort)
     ensure_meta(instance_dir, session_id, meta)
+    # 立即产出空 JSONL，使会话在 list_sessions 中立即可见（无需等第一条消息落盘）
+    resolve_session_path(instance_dir, session_id).touch(exist_ok=True)
     state.broadcast("session_created", {
         "instance_id": instance_id,
         "session_id": session_id,
         "parent_session_id": None,
         "parent_await_result": False,
+        "enabled_tools": enabled,
     })
     return {"session_id": session_id, "enabled_tools": enabled, "reasoning_effort": meta.get("reasoning_effort")}
 
@@ -1214,6 +1229,53 @@ async def get_session_reasoning_effort(
     effort = await resolve_session_effort(instance_dir, session_id, u["id"])
     scope = "session" if session_id != MAIN_SESSION_ID else "user"
     return {"session_id": session_id, "reasoning_effort": effort, "scope": scope}
+
+
+class PermissionRequest(BaseModel):
+    action: str  # "add" | "remove"
+    tools: list[str] = []
+
+
+@router.post("/instances/{instance_id}/sessions/{session_id}/permissions")
+async def set_session_permissions(
+    instance_id: str,
+    session_id: str,
+    body: PermissionRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Add/remove tools from a child session's ``enabled_tools`` allow-list.
+
+    ``action`` is ``add`` (union with the current list) or ``remove``
+    (difference). Persisted in the child session's ``.meta.json``; the next tool
+    loop reads it fresh, so changes take effect without recreating the session.
+    The main session is unrestricted and rejects this endpoint.
+    """
+    from ..sessions import MAIN_SESSION_ID, ensure_meta, save_meta
+    from ..tools import TOOL_EXECUTORS, SUB_SESSION_BASE_TOOLS
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    if session_id == MAIN_SESSION_ID:
+        raise HTTPException(status_code=400, detail="Permission changes only apply to child sessions")
+    if body.action not in ("add", "remove"):
+        raise HTTPException(status_code=422, detail="action must be 'add' or 'remove'")
+
+    tools = sorted({t for t in body.tools if isinstance(t, str) and t})
+    unknown = [t for t in tools if t not in TOOL_EXECUTORS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown tools: {', '.join(unknown)}")
+
+    instance_dir = _resolve_instance_dir(inst)
+    meta = ensure_meta(instance_dir, session_id)
+    current = set(meta.get("enabled_tools") or SUB_SESSION_BASE_TOOLS)
+    if body.action == "add":
+        current |= set(tools)
+    else:
+        current -= set(tools)
+    meta["enabled_tools"] = sorted(current)
+    save_meta(instance_dir, session_id, meta)
+    return {"session_id": session_id, "enabled_tools": meta["enabled_tools"]}
 
 
 @router.post("/instances/{instance_id}/sessions/{session_id}/interrupt")

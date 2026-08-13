@@ -336,7 +336,7 @@ Teahouse.runTool([
 var sid;
 
 // ① 创建子会话 + 设立权限,拿到 sid
-//   enabled_tools 未给 = 默认只读基础集(Read/Glob/Grep/GetRuntimeVars/Report/EndSession);
+//   enabled_tools 未给 = 默认只读基础集(Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession);
 //   按任务放开权限,例如允许改变量/写 temp 草稿/生成正文:
 Teahouse.sessionCreate({
   enabled_tools: ["Read", "Glob", "Grep", "GetRuntimeVars", "SetRuntimeVar", "Report", "Generate", "EndSession"]
@@ -367,7 +367,7 @@ function listenDone() {
 **等待期间不要傻等**：装完"建 → 送 → 挂"之后立即放回控制权,别在 `session_done` 到达前做会与之冲突的事；若子会话产出了正文/文件,宿主会照常推 `output.refresh`,沙盒据此重渲染即可。
 
 API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成败、`res.error` 取错误理由）：
-- `Teahouse.sessionCreate(opts)` → `Promise<{ok, data:{session_id, enabled_tools}, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/GetRuntimeVars/Report/EndSession)。只建号、不投任务;成功同步落盘 meta,**创建后即可立即 `sessionSend`,无需等就绪**。
+- `Teahouse.sessionCreate(opts)` → `Promise<{ok, data:{session_id, enabled_tools}, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession)。只建号、不投任务;成功同步落盘 meta,**创建后即可立即 `sessionSend`,无需等就绪**。
 - `Teahouse.sessionSend(session_id, message)` → `Promise<{ok, data:true, error?}>`,把消息补发给指定子会话(等价于向该会话发一条 user 消息,但隔离上下文);任务与追加指令都走它。
 - `Teahouse.sessionDestroy(session_id, abort?)` → `Promise<{ok, data:true, error?}>`,销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。回收要你主动调,`session_done` 不会销毁。
 - 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。**注意**:`sessionSend` 成功时返回的是 `{ok:true, data:true}`,不是 `true` 裸布尔——沙盒侧务必用 `res.ok` 判断,不要写 `res === true` 或 `res.ok === undefined` 这类旧假设。

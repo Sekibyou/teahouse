@@ -1,6 +1,7 @@
 [
   {
     "name": "Read",
+    "short": "读取文件内容",
     "description": "读取文件内容，支持指定行范围",
     "usage": "读取文件内容，支持指定行范围。用于在操作前了解文件当前状态。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 settings/world.yaml、floors/floor-001.md\n- `offset`（可选）：起始行号，从 1 开始。不指定则从文件开头读取\n- `limit`（可选）：最大读取行数。不指定则读取 offset 之后的所有行\n\n注意：path 必须指向文件，读取目录会报错。",
     "parameters": {
@@ -23,6 +24,7 @@
   },
   {
     "name": "Write",
+    "short": "覆写/创建文件",
     "description": "写入文件内容（覆盖式），自动创建父目录",
     "usage": "写入文件内容（覆盖式）。如果文件已存在则完全覆盖，不存在则创建。会自动创建必要的父目录。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 floors/floor-003.md\n- `content`（必填）：写入的文件内容\n- `resolve_placeholders`（可选）：是否解析 content 中的 {{path}} 占位符。默认 false。设为 true 时可用于复制/拼接文件：Write(path=\"copy.md\", content=\"{{source.md:1-50}}\", resolve_placeholders=true)\n\n注意：仅在需要完全重写文件时使用。增量修改请优先使用 Edit 或 WriteLine。",
     "parameters": {
@@ -46,6 +48,7 @@
   },
   {
     "name": "Edit",
+    "short": "精确字符串替换",
     "description": "精确字符串替换，支持全局替换",
     "usage": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `replace_all`（可选）：是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置\n- `resolve_placeholders`（可选）：是否解析 new_string 中的 {{path}} 占位符。默认 false。设为 true 时可将占位符引用展开为文件内容后替换\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，增加更多上下文行使其唯一",
     "parameters": {
@@ -76,6 +79,7 @@
   },
   {
     "name": "WriteLine",
+    "short": "按行号覆写",
     "description": "替换文件中的指定行",
     "usage": "替换文件中的指定行。每次调用只能替换一行（start_line 与 end_line 相同）。如需修改多行，请多次调用。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `start_line`（必填）：起始行号，从 1 开始\n- `end_line`（可选）：结束行号（包含）。不指定则仅替换 start_line 这一行\n- `new_content`（必填）：替换后的新行内容，\\n 会被自动处理为真实换行\n- `resolve_placeholders`（可选）：是否解析 new_content 中的 {{path}} 占位符。默认 false\n\n注意：使用前先用 Read 确认目标行号。每次只替换一行，多行修改请多次调用。",
     "parameters": {
@@ -106,6 +110,7 @@
   },
   {
     "name": "TodoWrite",
+    "short": "更新任务清单",
     "description": "创建/更新任务清单（todo list）追踪多步骤进度。一次调用覆盖整个清单",
     "usage": "创建或更新任务清单追踪进度。**会话内有效，不落盘、不持久化**，下次会话需重建。\n\n使用场景：\n- 面对复杂的多步骤任务（3 个以上独立步骤）时，用此工具创建清单追踪进度。\n- 任务完成、步骤推进或计划变更时，更新清单反映最新状态。\n- 简单任务无需使用。\n\n参数：\n- `todos`（必填）：任务数组，每项包含：\n  - `content`（必填）：任务内容（祈使句表述）\n  - `status`（必填）：`pending`（待办）、`in_progress`（进行中）、`completed`（已完成）之一\n  - `activeForm`（必填）：进行中状态的动态描述（用于展示，如 \"正在生成楼层正文\"）\n\n注意：\n- **同一时刻只能有一个任务为 `in_progress`**，违反会报错。\n- 每次调用以完整清单覆盖旧清单（不是增量追加）。\n- 会话结束后清单不保留，超长短时记忆需写入文件（如 temp/ 下的草稿）。",
     "parameters": {
@@ -147,6 +152,7 @@
   },
   {
     "name": "Glob",
+    "short": "匹配文件路径",
     "description": "按 glob 模式匹配文件路径",
     "usage": "按 glob 模式匹配实例中的文件路径。\n\n参数：\n- `pattern`（必填）：glob 模式，相对于实例根目录。例如 **/*.md 匹配所有 markdown，floors/floor-*.md 匹配楼层文件\n\n注意：只返回匹配的文件列表，不返回文件内容。找到目标文件后用 Read 读取内容。",
     "parameters": {
@@ -163,6 +169,7 @@
   },
   {
     "name": "Grep",
+    "short": "正则搜索内容",
     "description": "在文件内容中按正则表达式搜索",
     "usage": "按正则表达式搜索实例中的文件内容，返回匹配的文件路径和行数。\n\n参数：\n- `pattern`（必填）：正则表达式搜索模式。例如 张三 搜索包含\"张三\"的文件，log.*Error 搜索匹配模式的日志行\n- `path`（可选）：限定的搜索路径（文件或目录，相对实例根目录，如 .teahouse/output/sandbox/theme.css 或 skills/）。传入时只在该路径下搜索；省略则递归搜索整个实例目录\n\n注意：返回匹配文件列表及各文件中的匹配行数。找到匹配后用 Read 读取对应文件的具体内容。",
     "parameters": {
@@ -183,6 +190,7 @@
   },
   {
     "name": "Generate",
+    "short": "调用正文模型生成",
     "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",
     "usage": "调用正文模型（writer slot）生成内容，非流式调用完成后写入指定文件。\n\n参数：\n- `source_file`（必填）：YAML 配置文件路径，相对于实例根目录。例如 temp/generate-config-12-1.yaml\n- `path`（必填）：输出文件路径，相对于实例根目录。例如 temp/draft-12-1.md\n- `overwrite`（可选，默认 false）：当 `path` 指向的文件已存在时，是否允许覆盖。默认**只读保护**：目标已存在则直接报错并拒绝生成，不调用正文模型、不修改该文件。此时应由外部（前端/玩家）决定是换一个新文件名重试、还是显式传 `overwrite=true` 确认覆盖后重发。传 `overwrite=true` 时，生成开始时**先删除旧文件**再流式生成，生成完成才落盘；因此若生成中途失败，旧文件已删、只剩新积内容（旧内容靠 git 兜底回滚）。\n- `dump_payload_path`（可选，dry-run）：填入路径后，把展开占位符后的完整 Payload JSON 写入该路径并**立即返回**，不调用正文模型。用于调试时查看实际发给模型的 payload 内容\n- `reasoning_effort`（可选）：本次正文生成的思考强度，取值 `none|low|mid|high|max`（默认不传=模型默认）。none 关闭思考；其余依模型能力映射。\n\n配置文件格式（YAML）：\n  - role: system\n    content: |\n      你是资深小说作家。\n      \\{{static_settings/characters.yaml|from=\"## 夏瑾\"}}\n  - role: user\n    content: 写下一章\n\n占位符语法（在 content 字段中使用）：\n  \\{{path}}                                    引用整个文件\n  \\{{path:10-30}}                              引用文件的第 10~30 行\n  \\{{path|from=\"关键字\"}}                       从关键字所在行开始到文件末尾\n  \\{{path|to=\"关键字\"}}                         从文件开头到关键字所在行\n  \\{{path|from=\"A\"|to=\"B\"}}                     从 A 所在行到 B 所在行\n  \\{{path:10-30|from=\"A\"|to=\"B\"}}               先取行范围，再按锚点缩小\n  \\{{glob:模式}}                                按 glob 模式匹配多个文件，按文件名排序\n  \\{{glob:模式:lastN}}                          匹配后按文件名中数字段降序保留最近 N 个唯一楼层（例：\\{{glob:output/floors/floor-*.md:last30}}）；正式稿 floor-N.md 优先于 floor-N-draft.md\n\n规则：行号范围用 : 加在文件名后，锚点修饰符用 | 分隔，锚点值是精确子串匹配（必须唯一出现一次）。不确定行号时优先使用 from= 锚点语法。\n\n转义：占位符语法说明里的示例以 \\{{...}} / \\${...} 书写，仅作教学，解析时会保持字面量、不展开。正文里想展示字面 {{...}} 或 ${...} 而不要其被解析时，同样在开括号前加 \\ 前缀。",
     "parameters": {
@@ -204,7 +212,13 @@
         },
         "reasoning_effort": {
           "type": "string",
-          "enum": ["none", "low", "mid", "high", "max"],
+          "enum": [
+            "none",
+            "low",
+            "mid",
+            "high",
+            "max"
+          ],
           "description": "可选，正文生成思考强度。none 关闭思考；low/mid/high/max 依模型能力映射。不传则用模型默认。"
         }
       },
@@ -216,6 +230,7 @@
   },
   {
     "name": "SkillRead",
+    "short": "读取 Skill 教学",
     "description": "读取 Skill 的完整教学内容和 SOP",
     "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 teahouse-generate-floor、teahouse-summarize\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。",
     "parameters": {
@@ -232,6 +247,7 @@
   },
   {
     "name": "GitCommit",
+    "short": "git 提交锁定状态",
     "description": "执行 git 提交，锁定实例文件状态。必须指定提交类型（楼层/总结/其他）。",
     "usage": "执行 git add -A && git commit，锁定当前实例所有文件的状态。返回 commit hash 和当前分支名。\n\n参数：\n- `type`（必填）：提交类型 — \"floor\"（楼层）、\"summary\"（总结）、\"other\"（其他）\n- `number`（floor 时必填）：楼层编号，如 5\n- `start`（summary 时必填）：总结覆盖的起始楼层编号\n- `end`（summary 时必填）：总结覆盖的结束楼层编号（与 start 相同时表示单层总结）\n- `message`（必填）：提交描述（不含前缀，工具会自动拼接）\n\n调用 type=summary 时，后端会自动把归档界（`summary/index.json` 的 `summarized_through`）推进到你上报的 end，无需手动维护。\n\n调用时机：\n- 楼层完成时：type=\"floor\"，number=楼层号\n- 总结完成时：type=\"summary\"，start/end=总结范围\n- 其他变更（配置修改、资源更新等）：type=\"other\"\n\n生成的 git 消息格式：\n- floor: \"floor-5: 抵达王都\"\n- summary: \"summary-15-20: 总结十五楼到二十楼\"（start==end 时退化为 \"summary-5: 第五楼总结\"）\n- other: \"other: 初始化实例\"\n\n⚠️ 重要：调用此工具前，必须先向用户确认是否满意当前内容（如\"已完成楼层创作，请确认后提交\"）。不要自行决定提交时机。此工具调用时会触发前端确认弹窗，用户可拒绝。\npaths（可选）：本次提交要包含的文件/目录路径列表（相对实例根目录）。传入时只提交这些路径，其余未提交改动保持不动——**这是总结子会话后台并行、与主会话游玩互不污染的关键**。总结会话提交前先用 GitStatus/GitDiff 自查自己改了哪些文件，再只把这些路径交给本轮提交。不传则回退 git add -A 全量提交（other 类型常用）。示例：GitCommit(type=\"summary\", start=15, end=20, message=\"关系升温\", paths=[\".teahouse/dyn_settings\"])。",
     "parameters": {
@@ -273,6 +289,7 @@
   },
   {
     "name": "GitBranch",
+    "short": "分支管理",
     "description": "分支管理（列出、创建、切换、删除、重命名）",
     "usage": "分支管理操作，用于剧情分支存档、回档和实验性写作。\n\n参数：\n- `action`（必填）：操作类型\n  - `list` — 列出所有分支，* 标记当前\n  - `create` — 基于当前 HEAD 创建新分支\n  - `switch` — 切换到已有分支（会改变 floors/、variables/、settings/ 等的文件内容）\n  - `delete` — 删除分支（安全模式，未合并时拒绝）\n  - `rename` — 重命名分支（常用于将 temp-* 临时分支改名为正式名）\n- `name`（create/switch/delete/rename 时必填）：分支名\n- `new_name`（rename 时必填）：新名称",
     "parameters": {
@@ -302,6 +319,7 @@
   },
   {
     "name": "GitCheckout",
+    "short": "回到历史提交",
     "description": "回到历史提交（非破坏性，创建临时分支）",
     "usage": "回到历史提交进行查看或实验。在目标提交处创建临时分支并切换过去，原分支完全不受影响。\n\n参数：\n- `target_hash`（必填）：目标提交的 hash，可从 GitLog 返回的列表中找到\n\n使用场景：\n- 回顾之前的剧情状态\n- 从历史节点开始\"如果当初…\"的实验性写作\n- 在隔离环境中安全探索不同走向\n\n注意事项：\n- 工作区内容会随之变为历史 commit 的状态（floors/、settings/、variables/ 等）\n- 所有修改都在临时分支上，不影响原分支\n- 回到原分支：使用 GitBranch switch\n- 如果在此临时分支上做了修改并提交，请务必使用 GitBranch rename 改名为有意义的名称（不要以 temp- 开头），否则切换分支时临时分支会被自动清理\n- 如果只是查看历史、没有做任何修改就切走了，临时分支会在下次切换分支时被自动删除",
     "parameters": {
@@ -318,6 +336,7 @@
   },
   {
     "name": "GitLog",
+    "short": "查看提交历史",
     "description": "查看 git 提交历史",
     "usage": "查看实例的 git 提交历史。返回最近的提交列表，包含 commit hash、作者、日期和提交信息。\n\n参数：\n- `limit`（可选）：返回的最大提交数，默认 10\n\n使用场景：回顾历史记录；查找 commit hash 供 GitCheckout 使用。",
     "parameters": {
@@ -331,6 +350,7 @@
   },
   {
     "name": "GitDiff",
+    "short": "查看工作区差异",
     "description": "查看当前工作区与最后一次提交之间的差异",
     "usage": "执行 git diff 查看未提交的变更。返回 unified diff 格式的输出。\n\n参数：\n- `path`（可选）：指定要查看的文件路径，相对于实例根目录。不传则查看所有文件的差异\n\n使用场景：提交前确认改了什么；了解当前工作区状态。\nstaged（可选）：true 时查看「已暂存」的差异（git diff --cached，即本次已 add 进 index 的内容）；false（默认）时查看「工作区」未暂存差异。配合 path 可只看某一文件/目录。提交前自查：GitDiff(staged=true) 确认这次加到 index 的正是自己要提交的那几个文件。",
     "parameters": {
@@ -348,6 +368,7 @@
   },
   {
     "name": "GitStatus",
+    "short": "查看文件变更状态",
     "description": "查看当前工作区文件变更状态",
     "usage": "执行 git status --porcelain 查看工作区状态。返回每个文件的变更状态（M=修改、A=新增、D=删除、?=未跟踪）和是否已暂存。\n\n无参数。\n\n使用场景：快速了解有哪些文件被修改/新增/删除，无需查看具体 diff 内容。",
     "parameters": {
@@ -357,6 +378,7 @@
   },
   {
     "name": "FileOps",
+    "short": "目录/文件操作",
     "description": "文件和目录操作：创建目录、移动/重命名、删除",
     "usage": "对实例中的文件和目录执行操作。这些操作会直接覆盖已存在的目标，请确保文件结构正确。\n\n参数：\n- `action`（必填）：操作类型\n  - `mkdir` — 创建目录（自动创建父目录，已存在不报错）\n  - `move` — 移动文件或目录（重命名/移动，目标已存在则覆盖）\n  - `delete` — 删除文件或目录（删除目录时会递归删除其所有内容）\n- `path`（必填）：目标路径，相对于实例根目录\n- `destination`（move 时必填）：目标路径，相对于实例根目录\n\n注意：\n- `mkdir` 自动创建所有必要的父目录，相当于 `mkdir -p`\n- `move` 如果目标已存在则直接覆盖（文件覆盖文件，空目录覆盖空目录，非空目录报错）\n- `delete` 删除目录时会连同内容一起删除，操作不可逆（git 可恢复）\n- ⚠️ 使用这些工具前请确认文件结构——move 和 delete 会直接修改文件系统",
     "parameters": {
@@ -385,6 +407,7 @@
   },
   {
     "name": "BatchExecute",
+    "short": "批量执行工具脚本",
     "description": "顺序执行一段静态 JSONL 工具脚本。脚本是每行一条工具调用的 .jsonl 文件，按行展开为多个真实工具调用一次性执行。",
     "usage": "按行顺序执行一个静态 JSONL 批处理脚本。脚本每行是一条工具调用，形如：\n\n    {\"tool\": \"Output\", \"args\": {\"content\": \"\\{{temp/draft-1.md}}\", \"label\": \"ep1\", \"note\": \"第一章\", \"mode\": \"append\"}}\n\n后端会把脚本展开成多个真实工具调用逐行执行，每个展开的调用与手写完全一致（独立 SSE 事件、独立 tool_result、独立持久化）。\n\n### ⚠️ 你会收到什么（顺序理解规则）\n\n调用 `BatchExecute` 后，你**会先收到一条 BatchExecute 自身的工具结果**（说明本次已展开 N 步）；随后收到的是被展开的各个子调用的结果集合。\n\n每条子调用的返回都**以前缀行开头**，明确说明它不是你手动发起的，形如：\n\n    [This call was invoked by BatchExecute, NOT by you manually. It is auto-expanded sub-step 2/4 of the script temp/batch-test.jsonl]\n    Successfully applied edit to ...\n\n前缀行之下**才是该子调用原本的返回内容**。前缀含义：\n- **X/Y 中的 Y** = 本次批次的步骤总数；**X** = 该步骤在脚本中的序号（1 起）。\n\n**判断先后顺序的唯一可靠依据，是每条结果前缀里的 X 数字**：\n- 脚本按行序执行（X=1 先于 X=2，依此类推），严格串行，不存在并发。\n- 实际返回时各条结果的物理排列通常与编号一致，但这是实现细节，不可依赖；请始终以 X 为准，不要凭物理排列下结论。\n\n参数：\n- `path`（必填）：脚本文件路径，相对于实例根目录。\n  - ``settings/scripts/some.jsonl`` 执行全部步骤\n  - ``settings/scripts/some.jsonl:13-20`` 只执行第 13~20 步（1 起，含端点），用于续跑被截断的批次\n\n用法：\n- **批量操作**：当你要连续做多个确定的工具调用（如开局流程、楼层收束、重复的多步修改）时，把步骤先写进 .jsonl，再一次性 BatchExecute，避免一轮轮手发。\n- **可编辑**：脚本是纯文本。执行前先用 Read 查看，用 Edit 修改其中个别步骤的参数，再 BatchExecute 即可——你要批量执行什么，就先把它改成那样。\n- **机制**：本工具会返回一条自身的摘要结果（展开 N 步），随后把脚本展开成普通工具调用序列逐个执行，相当于你一次性发出了这么多工具调用。所以会占用工具调用上限（15 次/轮）。若一轮超限被截断，可用行切片在下一轮续跑剩余步骤。\n- **不会递归展开**：脚本某步若又写了 BatchExecute，该步不会被再次展开（为防死循环，BatchExecute 只展开一层）。\n\n注意：脚本里的参数默认是静态的，不会自动替换任何占位符。若需要差异化，直接改脚本里的参数值即可。",
     "parameters": {
@@ -402,6 +425,7 @@
   },
   {
     "name": "GetRuntimeVars",
+    "short": "读取实例变量",
     "description": "读取实例变量（runtime vars）——按名字数组读取变量值，可含 note/change_log 元数据。变量是实例内唯一的变量载体（金币、修为、好感度、主角名、玩家选项等）。",
     "usage": "读取当前变量的值。这些变量连同正文历史一起落盘 `.teahouse/runtime_vars.jsonl`（文件即状态，一个变量一行，进 git、跨会话/中断可恢复），是权威状态。\n\n变量是整个「变量」系统的唯一载体——高度归纳精炼的数值/重要值（金币、修为、好感度、主角名等）都归这里；设定（静态 + 中短期动态）则放在 `settings/` 下。导演既能读（本工具）、也能写（用 `SetRuntimeVar`）。\n\n数据来源有两类，读取时都要注意：\n1. **沙盒写入**：前端运行时写入的选择类状态（如选项块 `opt-3-1` 选了什么）。这些程序内部使用，你可能不理解含义——**配合工作流/提示词的说明理解每个变量代表什么**，只读工作流要求你读的。\n2. **导演自己通过 SetRuntimeVar 写的**：剧情数值状态。这类变量也注入你的系统提示词（no cache），通常你已知道其值，无需额外读取。\n\n参数：\n- `names`（必填）：要读取的变量名数组，如 `[\"opt-3-1\"]`。传入你需要的那几个即可，不必一次全读。每个请求的名字都会返回（未初始化值为 `null`）。\n\n返回值：每个变量的 `name: value`，并附 `note` / `change_log` 元数据（若有）——`change_log` 是历史笔记列表，当你需要深入某个变量（如它曾历经重大转变）时，可据此回溯对应楼层的正文细节。\n\n典型用法：当工作流提示你「上一轮是一个选项，请读取用户的选择」时，用本工具读取对应的选项变量（如 `[\"opt-3-1\"]`），拿到 `opt-3-1: opt2` 后据此决定下一层正文的走向。",
     "parameters": {
@@ -419,6 +443,7 @@
   },
   {
     "name": "SetRuntimeVar",
+    "short": "写入/合并实例变量",
     "description": "写入/合并实例变量（runtime vars）——更新剧情数值状态（金币、修为、好感度、主角名等），可带 note/change_log 元数据或 delete。落盘 .teahouse/runtime_vars.jsonl（文件即状态）。",
     "usage": "更新变量的当前值。变量系统只此一处（`.teahouse/runtime_vars.jsonl`），这些变量连同正文历史一起落盘、进 git、跨会话可恢复——**变量就该被追踪，这正是文件即状态**。核心变量会注入你的系统提示词（no cache），你改完后端与前端立即感知，不必再 Read。\n\n**变量 vs 设定**：\n- **变量**（本工具管理）：高度归纳精炼的数值/重要值，会频繁变动且追求极短（如 `金币: 120`、`主角名: 李四`、`修为: 炼气三层`）。\n- **设定**：偏静态或中短期较长的文字（角色卡、世界观、任务描述、二人关系状态），归 `settings/` 目录，用 Write/Edit/WriteLine 管理。不要把它们写成变量。\n\n参数（选其一或组合）：\n- `updates`（可选）：`{name: value}` 对象，值为任意 JSON 序列化对象，同名覆盖。\n- `note`（可选）：`{name: 文本}` —— 覆盖该变量的备注笔记。\n- `change_log`（可选）：`{name: 条目}` —— **追加**一条笔记到该变量的 change_log（类似 git commit 的提交说明，不删旧条目）。条目字段（如 at/to/why）不固定，按提示词约定构造。用于标记重要变量的关键转变，便于后续回溯。\n- `delete`（可选)：名字数组 —— 从变量文件整行删除这些变量。\n\n注意：\n- **`teahouse.` 前缀是系统保留命名空间**（如 `${teahouse.behavior}`），不要用它给变量命名——传入会被告警并忽略。\n- **不要轻易 delete**。当一个变量接下来长时间用不到（如两人分别、几十章不再相遇）时，不要删，而是让它「沉睡」：在 `teahouse.md` 的活跃变量板块保留该变量的**字面量 + 说明**（如「两人已分别：重逢场景需阅读此变量并激活」），删掉值的展示。只有当你确认某变量**永远不会再被用到**（如一场擂台赛打完，其胜负结果不再相关）时才 `delete`。\n- 若你只是想让某个值出现在叙事里而无关剧情状态，用普通变量即可。\n\n典型用法：楼层写完后更新剧情状态——`SetRuntimeVar(updates={\"金币\": 140, \"修为\": \"炼气四层\"})`；记录一次重要转变——`SetRuntimeVar(updates={\"修为\": \"筑基一层\"}, change_log={\"修为\": {\"at\": \"floor-015\", \"from\": \"炼气四层\", \"to\": \"筑基一层\", \"why\": \"闭关突破\"}})`；确认擂台赛收尾——`SetRuntimeVar(delete=[\"擂台赛胜负\"])`。",
     "parameters": {
@@ -448,6 +473,7 @@
   },
   {
     "name": "Wait",
+    "short": "等待指定毫秒",
     "description": "等待指定的毫秒数后再继续后续操作",
     "usage": "等待指定毫秒数后再继续。适用于需要在执行下一个步骤前留出间歇的场景（速率限制、外部服务冷却、依次发出的延迟）。等待结束即返回，不产生其他作用。",
     "parameters": {
@@ -466,6 +492,7 @@
   },
   {
     "name": "EndSession",
+    "short": "宣告子会话任务完成",
     "description": "（受限会话专用）声明本次会话任务的工作已完成，广播结束信号并强制中断本会话继续输出。只发信号、不销毁会话——是否销毁由调用方（沙盒或用户）决定，会话文件保留直到被显式销毁。",
     "usage": "当你作为一个受限会话（有 enabled_tools 白名单）被派发一项独立工作（如总结、改设定、探索某个设定）时，全部工作完成后调用本工具，宣告本次任务结束。\n\n效果：后端广播一条 `session_done` 信号（携带本 session_id），沙盒或用户据此得知任务完成，可决定后续是否销毁本会话；同时**强制中断本会话正在运行的输出流**，阻断任何在 EndSession 之后的尾随文本。\n\n**必须遵守的顺序**：本工具**必须在任务的最后一步调用**——所有总结、报告、落盘（`Report` 写 temp/、改动设定等）都必须在调用 EndSession **之前**完成。调用后会被强制中断，**不要再尝试输出任何内容**（正文、总结、后续工具调用都会被切断）。\n\n**注意**：\n- 本工具**不会销毁会话**，也不清空历史——它只是「说完了」并切断后续输出。彻底回收由 `sessionDestroy`（沙盒/前端调用）完成。\n- 只应在受限会话里调用，且只调一次，放在全部工具产出都已经落盘之后。\n- 主会话（main）作为持续对话通常不需要调用本工具——但如果创作者在 teahouse.md 中显式启用了工具白名单，则也应遵循受限会话的约定。",
     "parameters": {
@@ -475,6 +502,7 @@
   },
   {
     "name": "Report",
+    "short": "写结论到 temp/",
     "description": "（受限会话/探索专用）把一份工作结论或探索结果写入实例的 temp/ 目录（.md 文件）。write 覆盖、edit 追加。reports 供导演回溯参考，不进入正式正文。",
     "usage": "在受限会话/探索任务中，把一段调研结论、设定草稿、批量操作的报告落到 `temp/` 下的 markdown，作为可追溯的中间产物，供后续（或主会话）回溯复用。\n\n参数：\n- `mode`（必填）：`\"write\"` 覆盖写入（新建或整体替换），`\"edit\"` 向文件末尾追加。\n- `filename`（必填）：文件名，不含 `temp/` 前缀，如 `explore-char-秦悠.md`。\n- `content`（必填）：要写入的 markdown 文本。`mode=write` 时整体覆盖；`mode=edit` 时追加到文件末尾。\n\n注意：\n- **只能写 `temp/` 下的 .md 文件**，不能写到其他目录——这是报告区的约束，避免受限会话污染正式产物区（floors/、settings/ 等）。\n- `temp/` 不纳入 git 版本控制（GitCommit 不会提交其中的内容），所以用它放探索中间产物是安全的。\n- 想产出供玩家看到的正文或正式设定时，不要用本工具，改由具备写权限的会话用 Write/Edit 落到正确目录。",
     "parameters": {
@@ -506,8 +534,9 @@
   },
   {
     "name": "StartSubSession",
+    "short": "开启子会话委派任务",
     "description": "（导演专用）开启一个独立的导演会话（session），委派一次性任务（探索设定、总结、批量改写等）。新会话有独立上下文、受限工具集，不污染当前会话历史。可边开边继续当前会话工作，或选择等它完成后被唤醒。",
-    "usage": "当你想把一件耗时/会污染注意力的独立工作（如深入某个设定的文件考古、批量改写某几楼、独立总结一段）外包给一个独立 agent 时，用本工具开启新会话。\n\n参数：\n- `task`（必填）：给新会话的任务指令，越明确越好。新会话会据此执行，完成后用 `EndSession` 宣告结束。\n- `enabled_tools`（可选）：给新会话的工具白名单。默认只读基础集（Read/Glob/Grep/GetRuntimeVars/Report/EndSession）。若新会话需要写 temp/ 草稿或 Generate 正文，显式传入对应工具。\n- `reasoning_effort`（可选）：新会话的思考强度，取值 `none|low|mid|high|max`（默认不传=模型默认）。none 关闭思考；low/mid/high/max 依模型能力映射（Anthropic 映射思考预算，OpenAI 映射 reasoning_effort）。\n- `await_result`（可选，布尔，默认 false）：**等待策略**。\n  - `false`（默认）：发起后立刻返回 `session_id`，你**继续本轮的其它工具调用**，并行推进当前会话工作；之后用 `Read` 读新会话落到 `temp/` 的结论（让新会话经 `Report` 写 temp）。\n  - `true`：发起后本轮**就此终止**、等待唤醒——不要再发别的工具调用。新会话结束时后端会向你注入一条消息重新开启新一轮，你再读取结论收尾。\n\n注意：\n- 新会话默认**不能写正式区**（floors/、settings/ 等），探索结论一律经 `Report` 写 `temp/*.md`（不纳入 git 版本控制）。\n- 即使 `await_result:true`，本工具也只返回一个\"已发起等待\"确认，不会真的阻塞——你结束本轮后，唤醒靠新会话结束信号。\n- 每个新会话都是全新上下文，不继承你当前对话的历史，所以 `task` 要自包含（说明它需要读取哪些文件）。",
+    "usage": "当你想把一件耗时/会污染注意力的独立工作（如深入某个设定的文件考古、批量改写某几楼、独立总结一段）外包给一个独立 agent 时，用本工具开启新会话。\n\n参数：\n- `task`（必填）：给新会话的任务指令，越明确越好。新会话会据此执行，完成后用 `EndSession` 宣告结束。\n- `enabled_tools`（可选）：给新会话的工具白名单。默认只读基础集（Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession）。若新会话需要写 temp/ 草稿或 Generate 正文，显式传入对应工具。\n- `reasoning_effort`（可选）：新会话的思考强度，取值 `none|low|mid|high|max`（默认不传=模型默认）。none 关闭思考；low/mid/high/max 依模型能力映射（Anthropic 映射思考预算，OpenAI 映射 reasoning_effort）。\n- `await_result`（可选，布尔，默认 false）：**等待策略**。\n  - `false`（默认）：发起后立刻返回 `session_id`，你**继续本轮的其它工具调用**，并行推进当前会话工作；之后用 `Read` 读新会话落到 `temp/` 的结论（让新会话经 `Report` 写 temp）。\n  - `true`：发起后本轮**就此终止**、等待唤醒——不要再发别的工具调用。新会话结束时后端会向你注入一条消息重新开启新一轮，你再读取结论收尾。\n\n注意：\n- 新会话默认**不能写正式区**（floors/、settings/ 等），探索结论一律经 `Report` 写 `temp/*.md`（不纳入 git 版本控制）。\n- 即使 `await_result:true`，本工具也只返回一个\"已发起等待\"确认，不会真的阻塞——你结束本轮后，唤醒靠新会话结束信号。\n- 每个新会话都是全新上下文，不继承你当前对话的历史，所以 `task` 要自包含（说明它需要读取哪些文件）。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -528,7 +557,13 @@
         },
         "reasoning_effort": {
           "type": "string",
-          "enum": ["none", "low", "mid", "high", "max"],
+          "enum": [
+            "none",
+            "low",
+            "mid",
+            "high",
+            "max"
+          ],
           "description": "子会话思考强度（可选）。none 关闭思考；low/mid/high/max 依模型能力映射。不传则用模型默认。"
         }
       },
@@ -539,6 +574,7 @@
   },
   {
     "name": "SendToSubSession",
+    "short": "向子会话补发消息",
     "description": "（导演专用）向一个已存在的会话补发一条消息（追加指令）或催办。目标会话在后台独立运行，此工具只负责把消息投递给它，不等待其响应。",
     "usage": "启动会话后，若想追加要求、纠正方向、或补充信息，用本工具向它发一条消息。目标会话收到后在其后台流程里处理。\n\n参数：\n- `session_id`（必填）：目标会话 id（来自 StartSubSession 的返回值）。\n- `message`（必填）：要投递给它的消息内容。\n\n注意：\n- 异步投递，不阻塞你当前的工作，也不等待目标会话立刻回应。目标会话当前若在跑一轮生成，会把它排到下一轮处理。\n- 具体结果仍靠它落 temp 的文件 + 你 `Read` 读取。",
     "parameters": {
@@ -561,6 +597,7 @@
   },
   {
     "name": "DeleteSubSession",
+    "short": "删除子会话",
     "description": "删除一个子会话（废弃其 JSONL 与元数据文件）并广播 session_destroyed。导演与沙盒均可调用。",
     "usage": "当某个子会话的生命周期理应结束时调用本工具彻底回收，释放其后台生成与磁盘占用。\n\n参数：\n- `session_id`（必填）：要删除的子会话 id（来自 StartSubSession 的返回值）。\n- `abort`（可选，布尔，默认 true）：删除前是否先中断该会话进行中的一轮生成。默认 true 避免残留后台任务。\n\n使用建议：\n1. **用户明确要求清理时**：执行删除。\n2. **一次性侦查任务完成后**：如只是搜索某个关键信息、读完它落在 temp/ 的报告确认无用后，可立即删除。\n3. **可能继续追加的任务**：如总结、批量修改等，初始任务完成后可能还要追加要求（再经 SendToSubSession 投递），此类**不建议立即删除**，视任务节奏再定。\n\n注意：\n- 本工具**只销毁子会话**。主会话（main）的清理用 `/clear`（导演栏输入）或走 API，不要用本工具传 main。\n- 删除前请确认该会话已无你尚未读取的产出。删除不可恢复。",
     "parameters": {

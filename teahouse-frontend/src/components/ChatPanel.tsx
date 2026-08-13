@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Loader2, X, CheckCircle2, Flag, ArrowRight } from "lucide-react"
-import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi } from "@/lib/api"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi } from "@/lib/api"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
@@ -73,7 +73,14 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     sessionStateRef.current = map
     setSessionStateMap(map)
   }, [])
-  const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number }[]>([])
+  const [sessionList, setSessionList] = useState<{ session_id: string; record_count: number; enabled_tools?: string[] }[]>([])
+  // 内置工具清单（name + short），来自后端 tools.json，驱动 permission 补全
+  const [availableTools, setAvailableTools] = useState<{ name: string; short: string }[]>([])
+  useEffect(() => {
+    toolsApi.listTools().then(res => {
+      if (res.ok) setAvailableTools(res.data?.tools || [])
+    }).catch(() => {})
+  }, [])
   const messagesBySidRef = useRef<Record<string, RichMessage[]>>({})
   // Track the active streaming assistant per session for session_event-based real-time
   // "有新消息" 标志：后台会话有产出时需要提示，切过去即清。
@@ -261,7 +268,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           if (!data.session_id) return
           setSessionList(prev => {
             if (prev.some(s => s.session_id === data.session_id)) return prev
-            return [...prev, { session_id: data.session_id, record_count: 0 }]
+            return [...prev, { session_id: data.session_id, record_count: 0, enabled_tools: data.enabled_tools }]
           })
           refreshSessionsStatus()
         } catch {
@@ -992,11 +999,13 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     name: string
     description: string
     params?: CommandParam[]
+    // 动态参数：permission-add/remove 的可选工具随当前会话 enabled_tools 变化
+    dynamicParams?: () => CommandParam[]
   }
-  const COMMANDS: CommandDef[] = [
-    { name: "/clear", description: "清空当前对话" },
-    { name: "/compact", description: "压缩当前会话上下文" },
-    {
+  // 当前激活会话的工具白名单（子会话）；主会话不受限（undefined）
+  const activeEnabled = sessionList.find((s) => s.session_id === activeSid)?.enabled_tools
+  const COMMANDS: CommandDef[] = useMemo(() => {
+    const think: CommandDef = {
       name: "/think",
       description: "设置思考强度",
       params: [
@@ -1006,8 +1015,27 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         { name: "high", description: "高" },
         { name: "max", description: "最高" },
       ],
-    },
-  ]
+    }
+    const clear: CommandDef = { name: "/clear", description: "清空当前对话" }
+    if (activeSid === MAIN_SID) {
+      return [think, { name: "/compact", description: "压缩当前会话上下文" }, clear]
+    }
+    const enabled = new Set(activeEnabled || [])
+    return [
+      think,
+      clear,
+      {
+        name: "/permission-add",
+        description: "添加子会话工具权限",
+        dynamicParams: () => availableTools.filter((t) => !enabled.has(t.name)).map((t) => ({ name: t.name, description: t.short })),
+      },
+      {
+        name: "/permission-remove",
+        description: "移除子会话工具权限",
+        dynamicParams: () => availableTools.filter((t) => enabled.has(t.name)).map((t) => ({ name: t.name, description: t.short })),
+      },
+    ]
+  }, [activeSid, activeEnabled, availableTools])
 
   // Two-stage autocomplete derived purely from `input` (no extra state).
   // - stage "command": "/xxx" without a space → suggest command names.
@@ -1018,23 +1046,41 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     stage: CompletionStage
     command: CommandDef | null
     nick: (CommandDef | CommandParam)[]
+    paramPrefix?: string   // 动态多参数：命令 + 已输入部分（不含待补全的最后一个词）
   } => {
     if (!value.startsWith("/")) return { stage: "none", command: null, nick: [] }
     const paramMatch = value.match(/^\/(\S+)\s+([^/]*)$/)
     if (paramMatch) {
       const cmd = COMMANDS.find((c) => c.name === "/" + paramMatch[1]) || null
-      if (!cmd || !cmd.params) return { stage: "none", command: null, nick: [] }
+      if (!cmd) return { stage: "none", command: null, nick: [] }
       const tail = paramMatch[2]
-      // A full param value already in place means the command is complete — close
-      // the menu so Enter runs it instead of re-picking the same param.
-      if (cmd.params.some((p) => p.name === tail)) {
-        return { stage: "none", command: null, nick: [] }
+      // 静态参数（/think）：完整匹配一个参数 → 关闭菜单让 Enter 执行
+      if (cmd.params) {
+        if (cmd.params.some((p) => p.name === tail)) {
+          return { stage: "none", command: null, nick: [] }
+        }
+        return {
+          stage: "param",
+          command: cmd,
+          nick: cmd.params.filter((p) => p.name.startsWith(tail)),
+          paramPrefix: `/${paramMatch[1]} `,
+        }
       }
-      return {
-        stage: "param",
-        command: cmd,
-        nick: cmd.params.filter((p) => p.name.startsWith(tail)),
+      // 动态多参数（/permission-add|remove）：补全最后一个词，已选工具排除。
+      // 尾空格表示用户已敲完一个工具 → 关闭菜单让 Enter 执行。
+      if (cmd.dynamicParams) {
+        if (tail.endsWith(" ")) return { stage: "none", command: null, nick: [] }
+        const lastWord = tail.split(/\s+/).pop() || ""
+        const typed = tail.trim().split(/\s+/).slice(0, -1)
+        const opts = cmd.dynamicParams()
+        return {
+          stage: "param",
+          command: cmd,
+          nick: opts.filter((o) => !typed.includes(o.name) && o.name.startsWith(lastWord)),
+          paramPrefix: value.slice(0, value.length - lastWord.length),
+        }
       }
+      return { stage: "none", command: null, nick: [] }
     }
     return {
       stage: "command",
@@ -1147,6 +1193,17 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
     const sid = targetSid || activeSid
 
+    // 命令仅在会话空闲时执行（生成/等待/压缩中禁用）
+    const trimmedText = text.trim()
+    const isCommand = /^\/(clear|compact|think|permission-add|permission-remove)(\s|$)/.test(trimmedText)
+    if (isCommand) {
+      const st = sessionStateRef.current[sid]
+      if (st?.running || st?.waiting || st?.compacting) {
+        toast.error("会话忙时无法执行命令，请先停止生成或等待完成")
+        return
+      }
+    }
+
     // /clear command
     if (text === "/clear") {
       setMessages([])
@@ -1214,6 +1271,38 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         )
       } else {
         toast.error(`设置思考强度失败:${res.error || "未知错误"}`)
+      }
+      setInput("")
+      scrollToBottom()
+      return
+    }
+
+    // /permission-add <tool1> <tool2> ... / /permission-remove <tool1> ...
+    // Modify the child session's enabled_tools allow-list in its .meta.json.
+    const permMatch = text.match(/^\/(permission-add|permission-remove)(?:\s+(.+))?$/)
+    if (permMatch) {
+      const action: "add" | "remove" = permMatch[1] === "permission-add" ? "add" : "remove"
+      const tools = (permMatch[2] || "").trim().split(/\s+/).filter(Boolean)
+      if (sid === MAIN_SID) {
+        toast.error("权限命令仅用于子会话")
+        return
+      }
+      if (tools.length === 0) {
+        toast.error(`请指定至少一个工具名，如 /${permMatch[1]} Read Edit`)
+        return
+      }
+      const activeInst = getActiveInstance()
+      if (!activeInst) {
+        toast.error("未选中实例，无法修改权限")
+        return
+      }
+      const res = await instancesApi.setSessionPermissions(activeInst.id, sid, action, tools)
+      if (res.ok) {
+        const joined = res.data?.enabled_tools?.join(", ") || ""
+        toast.success(`子会话 ${sid} 权限已更新：${joined}`)
+        refreshSessionList()
+      } else {
+        toast.error(`权限修改失败：${res.error || "未知错误"}`)
       }
       setInput("")
       scrollToBottom()
@@ -1386,9 +1475,14 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           // Pick a command name → fill with trailing space so the param stage fires.
           setInput((selected as CommandDef).name + " ")
         } else if (completion.stage === "param" && selected) {
-          // Pick a param value → fill the full "cmd param" and let the Enter-to-send
-          // branch below execute it.
-          setInput(`${completion.command!.name} ${(selected as CommandParam).name}`)
+          if (completion.command?.dynamicParams) {
+            // 动态多参数：保留已输入部分，追加选中工具 + 尾空格
+            setInput(`${completion.paramPrefix ?? ""}${(selected as CommandParam).name} `)
+          } else {
+            // Pick a param value → fill the full "cmd param" and let the Enter-to-send
+            // branch below execute it.
+            setInput(`${completion.command!.name} ${(selected as CommandParam).name}`)
+          }
         } else if (selected) {
           // Param-less command name → fill with trailing space (no second stage).
           setInput((selected as CommandDef).name + " ")

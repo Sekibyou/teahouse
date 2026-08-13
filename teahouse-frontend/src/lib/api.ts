@@ -284,6 +284,13 @@ export const instancesApi = {
     )
   },
 
+  setSessionPermissions: async (instanceId: string, sessionId: string, action: "add" | "remove", tools: string[]) => {
+    return post<{ session_id: string; enabled_tools: string[] }>(
+      `/api/instances/${instanceId}/sessions/${sessionId}/permissions`,
+      { action, tools },
+    )
+  },
+
   getSessionReasoning: async (instanceId: string, sessionId: string) => {
     return get<{ session_id: string; reasoning_effort: string | null; scope: string }>(
       `/api/instances/${instanceId}/sessions/${sessionId}/reasoning`,
@@ -320,6 +327,13 @@ export const instancesApi = {
     return post<{ status: string; run_uuid: string; cancelled: boolean }>(
       `/api/instances/${instanceId}/tools/run/${runUuid}/cancel`,
     )
+  },
+}
+
+// Tools API — builtin tool list with short descriptions (for permission autocomplete)
+export const toolsApi = {
+  listTools: async () => {
+    return get<{ tools: { name: string; short: string }[] }>("/api/tools")
   },
 }
 

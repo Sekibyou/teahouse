@@ -83,10 +83,12 @@ def save_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
 
 
 def list_sessions(instance_dir: Path) -> list[dict]:
-    """List existing sessions: ``[{session_id, record_count}]``.
+    """List existing sessions: ``[{session_id, record_count, enabled_tools?}]``.
 
     Scans ``.sessions/*.jsonl`` on disk. The main session is always included
     (even before its file exists), so the frontend always shows a stable main entry.
+    Child sessions carry their ``enabled_tools`` allow-list (from ``.meta.json``)
+    so the frontend can render dynamic permission autocomplete.
     """
     d = instance_dir / SESSION_DIR
     out: list[dict] = []
@@ -95,10 +97,14 @@ def list_sessions(instance_dir: Path) -> list[dict]:
         for p in sorted(d.glob("*.jsonl")):
             sid = p.stem
             seen.add(sid)
-            out.append({
+            item: dict = {
                 "session_id": sid,
                 "record_count": _count_records(p),
-            })
+            }
+            meta = load_meta(instance_dir, sid)
+            if meta.get("enabled_tools"):
+                item["enabled_tools"] = meta["enabled_tools"]
+            out.append(item)
     # Main session is always reported — even if its file doesn't exist yet.
     if MAIN_SESSION_ID not in seen:
         out.insert(0, {"session_id": MAIN_SESSION_ID, "record_count": 0})
