@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
+import { MarkdownRenderer } from "@/components/MarkdownRenderer"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
   ChevronRight, ChevronDown, Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
+  Eye, Code2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,6 +68,8 @@ export function WorkspacePage() {
   const [isDirty, setIsDirty] = useState(false)
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
   const [editorEpoch, setEditorEpoch] = useState(0)
+  // .md 文件可在代码编辑器与 Markdown 预览间切换
+  const [editorView, setEditorView] = useState<"code" | "preview">("code")
   const [isLoading, setIsLoading] = useState(true)
   const initialLoadRef = useRef(true)
   // 文件加载/重载请求序号，丢弃过期响应（快速连点不同文件防串号）
@@ -111,6 +115,9 @@ export function WorkspacePage() {
   const [exportError, setExportError] = useState("")
 
   const instId = activeInstance?.id
+
+  // 当前文件是否为 Markdown（决定是否显示预览切换）
+  const isMarkdown = !!selectedFile?.endsWith(".md")
 
   // 进入 workspace 时按视口设置默认模式：移动端默认游玩，宽屏默认后台。
   // 用 ref 仅在首次挂载（进入）时生效，不随用户后续切换或窗口 resize 覆盖。
@@ -166,6 +173,7 @@ export function WorkspacePage() {
     setEditedContent("")
     setGitHeadContent("")
     setIsDirty(false)
+    setEditorView("code")
   }, [instId])
 
   // Ctrl+S to save
@@ -316,6 +324,7 @@ export function WorkspacePage() {
     setEditedContent(fileRes.data!.content)
     setGitHeadContent(headRes.ok && headRes.data?.content != null ? headRes.data.content : "")
     setIsDirty(false)
+    setEditorView("code")
     setSelectedFile(path)
   }, [instId])
 
@@ -487,6 +496,18 @@ export function WorkspacePage() {
                 {selectedFile && (
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && <span className="text-xs text-orange-500">未保存</span>}
+                    {isMarkdown && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
+                        className="gap-1"
+                        title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
+                      >
+                        {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
+                        {editorView === "code" ? "预览" : "代码"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                       {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                       保存
@@ -495,12 +516,18 @@ export function WorkspacePage() {
                 )}
               </div>
               {selectedFile ? (
-                <textarea
-                  className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
-                  value={editedContent}
-                  onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
-                  spellCheck={false}
-                />
+                isMarkdown && editorView === "preview" ? (
+                  <div className="flex-1 overflow-auto">
+                    <MarkdownRenderer content={editedContent} />
+                  </div>
+                ) : (
+                  <textarea
+                    className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
+                    value={editedContent}
+                    onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
+                    spellCheck={false}
+                  />
+                )
               ) : (
                 <div className="flex-1 flex items-center justify-center text-muted-foreground">
                   <div className="text-center">
@@ -845,6 +872,18 @@ export function WorkspacePage() {
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
                     {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
+                    {isMarkdown && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
+                        className="gap-1"
+                        title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
+                      >
+                        {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
+                        {editorView === "code" ? "预览" : "代码"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                       {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                       保存
@@ -852,26 +891,34 @@ export function WorkspacePage() {
                   </div>
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
-                  <MonacoEditor
-                    key={`${selectedFile}#${editorEpoch}`}
-                    path={selectedFile}
-                    defaultValue={fileContent}
-                    original={gitHeadContent ?? ""}
-                    onSave={handleSave}
-                    onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
-                    language={
-                      selectedFile?.endsWith(".md") ? "markdown" :
-                      selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
-                      selectedFile?.endsWith(".js") ? "javascript" :
-                      selectedFile?.endsWith(".py") ? "python" :
-                      selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
-                      selectedFile?.endsWith(".json") ? "json" :
-                      selectedFile?.endsWith(".css") ? "css" :
-                      selectedFile?.endsWith(".html") ? "html" :
-                      selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
-                      "plaintext"
-                    }
-                  />
+                  {/* 代码编辑器常驻挂载，预览时用 CSS 隐藏以保留撤销栈与光标 */}
+                  <div className={editorView === "code" ? "h-full" : "hidden"}>
+                    <MonacoEditor
+                      key={`${selectedFile}#${editorEpoch}`}
+                      path={selectedFile}
+                      defaultValue={fileContent}
+                      original={gitHeadContent ?? ""}
+                      onSave={handleSave}
+                      onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
+                      language={
+                        selectedFile?.endsWith(".md") ? "markdown" :
+                        selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
+                        selectedFile?.endsWith(".js") ? "javascript" :
+                        selectedFile?.endsWith(".py") ? "python" :
+                        selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
+                        selectedFile?.endsWith(".json") ? "json" :
+                        selectedFile?.endsWith(".css") ? "css" :
+                        selectedFile?.endsWith(".html") ? "html" :
+                        selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
+                        "plaintext"
+                      }
+                    />
+                  </div>
+                  {isMarkdown && (
+                    <div className={`h-full overflow-auto ${editorView === "preview" ? "" : "hidden"}`}>
+                      <MarkdownRenderer content={editedContent} />
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
