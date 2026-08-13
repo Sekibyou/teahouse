@@ -208,8 +208,13 @@ export function MonacoEditor({
   // Push value into the model when it changes (e.g. file content loaded async
   // after the editor has already mounted with the same path but empty value,
   // or when switching between files where the new file's content hasn't loaded yet).
-  // Use setValue so the content update doesn't trigger onChange, keeping isDirty
-  // clean — the parent has already called both setFileContent and setEditedContent.
+  // Must NOT use model.setValue(): it clears the whole undo stack
+  // (textModel._commandManager.clear()), so Ctrl+Z stops working after any
+  // SSE refresh / file switch that re-pushes content. executeEdits keeps the
+  // undo stack intact and lands the sync as a single undo step; pushUndoStop
+  // closes that step so the next user edit starts fresh.
+  // Note: executeEdits is a no-op on a readOnly editor, so don't wrap with a
+  // readOnly toggle.
   useEffect(() => {
     const editor = editorRef.current
     const monaco = monacoRef.current
@@ -220,12 +225,11 @@ export function MonacoEditor({
 
     if (model.getValue(monaco.editor.EndOfLinePreference.LF) === value) return
 
-    // Temporarily suspend onChange so this programmatic update doesn't
-    // look like a user edit to the parent.
-    const wasReadOnly = editor.getOption(monaco.editor.EditorOption.readOnly)
-    editor.updateOptions({ readOnly: true })
-    model.setValue(value)
-    editor.updateOptions({ readOnly: wasReadOnly })
+    editor.executeEdits(
+      "teahouse-sync",
+      [{ range: model.getFullModelRange(), text: value, forceMoveMarkers: true }],
+    )
+    editor.pushUndoStop()
   }, [value, editorReady])
 
   // Theme following via MutationObserver
