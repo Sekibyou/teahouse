@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .database.crypto import generate_master_key
 
@@ -28,6 +28,19 @@ class LLMConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8888, ge=1024, le=65535)
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def _port_from_env(cls, v):
+        # 允许用环境变量 TEAHOUSE_SERVER_PORT 覆盖端口,优先级高于 yaml。
+        # 生产/正式服务照读 yaml;开发脚本用环境变量切到独立端口,避开生产端口占用。
+        env_port = os.getenv("TEAHOUSE_SERVER_PORT")
+        if env_port:
+            try:
+                return int(env_port)
+            except ValueError:
+                raise ValueError(f"TEAHOUSE_SERVER_PORT 必须是整数, 得到 {env_port!r}")
+        return v
 
 
 class DbConfig(BaseModel):
