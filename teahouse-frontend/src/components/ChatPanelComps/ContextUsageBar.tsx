@@ -17,7 +17,7 @@ function brailleBar(pct: number): string {
 }
 
 const STATUS_CLASS: Record<string, string> = {
-  normal: "text-muted-foreground",
+  normal: "text-white",
   warning: "text-yellow-500",
   danger: "text-red-500",
 }
@@ -29,10 +29,14 @@ export function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
   const pct = (est / threshold) * 100
   const estText = est >= 1000 ? (est / 1000).toFixed(1) : String(est)
   const thText = (threshold / 1000).toFixed(1)
-  const cls = STATUS_CLASS[usage.status ?? "normal"] ?? STATUS_CLASS.normal
+  const barCls = STATUS_CLASS[usage.status ?? "normal"] ?? STATUS_CLASS.normal
   return (
-    <span className={`font-mono whitespace-nowrap ${cls}`}>
-      {brailleBar(pct)} {estText}/{thText}k tokens
+    <span className="font-mono whitespace-nowrap inline-flex items-center gap-1 text-white">
+      <span className="relative leading-none">
+        <span className="text-zinc-700">{brailleBar(100)}</span>
+        <span className={`absolute inset-0 ${barCls}`}>{brailleBar(pct)}</span>
+      </span>
+      {estText}/{thText}k tokens
     </span>
   )
 }
