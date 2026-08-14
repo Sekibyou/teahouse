@@ -38,7 +38,8 @@ interface AppliedAction {
 }
 
 interface FailedAction {
-  type: Action["type"]
+  /** 原始 type；坏块（JSON 整体损坏）用 "_block"。 */
+  type: string
   name: string
   value?: unknown
   index?: number
@@ -80,6 +81,43 @@ function deepEquals(a: unknown, b: unknown): boolean {
   return false
 }
 
+/**
+ * 防御性修复正文 bot 写坏的 JSON 大字面量：`"value": True` → `"value": true`。
+ *
+ * 正文变量清单用 Python 风格渲染现值（大写 True/False），bot 有时会照抄进
+ * teahouse-vars 块，导致 `JSON.parse` 整块失败。此处只在 `"value"` 字段值位置
+ * 把裸的大写 True/False 换成小写（JSON 合法字面量）。
+ *
+ * 覆盖范围刻意收窄——正则要求 `"value"` 冒号后紧邻一个裸 `True|False` 且其后是
+ * `空白/,/]/}`。因此不会误伤：
+ *   - 字符串值 `"value": "False"`（其后是引号）
+ *   - 嵌套对象 `"value": {"x": False}`（False 前是 "x": 不是 "value":）
+ *   - 数组内嵌 `"value": [False]` / 嵌套对象 `[... {"size":True}]`（前缀不同）
+ *   - 非 value 键 `{"x": True}`
+ * 数组/深嵌套里的大写布尔修复不到，交给「坏块留痕」兜底。
+ */
+function repairVarsJsonLiteral(jsonStr: string): string {
+  return jsonStr.replace(
+    /("value"\s*:\s*)(True|False)(?=[\s,\]\}])/g,
+    (_m, p1: string, p2: string) => p1 + p2.toLowerCase(),
+  )
+}
+
+/**
+ * 解析块内 JSON（先防御替换）。返回 {ok, value}：value 为数组或 null。
+ * 修复后仍解析失败（bot 写了其它非法结构）→ ok=false。
+ */
+function tryParseVarBlock(jsonStr: string): { ok: boolean; value: unknown[] | null; error?: string } {
+  const repaired = repairVarsJsonLiteral(jsonStr)
+  try {
+    const p = JSON.parse(repaired)
+    if (Array.isArray(p)) return { ok: true, value: p }
+    return { ok: false, value: null, error: "teahouse-vars 顶层必须是 JSON 数组" }
+  } catch (e) {
+    return { ok: false, value: null, error: `teahouse-vars JSON 解析失败：${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
 /** 断言 name 无空白 —— 与后端 validate_var_name 一致（空白会破坏 ${...} 标识符）。 */
 function validateName(name: unknown): string | null {
   if (typeof name !== "string") return "name 必须是字符串"
@@ -106,18 +144,11 @@ export function parseTeahouseVars(markdown: string): ParsedAction[] {
   // <!-- teahouse-vars: JSON -->  不限位置：文中/文末均可。非贪婪到最近 `-->`。
   const m = /<!--\s*teahouse-vars\s*:\s*([\s\S]*?)\s*-->/m.exec(markdown)
   if (!m) return []
-  let jsonStr = (m[1] || "").trim()
-  // 容错：去掉结尾可能的 `-->` 残留（正则已吃掉）。JSON 数组。
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(jsonStr)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(parsed)) return []
+  const { ok, value } = tryParseVarBlock(m[1])
+  if (!ok || !value) return []
   const out: ParsedAction[] = []
-  for (let i = 0; i < parsed.length; i++) {
-    const raw = parsed[i]
+  for (let i = 0; i < value.length; i++) {
+    const raw = value[i]
     if (!raw || typeof raw !== "object") continue
     const o = raw as Record<string, unknown>
     if (typeof o.type !== "string") continue
@@ -340,7 +371,7 @@ function buildFailure(
   built.msg = `error: ${reason}`
   const f: FailedAction = { type: act.type, name: act.name, value: act.value, index: act.index, error: reason }
   failed.push(f)
-  applied.push({ type: f.type, name: f.name, value: f.value, index: f.index, applied_value: undefined })
+  applied.push({ type: act.type, name: act.name, value: act.value, index: act.index, applied_value: undefined })
 }
 
 function setVarValue(vars: Array<{ name: string; value?: unknown }>, name: string, value: unknown): void {
@@ -361,6 +392,18 @@ function setVarValue(vars: Array<{ name: string; value?: unknown }>, name: strin
  * @returns 新正文（含 msg 标注）+ applied/failed
  */
 export function consumeVars(markdown: string, vars: Array<{ name: string; value?: unknown }>): CommitDraftResult {
+  // 0) 坏块检测：块存在但修复后仍解析失败 → 不静默丢块，留痕失败并被导演看见。
+  const badBlock = detectBrokenVarsBlock(markdown)
+  if (badBlock) {
+    return {
+      applied: [],
+      failed: [{ type: "_block", name: "", error: badBlock }],
+      updates: {},
+      // 原文写回（坏块留着，供人工修复），绝不改写为空
+      markedMarkdown: markdown,
+    }
+  }
+
   const rawActions = parseTeahouseVars(markdown)
   // 只处理"无 msg"的裸 action：parse 已过滤带 msg 的，这里再保险
   const actions = rawActions.filter((a) => a && !("msg" in a))
@@ -382,15 +425,24 @@ export function consumeVars(markdown: string, vars: Array<{ name: string; value?
   return { applied, failed, updates, markedMarkdown: newMarkdown }
 }
 
-/** 提取块内原始对象数组（还原逐条原始对象，含 index）；解析失败返回空数组。 */
+/**
+ * 检测"块存在但修复后仍解析失败"的情况。返回错误信息或 null。
+ * 区别于无块（null）：无块是正常，坏块留痕。
+ */
+export function detectBrokenVarsBlock(markdown: string): string | null {
+  if (!markdown) return null
+  const m = /<!--\s*teahouse-vars\s*:\s*([\s\S]*?)\s*-->/m.exec(markdown)
+  if (!m) return null
+  const { ok, error } = tryParseVarBlock(m[1])
+  return ok ? null : error ?? "teahouse-vars 块损坏"
+}
+
+/** 提取块内原始对象数组（还原逐条原始对象，含 index）；解析失败返回空数组。
+ *  走 tryParseVarBlock，故 value 里的裸大写布尔已被修复为小写——写回正文的块合法。 */
 export function extractRawActions(markdown: string): Array<Record<string, unknown>> {
   const m = /<!--\s*teahouse-vars\s*:\s*([\s\S]*?)\s*-->/m.exec(markdown || "")
   if (!m) return []
-  try {
-    const p = JSON.parse(m[1].trim())
-    if (Array.isArray(p)) return p.filter((x) => x && typeof x === "object") as Array<Record<string, unknown>>
-  } catch {
-    /* ignore */
-  }
-  return []
+  const { ok, value } = tryParseVarBlock(m[1])
+  if (!ok || !value) return []
+  return value.filter((x) => x && typeof x === "object") as Array<Record<string, unknown>>
 }
