@@ -29,7 +29,7 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       [/^\s*```.*$/, "codeblock", "codeblock"],
 
       // ---- Minimal markdown subset ----
-      [/^(#{1,6})\s/, "header.teahouse"],
+      [/^(#{1,6})\s*[^\n]*$/, "header.teahouse"],
 
       // 4. Snippet — `{{path}}` (a file path / glob).
       [/{{[\s\S]*?}}/, "string.teahouse"],
@@ -39,14 +39,22 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       // 1b. Comment multiline — `${!-- ...` opens a state that closes on `--}`.
       [/\$\{!--[^\n]*$/, "comment.teahouse", "commentBlock"],
 
-      // 2. Code block single-line — `${ ... }` with spaces inside, closes at the
-      //    LAST `}` on the line so inner braces in strings don't truncate it.
+      // 2. Code block (return-based) — any `${ ... return ... }`, no space needed
+      //    (so `${return}` lands here, not the variable rule). Closes at the LAST
+      //    `}` on the line so inner braces in strings don't truncate it.
+      [/\$\{[^\n]*\breturn\b[^\n]*\}/, "keyword.teahouse"],
+      // 2b. Code block multiline (return) — line doesn't close → state.
+      [/\$\{[^\n]*\breturn\b[^\n]*$/, "keyword.teahouse", "block"],
+
+      // 2c. Code block (space-based) — `${ ... }` with spaces inside, closes at
+      //     the last `}` on the line. Covers multi-line blocks whose first line
+      //     holds the return on a later line.
       [/\$\{[^\n}]*\s[^\n]*\}/, "keyword.teahouse"],
-      // 2b. Code block multiline — `${ ...` doesn't close this line → state.
+      // 2d. Code block multiline (space) → state.
       [/\$\{[^\n}]*\s[^\n]*$/, "keyword.teahouse", "block"],
 
       // 3. Variable — `${name}`, no whitespace inside. Must come after code blocks
-      //    (which require a space) so `${var1}` lands here, not as a block prefix.
+      //    (which require a return or space) so `${var1}` lands here, not as a block.
       [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
     ],
     codeblock: [
@@ -74,7 +82,7 @@ function defineThemes(monaco: typeof Monaco) {
     base: "vs",
     inherit: true,
     rules: [
-      { token: "comment.teahouse", foreground: "#8c8c8c", fontStyle: "italic" },
+      { token: "comment.teahouse", foreground: "#2e7d32", fontStyle: "italic" },
       { token: "keyword.teahouse", foreground: "#c586c0" },
       { token: "variable.teahouse", foreground: "#0c7bb8" },
       { token: "string.teahouse", foreground: "#a0472c" },
@@ -104,7 +112,7 @@ function defineThemes(monaco: typeof Monaco) {
     base: "vs-dark",
     inherit: true,
     rules: [
-      { token: "comment.teahouse", foreground: "#8c8c8c", fontStyle: "italic" },
+      { token: "comment.teahouse", foreground: "#6a9955", fontStyle: "italic" },
       { token: "keyword.teahouse", foreground: "#d67fe0" },
       { token: "variable.teahouse", foreground: "#4fc1ff" },
       { token: "string.teahouse", foreground: "#ce9178" },
