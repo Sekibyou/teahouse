@@ -10,14 +10,13 @@ alone. If the name is NOT in var_map, the literal `${name}` is kept unchanged (�
 `teahouse.xxx` values exist only during director system-prompt assembly; elsewhere they
 are ordinary missing variables and render literally (naturally 不泄露内部提示词).
 
-`${!-- ... --}` comments: writer/director-facing metadata inside setting files that is
-stripped to empty on every AI-facing resolve (system prompt / Generate), so the writer
-LLM never sees it while the director (via Read) does. Must be `$` `{` then `!-- ` — the
-space is the key distinguisher from a real variable (names bar whitespace). The body may
-contain bare `}` and spans braces freely; it closes at the first `--}`. A `--}`-less
-comment degrades to its literal. Escaped with a leading backslash (`\${!-- ... --}`) it
-renders verbatim. Write/Edit persistence (resolve_placeholders) does NOT strip it — that
-surface is where you WANT the comment to stay on disk for the director to read.
+All `${}` placeholders route through a single registered framework (see the
+`${@...}` section): `${@var name}` / `${@type name}` / `${@python return ...}` /
+`${@condition ...}` / `${@note ...}` / `${@max|@min|@len|@random}`. Bare `$ {...}`
+forms (plain `${name}` variables, and `${ if ...: return ... }` code blocks) are
+auto-degraded by a heuristic. Old `${!-- ...--}` comments and `${type:name}` are
+deprecated and render literally after the no-guardrail migration; use `${@note name}`
+and `${@type name}` instead.
 
 Two surfaces only AI consumes auto-resolve BOTH `${}` and `{{}}`:
   - Generate yaml (sent to the writer LLM)
@@ -83,8 +82,6 @@ def resolve_placeholders(text: str, instance_dir: Path, strict: bool = False) ->
     return _restore_escaped_placeholders(text, literals)
 
 
-_VARIABLE_RE = re.compile(r"\$\{(.+?)\}")
-
 # ---------------------------------------------------------------------------
 # 转义语法 — 前缀反斜杠保护占位符不被展开
 #
@@ -113,7 +110,7 @@ def _hide_escaped_placeholders(text: str) -> tuple[str, list[str]]:
     literals[i] 是第 i 个被转义占位符的**字面量**（去掉前导反斜杠的原样文本）。
     hidden 文本里第 i 个哨兵还原时取 literals[i]。
 
-    用 balanced 扫描（同 resolve_conditional_slices）匹配开括号，所以：
+    用 balanced 扫描（同 _match_brace_group）匹配开括号，所以：
       - \${...}（单行变量）与其内部的 } 正确配对
       - \$ {...}（多行条件块）内部的 } 按嵌套深度配对，不会被截断
       - \{{...}} 单层切片正确配对
@@ -177,42 +174,28 @@ def _restore_escaped_placeholders(text: str, literals: list[str]) -> str:
 
 
 def _substitute_variable_literals(text: str, var_map: dict) -> str:
-    """One pass of ${name} substitution. Missing variables render literally.
+    """Single-pass `${name}` / `${@name ...}` substitution for sandbox surfaces.
 
-    ${!-- ... --} comment blocks are stripped first (body may contain bare `}`,
-    which the single-line _VARIABLE_RE would otherwise truncate on). The primary
-    comment path is resolve_conditional_slices — this pre-strip is a defensive
-    backstop for surfaces that go through the regex pass alone.
+    This is the regex-free, registered-framework path: scan the text, match every
+    top-level `${...}` (brace-balanced, survives nested `{{}}` / f-string braces),
+    judge its syntax (§3.2) and dispatch to a PLACEHOLDER_HANDLERS entry (§3.3).
+    Missing/unknown placeholders render literally — never raise.
     """
-    text = _strip_comments(text)
-
-    def _replacer(match: re.Match) -> str:
-        name = match.group(1).strip()
-        if name in var_map:
-            return _stringify(var_map[name])
-        return match.group(0)  # 原样显示
-
-    return _VARIABLE_RE.sub(_replacer, text)
+    return _resolve_one_round_braces(text, var_map, type_map=None)
 
 
 # =====================================================================
-# 条件切片 — 变量驱动的 `${ if ...: return ... }` 多行代码块
+# 条件切片（代码块）— 白名单 AST 解释器
 # =====================================================================
 #
-# A multi-line `${ ... }` block is a conditional slice: it selects one string to
-# inline based on sandbox vars, evaluated at resolve time. A block whose content
-# (after strip) contains `return ` (followed by a space) is treated as a **code
-# block**: its content is parsed via a whitelist AST interpreter, the single
-# matched `return <value>` branch is materialized, and that value is returned for
-# the outer resolve loop to continue expanding (it may itself contain `{{...}}`
-# or `${...}`). A block with no `return ` is an ordinary variable block reused
-# from the standard lookup (read var_map; missing → literal).
+# A `${ ... }` block routed to python (either `${@python ...}`/`${@condition ...}`
+# explicitly, or a bare `${ if ...: return ... }` auto-degraded by the judgment
+# layer) is parsed by this whitelist AST interpreter. The single matched
+# `return <value>` branch is materialized and returned for the outer resolve loop
+# to continue expanding (it may itself contain `{{...}}` or `${...}`).
 #
 # All failures (syntax error, non-whitelisted node, unknown name) degrade to the
 # literal block text — never raise, so a bad block can't blow up assembly.
-
-# Test trigger: a block is a code block iff `return ` appears inside it.
-_CODE_BLOCK_TRIGGER = "return "
 
 # Whitelist functions callable from inside a code block. Mapped to safe impls
 # so arbitrary calls are never executed.
@@ -533,152 +516,374 @@ def _parse_code_block(code: str) -> ast.Module:
         raise
 
 
-def _eval_code_block(code: str, var_map: dict) -> str:
+def _eval_code_block_value(code: str, var_map: dict):
+    """Evaluate `code`, returning `(ok, value_or_None)`.
+
+    Distinguishes the two degraded outcomes so callers can decide fallback:
+      - Syntax / whitelist / eval exception (bad block) → **raises**.
+      - Executed cleanly but no `return` reached (e.g. a false `if` condition) →
+        `(False, None)`.
+      - A `return` was materialized → `(True, <stringified value>)`.
+    """
+    tree = _parse_code_block(code)
+    _check_whitelist(tree)
+    env = dict(var_map) if isinstance(var_map, dict) else {}
+    value = _exec_block(tree.body, env)
+    if value is _NO_RETURN:
+        return False, None
+    return True, _stringify(value)
+
+
+def _eval_code_block(code: str, var_map: dict, fail_literal: str | None = None) -> str:
     """Evaluate a code block's content to the materialized return value. Always
-    returns a string — on any failure, the original literal block text."""
-    literal = "${" + code + "}"
+    returns a string — on any failure, `fail_literal` (or the original block text
+    `${code}`) is returned.
+
+    `fail_literal` lets callers that rewrite the code (e.g. `@condition` wrapping it
+    in `if/return`) fall back to their own user-visible literal instead of the mangled
+    rewritten code.
+    """
+    literal = fail_literal if fail_literal is not None else "${" + code + "}"
     try:
-        tree = _parse_code_block(code)
-        _check_whitelist(tree)
-        env = dict(var_map) if isinstance(var_map, dict) else {}
-        value = _exec_block(tree.body, env)
+        ok, val = _eval_code_block_value(code, var_map)
     except (_BlockEvalError, SyntaxError, TypeError, ValueError, ZeroDivisionError):
         return literal
-    if value is _NO_RETURN:
+    if not ok:
         return literal
-    return _stringify(value)
+    return val
 
 
-def _resolve_one_block(inner: str, var_map: dict, type_map: dict | None = None) -> str:
-    """Resolve a single `${...}` block's content. Returns the replacement string.
-
-    `${type:name}` resolves to the variable's type string from type_map (name→type).
-    Because variable names cannot contain `:`, this prefix is unambiguous. An unknown
-    name returns the literal block (no leak).
-    """
-    stripped = inner.strip()
-    if stripped.startswith("type:"):
-        tname = stripped[5:].strip()
-        if type_map and tname in type_map:
-            return str(type_map[tname])
-        return "${" + inner + "}"
-    if _CODE_BLOCK_TRIGGER in stripped:
-        return _eval_code_block(stripped, var_map)
-    # Ordinary variable block — reuse standard lookup, missing → literal.
-    if stripped in var_map:
-        return _stringify(var_map[stripped])
-    return "${" + inner + "}"  # 原样显示
-
-
-# ---------------------------------------------------------------------------
-# 注释语法 — ${!-- ... --}   →  解析时剥掉（替换为空）
+# =====================================================================
+# `${@...}` — 注册式占位符统一框架（§3.1 搜索状态机 + §3.2 判定层 + §3.3 处理器）
+# =====================================================================
 #
-# 复用变量占位符的识别外壳：`$` 后跟 `{`，但 `{` 后必须紧跟 `!-- `（三个
-# 字符后一个空格——空格是与真实变量的关键区分，变量名禁止空白）。命中注释
-# 前缀即进入**注释模式**：忽略所有嵌套深度（正文可含任意字符，包括裸 `}`），
-# 线性查找第一个 `--}` 作为闭合，整段剥掉返回空串。找不到 `--}` 则保守回退
-# 字面量原样保留。
+# 每一次解析只处理**最表层**的占位符：从首个 `${`（进入 S 搜索）或 `{{`
+# （进入 P 搜索）开始，用花括号配对外层匹配到同级闭合，判其语法，产出字符串；
+# 产物流入下一轮输入（resolve_variables 的多轮循环消化），循环直到稳定。
 #
-# 用途：写在与导演相关的设定里，导演 Read 原始文件可见，正文 bot 收到的注入
-# 文本已被剥净。`\${!-- ... --}`（转义）仍由 _hide_escaped_placeholders 保护为
-# 字面量显示。Write/Edit 落盘（resolve_placeholders 路径）不剥——落盘正是要
-# 保留注释供导演读的时机。
-# ---------------------------------------------------------------------------
-_COMMENT_OPEN = "!-- "
-_COMMENT_CLOSE = "--}"
+#   `${name}`             裸写普通变量（无空白/无冒号）
+#   `${@var name}`        显式变量
+#   `${@type name}`       取变量类型
+#   `${@max [..]}` / `${@min [..]}` / `${@len ...}`   从列表/变量取 max/min/len
+#   `${@random [a,b,c]}`  随机取列表一项（字面量或数组变量）
+#   `${@python return ...}`  白名单 python 代码块（须含 return）
+#   `${@condition 条件: 输出}`  最简条件切片：封装成 `if 条件: return 输出`（单分支）三态：
+#                                命中→输出；假条件→空；坏块→原样
+#   `${@note ...}`        注释，恒剥为空（不做内部展开）
+#   `${ if ...: return ... }`   裸写带 return → 自动降级为 python（兼容旧写法）
+#   `${条件: 输出}` / `${a:b}`  裸写恰一最外层冒号 → 自动判为 condition（if/return 封装）
+#   `${a:b:c}` (≥2 最外层冒号)   原样保留，不解析
+#
+# 兜底原则：绝大多数失败（变量不存在、未注册指令、坏块、语法错）统一"回退原样字面量"，
+# 绝不报错（It should degrade to literal）。唯一例外是 `@condition` 的**假条件**（语义
+# 不中）→ 返回空字符串，使"分支不命中=不注入内容"成立；坏块仍保留原样便于排查。
 
 
-def _find_comment_end(text: str, start: int) -> int:
-    """Find the index just after `--}` closing a comment starting at `start`.
+def _match_brace_group(text: str, start: int) -> tuple[str, int] | None:
+    """From a `${` at `start` (start points at `$`), find the matching `}`.
 
-    Linear scan ignoring all brace depth (comment body may contain bare `}`).
-    Returns -1 when no `--}` is found within the text.
+    Counts **single** `{` / `}` (so `{{foo}}` file-slices and f-string braces
+    inside a block balance instead of truncating at the first `}`). Returns
+    (inner_without_outer_braces, index_after_closing_`}`), or None if unbalanced.
     """
-    return text.find(_COMMENT_CLOSE, start)
-
-
-def _strip_comments(text: str) -> str:
-    """Remove every `${!-- ... --}` comment block (replaced with empty string).
-
-    Pure text transform, no var resolution — used as a defensive backstop by the
-    regex-only variable pass. The primary strip happens text[start:...]. Comments
-    without a closing `--}` are kept verbatim.
-    """
-    out: list[str] = []
-    i = 0
     n = len(text)
-    while i < n:
-        if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
-            if text.startswith(_COMMENT_OPEN, i + 2):
-                end = _find_comment_end(text, i + 2 + len(_COMMENT_OPEN))
-                if end == -1:
-                    out.append(text[i])
-                    i += 1
-                    continue
-                i = end + len(_COMMENT_CLOSE)
-                continue
-        out.append(text[i])
-        i += 1
-    return "".join(out)
+    depth = 0
+    k = start  # start points at '$'
+    while k < n:
+        c = text[k]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 2:k], k + 1
+        k += 1
+    return None
 
 
-def resolve_conditional_slices(text: str, var_map: dict, type_map: dict | None = None) -> str:
-    """Replace every multi-line `${ ... }` conditional-slice block in `text`.
+def _match_double_brace(text: str, start: int) -> tuple[str, int] | None:
+    """From a `{{` at `start`, find the matching `}}`.
 
-    Balanced-brace scan (nested `{}` supported), independent of _VARIABLE_RE so a
-    multi-line block isn't truncated at the first `}`. Returns text with matched
-    code/variable blocks materialized (or kept literal on failure); ${name} and
-    {{path}} placeholders produced here are expanded by the caller's next pass.
-
-    `${type:name}` (the type-of-name syntax) is resolved here to the variable's
-    declared/inferred type string via `type_map` (name→type). Because variable names
-    are forbidden from containing `:` (see validate_var_name), the `type:` prefix is
-    unambiguous. Unknown names render literally (no leak).
-
-    `${!-- ... --}` comment blocks (see _COMMENT_OPEN/_COMMENT_CLOSE) are stripped
-    to empty here, before variable/code-block resolution — body may contain bare `}`.
+    Counts `{` individually like _match_brace_group but only closes when `}}`
+    appears (internal single braces don't close a slice). Returns
+    (path, index_after_closing_`}}`), or None if unbalanced.
     """
-    out: list[str] = []
-    i = 0
     n = len(text)
+    depth = 0
+    k = start
+    while k < n:
+        c = text[k]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 2:k], k + 1
+        k += 1
+    return None
+
+
+def _scan_top_level(text: str):
+    """Scan `text` left→right, yielding every top-level `${...}` group.
+
+    First-opener-wins: whichever of `${`/`{{` appears earlier is consumed by its
+    own matcher; content inside an outer group is skipped, so a `{{}}` inside a
+    `${...}` never triggers the slice matcher (and vice versa). Yields
+    (inner, start_index, end_index_after_close).
+    """
+    n = len(text)
+    i = 0
     while i < n:
-        if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
-            # ${!-- ... --}  注释：`{` 后必须紧跟 `!-- `（含空格）才命中。
-            # 必须用原文前缀检测而非 inner——inner 会被正文裸 `}` 截断。
-            if text.startswith(_COMMENT_OPEN, i + 2):
-                end = _find_comment_end(text, i + 2 + len(_COMMENT_OPEN))
-                if end == -1:
-                    # 没有闭合 `--}` — 保守回退字面量（保持原样）
-                    out.append(text[i])
-                    i += 1
-                    continue
-                # 剥掉整段（不含 `}$` 本身之外的任何字符），替换为空
-                i = end + len(_COMMENT_CLOSE)
-                continue
-            depth = 0
-            k = i + 1
-            closed = False
-            while k < n:
-                if text[k] == "{":
-                    depth += 1
-                elif text[k] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        closed = True
-                        break
-                k += 1
-            if not closed:
-                # Unbalanced — leave the brace group untouched, resume after `{`.
-                out.append(text[i])
+        c = text[i]
+        if c == "$" and i + 1 < n and text[i + 1] == "{":
+            res = _match_brace_group(text, i)
+            if res is None:
                 i += 1
                 continue
-            inner = text[i + 2:k]
-            out.append(_resolve_one_block(inner, var_map, type_map))
-            i = k + 1
+            inner, end = res
+            yield "var", inner, i, end
+            i = end
+        elif c == "{" and i + 1 < n and text[i + 1] == "{":
+            res = _match_double_brace(text, i)
+            if res is None:
+                i += 1
+                continue
+            inner, end = res
+            yield "slice", inner, i, end
+            i = end
         else:
-            out.append(text[i])
             i += 1
-    return "".join(out)
+
+
+def _resolve_python(value: str, var_map: dict, type_map: dict | None) -> str:
+    """Route a python/condition body through the whitelist code-block interpreter."""
+    return _eval_code_block(value, var_map)
+
+
+def _resolve_type(value: str, var_map: dict, type_map: dict | None) -> str:
+    """`@type` — return the variable's declared/inferred type string."""
+    name = value.strip()
+    if type_map and name in type_map:
+        return str(type_map[name])
+    return None  # 未知 → 回退原样
+
+
+def _resolve_note(_value: str, _var_map: dict, _type_map: dict | None) -> str:
+    """`@note` comments strip to empty, no internal expansion."""
+    return ""
+
+
+def _resolve_random(value: str, var_map: dict, type_map: dict | None) -> str:
+    """`@random` — pick one item from a list literal or an array variable."""
+    v = _try_resolve_value(value, var_map)
+    if isinstance(v, list) and v:
+        return _stringify(random.choice(v))
+    return None
+
+
+def _resolve_len(value: str, var_map: dict, type_map: dict | None) -> str:
+    v = _try_resolve_value(value, var_map)
+    if v is not None:
+        try:
+            return _stringify(len(v))
+        except TypeError:
+            pass
+    return None
+
+
+def _resolve_maxmin(value: str, var_map: dict, fn) -> str:
+    v = _try_resolve_value(value, var_map)
+    if v is not None:
+        try:
+            unfolded = v
+            if isinstance(unfolded, (list, tuple)) and len(unfolded) == 1 and isinstance(unfolded[0], (list, tuple)):
+                unfolded = unfolded[0]
+            return _stringify(fn(unfolded))
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _try_resolve_value(value: str, var_map: dict):
+    """Resolve a handler argument: a variable name, else a python literal value."""
+    name = value.strip()
+    if name in var_map:
+        return var_map[name]
+    try:
+        return ast.literal_eval(name)
+    except (ValueError, SyntaxError):
+        return None
+
+
+def _split_condition_colon(text: str) -> tuple[str, str] | None:
+    """Split `condition: output` at the first colon **outside quotes and braces**.
+
+    Colons inside `"..."` (quoted `{{file:line}}`) or inside `{{...}}` (line-range /
+    glob `:last30`) are NOT the separator — only a colon at brace/quote depth 0 is.
+    Returns (condition, output) stripped, or None if no out-of-quote/brace colon, or
+    if MORE THAN ONE out-of-quote/brace colon is present (ambiguity → caller keeps
+    literal, per the "最外层恰一冒号才判" rule).
+    """
+    in_quote = False
+    brace_depth = 0
+    sep = -1
+    n = len(text)
+    for i, ch in enumerate(text):
+        if ch == '"':
+            in_quote = not in_quote
+        elif ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth = max(0, brace_depth - 1)
+        elif in_quote or brace_depth > 0:
+            continue
+        elif ch == ":":
+            if sep != -1:
+                return None  # 第二个最外层冒号 → 歧义，原样
+            sep = i
+    if sep == -1:
+        return None
+    return text[:sep].strip(), text[sep + 1:].strip()
+
+
+def _quote_if_bare_slice(out: str) -> str:
+    """Wrap a bare `{{...}}` output in double quotes so the resulting code is valid.
+
+    From `${a >= 10: {{file:10-30}}}` the output is `{{file:10-30}}` — a bare slice
+    (no surrounding quotes) is not a valid Python expression, so `return {{file:10-30}}`
+    would be a syntax error. Quoting it turns the slice into a string constant the
+    resolve loop expands next round. A slice already inside quotes is left untouched.
+    """
+    s = out.strip()
+    if s.startswith("{{") and s.endswith("}}"):
+        return '"' + s + '"'
+    return out
+
+
+def _count_outer_colons(text: str) -> int:
+    """Count colons at brace/quote depth 0 (colons inside `"..."` or `{{...}}` don't count).
+
+    Used by the judgment layer to decide "bare single outer colon → condition" vs
+    "≥2 outer colons → literal", independent of colons buried in slices/quotes.
+    """
+    in_quote = False
+    brace_depth = 0
+    count = 0
+    for ch in text:
+        if ch == '"':
+            in_quote = not in_quote
+        elif ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth = max(0, brace_depth - 1)
+        elif not in_quote and brace_depth == 0 and ch == ":":
+            count += 1
+    return count
+
+
+def _resolve_condition(value: str, var_map: dict, type_map: dict | None, original: str | None = None) -> str:
+    """`@condition` — 最简条件切片（统一裸写与显式入口）。
+
+    写法 `${@condition <条件>: <输出>}`（或裸写 `${<条件>: <输出>}`），引擎按
+    **最外层恰一冒号**切出条件/输出，封装为 `if <条件>:\n    return <输出>` 后丢进
+    白名单 python 解释器执行。**只允准单分支 if-return**，不支持 elif/else/三元。
+    切片/引号内的冒号不当作分隔。输出为裸 `{{...}}` 切片时自动套引号（`{{file:10-30}}`
+    → `"{{file:10-30}}"`），使 `${a>=10: {{file:10-30}}}` 这类高频写法 work。
+    条件即 python 比较式；输出即 return 值——引号字面量、裸变量名（`金币` 按 env
+    查现值）、函数调用（`roll("1d10")`）皆由解释器天然处理。
+
+    结果三态（语义见 §设计意图）：
+      - **命中**（条件为真，走到 return）→ 返回该输出。
+      - **假条件**（语义不中：代码干净执行但条件为假没 return）→ 返回**空字符串**，
+        分支不命中 = 不注入内容。
+      - **坏块**（缺冒号 / 语法错 / 变量不存在 / 越权）→ 回退**原样字面量**，便于排查。
+    """
+    literal = original if original is not None else "${@condition " + value + "}"
+    split = _split_condition_colon(value)
+    if split is None:
+        return literal  # 坏块：无冒号
+    cond, out = split
+    if not cond or not out:
+        return literal  # 坏块：空条件/空输出
+    code = f"if {cond}:\n    return {_quote_if_bare_slice(out)}"
+    try:
+        ok, val = _eval_code_block_value(code, var_map)
+    except (_BlockEvalError, SyntaxError, TypeError, ValueError, ZeroDivisionError):
+        return literal  # 坏块
+    if not ok:
+        return ""  # 假条件 → 空（不注入内容）
+    return val
+
+
+# --- §3.3 类型注册表：@A → handler(C, var_map, type_map) -> str。返回 None 视为未命中→原样。 ---
+PLACEHOLDER_HANDLERS: dict[str, object] = {
+    "var": lambda c, vm, tm: _stringify(vm[c.strip()]) if c.strip() in vm else None,
+    "type": _resolve_type,
+    "python": _resolve_python,
+    "condition": _resolve_condition,
+    "note": _resolve_note,
+    "random": _resolve_random,
+    "len": _resolve_len,
+    "max": lambda c, vm, tm: _resolve_maxmin(c, vm, max),
+    "min": lambda c, vm, tm: _resolve_maxmin(c, vm, min),
+}
+
+
+def _judge_and_resolve(inner: str, var_map: dict, type_map: dict | None) -> str:
+    """§3.2 判定层 + §3.3 处理器分发。对单个 `${...}` inner 返回替换串。
+
+    失败统一回退原样字面量 `${inner}`（绝不抛错）。
+    """
+    stripped = inner.strip()
+    literal = "${" + inner + "}"
+
+    if stripped.startswith("@"):
+        head, _, rest = stripped[1:].partition(" ")
+        rest = rest.strip()
+        handler = PLACEHOLDER_HANDLERS.get(head)
+        if handler is None:
+            return literal  # 未注册指令 → 原样
+        try:
+            if head == "condition":
+                out = _resolve_condition(rest, var_map, type_map, original=literal)
+            else:
+                out = handler(rest, var_map, type_map)
+        except Exception:
+            return literal
+        if out is None:
+            return literal
+        return out
+
+    # -- 裸写启发式判定 --
+    has_space = any(ch.isspace() for ch in stripped)
+    if not has_space and _count_outer_colons(stripped) == 0:
+        return _stringify(var_map[stripped]) if stripped in var_map else literal
+    if "return " in stripped:
+        return _resolve_python(stripped, var_map, type_map)
+    if _count_outer_colons(stripped) == 1:
+        # 裸写单冒号 → condition（if/return 封装），失败回退用户原始字面量
+        return _resolve_condition(stripped, var_map, type_map, original=literal)
+    # ≥2 最外层冒号，或带 @/空白却无 return —— 无法分类 → 原样
+    return literal
+
+
+def _resolve_one_round_braces(text: str, var_map: dict, type_map: dict | None) -> str:
+    """One pass: match every top-level `${...}` and replace via the judgment layer.
+
+    Only `${}` groups are handled here. `{{}}` slices are handled by
+    resolve_placeholders separately in the resolve_variables loop (which owns
+    instance_dir). Produced strings may contain fresh `${`/`{{`, fed to the next round.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for kind, inner, start, end in _scan_top_level(text):
+        if kind != "var":
+            continue  # stay out of `{{}}` — resolve_placeholders owns those
+        pieces.append(text[cursor:start])
+        pieces.append(_judge_and_resolve(inner, var_map, type_map))
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def validate_var_name(name) -> Optional[str]:
@@ -686,14 +891,18 @@ def validate_var_name(name) -> Optional[str]:
 
     Names must not contain whitespace: they are referenced from `${...}` code blocks
     as Python identifiers (e.g. `if dice == 6`), and a spacey name can't be a Name.
-    Names must not contain `:`: it is the reserved prefix for the return-type syntax
-    `${type:name}` (e.g. `${type:金币}` → `number`), so a colon in a real variable
-    name would make that parse ambiguous.
+    Names must not contain `:`: the judgment layer routes a single `/multiple` colon
+    in a bare `${...}` to the python/condition path (e.g. `${a:b}`), so a colon in a
+    real variable name would make that parse ambiguous.
+    Names must not contain `@`: it is the reserved prefix of the explicit directive
+    syntax `${@name ...}`, so a real variable name starting with `@` (or containing
+    it) would collide with directive parsing.
     """
-    if any(ch.isspace() for ch in str(name)) or ":" in str(name):
+    s = str(name)
+    if any(ch.isspace() for ch in s) or ":" in s or "@" in s:
         return (
-            f"变量名不能包含空白字符或冒号 ':': '{name}'"
-            "（空白会破坏 ${...} 代码块做 Python 标识符；冒号 ':' 是 `${type:名字}` 类型语法的保留前缀）"
+            f"变量名不能包含空白字符、冒号 ':' 或 '@': '{name}'"
+            "（空白会破坏 ${...} 代码块做 Python 标识符；冒号 ':' 会让裸 ${...} 被判定层误判为 python/condition；'@' 是 ${@name} 显式指令的保留前缀）"
         )
     return None
 
@@ -704,40 +913,35 @@ def substitute_variables(text: str, var_map: dict) -> str:
 
 
 def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False, type_map: dict | None = None) -> str:
-    """Resolve ${name} and {{path}} for AI-facing surfaces (system prompt / Generate).
+    """Resolve `${}` and `{{path}}` for AI-facing surfaces (system prompt / Generate).
 
-    Alternates ${} → {{}} → ${} → ... until stable, so a {{path}} slice whose content
-    references a variable (and vice versa) resolves fully. Bounded by max_depth:
-    past the limit, remaining placeholders are left literal (no hard error), so a
-    variable whose value (transitively) references itself degrades gracefully.
-
-    Also resolves multi-line ${ ... } conditional-slice blocks (see
-    resolve_conditional_slices): an `if ...: return ...` block selects one string to
-    inline based on var_map, substituted ahead of the single-line variable pass.
-    `${type:name}` similarly resolves to the variable's type via type_map (name→type).
+    Pure per-round model (§3.4): each round matches every top-level placeholder,
+    judges its syntax and dispatches to the handler registry, producing strings that
+    become the next round's input. Alternation between `${}`-expansion and `{{}}`
+    file slices happens **within** a round (brace groups first, then resolving any
+    `{{}}` produced), and loops until stable. Bounded by max_depth: past the limit,
+    remaining placeholders are left literal (no hard error), so a variable whose
+    value (transitively) references itself degrades gracefully.
 
     Missing variables render literally; a bare `$` is never touched. File slices
     are lenient (strict=False): unresolvable `{{...}}` (a doc example) stays literal
     rather than raising.
     """
-    # 转义的最后阶段：隐藏被 \ 转义的占位符，避免多轮交替展开把它们吞掉。
-    # ${teahouse.*} / ${name} 变量值在循环内才注入，注入后可能出现新的 \{{...}}，
-    # 所以隐藏要**在每次迭代里重复做**（把新增的转发给哨兵），循环稳定后统一还原。
+    # 转义的最后阶段：隐藏被 \ 转义的占位符，避免多轮循环把 ${/{{ 哨兵吞掉。
+    # 变量值在循环内才注入，注入后可能出现新的 \{{...}}，所以隐藏要**每次迭代重复做**，
+    # 循环稳定后统一还原哨兵。
     esc_literals: list[str] = []
-    # 入口预隐藏一次：把首轮的 \${...} / \${!-- ... --} 先变成哨兵，否则
-    # resolve_conditional_slices（第 1 步）会在隐藏（原第 2 步）之前把它们当
-    # 普通变量/注释解开——既有的转义对 $ 占位符失效 bug。
     text, pre = _hide_escaped_placeholders(text)
     esc_literals.extend(pre)
     for _ in range(max_depth):
         before = text
-        text = resolve_conditional_slices(text, var_map, type_map)
-        text = _substitute_variable_literals(text, var_map)
+        # ${} 一组（搜索状态机 → 判定 → 处理器），再解本轮新产出的 {{}} 切片。
+        text = _resolve_one_round_braces(text, var_map, type_map)
+        if "{{" in text:
+            text = resolve_placeholders(text, instance_dir, strict=strict)
         # 变量值注入后，把新增的转义占位符保护为哨兵
         text, extra = _hide_escaped_placeholders(text)
         esc_literals.extend(extra)
-        if "{{" in text:
-            text = resolve_placeholders(text, instance_dir, strict=strict)
         if text == before:
             break
     return _restore_escaped_placeholders(text, esc_literals)
