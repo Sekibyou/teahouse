@@ -3,12 +3,13 @@ import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
+  BookOpen,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
-import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi } from "@/lib/api"
+import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi } from "@/lib/api"
 import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import { SlotCard } from "@/components/SlotCard"
 import { useThemeStore } from "@/stores/themeStore"
@@ -16,6 +17,7 @@ import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
+import type { MySkill, SkillPreview } from "@/lib/api"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -23,7 +25,7 @@ interface SettingsDialogProps {
   defaultTab?: TabKey
 }
 
-type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins"
+type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills"
 
 const API_FORMAT_OPTIONS = [
   { value: "openai", label: "openai" },
@@ -38,6 +40,7 @@ const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string }[] = [
   { key: "slots", Icon: Link2, label: "槽位指定" },
   { key: "general", Icon: SlidersHorizontal, label: "通用设置" },
   { key: "plugins", Icon: Puzzle, label: "插件管理" },
+  { key: "skills", Icon: BookOpen, label: "Skill 管理" },
 ]
 
 const permLabels: Record<string, string> = {
@@ -144,6 +147,17 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [newRule, setNewRule] = useState<{ scheme: string; host: string; port: string }>({ scheme: "https", host: "", port: "" })
   const [netRuleError, setNetRuleError] = useState("")
 
+  // ─── Skills state (user-level skill library) ───
+  const [mySkills, setMySkills] = useState<MySkill[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const skillFileInputRef = useRef<HTMLInputElement>(null)
+  const [skillPreview, setSkillPreview] = useState<SkillPreview | null>(null)
+  const [skillPreviewError, setSkillPreviewError] = useState("")
+  const [skillUploading, setSkillUploading] = useState(false)
+  const [skillInstalling, setSkillInstalling] = useState(false)
+  const [skillDeleting, setSkillDeleting] = useState<string | null>(null)
+  const [skillDeleteTarget, setSkillDeleteTarget] = useState<string | null>(null)
+
   const [error, setError] = useState("")
 
   // ─── Provider form overrides per card ───
@@ -205,9 +219,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const isDark = useThemeStore((s) => s.isDark)
   const setTheme = useThemeStore((s) => s.setTheme)
 
-  // Lazy-load general / plugins on first visit of those tabs
+  // Lazy-load general / plugins / skills on first visit of those tabs
   const settingsLoadedRef = useRef(false)
   const pluginsLoadedRef = useRef(false)
+  const skillsLoadedRef = useRef(false)
   useEffect(() => {
     if (!open) return
     if (tab === "general" && !settingsLoadedRef.current) {
@@ -217,6 +232,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (tab === "plugins" && !pluginsLoadedRef.current) {
       pluginsLoadedRef.current = true
       loadPlugins()
+    }
+    if (tab === "skills" && !skillsLoadedRef.current) {
+      skillsLoadedRef.current = true
+      loadMySkills()
     }
   }, [open, tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -525,6 +544,60 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     } finally {
       setInstalling(false)
     }
+  }
+
+  // ─── Skills handlers ───
+  const loadMySkills = async () => {
+    setSkillsLoading(true)
+    const res = await skillsApi.listMy()
+    if (res.ok) setMySkills(res.data!.skills)
+    setSkillsLoading(false)
+  }
+
+  const handleSkillImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setSkillUploading(true)
+    setSkillPreviewError("")
+    try {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await skillsApi.preview(form)
+      if (res.ok) {
+        setSkillPreview(res.data)
+      } else {
+        setSkillPreviewError(res.error || "skill 预检失败")
+        setSkillPreview(null)
+      }
+    } finally {
+      setSkillUploading(false)
+      if (skillFileInputRef.current) skillFileInputRef.current.value = ""
+    }
+  }
+
+  const handleSkillConfirmInstall = async () => {
+    if (!skillPreview) return
+    setSkillInstalling(true)
+    try {
+      const res = await skillsApi.confirmInstall(skillPreview.preview_id)
+      setSkillPreview(null)
+      if (res.ok) {
+        await loadMySkills()
+      } else {
+        setSkillPreviewError(res.error || "导入失败")
+      }
+    } finally {
+      setSkillInstalling(false)
+    }
+  }
+
+  const handleSkillDelete = async () => {
+    if (!skillDeleteTarget) return
+    setSkillDeleting(skillDeleteTarget)
+    const res = await skillsApi.deleteMy(skillDeleteTarget)
+    setSkillDeleting(null)
+    setSkillDeleteTarget(null)
+    if (res.ok) await loadMySkills()
   }
 
   // ─── Network allowlist handlers ───
@@ -1656,6 +1729,120 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   </div>
                 )
               )}
+
+              {/* ── Tab 7: Skills (user-level library) ── */}
+              {tab === "skills" && (
+                skillsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="p-5 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        你的 skill 库共 {mySkills.length} 个 skill
+                      </p>
+                      <div>
+                        <input
+                          ref={skillFileInputRef}
+                          type="file"
+                          accept=".zip"
+                          onChange={handleSkillImport}
+                          className="hidden"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => skillFileInputRef.current?.click()}
+                          disabled={skillUploading}
+                        >
+                          {skillUploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
+                          导入 skill
+                        </Button>
+                      </div>
+                    </div>
+
+                    {skillPreviewError && (
+                      <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{skillPreviewError}</span>
+                      </div>
+                    )}
+
+                    {skillPreview && (
+                      <div className="border rounded-md p-4 space-y-3 bg-card">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="font-medium">导入 skill 「{skillPreview.name}」</div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              {skillPreview.preview.file_count} 个文件，确认后加入你的 skill 库
+                            </p>
+                          </div>
+                          <button onClick={() => setSkillPreview(null)} className="text-muted-foreground hover:text-foreground">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button size="sm" variant="outline" onClick={() => setSkillPreview(null)}>取消</Button>
+                          <Button size="sm" onClick={handleSkillConfirmInstall} disabled={skillInstalling}>
+                            {skillInstalling ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                            确认导入
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {mySkills.length === 0 ? (
+                      <div className="text-center text-muted-foreground py-12">
+                        <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                        <p className="text-sm">你的 skill 库还是空的</p>
+                        <p className="text-xs mt-1 opacity-60">
+                          在实例内将 skill 导出到库里，或点击「导入 skill」上传 .zip 打包的 skill 文件夹
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {mySkills.map((s) => (
+                          <div key={s.name} className="rounded-lg border p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium flex items-center gap-2">
+                                  <BookOpen className="h-4 w-4 text-muted-foreground" />
+                                  {s.name}
+                                </div>
+                                <p className="text-[11px] text-muted-foreground mt-1">
+                                  {s.has_skill ? `${s.file_count} 个文件` : "缺少 SKILL.md"}
+                                  {s.size ? ` · ${(s.size / 1024).toFixed(1)} KB` : ""}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button size="sm" variant="outline" onClick={() => window.open(skillsApi.downloadUrl(s.name), "_blank")}>
+                                  <Download className="h-3 w-3 mr-1" />
+                                  下载
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-500 hover:text-red-500"
+                                  onClick={() => setSkillDeleteTarget(s.name)}
+                                  disabled={skillDeleting === s.name}
+                                >
+                                  <Trash2 className="h-3 w-3 mr-1" />
+                                  删除
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
+                      提示：skill 库是你的库存，导入或从实例导出后存入。要让它对某个实例生效，请在该实例详情中「添加 skill」复制进去。
+                    </div>
+                  </div>
+                )
+              )}
             </div>
           </div>
         </div>
@@ -1700,6 +1887,16 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
         confirmText={deleting ? "卸载中..." : "卸载"}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={skillDeleteTarget !== null}
+        title="删除 skill"
+        message={`确定从你的 skill 库删除「${skillDeleteTarget}」吗？只会从你的库存删除，已将其复制进实例的不受影响。`}
+        variant="destructive"
+        confirmText={skillDeleting ? "删除中..." : "删除"}
+        onConfirm={handleSkillDelete}
+        onCancel={() => setSkillDeleteTarget(null)}
       />
     </>
   )

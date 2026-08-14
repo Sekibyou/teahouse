@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import {
   Play, Loader2, X, Upload, Download, Trash2, Clock, Hash, Sun, Moon, LogOut,
@@ -8,7 +8,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
+import { prototypesApi, instancesApi, sessionApi, skillsApi, type MySkill, type InstanceSkill } from "@/lib/api"
 import { renderText } from "@/lib/htmlSanitizer"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { useAuthActions } from "@/stores/authStore"
@@ -51,6 +51,9 @@ export function SessionSelectPage() {
   const [copyName, setCopyName] = useState("")
   const [copyError, setCopyError] = useState("")
   const [copying, setCopying] = useState(false)
+
+  // Instance skill management (enable library skills into this instance)
+  const [manageSkillsFor, setManageSkillsFor] = useState<Instance | null>(null)
 
   // Import
   const [importState, setImportState] = useState<"idle" | "loading">("idle")
@@ -268,6 +271,7 @@ export function SessionSelectPage() {
           onContinue={() => handleContinue(dialogInstance)}
           onDelete={() => setInstanceToDelete(dialogInstance)}
           onCopy={() => openCopyDialog(dialogInstance)}
+          onManageSkills={() => setManageSkillsFor(dialogInstance)}
           onClose={() => setDialogInstance(null)}
         />
       )}
@@ -284,6 +288,11 @@ export function SessionSelectPage() {
           onDownload={handleDownload}
           onDeleteProto={(p) => setProtoToDelete(p)}
         />
+      )}
+
+      {/* Instance skill management overlay */}
+      {manageSkillsFor && (
+        <InstanceSkillsDialog instance={manageSkillsFor} onClose={() => setManageSkillsFor(null)} />
       )}
 
       {/* Confirm delete prototype */}
@@ -481,7 +490,7 @@ function formatDateShort(ts: number) {
 function InstanceDialog({
   instance, readmeData, readmeLoading, renaming, renameValue, isMobile,
   onRenameValue, onToggleRename, onConfirmRename, actionLoading,
-  onContinue, onDelete, onCopy, onClose,
+  onContinue, onDelete, onCopy, onClose, onManageSkills,
 }: {
   instance: Instance
   readmeData: { metadata: Record<string, unknown>; readme: string } | null
@@ -497,6 +506,7 @@ function InstanceDialog({
   onDelete: () => void
   onCopy: () => void
   onClose: () => void
+  onManageSkills: () => void
 }) {
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
   useDialogBackClose(true, onClose)
@@ -617,6 +627,9 @@ function InstanceDialog({
                 <Play className="h-4 w-4" />
                 开始
               </Button>
+              <Button variant="outline" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill（从你的 skill 库启用）">
+                <BookOpen className="h-4 w-4" />
+              </Button>
               <Button variant="outline" onClick={onCopy} disabled={actionLoading} title="复制实例">
                 <Copy className="h-4 w-4" />
               </Button>
@@ -695,6 +708,9 @@ function InstanceDialog({
 
                   {/* 复制/删除 — 更小 */}
                   <div className="flex items-center gap-2 mt-2">
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill">
+                      <BookOpen className="h-3.5 w-3.5" />Skill
+                    </Button>
                     <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onCopy} disabled={actionLoading} title="复制实例">
                       <Copy className="h-3.5 w-3.5" />复制
                     </Button>
@@ -1153,10 +1169,11 @@ function PrototypeDetailDialog({
             </button>
 
             <div className="flex-1 min-h-0 p-5 grid grid-cols-[1fr_2fr] gap-8 min-w-0">
-              {/* 左侧列(1fr)：写死 1fr 宽，图片铺满该列 */}
+              {/* 左侧列(1fr)：写死 1fr 宽；图片高度自适应收缩填入左栏除去功能区的剩余高度，
+                  避免自建原型多出「下载/删除」一行时把弹窗撑高。 */}
               <div className="min-w-0 self-stretch flex flex-col justify-between min-h-0">
-                {/* 图片：宽=左列宽(1/3)，高=宽×4/3 健康比例；Cover 填满容器，img object-cover 居中裁剪不拉伸 */}
-                <div className="shrink-0 w-full aspect-[3/4] overflow-hidden rounded-xl border border-border bg-card">
+                {/* 图片：flex-1 填满剩余空间，Cover object-cover 裁剪不拉伸 */}
+                <div className="flex-1 min-h-0 w-full overflow-hidden rounded-xl border border-border bg-card">
                   <CoverWithFetch
                     kind="prototype"
                     id={prototype.id}
@@ -1246,6 +1263,158 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{proto.description}</p>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── Instance skill management ──────────────────────────────────────
+// Lists the user's skill library + which skills this instance has enabled.
+// Enabling copies a library skill into the instance; removing deletes it there.
+function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+  useDialogBackClose(true, onClose)
+
+  const [library, setLibrary] = useState<MySkill[]>([])
+  const [enabled, setEnabled] = useState<InstanceSkill[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState("")
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    setError("")
+    const [libRes, instRes] = await Promise.all([
+      skillsApi.listMy(),
+      skillsApi.listForInstance(instance.id),
+    ])
+    if (libRes.ok) setLibrary(libRes.data!.skills)
+    if (instRes.ok) setEnabled(instRes.data!.filter(s => s.source === "instance" && s.has_skill))
+    setLoading(false)
+  }, [instance.id])
+
+  useEffect(() => { reload() }, [reload])
+
+  const enabledNames = new Set(enabled.map(s => s.name))
+
+  const handleEnable = async (name: string) => {
+    setBusy(name)
+    setError("")
+    const res = await skillsApi.enableFromLibrary(instance.id, name)
+    setBusy(null)
+    if (!res.ok) setError(res.error || "启用失败")
+    else await reload()
+  }
+
+  const handleConfirmRemove = async () => {
+    if (!removeTarget) return
+    setBusy(removeTarget)
+    setError("")
+    const res = await skillsApi.removeFromInstance(instance.id, removeTarget)
+    setBusy(null)
+    setRemoveTarget(null)
+    if (!res.ok) setError(res.error || "移除失败")
+    else await reload()
+  }
+
+  return (
+    <div className="absolute inset-0 z-[60] bg-background/70 backdrop-blur-lg flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-w-md max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div>
+            <div className="font-semibold flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-muted-foreground" />
+              Skill 管理
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">为「{instance.name}」启用或移除 skill</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">{error}</div>
+          )}
+
+          <div className="text-xs font-medium text-muted-foreground">该实例已启用的 skill</div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+            </div>
+          ) : enabled.length === 0 ? (
+            <p className="text-xs text-muted-foreground">尚未启用任何 skill</p>
+          ) : (
+            <div className="space-y-2">
+              {enabled.map(s => (
+                <div key={s.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                  <span className="text-sm">{s.name}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-500 hover:text-red-500 h-7 text-xs"
+                    onClick={() => setRemoveTarget(s.name)}
+                    disabled={busy === s.name}
+                  >
+                    {busy === s.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1" />}
+                    移除
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="text-xs font-medium text-muted-foreground pt-3 border-t border-border">
+            从你的 skill 库添加
+          </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+            </div>
+          ) : library.length === 0 ? (
+            <p className="text-xs text-muted-foreground">你的 skill 库还是空的，可先在设置页「Skill 管理」导入，或在实例里导出。</p>
+          ) : (
+            <div className="space-y-2">
+              {library.map(s => {
+                const isEnabled = enabledNames.has(s.name)
+                return (
+                  <div key={s.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm truncate">{s.name}</div>
+                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">已启用</div>}
+                    </div>
+                    {isEnabled ? (
+                      <span className="text-[11px] text-muted-foreground shrink-0">已在实例中</span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleEnable(s.name)}
+                        disabled={busy === s.name}
+                      >
+                        {busy === s.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3 mr-1" />}
+                        启用
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="移除 skill"
+        message={`确定移除「${removeTarget}」吗？这只会从该实例删除，你的 skill 库里仍保留。`}
+        variant="destructive"
+        confirmText="移除"
+        onConfirm={handleConfirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   )
 }

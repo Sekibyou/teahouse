@@ -693,3 +693,63 @@ export const pluginsApi = {
   setData: (id: string, data: PluginData) => put<{ status: string; plugin_id: string }>(`/api/plugins/${id}/data`, { data }),
   deleteData: (id: string, key: string) => del<{ status: string }>(`/api/plugins/${id}/data/${key}`),
 }
+
+// ── Types for the skill library ──
+export interface MySkill {
+  name: string
+  has_skill: boolean
+  has_examples: boolean
+  file_count: number
+  size: number
+  updated_at: number
+}
+
+export interface SkillPreview {
+  preview_id: string
+  available: boolean
+  name: string
+  preview: { name: string; has_skill: boolean; has_examples: boolean; file_count: number }
+}
+
+export interface InstanceSkill {
+  name: string
+  source: "system" | "instance"
+  has_skill: boolean
+  has_examples: boolean
+}
+
+// Skills API — user-level skill library + instance enable/export
+export const skillsApi = {
+  // User library
+  listMy: () => get<{ skills: MySkill[] }>("/api/my-skills"),
+  preview: (form: FormData) => {
+    const token = getAuthToken()
+    const headers: Record<string, string> = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    return fetch(`${getApiBaseUrl()}/api/my-skills/preview`, {
+      method: "POST",
+      headers,
+      body: form,
+    }).then(async r => {
+      if (r.ok) return { ok: true as const, data: await r.json() as SkillPreview }
+      const detail = (await r.json().catch(() => null))?.detail
+      return { ok: false as const, error: typeof detail === "string" ? detail : "skill 预检失败" }
+    })
+  },
+  confirmInstall: (previewId: string) =>
+    post<{ status: string; name: string; message: string }>("/api/my-skills/import/confirm", { preview_id: previewId }),
+  deleteMy: (name: string) => del<{ status: string; name: string; message: string }>(`/api/my-skills/${encodeURIComponent(name)}`),
+  downloadUrl: (name: string) => {
+    const token = getAuthToken()
+    return `${getApiBaseUrl()}/api/my-skills/${encodeURIComponent(name)}/download?token=${encodeURIComponent(token || "")}`
+  },
+  // Instance skills
+  listForInstance: (instanceId: string) =>
+    get<InstanceSkill[]>(`/api/instances/${instanceId}/skills`),
+  enableFromLibrary: (instanceId: string, name: string) =>
+    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}/enable-from-library`),
+  exportToLibrary: (instanceId: string, name: string) =>
+    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}/export-to-library`),
+  removeFromInstance: (instanceId: string, name: string) =>
+    del<{ name: string; status: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}`),
+}

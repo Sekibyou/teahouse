@@ -1129,6 +1129,69 @@ async def delete_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
     return {"name": skill_name, "status": "deleted"}
 
 
+def _user_skills_lib_dir(user_row: dict) -> Path:
+    """Path to the user's skill library (decoupled inventory dir)."""
+    safe_name = user_row.get("safe_name") or user_row["username"].lower().replace(" ", "_")
+    return Path(state.workspace_base) / safe_name / "skills"
+
+
+@router.post("/instances/{instance_id}/skills/{skill_name}/enable-from-library")
+async def enable_skill_from_library(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+    """Copy a skill from the user's library into this instance's .teahouse/skills/.
+
+    user -> instance. The library is a stock/inventory only; copying it in is what
+    makes the skill take effect (instance skills override system ones).
+    """
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_-]+$', skill_name):
+        raise HTTPException(status_code=400, detail="Skill name must contain only letters, numbers, hyphens, underscores")
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    lib_skill = _user_skills_lib_dir(u) / skill_name
+    if not lib_skill.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不在你的 skill 库中")
+
+    target = _get_skill_dir(instance_dir, skill_name)
+    if target.exists():
+        raise HTTPException(status_code=409, detail=f"该实例已启用 skill '{skill_name}'")
+
+    shutil.copytree(lib_skill, target)
+    return {"name": skill_name, "status": "enabled", "message": f"skill '{skill_name}' 已启用"}
+
+
+@router.post("/instances/{instance_id}/skills/{skill_name}/export-to-library")
+async def export_skill_to_library(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+    """Copy a skill from this instance into the user's skill library.
+
+    instance -> user. This is how a skill authored in an instance becomes
+    reusable across other instances (the library is the stock).
+    """
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_-]+$', skill_name):
+        raise HTTPException(status_code=400, detail="Skill name must contain only letters, numbers, hyphens, underscores")
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    source = _resolve_skill_dir(instance_dir, skill_name)
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不在该实例中")
+
+    lib_dir = _user_skills_lib_dir(u)
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    target = lib_dir / skill_name
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    return {"name": skill_name, "status": "exported", "message": f"skill '{skill_name}' 已加入你的 skill 库"}
+
+
 @router.post("/instances/{instance_id}/skills/{skill_name}/export")
 async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
     """Export a skill as a reusable zip package (system or instance)."""

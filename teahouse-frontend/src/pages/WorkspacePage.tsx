@@ -13,7 +13,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { instancesApi, gitApi, prototypesApi } from "@/lib/api"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { instancesApi, gitApi, prototypesApi, skillsApi, type InstanceSkill } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -107,12 +110,19 @@ export function WorkspacePage() {
 
   // Export prototype state
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [exportType, setExportType] = useState<"prototype" | "skill">("prototype")
   const [exportName, setExportName] = useState("")
   const [exportDescription, setExportDescription] = useState("")
   const [exportAuthor, setExportAuthor] = useState("")
   const [exportVersion, setExportVersion] = useState("1.0.0")
   const [exportLoading, setExportLoading] = useState(false)
   const [exportError, setExportError] = useState("")
+  // Export-skill plane: list instance skills, pick one, export to user library
+  const [instSkills, setInstSkills] = useState<InstanceSkill[]>([])
+  const [instSkillsLoading, setInstSkillsLoading] = useState(false)
+  const [exportSelectedSkill, setExportSelectedSkill] = useState("")
+  const [exportSkillError, setExportSkillError] = useState("")
+  const [exportSkillLoading, setExportSkillLoading] = useState(false)
 
   const instId = activeInstance?.id
 
@@ -273,25 +283,61 @@ export function WorkspacePage() {
     await refresh()
   }
 
-  const handleExport = async () => {
-    if (!instId || !exportName.trim()) return
-    setExportLoading(true)
+  const openExportDialog = async (type: "prototype" | "skill") => {
+    setExportType(type)
     setExportError("")
-    const res = await prototypesApi.create(
-      instId, exportName.trim(), exportDescription.trim(),
-      exportAuthor.trim(), exportVersion.trim() || "1.0.0",
-    )
-    if (res.ok) {
-      setShowExportDialog(false)
-      setExportName("")
-      setExportDescription("")
-      setExportAuthor("")
-      setExportVersion("1.0.0")
-      showSaveToast()
-    } else {
-      setExportError(res.error || "导出失败")
+    setExportSkillError("")
+    if (type === "skill") {
+      setExportSelectedSkill("")
+      if (!instId) return
+      setInstSkillsLoading(true)
+      const res = await skillsApi.listForInstance(instId)
+      if (res.ok) {
+        const instanceOnly = res.data!.filter(s => s.source === "instance" && s.has_skill)
+        setInstSkills(instanceOnly)
+      } else {
+        setExportSkillError(res.error || "加载 skill 列表失败")
+      }
+      setInstSkillsLoading(false)
     }
-    setExportLoading(false)
+    setShowExportDialog(true)
+  }
+
+  const handleExport = async () => {
+    if (!instId) return
+    if (exportType === "prototype") {
+      if (!exportName.trim()) return
+      setExportLoading(true)
+      setExportError("")
+      const res = await prototypesApi.create(
+        instId, exportName.trim(), exportDescription.trim(),
+        exportAuthor.trim(), exportVersion.trim() || "1.0.0",
+      )
+      if (res.ok) {
+        setShowExportDialog(false)
+        setExportName("")
+        setExportDescription("")
+        setExportAuthor("")
+        setExportVersion("1.0.0")
+        showSaveToast()
+      } else {
+        setExportError(res.error || "导出失败")
+      }
+      setExportLoading(false)
+    } else {
+      if (!exportSelectedSkill) return
+      setExportSkillLoading(true)
+      setExportSkillError("")
+      const res = await skillsApi.exportToLibrary(instId, exportSelectedSkill)
+      setExportSkillLoading(false)
+      if (res.ok) {
+        setShowExportDialog(false)
+        setExportSelectedSkill("")
+        showSaveToast()
+      } else {
+        setExportSkillError(res.error || "导出失败")
+      }
+    }
   }
 
   // Keep a ref for latest selectedFile so callbacks always have current value
@@ -724,58 +770,115 @@ export function WorkspacePage() {
           onCancel={() => setDeleteTarget(null)}
         />
 
-        {/* Export prototype dialog */}
+        {/* Export prototype / skill dialog */}
         {showExportDialog && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
             <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <h3 className="font-semibold">导出为原型</h3>
-              <p className="text-xs text-muted-foreground">
-                将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
-              </p>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">原型名称</label>
-                <Input
-                  value={exportName}
-                  onChange={e => { setExportName(e.target.value); setExportError("") }}
-                  placeholder="为原型起个名字"
-                  autoFocus
-                />
+
+              {/* Type toggle */}
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted">
+                <button
+                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => openExportDialog("prototype")}
+                >
+                  导出原型
+                </button>
+                <button
+                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => openExportDialog("skill")}
+                >
+                  导出 Skill
+                </button>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
-                <Input
-                  value={exportDescription}
-                  onChange={e => setExportDescription(e.target.value)}
-                  placeholder="简要描述，用于原型列表展示"
-                  maxLength={50}
-                />
-              </div>
-              <div className="flex gap-3">
-                <div className="space-y-1 flex-1">
-                  <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
-                  <Input
-                    value={exportAuthor}
-                    onChange={e => setExportAuthor(e.target.value)}
-                    placeholder="作者名"
-                  />
-                </div>
-                <div className="space-y-1 w-24">
-                  <label className="text-sm font-medium">版本</label>
-                  <Input
-                    value={exportVersion}
-                    onChange={e => setExportVersion(e.target.value)}
-                    placeholder="1.0.0"
-                  />
-                </div>
-              </div>
-              {exportError && <p className="text-sm text-red-500">{exportError}</p>}
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
-                <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
-                  {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                  导出
-                </Button>
-              </div>
+
+              {exportType === "prototype" ? (
+                <>
+                  <h3 className="font-semibold">导出为原型</h3>
+                  <p className="text-xs text-muted-foreground">
+                    将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">原型名称</label>
+                    <Input
+                      value={exportName}
+                      onChange={e => { setExportName(e.target.value); setExportError("") }}
+                      placeholder="为原型起个名字"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
+                    <Input
+                      value={exportDescription}
+                      onChange={e => setExportDescription(e.target.value)}
+                      placeholder="简要描述，用于原型列表展示"
+                      maxLength={50}
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="space-y-1 flex-1">
+                      <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                      <Input
+                        value={exportAuthor}
+                        onChange={e => setExportAuthor(e.target.value)}
+                        placeholder="作者名"
+                      />
+                    </div>
+                    <div className="space-y-1 w-24">
+                      <label className="text-sm font-medium">版本</label>
+                      <Input
+                        value={exportVersion}
+                        onChange={e => setExportVersion(e.target.value)}
+                        placeholder="1.0.0"
+                      />
+                    </div>
+                  </div>
+                  {exportError && <p className="text-sm text-red-500">{exportError}</p>}
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
+                      {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      导出
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="font-semibold">导出 Skill 到 skill 库</h3>
+                  <p className="text-xs text-muted-foreground">
+                    选取当前实例里的一个 skill，复制到你的 skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">选择 skill</label>
+                    {instSkillsLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                      </div>
+                    ) : instSkills.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">该实例没有可作为 skill 导出的条目。</p>
+                    ) : (
+                      <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择一个 skill" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {instSkills.map(s => (
+                            <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                  {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
+                      {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      导出到库里
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -808,8 +911,8 @@ export function WorkspacePage() {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={() => { setShowExportDialog(true); setExportName(""); setExportDescription(""); setExportAuthor(""); setExportVersion("1.0.0"); setExportError("") }}
-                  title="导出为原型"
+                  onClick={() => openExportDialog("prototype")}
+                  title="导出为原型 / Skill"
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </button>
@@ -1037,58 +1140,114 @@ export function WorkspacePage() {
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Export prototype dialog */}
+      {/* Export prototype / skill dialog */}
       {showExportDialog && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">导出为原型</h3>
-            <p className="text-xs text-muted-foreground">
-              将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
-            </p>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">原型名称</label>
-              <Input
-                value={exportName}
-                onChange={e => { setExportName(e.target.value); setExportError("") }}
-                placeholder="为原型起个名字"
-                autoFocus
-              />
+            {/* Type toggle */}
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted">
+              <button
+                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => openExportDialog("prototype")}
+              >
+                导出原型
+              </button>
+              <button
+                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => openExportDialog("skill")}
+              >
+                导出 Skill
+              </button>
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
-              <Input
-                value={exportDescription}
-                onChange={e => setExportDescription(e.target.value)}
-                placeholder="简要描述，用于原型列表展示"
-                maxLength={50}
-              />
-            </div>
-            <div className="flex gap-3">
-              <div className="space-y-1 flex-1">
-                <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
-                <Input
-                  value={exportAuthor}
-                  onChange={e => setExportAuthor(e.target.value)}
-                  placeholder="作者名"
-                />
-              </div>
-              <div className="space-y-1 w-24">
-                <label className="text-sm font-medium">版本</label>
-                <Input
-                  value={exportVersion}
-                  onChange={e => setExportVersion(e.target.value)}
-                  placeholder="1.0.0"
-                />
-              </div>
-            </div>
-            {exportError && <p className="text-sm text-red-500">{exportError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
-              <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
-                {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                导出
-              </Button>
-            </div>
+
+            {exportType === "prototype" ? (
+              <>
+                <h3 className="font-semibold">导出为原型</h3>
+                <p className="text-xs text-muted-foreground">
+                  将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
+                </p>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">原型名称</label>
+                  <Input
+                    value={exportName}
+                    onChange={e => { setExportName(e.target.value); setExportError("") }}
+                    placeholder="为原型起个名字"
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
+                  <Input
+                    value={exportDescription}
+                    onChange={e => setExportDescription(e.target.value)}
+                    placeholder="简要描述，用于原型列表展示"
+                    maxLength={50}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <div className="space-y-1 flex-1">
+                    <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                    <Input
+                      value={exportAuthor}
+                      onChange={e => setExportAuthor(e.target.value)}
+                      placeholder="作者名"
+                    />
+                  </div>
+                  <div className="space-y-1 w-24">
+                    <label className="text-sm font-medium">版本</label>
+                    <Input
+                      value={exportVersion}
+                      onChange={e => setExportVersion(e.target.value)}
+                      placeholder="1.0.0"
+                    />
+                  </div>
+                </div>
+                {exportError && <p className="text-sm text-red-500">{exportError}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
+                    {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    导出
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="font-semibold">导出 Skill 到 skill 库</h3>
+                <p className="text-xs text-muted-foreground">
+                  选取当前实例里的一个 skill，复制到你的 skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。
+                </p>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">选择 skill</label>
+                  {instSkillsLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                    </div>
+                  ) : instSkills.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">该实例没有可作为 skill 导出的条目。</p>
+                  ) : (
+                    <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择一个 skill" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {instSkills.map(s => (
+                          <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
+                    {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    导出到库里
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
