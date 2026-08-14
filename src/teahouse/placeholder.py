@@ -567,12 +567,13 @@ def _eval_code_block(code: str, var_map: dict, fail_literal: str | None = None) 
 #   `${@max [..]}` / `${@min [..]}` / `${@len ...}`   从列表/变量取 max/min/len
 #   `${@random [a,b,c]}`  随机取列表一项（字面量或数组变量）
 #   `${@python return ...}`  白名单 python 代码块（须含 return）
-#   `${@condition 条件: 输出}`  最简条件切片：封装成 `if 条件: return 输出`（单分支）三态：
-#                                命中→输出；假条件→空；坏块→原样
+#   `${@condition 条件: 输出 [else 假输出]}`  最简条件切片（if/else 均可选，宽松）：
+#                                封装成 `if 条件: return 输出 [else: return 假输出]`；
+#                                真→输出，假+else→假输出，假无else→空，坏块→原样
 #   `${@note ...}`        注释，恒剥为空（不做内部展开）
 #   `${ if ...: return ... }`   裸写带 return → 自动降级为 python（兼容旧写法）
-#   `${条件: 输出}` / `${a:b}`  裸写恰一最外层冒号 → 自动判为 condition（if/return 封装）
-#   `${a:b:c}` (≥2 最外层冒号)   原样保留，不解析
+#   `${条件: 输出 [else 假]}` / `${a:b}`  裸写含最外层冒号（含/不含 else）→ 自动判为 condition
+#   `${a:b:c}` (≥2 最外层冒号，无 else)    原样保留，不解析
 #
 # 兜底原则：绝大多数失败（变量不存在、未注册指令、坏块、语法错）统一"回退原样字面量"，
 # 绝不报错（It should degrade to literal）。唯一例外是 `@condition` 的**假条件**（语义
@@ -715,37 +716,6 @@ def _try_resolve_value(value: str, var_map: dict):
         return None
 
 
-def _split_condition_colon(text: str) -> tuple[str, str] | None:
-    """Split `condition: output` at the first colon **outside quotes and braces**.
-
-    Colons inside `"..."` (quoted `{{file:line}}`) or inside `{{...}}` (line-range /
-    glob `:last30`) are NOT the separator — only a colon at brace/quote depth 0 is.
-    Returns (condition, output) stripped, or None if no out-of-quote/brace colon, or
-    if MORE THAN ONE out-of-quote/brace colon is present (ambiguity → caller keeps
-    literal, per the "最外层恰一冒号才判" rule).
-    """
-    in_quote = False
-    brace_depth = 0
-    sep = -1
-    n = len(text)
-    for i, ch in enumerate(text):
-        if ch == '"':
-            in_quote = not in_quote
-        elif ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth = max(0, brace_depth - 1)
-        elif in_quote or brace_depth > 0:
-            continue
-        elif ch == ":":
-            if sep != -1:
-                return None  # 第二个最外层冒号 → 歧义，原样
-            sep = i
-    if sep == -1:
-        return None
-    return text[:sep].strip(), text[sep + 1:].strip()
-
-
 def _quote_if_bare_slice(out: str) -> str:
     """Wrap a bare `{{...}}` output in double quotes so the resulting code is valid.
 
@@ -760,11 +730,98 @@ def _quote_if_bare_slice(out: str) -> str:
     return out
 
 
+def _find_outer_keyword(text: str, kw: str) -> int:
+    """Return the index of keyword `kw` at brace/quote depth 0 (word-boundary), or -1.
+
+    Colons/quotes/braces don't contain a real `else`; only a standalone `else`
+    surrounded by whitespace (or line edges) counts, so a `else` inside a quoted
+    output string or a `{{slice}}` is ignored.
+    """
+    in_quote = False
+    brace_depth = 0
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c == '"':
+            in_quote = not in_quote
+            i += 1
+            continue
+        if c == "{":
+            brace_depth += 1
+            i += 1
+            continue
+        if c == "}":
+            brace_depth = max(0, brace_depth - 1)
+            i += 1
+            continue
+        if not in_quote and brace_depth == 0 and (c.isalnum() or c == "_"):
+            if text.startswith(kw, i):
+                before = text[i - 1] if i > 0 else " "
+                after = text[i + len(kw)] if i + len(kw) < n else " "
+                if (not before.isalnum() and before != "_") and (not after.isalnum() and after != "_"):
+                    return i
+            while i < n and (text[i].isalnum() or text[i] == "_"):
+                i += 1
+            continue
+        i += 1
+    return -1
+
+
+def _split_condition(text: str) -> tuple[str, str, str | None] | None:
+    """Parse a condition body `[if ]条件: 真输出 [else 假输出]`.
+
+    Rules (宽松、小白友好)：
+      - 可选前导 `if `。
+      - `条件: 真输出` 以第一个**最外层**冒号切分（引号/花括号内冒号不计）。
+      - 可选 `else 假输出`：`else` 是特殊符号（最外层单词边界），**其后不允许冒号**
+        （假输出直接跟内容）。无 `else` → 假分支为 None。
+      - 返回 (condition, true_output, false_output_or_None)；格式非法返回 None。
+    """
+    s = text.strip()
+    # 可选前导 if
+    if s.lower().startswith("if ") or s == "if":
+        s = s[2:].strip() if len(s) > 2 else ""
+    # 找最外层 else（若无 → 单分支）
+    epos = _find_outer_keyword(s, "else")
+    head = s
+    false_out = None
+    if epos != -1:
+        head = s[:epos].strip()
+        false_out = s[epos + 4:].strip()
+    # 真分支：第一个最外层冒号切分 条件 / 真输出
+    cpos = _first_outer_colon(head)
+    if cpos == -1:
+        return None
+    cond = head[:cpos].strip()
+    true_out = head[cpos + 1:].strip()
+    if not cond or not true_out:
+        return None
+    return cond, true_out, (false_out if false_out else None)
+
+
+def _first_outer_colon(text: str) -> int:
+    """Index of the first colon at brace/quote depth 0 (or -1 if none)."""
+    in_quote = False
+    brace_depth = 0
+    for i, ch in enumerate(text):
+        if ch == '"':
+            in_quote = not in_quote
+        elif ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth = max(0, brace_depth - 1)
+        elif not in_quote and brace_depth == 0 and ch == ":":
+            return i
+    return -1
+
+
 def _count_outer_colons(text: str) -> int:
     """Count colons at brace/quote depth 0 (colons inside `"..."` or `{{...}}` don't count).
 
-    Used by the judgment layer to decide "bare single outer colon → condition" vs
-    "≥2 outer colons → literal", independent of colons buried in slices/quotes.
+    Used by the judgment layer to decide "bare contains a condition-colon → condition".
+    Because `else` takes no trailing colon, `条件: 真 else 假` has exactly one outer colon
+    and is correctly routed; a bare `a:b:c` (two outer colons, no else) stays literal.
     """
     in_quote = False
     brace_depth = 0
@@ -784,34 +841,34 @@ def _count_outer_colons(text: str) -> int:
 def _resolve_condition(value: str, var_map: dict, type_map: dict | None, original: str | None = None) -> str:
     """`@condition` — 最简条件切片（统一裸写与显式入口）。
 
-    写法 `${@condition <条件>: <输出>}`（或裸写 `${<条件>: <输出>}`），引擎按
-    **最外层恰一冒号**切出条件/输出，封装为 `if <条件>:\n    return <输出>` 后丢进
-    白名单 python 解释器执行。**只允准单分支 if-return**，不支持 elif/else/三元。
-    切片/引号内的冒号不当作分隔。输出为裸 `{{...}}` 切片时自动套引号（`{{file:10-30}}`
-    → `"{{file:10-30}}"`），使 `${a>=10: {{file:10-30}}}` 这类高频写法 work。
-    条件即 python 比较式；输出即 return 值——引号字面量、裸变量名（`金币` 按 env
-    查现值）、函数调用（`roll("1d10")`）皆由解释器天然处理。
+    宽松写法 `${[if ]条件: 真输出 [else 假输出]}`（`if`/`else` 均可选，`else` 后
+    不带冒号），引擎把**最外层冒号**切出条件/真输出、把 `else` 关键字切出假分支，
+    封装为 `if 条件: return 真输出 [else: return 假输出]` 丢进白名单 python 解释器
+    执行。单分支（无 else）或多分支（有 else）均可；不支持 elif/三元。
+    切片/引号内的冒号与 `else` 不计。输出为裸 `{{...}}` 切片时自动套引号
+    （`{{file:10-30}}` → `"{{file:10-30}}"`）。条件即 python 比较式；输出即 return
+    值——引号字面量、裸变量名（按 env 查现值）、函数调用（`roll("1d10")`）皆由解释器
+    天然处理。
 
-    结果三态（语义见 §设计意图）：
-      - **命中**（条件为真，走到 return）→ 返回该输出。
-      - **假条件**（语义不中：代码干净执行但条件为假没 return）→ 返回**空字符串**，
-        分支不命中 = 不注入内容。
-      - **坏块**（缺冒号 / 语法错 / 变量不存在 / 越权）→ 回退**原样字面量**，便于排查。
+    结果：命中 → 真输出；假且无 else → **空**；假且有 else → **假输出**；坏块
+    （无冒号 / 语法错 / 变量不存在 / 越权）→ 回退**原样字面量**，便于排查。
     """
     literal = original if original is not None else "${@condition " + value + "}"
-    split = _split_condition_colon(value)
-    if split is None:
-        return literal  # 坏块：无冒号
-    cond, out = split
-    if not cond or not out:
-        return literal  # 坏块：空条件/空输出
-    code = f"if {cond}:\n    return {_quote_if_bare_slice(out)}"
+    parts = _split_condition(value)
+    if parts is None:
+        return literal  # 坏块：无有效冒号/空分支
+    cond, true_out, false_out = parts
+    q_true = _quote_if_bare_slice(true_out)
+    if false_out is not None:
+        code = f"if {cond}:\n    return {q_true}\nelse:\n    return {_quote_if_bare_slice(false_out)}"
+    else:
+        code = f"if {cond}:\n    return {q_true}"
     try:
         ok, val = _eval_code_block_value(code, var_map)
     except (_BlockEvalError, SyntaxError, TypeError, ValueError, ZeroDivisionError):
         return literal  # 坏块
     if not ok:
-        return ""  # 假条件 → 空（不注入内容）
+        return ""  # 假条件（无 else 分支时）→ 空（不注入内容）
     return val
 
 
