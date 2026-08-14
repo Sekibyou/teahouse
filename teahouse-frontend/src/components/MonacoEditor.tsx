@@ -53,6 +53,12 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       // 2d. Code block multiline (space) → state.
       [/\$\{[^\n}]*\s[^\n]*$/, "keyword.teahouse", "block"],
 
+      // 2e. Unclosed `${` — any line starting `${` that doesn't close by EOL is a
+      //     multi-line block, even if the first line has no return/space (e.g. a
+      //     YAML value `${111` with the return on a later line). Must precede the
+      //     variable rule; `${name}` closes on the same line so it is unaffected.
+      [/\$\{[^\n}]*$/, "keyword.teahouse", "block"],
+
       // 3. Variable — `${name}`, no whitespace inside. Must come after code blocks
       //    (which require a return or space) so `${var1}` lands here, not as a block.
       [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
@@ -66,7 +72,10 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       [/[^\n]*$/, "comment.teahouse"],
     ],
     block: [
-      [/[^\n]*\}[^\n]*$/, "keyword.teahouse", "@pop"],
+      // 块闭合：整行经前导空白后以 `}` 开头（return 里的 {{切片}} 不以行首
+      // `}` 开头，不会误判）。仅凭“行内含 }”会因切片 `{{...}}` 提前关闭。
+      [/^[ \t]*\}[ \t]*.*$/, "keyword.teahouse", "@pop"],
+      // 其余行整行染代码块色（含 return 里的切片）。
       [/[^\n]*$/, "keyword.teahouse"],
     ],
   },
