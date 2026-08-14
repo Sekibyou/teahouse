@@ -1,15 +1,19 @@
 (function() {
-  /* 底部输入框 — 四模式：与导演对话 / 生成下一章 / 重写本章 / 续写补全
-     模式切换：输入框左侧上拉菜单（模式按钮 + 弹出菜单）
-       对话模式：内容经 Teahouse.send() 发给导演（蓝色）
-       生成模式：内容存变量 user_msg →（若最高章节为草稿）draft 转正 + 楼层提交
-                → Generate 下一楼 draft（绿色）
-       重写模式：切换时以 user_msg 填充输入框；发送前先检查 git，不干净则
-                other 存档「重写：章节名」→ 写 user_msg → Generate 覆写当前章（红色）
-       续写模式：写 user_msg → Generate 补全草稿到 temp → 开子会话合并原文+补全
-                为完整章节正文（紫色）
-     发送按钮背景/文字为内嵌固定颜色，与菜单主题色一致。
-     生成模式为默认模式，发送即生成，无确认弹窗。 */
+  /* 底部输入条 — 五模式：与导演对话 / 生成下一章 / 重写本章 / 续写补全 / 总结归纳
+     状态机（转正是唯一闸门，正式稿标准流程不可动）：
+       READY        最新章是正式稿 → 打字可用；菜单仅 chat/gen/summarize
+                    （rewrite/continue 只服务草稿，正式稿态不可见；若当前选中则自动切回 gen）
+       GENERATING   生成/重写中 → 打字禁用，右侧为「停止」按钮，可 Esc 打断
+       AWAIT_COMMIT 最新章是草稿 → 右侧按钮变「确认草稿」形态（sendBtn 三态）：
+         send（纸飞机）= 正常发送 / stop（方块）= 打断生成 / commit（绿色文字）= 转正
+         确认草稿 → Teahouse.commitDraft(N)：解析 teahouse-vars → 应用变量
+                    → 标记 msg 写回 → 改名 floor-N.md → git 提交
+                     菜单含 rewrite/continue（草稿阶段折腾）；仅「生成下一章」模式打字禁用，
+                     其余模式打字可用（找导演走「与导演对话」，回档不做常驻按钮）。
+     写下一章 = 写 user_msg + Generate floor-N-draft.md，不碰 git；
+     续写补全 = Generate 补全到 temp → 子会话合并写回草稿；
+     重写草稿 = Generate overwrite 覆写当前草稿（仅草稿，正式稿不可重写）；
+     转正只由「确认草稿」按钮（commitDraft 闸门）驱动。 */
 
   var MODE_CHAT = 'chat';
   var MODE_GEN  = 'gen';
@@ -50,16 +54,19 @@
     }
   };
 
-  var MODE_ORDER = [MODE_CHAT, MODE_GEN, MODE_REWRITE, MODE_CONT, MODE_SUMM];
+  /* ---- 状态机 ---- */
+  var S_READY = 'ready';
+  var S_GEN   = 'generating';
+  var S_AWAIT = 'await_commit';
+  var state = S_READY;
 
-  var currentMode = MODE_GEN;   // 初始化默认「生成下一章」
-  var lastGenArgs = null;   // 最近一次 Generate 步骤参数（覆写重试用）
-  var activeRun = null;     // 当前进行中的 runTool handle（用于打断生成）
+  var currentMode = MODE_GEN;
+  var activeRun = null;         // 当前进行中的 runTool handle（用于打断生成）
   var activeSid = null;         // 当前活跃的子会话 id（续写合并 / 总结归纳）
-  var activeSessionLabel = '';  // 活跃子会话的类型名（续写合并 / 总结归纳）
+  var activeSessionLabel = '';  // 活跃子会话的类型名
+  var statusTimer = null;
 
   var PLACEHOLDER_BUSY = 'Remielle 正在执笔…';
-  var statusTimer = null;
 
   /* ---- 组件级 hover/disabled 样式（固定色按钮无法用内嵌 :hover，注入 <style>） ---- */
   var styleTag = document.createElement('style');
@@ -87,6 +94,11 @@
     'box-shadow:0 8px 28px rgba(0,0,0,0.5);' +
     'backdrop-filter:blur(10px);' +
     'transition:border-color 0.2s,background 0.25s;';
+
+  /* 打字区（READY / GENERATING / AWAIT 的 rewrite/continue/chat 模式显示） */
+  var inputArea = document.createElement('div');
+  inputArea.id = 'teahouse-input-area';
+  inputArea.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;min-width:0;';
 
   /* 模式按钮（左侧触发器） */
   var modeBtn = document.createElement('button');
@@ -121,7 +133,7 @@
   sendBtn.type = 'button';
   sendBtn.title = '发送';
   /* 纸飞机发送 icon（feather send），颜色随当前模式按钮色（currentColor） */
-  sendBtn.innerHTML =
+  var SEND_ICON =
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
     'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
     'style="display:block;margin:0 auto;">' +
@@ -131,12 +143,11 @@
     'display:flex;align-items:center;justify-content:center;cursor:pointer;' +
     'transition:opacity 0.2s;';
 
-  /* 打断按钮：生成/补全进行中显示，点击中断当前 runTool */
+  /* 打断按钮：生成中显示，点击中断当前 runTool */
   var stopBtn = document.createElement('button');
   stopBtn.id = 'teahouse-input-stop';
   stopBtn.type = 'button';
   stopBtn.title = '打断本次生成（Esc）';
-  /* 方块停止 icon（feather square），配合停止钮红底色 */
   stopBtn.innerHTML =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" ' +
     'style="display:block;margin:0 auto;">' +
@@ -146,6 +157,13 @@
     'display:none;align-items:center;justify-content:center;cursor:pointer;' +
     'background:var(--danger-fill);color:var(--danger-filled-text);' +
     'transition:opacity 0.2s;';
+
+  inputArea.appendChild(modeBtn);
+  inputArea.appendChild(input);
+  inputArea.appendChild(sendBtn);
+  inputArea.appendChild(stopBtn);
+
+  form.appendChild(inputArea);
 
   var status = document.createElement('div');
   status.id = 'teahouse-input-status';
@@ -180,50 +198,95 @@
       '</div>';
   }
 
+  /* 菜单项按最新章是否草稿过滤：
+     草稿态 → chat/gen/rewrite/continue/summarize（草稿阶段可折腾）
+     正式稿态 → chat/gen/summarize（rewrite/continue 只服务草稿，不可见） */
+  function latestHasDraft() {
+    var st = window.Teahouse._pageState || { floors: [], currentIndex: 0 };
+    var floors = st.floors || [];
+    var top = floors.length ? floors[floors.length - 1] : null;
+    return !!(top && top.draft);
+  }
+
+  function modeOrder() {
+    var order = [MODE_CHAT, MODE_GEN, MODE_SUMM];
+    if (latestHasDraft()) {
+      return [MODE_CHAT, MODE_GEN, MODE_REWRITE, MODE_CONT, MODE_SUMM];
+    }
+    return order;
+  }
+
   function renderMenu() {
     var html = '';
-    for (var i = 0; i < MODE_ORDER.length; i++) {
-      html += menuItemHtml(MODE_ORDER[i], MODES[MODE_ORDER[i]]);
+    var order = modeOrder();
+    for (var i = 0; i < order.length; i++) {
+      html += menuItemHtml(order[i], MODES[order[i]]);
     }
     menu.innerHTML = html;
     var items = menu.querySelectorAll('.teahouse-mode-item');
-    for (var i = 0; i < items.length; i++) {
+    for (var j = 0; j < items.length; j++) {
       (function(el) {
         el.addEventListener('click', function(e) {
           e.stopPropagation();
-          currentMode = el.getAttribute('data-mode');
+          var key = el.getAttribute('data-mode');
+          // 防御：菜单里已过滤，但万一切到只服务草稿的模式且无草稿 → 忽略
+          if ((key === MODE_REWRITE || key === MODE_CONT) && !latestHasDraft()) {
+            closeMenu();
+            applyState(S_READY);
+            return;
+          }
+          currentMode = key;
           closeMenu();
           applyMode();
         });
-      })(items[i]);
+      })(items[j]);
     }
   }
 
   function openMenu() { renderMenu(); menu.style.display = 'block'; }
   function closeMenu() { menu.style.display = 'none'; }
 
-  form.appendChild(modeBtn);
-  form.appendChild(input);
-  form.appendChild(sendBtn);
-  form.appendChild(stopBtn);
   wrap.appendChild(form);
   wrap.appendChild(menu);
   wrap.appendChild(status);
 
   /* ---- 模式应用 ---- */
+  /* sendBtn 三形态：send（纸飞机）/ commit（确认草稿文字）
+     commit 形态只在 AWAIT 态 + gen 模式出现（右侧按钮位替代发送） */
+  var sendMode = 'send';
+  function syncSendBtn() {
+    if (state === S_AWAIT && currentMode === MODE_GEN) {
+      sendMode = 'commit';
+      sendBtn.innerHTML = '确认草稿';
+      sendBtn.style.background = 'var(--success-fill)';
+      sendBtn.style.color = 'var(--success-filled-text)';
+      sendBtn.style.minWidth = '86px';
+      sendBtn.style.padding = '0 16px';
+      sendBtn.style.fontSize = '13px';
+      sendBtn.title = '解析正文 teahouse-vars 块并转正为正式稿';
+    } else {
+      sendMode = 'send';
+      sendBtn.innerHTML = SEND_ICON;
+      sendBtn.style.background = MODES[currentMode].btnBg;
+      sendBtn.style.color = '#1a1a1a';
+      sendBtn.style.minWidth = '32px';
+      sendBtn.style.padding = '0 12px';
+      sendBtn.style.fontSize = '';
+      var btnTitle = (currentMode === MODE_CHAT) ? '发送'
+        : (currentMode === MODE_GEN) ? '生成下一章'
+        : (currentMode === MODE_REWRITE) ? '重写本章'
+        : (currentMode === MODE_CONT) ? '续写补全'
+        : '总结归纳';
+      sendBtn.title = btnTitle;
+    }
+  }
+
   function applyMode() {
     var m = MODES[currentMode];
     modeLabel.textContent = m.label;
     modeBtn.style.color = m.dot;
     modeBtn.style.borderColor = m.dot;
-    sendBtn.style.background = m.btnBg;
-    sendBtn.style.color = '#1a1a1a';   // 亮彩色底上的纸飞机用深色，清晰可辨
-    var btnTitle = (currentMode === MODE_CHAT) ? '发送'
-      : (currentMode === MODE_GEN) ? '生成下一章'
-      : (currentMode === MODE_REWRITE) ? '重写本章'
-      : (currentMode === MODE_CONT) ? '续写补全'
-      : '总结归纳';
-    sendBtn.title = btnTitle;
+    syncSendBtn();
     input.placeholder = m.placeholder;
     input.setAttribute('placeholder', m.placeholder);
     // 重写模式：以 user_msg 填充输入框，用户可修改
@@ -233,22 +296,75 @@
         input.value = (v !== null && v !== undefined) ? String(v) : '';
       }).catch(function() {});
     } else {
-      // 其他模式：清空，避免残留重写预填/上次输入
       input.value = '';
+    }
+    // 若处于 AWAIT 态，切模式后刷新「打字可用性」（gen 禁用，其余可用）
+    applyInputAvailability();
+  }
+
+  /* ---- 输入可用性：AWAIT 态下 gen 模式打字禁用 + sendBtn 变确认草稿；其余模式可用 ---- */
+  function applyInputAvailability() {
+    if (state !== S_AWAIT) return;
+    var awaitGen = (currentMode === MODE_GEN);
+    input.disabled = awaitGen;
+    sendBtn.style.display = 'flex';
+    sendBtn.disabled = false;
+    syncSendBtn();
+    if (awaitGen) {
+      input.placeholder = '最新一章是草稿，请确认草稿或切换模式';
+      input.setAttribute('placeholder', input.placeholder);
+    } else {
+      input.placeholder = MODES[currentMode].placeholder;
+      input.setAttribute('placeholder', input.placeholder);
     }
   }
 
-  /* ---- 状态 ---- */
-  function setGenerating(g) {
-    input.disabled = g;
-    modeBtn.disabled = g;
-    // 生成中隐藏「发送」按钮（保留「停止」）；完成后恢复
-    sendBtn.style.display = g ? 'none' : 'flex';
-    sendBtn.disabled = g;
-    stopBtn.style.display = g ? 'inline-block' : 'none';
-    input.placeholder = g ? PLACEHOLDER_BUSY : MODES[currentMode].placeholder;
-    input.setAttribute('placeholder', input.placeholder);
-    if (g) input.blur();
+  /* ---- 状态机 ---- */
+  function applyState(s) {
+    state = s;
+    if (s === S_GEN) {
+      input.disabled = true;
+      modeBtn.disabled = true;
+      sendBtn.style.display = 'none';
+      sendBtn.disabled = true;
+      stopBtn.style.display = 'inline-block';
+      inputArea.style.display = 'flex';
+      input.placeholder = PLACEHOLDER_BUSY;
+      input.setAttribute('placeholder', input.placeholder);
+      status.textContent = PLACEHOLDER_BUSY;
+      input.blur();
+    } else if (s === S_AWAIT) {
+      modeBtn.disabled = false;
+      stopBtn.style.display = 'none';
+      inputArea.style.display = 'flex';
+      applyInputAvailability();
+      status.textContent = '草稿已就绪：确认草稿，或切换模式续写·重写';
+    } else {
+      // READY：正式稿态，rewrite/continue 不可用 → 防御性强制切回 gen
+      if (currentMode === MODE_REWRITE || currentMode === MODE_CONT) {
+        currentMode = MODE_GEN;
+        applyMode();
+      }
+      input.disabled = false;
+      modeBtn.disabled = false;
+      sendBtn.style.display = 'flex';
+      sendBtn.disabled = false;
+      stopBtn.style.display = 'none';
+      inputArea.style.display = 'flex';
+      syncSendBtn();
+      status.textContent = '';
+      input.placeholder = MODES[currentMode].placeholder;
+      input.setAttribute('placeholder', input.placeholder);
+    }
+  }
+
+  /* 从权威楼层清单判定状态：最新章是 draft → AWAIT_COMMIT，否则 READY */
+  function refreshState() {
+    window.Teahouse.listFloors().then(function(floors) {
+      var top = (floors && floors.length) ? floors[floors.length - 1] : null;
+      if (top && top.draft) applyState(S_AWAIT);
+      else applyState(S_READY);
+    }).catch(function() {});
   }
 
   /* ---- 子会话运行期：输入框可继续打字，打字 = 补发给当前活跃子会话 ----
@@ -261,19 +377,15 @@
     sendBtn.style.display = 'flex';
     sendBtn.disabled = false;
     stopBtn.style.display = 'none';
+    inputArea.style.display = 'flex';
+    syncSendBtn();
     input.placeholder = '给' + label + '子会话补发消息…（Enter 发送）';
     input.setAttribute('placeholder', input.placeholder);
   }
   function clearSessionActive() {
     activeSid = null;
     activeSessionLabel = '';
-    input.disabled = false;
-    modeBtn.disabled = false;
-    sendBtn.style.display = 'flex';
-    sendBtn.disabled = false;
-    stopBtn.style.display = 'none';
-    input.placeholder = MODES[currentMode].placeholder;
-    input.setAttribute('placeholder', input.placeholder);
+    refreshState();   // 回到按最新章 draft 判定的状态
   }
 
   /* ---- 打断生成 ---- */
@@ -295,88 +407,6 @@
     }, 2400);
   }
 
-  /* ---- 覆写确认弹窗（Generate 报"文件已存在"时触发） ---- */
-  var rewriteOverlay = document.createElement('div');
-  rewriteOverlay.id = 'teahouse-rewrite-dialog';
-  rewriteOverlay.style.cssText =
-    'position:fixed;inset:0;z-index:610;display:none;' +
-    'align-items:center;justify-content:center;' +
-    'background:rgba(0,0,0,0.55);' +
-    'font-family:"Noto Sans SC","PingFang SC",sans-serif;';
-  rewriteOverlay.innerHTML =
-    '<div style="width:min(92%,360px);background:var(--panel);color:var(--panel-text);' +
-    'border:1px solid var(--panel-border);border-radius:14px;' +
-    'box-shadow:var(--shadow-panel);padding:18px;">' +
-    '<div style="font-size:14px;font-weight:700;margin-bottom:10px;">文件已存在</div>' +
-    '<div style="font-size:12.5px;color:var(--panel-text-soft);line-height:1.7;margin-bottom:16px;">' +
-    '是否重写？这会导致旧文件被删除。如果你认为旧文件有保存的价值，请先进行 git 提交存档。</div>' +
-    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-    '<button type="button" id="rewrite-dialog-cancel" style="' +
-    'height:32px;padding:0 16px;border-radius:20px;border:1px solid var(--control-border);' +
-    'background:transparent;color:var(--panel-text-soft);font-size:13px;cursor:pointer;">取消</button>' +
-    '<button type="button" id="rewrite-dialog-ok" style="' +
-    'height:32px;padding:0 16px;border-radius:20px;border:none;' +
-    'background:#f87171;color:#ffffff;font-size:13px;font-weight:700;cursor:pointer;">确认重写</button>' +
-    '</div></div>';
-  document.body.appendChild(rewriteOverlay);
-
-  function showRewriteDialog() { rewriteOverlay.style.display = 'flex'; }
-  function hideRewriteDialog() { rewriteOverlay.style.display = 'none'; }
-  document.getElementById('rewrite-dialog-cancel').addEventListener('click', function() { hideRewriteDialog(); });
-  document.getElementById('rewrite-dialog-ok').addEventListener('click', function() {
-    hideRewriteDialog();
-    doGenOverwrite();
-  });
-  rewriteOverlay.addEventListener('click', function(e) {
-    if (e.target === rewriteOverlay) hideRewriteDialog();
-  });
-
-  /* ---- 生成下一章流水线 ---- */
-  function extractTitle(md) {
-    var lines = String(md || '').split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      var m = /^\s*#\s+(.+?)\s*$/.exec(lines[i]);
-      if (m) return m[1].trim();
-    }
-    return '';
-  }
-
-  function buildSteps(text) {
-    var st = window.Teahouse._pageState || { floors: [], currentIndex: 0 };
-    var floors = st.floors || [];
-    var top = floors.length ? floors[floors.length - 1] : null;
-    var nextNum = (top ? top.num : 0) + 1;
-    var steps = [];
-
-    // 顺序约定：先固化当前状态（draft 转正 + 楼层提交），
-    // git 提交之后才写变量 user_msg 并生成下一楼 —— 新变量与新楼层都是"git 之后的待办"。
-    if (top && top.draft) {
-      var n = top.num;
-      var src = '.teahouse/output/floors/floor-' + n + '-draft.md';
-      var dst = '.teahouse/output/floors/floor-' + n + '.md';
-      return window.Teahouse.readText(src).then(function(md) {
-        var title = extractTitle(md) || ('第 ' + n + ' 章');
-        steps.push({ tool: 'FileOps', args: { action: 'move', path: src, destination: dst } });
-        steps.push({ tool: 'GitCommit', args: { type: 'floor', number: n, message: title } });
-        // git 之后：写入 user_msg（Generate 配置里 ${user_msg} 由后端在生成前解析）
-        steps.push({ tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } });
-        steps.push({ tool: 'Generate', args: {
-          source_file: '.teahouse/generate-config/正文生成.yaml',
-          path: '.teahouse/output/floors/floor-' + nextNum + '-draft.md'
-        }});
-        return steps;
-      });
-    }
-
-    // 无草稿：直接写变量 + 生成下一楼
-    steps.push({ tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } });
-    steps.push({ tool: 'Generate', args: {
-      source_file: '.teahouse/generate-config/正文生成.yaml',
-      path: '.teahouse/output/floors/floor-' + nextNum + '-draft.md'
-    }});
-    return Promise.resolve(steps);
-  }
-
   function errMsg(err) {
     if (!err) return '';
     if (typeof err === 'string') return err;
@@ -384,138 +414,131 @@
     try { return JSON.stringify(err); } catch (e) { return String(err); }
   }
 
+  /* ---- 当前最高楼层 / 最高草稿 ---- */
+  function currentTop() {
+    var st = window.Teahouse._pageState || { floors: [], currentIndex: 0 };
+    var floors = st.floors || [];
+    return floors.length ? floors[floors.length - 1] : null;
+  }
+
+  /* ---- 生成下一章（READY → GENERATING → 落草稿 → AWAIT_COMMIT） ----
+     只在最新章为正式稿时可用；写 user_msg + Generate 下一楼 draft，不碰 git。 */
   function doGen(text) {
-    setGenerating(true);
-    status.textContent = '正在保存草稿并生成下一章…';
-    buildSteps(text).then(function(steps) {
-      lastGenArgs = null;
-      for (var i = 0; i < steps.length; i++) {
-        if (steps[i].tool === 'Generate') lastGenArgs = steps[i].args;
-      }
-      var h = window.Teahouse.runTool(steps);
-      activeRun = h;
-      return h;
-    }).then(function() {
+    var top = currentTop();
+    if (top && top.draft) {
+      applyState(S_AWAIT);
+      flashStatus('最新一章还是草稿，请先确认或切换模式');
+      return;
+    }
+    var nextNum = (top ? top.num : 0) + 1;
+    var steps = [
+      { tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } },
+      { tool: 'Generate', args: {
+        source_file: '.teahouse/generate-config/正文生成.yaml',
+        path: '.teahouse/output/floors/floor-' + nextNum + '-draft.md'
+      }}
+    ];
+    applyState(S_GEN);
+    var h = window.Teahouse.runTool(steps);
+    activeRun = h;
+    h.then(function() {
       activeRun = null;
-      setGenerating(false);
-      flashStatus('已生成下一章 ✓');
+      refreshState();
     }).catch(function(err) {
       activeRun = null;
-      setGenerating(false);
       if (isCancelledErr(err)) {
         flashStatus('已停止生成');
         console.log('[InputBar] gen cancelled:', err);
-        return;
-      }
-      var msg = errMsg(err);
-      // 识别 Generate 只读保护报错：文件已存在 → 弹覆写确认（可先 git 存档）
-      if (msg.indexOf('目标文件已存在') !== -1) {
-        showRewriteDialog();
       } else {
         status.textContent = '生成失败，请重试';
         console.error('[InputBar] gen failed:', err);
       }
+      refreshState();
     });
   }
 
-  /* 覆写确认后：仅重发 Generate 步骤（前面的定稿/提交/写变量已完成），overwrite=true */
-  function doGenOverwrite() {
-    if (!lastGenArgs) return;
-    setGenerating(true);
-    status.textContent = '正在重写生成…';
-    var args = {};
-    for (var k in lastGenArgs) args[k] = lastGenArgs[k];
-    args.overwrite = true;
-    var h = window.Teahouse.runTool([{ tool: 'Generate', args: args }]);
+  /* ---- 重写本章（仅草稿）：Generate overwrite 覆写当前草稿，不碰 git ----
+     正式稿不可重写（标准流程锁定），想改走导演/手动危险操作。 */
+  function doRewrite(text) {
+    var top = currentTop();
+    if (!top || !top.draft) {
+      refreshState();
+      flashStatus('没有草稿可重写（正式稿不可重写）');
+      return;
+    }
+    var n = top.num;
+    var steps = [
+      { tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } },
+      { tool: 'Generate', args: {
+        source_file: '.teahouse/generate-config/正文生成.yaml',
+        path: '.teahouse/output/floors/floor-' + n + '-draft.md',
+        overwrite: true
+      }}
+    ];
+    applyState(S_GEN);
+    status.textContent = '正在重写本章草稿…';
+    var h = window.Teahouse.runTool(steps);
     activeRun = h;
     h.then(function() {
       activeRun = null;
-      setGenerating(false);
-      flashStatus('已重写生成 ✓');
-    }).catch(function(err) {
-      activeRun = null;
-      setGenerating(false);
-      if (isCancelledErr(err)) {
-        flashStatus('已停止生成');
-        return;
-      }
-      status.textContent = '重写失败，请重试';
-      console.error('[InputBar] rewrite failed:', err);
-    });
-  }
-
-  /* ---- 重写本章流水线 ----
-     流程：1) 检查 git 是否干净，不干净 → other 存档「重写：章节名」
-           2) 把输入框内容保存为 user_msg
-           3) Generate 覆写当前章（overwrite=true，draft/正式章都可重写） */
-  function gitDirtyFromResult(result) {
-    if (!result) return false;
-    var out = result.result;
-    if (out === null || out === undefined) return false;
-    var s = (typeof out === 'string' ? out : JSON.stringify(out)) || '';
-    s = s.trim();
-    if (!s || s === '[]' || s === '{}') return false;
-    return true;
-  }
-
-  function buildRewriteSteps(text) {
-    var st = window.Teahouse._pageState || { floors: [], currentIndex: 0 };
-    var floors = st.floors || [];
-    var cur = floors[st.currentIndex];
-    if (!cur) return Promise.reject(new Error('当前没有可重写的章节'));
-    var title = cur.title || ('第 ' + cur.num + ' 章');
-    var steps = [];
-
-    // 1) git 是否干净：先跑一次 GitStatus，再组装后续步骤
-    return window.Teahouse.runTool([{ tool: 'GitStatus', args: {} }]).then(function(res) {
-      var dirty = false;
-      var results = (res && res.results) ? res.results : [];
-      for (var i = 0; i < results.length; i++) {
-        if (results[i].tool === 'GitStatus') dirty = gitDirtyFromResult(results[i]);
-      }
-      if (dirty) {
-        steps.push({ tool: 'GitCommit', args: { type: 'other', message: '重写：' + title } });
-      }
-      // 2) 写 user_msg
-      steps.push({ tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } });
-      // 3) 覆写当前章
-      steps.push({ tool: 'Generate', args: {
-        source_file: '.teahouse/generate-config/正文生成.yaml',
-        path: cur.path,
-        overwrite: true
-      }});
-      return steps;
-    });
-  }
-
-  function doRewrite(text) {
-    setGenerating(true);
-    status.textContent = '正在检查存档并重写本章…';
-    buildRewriteSteps(text).then(function(steps) {
-      return window.Teahouse.runTool(steps);
-    }).then(function() {
-      setGenerating(false);
+      refreshState();
       flashStatus('已重写本章 ✓');
     }).catch(function(err) {
-      setGenerating(false);
-      status.textContent = '重写失败，请重试';
-      console.error('[InputBar] rewrite failed:', err);
+      activeRun = null;
+      if (isCancelledErr(err)) {
+        flashStatus('已停止重写');
+        console.log('[InputBar] rewrite cancelled:', err);
+      } else {
+        status.textContent = '重写失败，请重试';
+        console.error('[InputBar] rewrite failed:', err);
+      }
+      refreshState();
     });
   }
 
-  /* ---- 续写补全流水线 ----
-     针对草稿（floor-N-draft.md）：
-       1) 写 user_msg
-       2) Generate 补全内容到 temp/floor-N-draft-补全.md（正文补全.yaml，temp 中间产物直接覆盖）
-       3) 开启子会话：合并 原文+补全 → 完整章节正文，写回 floor-N-draft.md
-      子会话完成后（session_done）通知玩家，不自动销毁，玩家可用 /clear 清理。 */
+  /* ---- 确认草稿 → commitDraft(N) ---- */
+  function doCommit() {
+    var top = currentTop();
+    if (!top || !top.draft) { refreshState(); return; }
+    var num = top.num;
+    sendBtn.disabled = true;
+    sendBtn.textContent = '转正中…';
+    window.Teahouse.commitDraft(num).then(function(res) {
+      sendBtn.disabled = false;
+      syncSendBtn();
+      if (res && res.ok) {
+        var d = res.data || {};
+        refreshState();
+        if (d.committed_draft === false) {
+          flashStatus('已补解析变量 ✓');
+        } else if (d.failed && d.failed.length > 0) {
+          flashStatus('已转正，但 ' + d.failed.length + ' 个变量操作失败（可找导演修正后补提交）');
+        } else {
+          flashStatus('已转正并提交 ✓');
+        }
+      } else {
+        status.textContent = '转正失败：' + ((res && res.error) || '未知错误');
+        console.error('[InputBar] commitDraft failed:', res);
+      }
+    }).catch(function(err) {
+      sendBtn.disabled = false;
+      syncSendBtn();
+      status.textContent = '转正失败：' + errMsg(err);
+      console.error('[InputBar] commitDraft failed:', err);
+    });
+  }
+
+  /* ---- 找导演走「与导演对话」模式，回档是危险操作不做常驻按钮 ---- */
+
+  /* ---- 续写补全流水线（仅草稿） ----
+     1) 写 user_msg
+     2) Generate 补全内容到 temp/floor-N-draft-补全.md（正文补全.yaml，temp 中间产物直接覆盖）
+     3) 开启子会话：合并 原文+补全 → 完整章节正文，写回 floor-N-draft.md
+     子会话完成后（session_done）通知玩家，不自动销毁。 */
   var CONT_YAML = '.teahouse/generate-config/正文补全.yaml';
 
   function buildContinueSteps(text) {
-    var st = window.Teahouse._pageState || { floors: [], currentIndex: 0 };
-    var floors = st.floors || [];
-    var top = floors.length ? floors[floors.length - 1] : null;
-    // 续写针对草稿：最高章节必须是 draft
+    var top = currentTop();
     if (!top || !top.draft) return Promise.reject(new Error('NO_DRAFT'));
     var n = top.num;
     var srcPath = '.teahouse/output/floors/floor-' + n + '-draft.md';
@@ -554,7 +577,6 @@
         enabled_tools: ['Read', 'Glob', 'Grep', 'Edit', 'WriteLine', 'TodoWrite', 'EndSession'],
         reasoning_effort: 'none'
       }).then(function(created) {
-        // 统一返回 {ok, data|error}：用 created.ok 判成败，sid 在 created.data.session_id。
         if (!created || !created.ok) {
           throw new Error((created && created.error) || '创建子会话失败');
         }
@@ -564,7 +586,7 @@
       });
   }
 
-  /* 续写合并子会话：收到 EndSession 后通知完成并恢复输入；不自动销毁（用户可用 /clear 清理） */
+  /* 续写合并子会话：收到 EndSession 后通知完成并恢复输入；不自动销毁 */
   function onSessionDone(sid) {
     var handler = function(data) {
       if (!data || data.session_id !== sid) return;
@@ -585,7 +607,13 @@
   }
 
   function doContinue(text) {
-    setGenerating(true);
+    var top = currentTop();
+    if (!top || !top.draft) {
+      refreshState();
+      flashStatus('当前没有草稿可续写（续写针对草稿）');
+      return;
+    }
+    applyState(S_GEN);
     status.textContent = '正在生成补全内容…';
     buildContinueSteps(text).then(function(info) {
       var h = window.Teahouse.runTool(info.steps);
@@ -618,43 +646,33 @@
     });
   }
 
-  /* ---- 总结归纳流水线 ----
-     用户输入总结范围 → 直接归纳进子会话任务提示词 → 开子会话按 teahouse-summarize skill 总结
-     子会话完成后（session_done）通知玩家，不自动销毁，玩家可用 /clear 清理。 */
+  /* ---- 总结归纳流水线（子会话） ---- */
+  var SUMMARIZE_PROMPT = '.teahouse/output/sandbox/input-bar/summarize-prompt.md';
+
   function openSummarizeSession(text) {
-    var task = [
-      '你的任务是执行一次「总结归纳」流程，把用户指定的楼层范围压缩归档。',
-      '【第一步 · 必须先加载技能】先用 SkillRead 读取 teahouse-summarize，严格按其中 SOP 执行总结。这是本任务的唯一方法依据。',
-      '【进度记录】请使用 TodoWrite 工具维护任务清单，逐步记录总结进度（读归档界 / 读楼层 / 更新设定与变量 / 写流水账 / git 提交），让用户能实时看到你做到哪一步。',
-      '【用户原始要求（用户在输入框手打的原文，请原样解读、严格遵循，不要擅自改动或扩大其范围）】',
-      '『' + text + '』',
-      '以上是用户的原始要求。请以它为准：解析其中的总结范围（例如「最近10章」「71~79章」「总结到第80章」等），确定要覆盖的楼层编号区间。若原始要求未指明明确起点，先 Read .teahouse/dyn_settings/summary/index.json 读归档界 summarized_through（上次已总结到的结束楼层），以此为起点顺延。',
-      '【执行流程 · 严格按 skill SOP】',
-      '1) Read .teahouse/dyn_settings/summary/index.json 确认归档界与已有流水账；',
-      '2) Read 本次待总结的全部楼层（.teahouse/output/floors/floor-N.md）；',
-      '3) 把对后续剧情有持续影响的信息沉淀进 .teahouse/dyn_settings/ 的动态设定文件，并更新变量（GetRuntimeVars / SetRuntimeVar）；',
-      '4) Write 流水账到 .teahouse/dyn_settings/summary/sum-A-B.md。注意：每次总结最多覆盖 10 章，超过 10 章需拆分成多个 sum-*.md 文件（如 sum-1-10.md、sum-11-20.md…），每个单独提交；',
-      '5) 用 GitCommit(type="summary", start=A, end=B, paths=[".teahouse/dyn_settings", ".teahouse/generate-config"], message="简短描述") 提交。若拆分为多个范围，逐个提交。提交前用 GitStatus / GitDiff(staged=true) 自查本次 stage 的正是总结自己的改动（别把主会话未提交的楼层/变量卷进来）。',
-      '【完成宣告】任务全部做完后，先以文本输出这句话：「总结已完成 ✓ 如希望清理，请输入 /clear」，然后调用 EndSession 宣告任务结束。EndSession 之后不要再输出任何内容。'
-    ].join('\n');
     window.Teahouse.openDirector();   // 唤起导演栏，让玩家看到总结过程并可介入
-    return window.Teahouse.sessionCreate({
-        enabled_tools: ['Read', 'Glob', 'Grep', 'GetRuntimeVars', 'SetRuntimeVar',
-                        'SkillRead', 'FileOps', 'Write', 'Edit', 'WriteLine',
-                        'TodoWrite', 'GitStatus', 'GitDiff', 'GitCommit', 'EndSession'],
-        reasoning_effort: 'mid'
-      }).then(function(created) {
-        // 统一返回 {ok, data|error}：用 created.ok 判成败，sid 在 created.data.session_id。
-        if (!created || !created.ok) {
-          throw new Error((created && created.error) || '创建子会话失败');
-        }
-        var sid = created.data.session_id;
-        window.Teahouse.sessionSend(sid, task);
-        return sid;
-      });
+    return window.Teahouse.readText(SUMMARIZE_PROMPT).then(function(prompt) {
+      var task = (prompt || '').replace('__USER_REQUEST__', text);
+      if (!task) {
+        throw new Error('总结提示词文件为空或读取失败：' + SUMMARIZE_PROMPT);
+      }
+      return window.Teahouse.sessionCreate({
+          enabled_tools: ['Read', 'Glob', 'Grep', 'GetRuntimeVars', 'SetRuntimeVar',
+                          'SkillRead', 'FileOps', 'Write', 'Edit', 'WriteLine',
+                          'TodoWrite', 'GitStatus', 'GitDiff', 'GitCommit', 'EndSession'],
+          reasoning_effort: 'mid'
+        }).then(function(created) {
+          if (!created || !created.ok) {
+            throw new Error((created && created.error) || '创建子会话失败');
+          }
+          var sid = created.data.session_id;
+          window.Teahouse.sessionSend(sid, task);
+          return sid;
+        });
+    });
   }
 
-  /* 总结子会话：收到 EndSession 后通知完成并恢复输入；不自动销毁（用户可用 /clear 清理） */
+  /* 总结子会话：收到 EndSession 后通知完成并恢复输入；不自动销毁 */
   function onSummarizeDone(sid) {
     var handler = function(data) {
       if (!data || data.session_id !== sid) return;
@@ -675,7 +693,11 @@
   }
 
   function doSummarize(text) {
-    setGenerating(true);
+    // 派发期间手动禁用输入（不借用 S_GEN 状态机，避免误显停止按钮）
+    input.disabled = true;
+    modeBtn.disabled = true;
+    sendBtn.style.display = 'none';
+    stopBtn.style.display = 'none';
     status.textContent = '正在派发总结子会话…';
     openSummarizeSession(text).then(function(sid) {
       onSummarizeDone(sid);
@@ -690,6 +712,8 @@
 
   /* ---- 提交入口 ---- */
   function submit() {
+    // 防御：AWAIT+gen 时 sendBtn 是 commit 形态，任何提交路径都走转正
+    if (sendMode === 'commit') { doCommit(); return; }
     var text = input.value.trim();
     if (!text || input.disabled) return;
 
@@ -709,18 +733,14 @@
       window.Teahouse.openDirector();   // 唤起导演栏，让玩家能看到导演回应
       window.Teahouse.send(text);
     } else if (currentMode === MODE_GEN) {
-      // 生成下一章：无需弹窗确认。buildSteps 内已处理——最高章节是 draft 就先转正提交，
-      // 再生成下一楼；已是正式版则直接生成。立即清空输入开跑。
       input.value = '';
       input.blur();
       doGen(text);
     } else if (currentMode === MODE_REWRITE) {
-      // 重写：确认前不清空输入（弹窗由 doRewrite 流程内处理）
       input.value = '';
       input.blur();
       doRewrite(text);
     } else if (currentMode === MODE_SUMM) {
-      // 总结归纳：派发子会话
       input.value = '';
       input.blur();
       doSummarize(text);
@@ -733,7 +753,11 @@
   }
 
   form.addEventListener('submit', function(e) { e.preventDefault(); submit(); });
-  sendBtn.addEventListener('click', function() { submit(); });
+  sendBtn.addEventListener('click', function() {
+    // commit 形态（AWAIT+gen）点击 → 转正；其余形态 → 正常发送
+    if (sendMode === 'commit') { doCommit(); }
+    else { submit(); }
+  });
   stopBtn.addEventListener('click', function() { cancelActive(); });
   input.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { e.preventDefault(); submit(); }
@@ -752,15 +776,28 @@
   });
   document.addEventListener('click', function() { closeMenu(); });
 
-  /* 生成中禁言 */
-  function onGen(statusVal) {
-    if (statusVal === 'generating') setGenerating(true);
-    else if (statusVal === 'done') setGenerating(false);
+  /* ---- 事件订阅 ---- */
+  function onGenStatus(statusVal) {
+    if (statusVal === 'generating') applyState(S_GEN);
+    // 'done' 时草稿文件尚未落盘（随后 output.refresh 才触发文件接管），
+    // 此刻 refreshState 会误读最新章仍是正式稿 → 闪回 READY，故不在此切换。
   }
-  window.Teahouse.on('generation.status', onGen);
-  onGen(window.Teahouse.generationStatus || 'idle');
+  window.Teahouse.on('generation.status', onGenStatus);
+  onGenStatus(window.Teahouse.generationStatus || 'idle');
+
+  // 转正完成（含导演/其它组件触发的 commitDraft）→ 同步状态
+  window.Teahouse.on('draft.committed', function() { refreshState(); });
+
+  // 文件变化 → 只关心 floors 路径（草稿出现/消失/转正改名）：
+  // 变量/设定等写入（如 runTool 里 SetRuntimeVar 先于 Generate 落盘）也会推 output.refresh，
+  // 若不过滤会打断生成中 UI，闪回 READY。
+  window.Teahouse.on('output.refresh', function(data) {
+    var p = data && data.path;
+    if (p && p.indexOf('.teahouse/output/floors/') === 0) refreshState();
+  });
 
   /* ---- 初始化 ---- */
   applyMode();
+  refreshState();
   window.registerUI('teahouse-input-bar', wrap);
 })();
