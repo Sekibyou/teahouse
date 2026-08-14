@@ -156,6 +156,18 @@
     readAsset: function(path) { return callHost('readAsset', [path]); },
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
+    // ---- 转正（草稿 → 正式稿）----
+    // 一次性完成：解析正文 teahouse-vars → 应用变量 → 标记 msg 写回 → 改名 → git 提交。
+    // 返回 {ok, data|error}，data 含 {num, title, commit_hash, applied, failed, committed_draft}。
+    // 已转正且无未消费 action → 幂等返回。二次补解析失败变量 → 再次调用即可。
+    // 约定源：tests/teahouse-commit-draft-api.md (v2)。
+    commitDraft: function(num) { return callHost('commitDraft', [num]); },
+
+    // ---- 重写 = 回档：git 丢弃所有暂存/未跟踪改动 ----
+    // 复用后端 /git/discard（git checkout -- . + clean -fd，连 untracked 的
+    // floor-N-draft.md 一并清除）。B 按钮用它回档后重新生成。
+    gitDiscard: function() { return callHost('gitDiscard', []); },
+
     // 富文本渲染
     renderRichText: function(text) { return callHost('renderRichText', [text]); },
 

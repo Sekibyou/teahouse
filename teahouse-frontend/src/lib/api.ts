@@ -450,7 +450,7 @@ export const gitApi = {
     return get<{ git: GitStatus; file_statuses: GitFileStatus[]; floors: FloorsStats | null }>(`/api/instances/${instanceId}/refresh`)
   },
 
-  commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string }) => {
+  commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string; paths?: string[] }) => {
     return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, params)
   },
 

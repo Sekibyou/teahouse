@@ -326,6 +326,37 @@ Teahouse.runTool([
 
 一句话：**runTool 是"我自己按计划连做几步"，子会话是"我开一个 agent 替我想/做"**——两者分工别混。子会话相关操作只走 `Teahouse.session*` API。
 
+### 转正：`Teahouse.commitDraft(N)` / 回档：`Teahouse.gitDiscard()`（v2 新增）
+
+草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md` **不再由导演 `FileOps move` + `GitCommit`**，改由沙盒调用 `commitDraft` 一次性完成（正文末尾/文中可能带 `<!-- teahouse-vars: [...] -->` 变量操作块，见「正文变量块」）。
+
+#### `Teahouse.commitDraft(N) → Promise<{ok, data|error}>`
+
+把「解析 teahouse-vars → 应用变量 → 标记 msg 写回正文 → 改名 → git 提交」绑定为一个**单向闸门**（请求-响应语义，失败 reject）。`data`：
+
+```js
+{ num, title, commit_hash,
+  applied: [{type, name, value?, index?, applied_value?}],  // 本次消费的操作
+  failed:  [{type, name, value?, index?, error}],           // 解析失败的操作（error 含原因）
+  committed_draft: bool,    // true=本次新转正；false=幂等/二次补解析
+  commit_warning?: string }
+```
+
+分支语义：
+- `floor-N-draft.md` 存在 → 正常转正（consumed_draft=true）；同时应用正文里的变量块，成功/失败的都写回 `msg`（`consumed` / `error:…`），一并提交。
+- `floor-N.md` 已存在但还有**未带 msg 的裸 action** → 二次补解析（`committed_draft=false`，git type=other「正文变量维护」），把上次失败的变量再解析一遍。
+- 已全部消费 → 幂等返回（不动正文/git）。
+
+判断「是否有失败」用 `data.failed.length > 0`；沙盒据此决定是否引导导演人工修正失败的 action 后**再次 commitDraft** 补解析。
+
+**适用**：A 按钮（确认草稿可用）/ input-bar 三态的 `AWAIT_COMMIT`。**不是** runTool 的多步工具数组——它是宿主编排的确定性闸门，沙盒只发一个请求。
+
+#### `Teahouse.gitDiscard() → Promise<{ok, data|error}>`
+
+**重写 = 回档**：git 丢弃所有未提交改动（`git checkout -- .` + `git clean -fd`，连 untracked 的 `floor-N-draft.md` 一并清除）。B 按钮用于"这版草稿不满意，回到上一正式稿状态重新生成"。
+
+> 注意：`commitDraft` / `gitDiscard` 走宿主 `SandboxManager` 桥（`callHost`），非 runTool。它们不经过导演 LLM，无法由导演工具集触发——由沙盒 UI 按钮调用。
+
 ### 子会话（sub-session）— 一次性导演子任务
 
 适合：一次性的总结、改设定、探索某设定、批量润色。子会话**独立上下文、受限工具**,干完可销毁,**不污染主会话历史**——搭建造型阶段测试子任务不会误伤正在进行的搭建主对话。导演自己也可在子会话里开子 agent 探索。
@@ -390,6 +421,7 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 | `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
 | `draft.change` | `{ path, text, accumulated_len }` | bootstrap 收到 `generate_progress` 后更新 `currentDraft` 并广播此事件。UI 组件（如正文渲染器）订阅此事件即可实现生成中的打字机效果 |
 | `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
+| `draft.committed` | `{ num, path, title, commit_hash, applied, failed, committed_draft }` | `Teahouse.commitDraft()` 成功转正/补解析后宿主广播。**非调用方组件**（page-bar 角标、导演手动转正后 input-bar 切态）订阅它同步状态 |
 | `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
 | `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |

@@ -15,7 +15,7 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 
 正文生成的核心思路：**先理解当前状态，再构造写作请求**。你不是自己写正文，而是通过 Generate 工具让正文 AI 来写。你的职责是提供准确、完整的上下文。
 
-正文「输出」即**文件落盘**：正文历史唯一来源是 `.teahouse/output/floors/`。半正式稿 `floor-N-draft.md`（每层唯一，就地覆盖）是写稿过程中的可见输出；满意后重命名为 `floor-N.md` 即为定稿。前端监听导演的工具调用后自动刷新读取，无需任何推送工具。
+正文「输出」即**文件落盘**：正文历史唯一来源是 `.teahouse/output/floors/`。半正式稿 `floor-N-draft.md`（每层唯一，就地覆盖）是写稿过程中的可见输出；用户在草稿页确认后，由沙盒 `Teahouse.commitDraft(N)` 自动转正为 `floor-N.md`（含解析正文变量块 + git 提交）。前端监听导演的工具调用后自动刷新读取，无需任何推送工具。
 
 ## 目录约定
 
@@ -202,19 +202,50 @@ FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 - **如果用户要求返工**：直接修改 `temp/generate-config-{{N}}.yaml`（或对应场景的产出）后再次生成，就地覆盖 `.teahouse/output/floors/floor-{{N}}-draft.md`（续写/改写场景需再对比合并后 move）。
 - **如果用户要求修改这一层**：不要重新生成，直接对 `.teahouse/output/floors/floor-{{N}}-draft.md` 用 Edit 或 WriteLine 精确替换。除非用户明确要求重写。
 
-### 步骤 10：用户确认后，正式定稿并 Git 提交
+### 步骤 10：用户确认后，交由沙盒转正（commitDraft）
 
-**必须等用户明确确认满意后**，才执行定稿与提交：
+**必须等用户明确确认满意后**，才执行转正。**转正不再是导演做 `FileOps move` + `GitCommit`**——改由沙盒 `Teahouse.commitDraft(N)`（host 侧的确定性闸门）一次性完成：
 
-1. 将半正式稿重命名为正式定稿：
-   ```
-   FileOps move .teahouse/output/floors/floor-{{N}}-draft.md .teahouse/output/floors/floor-{{N}}.md
-   ```
+> 沙盒（本实例的 `.teahouse/output/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 标记 msg 写回 → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
 
-2. 执行 Git 提交：
-   ```
-   GitCommit(type="floor", number={{N}}, message="简短描述")
-   ```
+作为导演，你的职责是确保正文**末尾/文中**已正确产出 `<!-- teahouse-vars: [...] -->` 变量操作块（见下节「正文变量块约定」），并让用户理解转正由 front-end 触发，**不要自己 move + commit**。
+
+如果用户通过对话要求"提交/定稿"，你可以提醒：转正是草稿页的「确认」按钮动作；若正文里没有需要生效的变量块，沙盒会直接转正（无变量操作）。
+
+## 正文变量块约定（teahouse-vars）
+
+正文可携带变量操作，**由正文 AI 在剧情变动处（文中/章节任意位置）就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、标记并 git 提交。约定源：`tests/teahouse-commit-draft-api.md`（v2）。
+
+```html
+<!-- teahouse-vars: [
+  {"type": "set",   "name": "金币",  "value": 120},
+  {"type": "add",   "name": "金币",  "value": -30},
+  {"type": "append","name": "背包",  "value": {"type": "item", "name": "回血药"}},
+  {"type": "pop",   "name": "背包",  "value": {"type": "item", "name": "生锈匕首"}},
+  {"type": "x",     "name": "背包",  "index": 2, "value": {"type": "item", "name": "钥匙"}},
+  {"type": "set",   "name": "当前状态", "value": "XXX感到不适，皱眉看着主角"}
+] -->
+```
+
+### 语义
+
+| `type` | 合法目标 | 语义 |
+|---|---|---|
+| `set` | boolean/string/number/array | 整体覆盖；name 不存在自动创建 |
+| `add` | number | 现值 = 现值 + value；未设按 0 起加 |
+| `append` | array | 尾部追加 value |
+| `pop` | array | 按值移除第一个匹配 |
+| `x` | array | index 处整体替换；index 可负；越界失败 |
+
+- **顺序敏感**：数组从上到下逐条执行；同批按序叠加。
+- **类型约束（硬）**：正文 bot 只维护 boolean/string/number/array 四类；**对象仅程序内用，正文 bot 不维护对象**（非要用只能 `set` 整体替换，非最佳实践）。
+- **失败留痕**：转正时成功的 action 写 `"msg":"consumed"`，失败的写 `"msg":"error:<原因>"`，**全部保留不删**（导演借此看到哪些成功/失败及正文上下文）。带 `msg` 的 action 后续不再被消费。
+- 变量变更需绑定单一时刻（转正那次 git 提交），故**不要在正文里反复改同一个块**；正式稿被 git 锁定，二次补解析仅处理"无 msg 的裸 action"。
+
+### 导演如何保证正文产块
+
+- 在 `generate-config-{{N}}.yaml` 的 **system 段**维护一段「章末/适当处用 teahouse-vars 块输出变量操作」的指令（正文 AI 真正读它），并给出上文表格的 type 语义 + 当前关键变量快照（名/值/类型）。
+- 当前变量快照通常已实时注入系统提示词（no cache）。若正文 AI 需要更细的现值类型，用 `GetRuntimeVars(names=[...])` 喂给它。导演尽量在配置里帮 bot 建好「要更新的变量」白名单，减少类型/命名错误。
 
 ## 注意事项
 
