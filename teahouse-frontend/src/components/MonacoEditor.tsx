@@ -14,6 +14,42 @@ self.MonacoEnvironment = {
 }
 loader.config({ monaco: Monaco })
 
+// ---- Custom "teahouse" language: placeholder syntax highlighting ----
+// A bespoke language for markdown / yaml / plaintext files that carry teahouse
+// placeholder syntax. Monarch tokenizers are per-language (we can't graft extra
+// tokens onto an existing language without rewriting all of its rules), so we
+// ship a deliberately small grammar: the four placeholders + a minimal markdown
+// subset (headings & fenced code blocks). Other host languages (py/ts/js/css/
+// html/shell) keep their native highlighting untouched.
+Monaco.languages.register({ id: "teahouse" })
+Monaco.languages.setMonarchTokensProvider("teahouse", {
+  tokenizer: {
+    root: [
+      // 1. Comment — `${!-- ... --}` (leading space required after "{").
+      [/\$\{!--[\s\S]*?--\}/, "comment.teahouse"],
+
+      // 2. Python code block — `${ ... return ... }` (contains spaces + `return`).
+      //    Must come before the bare variable rule so a code block isn't swallowed
+      //    as a variable prefix.
+      [/\$\{[\s\S]*?\breturn\b[\s\S]*?\}/, "keyword.teahouse"],
+
+      // 3. Variable — `${name}`, no whitespace inside.
+      [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
+
+      // 4. Snippet — `{{path}}` (a file path / glob).
+      [/{{[\s\S]*?}}/, "string.teahouse"],
+
+      // ---- Minimal markdown subset ----
+      [/^(#{1,6})\s/, "header.teahouse"],
+      [/^\s*```.*$/, "codeblock", "@codeblock"],
+    ],
+    codeblock: [
+      [/^\s*```\s*$/, "@pop"],
+      [/[^]*/, "codeblock"],
+    ],
+  },
+})
+
 // ---- Theme helpers ----
 
 const LIGHT_THEME = "teahouse-light"
@@ -23,7 +59,14 @@ function defineThemes(monaco: typeof Monaco) {
   monaco.editor.defineTheme(LIGHT_THEME, {
     base: "vs",
     inherit: true,
-    rules: [],
+    rules: [
+      { token: "comment.teahouse", foreground: "#8c8c8c", fontStyle: "italic" },
+      { token: "keyword.teahouse", foreground: "#c586c0" },
+      { token: "variable.teahouse", foreground: "#0c7bb8" },
+      { token: "string.teahouse", foreground: "#a0472c" },
+      { token: "header.teahouse", foreground: "#1a6fb5", fontStyle: "bold" },
+      { token: "codeblock", foreground: "#7a7a7a" },
+    ],
     colors: {
       "editor.background": "#00000000",
       "editor.foreground": "#1a1a1a",
@@ -46,7 +89,14 @@ function defineThemes(monaco: typeof Monaco) {
   monaco.editor.defineTheme(DARK_THEME, {
     base: "vs-dark",
     inherit: true,
-    rules: [],
+    rules: [
+      { token: "comment.teahouse", foreground: "#8c8c8c", fontStyle: "italic" },
+      { token: "keyword.teahouse", foreground: "#d67fe0" },
+      { token: "variable.teahouse", foreground: "#4fc1ff" },
+      { token: "string.teahouse", foreground: "#ce9178" },
+      { token: "header.teahouse", foreground: "#569cd6", fontStyle: "bold" },
+      { token: "codeblock", foreground: "#a8a8a8" },
+    ],
     colors: {
       "editor.background": "#00000000",
       "editor.foreground": "#e0e0e0",

@@ -901,16 +901,14 @@ export function WorkspacePage() {
                       onSave={handleSave}
                       onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
                       language={
-                        selectedFile?.endsWith(".md") ? "markdown" :
                         selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
                         selectedFile?.endsWith(".js") ? "javascript" :
                         selectedFile?.endsWith(".py") ? "python" :
-                        selectedFile?.endsWith(".yaml") || selectedFile?.endsWith(".yml") ? "yaml" :
                         selectedFile?.endsWith(".json") ? "json" :
                         selectedFile?.endsWith(".css") ? "css" :
                         selectedFile?.endsWith(".html") ? "html" :
                         selectedFile?.endsWith(".sh") || selectedFile?.endsWith(".bash") ? "shell" :
-                        "plaintext"
+                        "teahouse"
                       }
                     />
                   </div>
