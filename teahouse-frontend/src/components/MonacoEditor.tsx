@@ -18,7 +18,7 @@ loader.config({ monaco: Monaco })
 // A bespoke language for markdown / yaml / plaintext files that carry teahouse
 // placeholder syntax. Monarch tokenizers are per-language (we can't graft extra
 // tokens onto an existing language without rewriting all of its rules), so we
-// ship a deliberately small grammar: the four placeholders + a minimal markdown
+// ship a deliberately small grammar: the placeholders + a minimal markdown
 // subset (headings & fenced code blocks). Other host languages (py/ts/js/css/
 // html/shell) keep their native highlighting untouched.
 Monaco.languages.register({ id: "teahouse" })
@@ -34,10 +34,13 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       // 4. Snippet — `{{path}}` (a file path / glob).
       [/{{[\s\S]*?}}/, "string.teahouse"],
 
-      // 1. Comment — `${!-- ... --}` (leading space required after "{"). Single line.
-      [/\$\{!--[^\n]*--\}/, "comment.teahouse"],
-      // 1b. Comment multiline — `${!-- ...` opens a state that closes on `--}`.
-      [/\$\{!--[^\n]*$/, "comment.teahouse", "commentBlock"],
+      // 0. ${@...} directive (explicit) — `${@type name}` / `${@max [...]}` etc.,
+      //    single-line form. Must precede the code-block rules so `${@note ...}`
+      //    (which contains spaces) doesn't land in the space-based block rule.
+      [/\$\{@[^\n}]*\}/, "comment.teahouse"],
+      // 0b. ${@...} directive multiline (e.g. `${@note` spanning several lines) —
+      //     enters a state that closes on a line-start `}`.
+      [/\$\{@[^\n}]*$/, "comment.teahouse", "atBlock"],
 
       // 2. Code block (return-based) — any `${ ... return ... }`, no space needed
       //    (so `${return}` lands here, not the variable rule). Closes at the LAST
@@ -67,8 +70,11 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       [/^\s*```.*$/, "codeblock", "@pop"],
       [/[^\n]*$/, "codeblock"],
     ],
-    commentBlock: [
-      [/[^\n]*--\}\s*$/, "comment.teahouse", "@pop"],
+    atBlock: [
+      // ${@...} directive closes on a line-start `}`; inner `{{...}}` slices don't
+      // start a line with `}` so they won't truncate it.
+      [/^[ \t]*\}[ \t]*.*$/, "comment.teahouse", "@pop"],
+      // 其余行整行染 directive 色。
       [/[^\n]*$/, "comment.teahouse"],
     ],
     block: [

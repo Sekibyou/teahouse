@@ -744,7 +744,7 @@ async def set_runtime_vars(
         raise HTTPException(status_code=404, detail="Instance not found")
 
     instance_dir = _resolve_instance_dir(inst)
-    # Whitespace/colon in a variable name is unusable in ${...} identifier / ${type:name} syntax.
+    # Whitespace/colon/@ in a variable name is unusable in ${...} identifier / ${@type ...} syntax.
     bad_names: set[str] = set()
     for mapping in (body.updates, body.note, body.change_log, body.meta):
         for k in mapping:

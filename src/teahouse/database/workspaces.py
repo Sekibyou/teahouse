@@ -627,7 +627,7 @@ def clamp_number(value, lo=None, hi=None):
 def build_type_map(instance_dir: Path) -> dict:
     """Flat name→type map of the instance sandbox variables (declared or inferred).
 
-    Used to resolve the `${type:name}` placeholder (returns the type string).
+    Used to resolve the `${@type name}` placeholder (returns the type string).
     """
     try:
         items = read_sandbox_vars(instance_dir, None)

@@ -328,8 +328,9 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
     if not updates and not note and not change_log and not meta and not delete:
         return "Error: provide at least one of updates / note / change_log / meta / delete"
 
-    # Whitespace/colon in a variable name breaks ${...} identifiers / ${type:name}
-    # syntax — reject up front rather than silently.
+    # Whitespace/colon/@ in a variable name breaks ${...} identifiers /
+    # codespace:colon triggers the condition judgement path and @ the @-directive
+    # prefix — reject up front rather than silently.
     bad_names: set[str] = set()
     for mapping in (updates, note, change_log, meta):
         if not mapping:

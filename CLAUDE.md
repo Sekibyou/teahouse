@@ -54,13 +54,13 @@
 
 ## 占位符语法
 
-实例配置/提示词/工具内容里使用四种占位符，语义互不混淆：
+实例配置/提示词/工具内容里使用多种占位符，语义互不混淆：
 
 | 语法 | 含义 | 在哪里解析为值 |
 |---|---|---|
 | `{{path\|切片}}` | **文件切片**（复制/搬运，不修改内容），如 `{{static_settings/characters.yaml\|from="## 秦悠"}}`、`{{glob:output/floors/floor-*.md:last30}}` | Write/Edit/WriteLine 显式 `resolve_placeholders=true`；系统提示词/预设模板（lenient，文档示例保持字面量） |
 | `${name}` | **普通变量引用**（沙盒变量），如 `${金币}`、`${user_name}` | 导演系统提示词组装 + Generate 发送给正文 AI 前（酒馆式展开为值）；沙盒内手动 `Teahouse.replacePlaceholders()` 替换 |
-| `${type:name}` | **取变量类型**（非值，展开为类型字符串），如 `${type:金币}` → `number`。变量名已禁冒号故无歧义 | 同 `${name}` 的所有解析表面；未知变量名原样保留不外泄 |
+| `${@type name}` | **取变量类型**（非值，展开为类型字符串），如 `${@type 金币}` → `number`。`@` 是指令保留前缀，故变量名禁 `@`、禁冒号无歧义 | 同 `${name}` 的所有解析表面；未知变量名原样保留不外泄 |
 | `${ if...: return... }` | **条件切片**（代码块），按变量值就地选一段返回，如 `${ if dice == 6: return "{{room1}}" else: return "{{room2}}" }` | 所有 AI 表面（导演系统提示词组装 + Generate），解析阶段就地选分支；块内可用白名单函数 `roll("1d6")` / `random(lo, hi)`；坏块回退字面量不报错 |
 | `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词预设模板组装时临时注入；其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
 
@@ -69,7 +69,8 @@
 - `teahouse.` 前缀为系统保留命名空间，setVar/SetRuntimeVar 禁止用其命名（会告警忽略）。
 - 喂给 AI（系统提示词、Generate）的内容替换 `${}` + 展开 `{{}}`；`Write/Edit/WriteLine`（文件编辑）只做 `{{}}` 切片、不解变量。
 - **变量名禁止空白**（空格/tab/换行）：代码块用 `if dice == 6` 引用变量需作合法 Python 标识符，写含空白变量名会被 SetRuntimeVar / 沙盒 setVar 拒绝。
-- **变量名禁止冒号 `:`**：它是 `${type:名字}` 取类型语法的保留前缀（与空白同由 `validate_var_name`/沙盒 `validateName` 拒绝）。
+- **变量名禁止冒号 `:`**：`${@type name}` 用空格分隔指令与变量名，冒号会让裸 `${}` 被判定层误判为 condition（`${a:b}` → 取 `a/b` 两个符号作为条件）。
+- **变量名禁止 `@`**：它是 `${@name}` 显式指令（如 `${@type name}`）的保留前缀，带 `@` 的变量名会被误认成指令。以上二者与空白同由 `validate_var_name`/沙盒 `validateName` 拒绝。
 - **转义语法**：在开括号前加反斜杠 `\`，强制该占位符保持**字面量**、不解析：`\{{path}}` → `{{path}}`、`\${name}` → `${name}`、`\$ { if...: }` → 不执行的条件块；`\\` → `\`。在解析全部结束后才被去掉反斜杠还原，故多轮交替展开期间也不会被吞。**必须给"教学示例/要展示的字面 `{{}}`、`${}`"加转义**——否则若该占位符恰好匹配到实例真实文件（如 `{{glob:...}}`），会被当成真实引用执行、把文件内容注进系统提示词（曾因此泄漏楼层正文）。tools.json 的 usage 说明即属此类，均已转义。
 
 
