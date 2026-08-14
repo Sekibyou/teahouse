@@ -835,7 +835,7 @@ async def _tool_use_loop(
         from .director_system import get_floors_stats
         stats = get_floors_stats(instance_dir)
         if stats:
-            stats["instance_id"] = instance_dir.name
+            stats["instance_id"] = instance_id or instance_dir.name
             state.broadcast("floors_changed", stats)
 
     # Max rounds exhausted

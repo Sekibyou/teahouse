@@ -36,13 +36,13 @@ from .state import state
 RUNTIME_VARS_RELPATH = ".teahouse/runtime_vars.jsonl"
 
 
-def _maybe_broadcast_vars_changed(instance_dir: Path, full: Path, tool: str) -> None:
+def _maybe_broadcast_vars_changed(instance_dir: Path, full: Path, tool: str, instance_id: str | None = None) -> None:
     """Broadcast the runtime-vars file_changed signal when the written path is
     the variables file (so prose ${name} placeholders re-resolve to new values)."""
     if full.resolve() == (instance_dir / RUNTIME_VARS_RELPATH).resolve():
         state.broadcast(
             "file_changed",
-            {"path": RUNTIME_VARS_RELPATH, "tool": tool, "instance_id": instance_dir.name},
+            {"path": RUNTIME_VARS_RELPATH, "tool": tool, "instance_id": instance_id or instance_dir.name},
         )
 
 import yaml
@@ -296,7 +296,7 @@ async def execute_get_runtime_vars(instance_dir: Path, args: dict[str, Any]) -> 
     return "\n".join(_fmt_var_entry(item) for item in items)
 
 
-async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Write runtime variables. Merges `updates` (+ optional `note`/`change_log`/`meta`).
 
     - `updates`: {name: value} — overwrite value; missing names are created.
@@ -387,7 +387,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
 
     state.broadcast(
         "file_changed",
-        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_dir.name},
+        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id or instance_dir.name},
     )
 
     affected = list(updates.keys()) if updates else []
@@ -437,7 +437,7 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
     return [_resolve_value(m) for m in messages]
 
 
-async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_write(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Write content to a file (overwrite). Creates parent directories if needed.
 
     Set resolve_placeholders=true to resolve {{path}} placeholders in content.
@@ -458,12 +458,12 @@ async def execute_write(instance_dir: Path, args: dict[str, Any]) -> str:
     full = _validate_path(instance_dir, path)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
-    state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_dir.name})
-    _maybe_broadcast_vars_changed(instance_dir, full, "Write")
+    state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_id or instance_dir.name})
+    _maybe_broadcast_vars_changed(instance_dir, full, "Write", instance_id)
     return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}. File state is now up to date in your context — no need to Read it back."
 
 
-async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_edit(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Edit a file by exact string replacement. Follows Claude Code harness rules:
     - old_string must appear exactly once in the file (unless replace_all=True)
     - Must match whitespace exactly
@@ -499,18 +499,18 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any]) -> str:
     if replace_all:
         new_content = content.replace(old_string, new_string)
         full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, full, "Edit")
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_id or instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
         return f"Successfully replaced all {count} occurrences in {path}. File state is now up to date in your context — no need to Read it back."
     else:
         new_content = content.replace(old_string, new_string, 1)
         full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, full, "Edit")
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_id or instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
         return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
 
 
-async def execute_report(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_report(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Write a sub-session / exploration report to temp/ as markdown.
 
     ``mode="write"`` overwrites (creates or replaces); ``mode="edit"`` appends.
@@ -538,7 +538,7 @@ async def execute_report(instance_dir: Path, args: dict[str, Any]) -> str:
         full.write_text(full.read_text(encoding="utf-8") + content, encoding="utf-8")
     else:
         full.write_text(content, encoding="utf-8")
-    state.broadcast("file_changed", {"path": rel, "tool": "Report", "instance_id": instance_dir.name})
+    state.broadcast("file_changed", {"path": rel, "tool": "Report", "instance_id": instance_id or instance_dir.name})
     return f"Report {mode} to {rel}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -701,7 +701,7 @@ async def execute_delete_sub_session(instance_dir: Path, args: dict[str, Any], s
     return f"Sub-session {target} destroyed and reclaimed."
 
 
-async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_edit_line(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Edit a file by replacing a range of lines. Use after Read to confirm line numbers.
 
     Set resolve_placeholders=true to resolve {{path}} placeholders in new_content.
@@ -752,8 +752,8 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any]) -> str:
     new_file = before + decoded + after
 
     full.write_text(new_file, encoding="utf-8")
-    state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_dir.name})
-    _maybe_broadcast_vars_changed(instance_dir, full, "WriteLine")
+    state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_id or instance_dir.name})
+    _maybe_broadcast_vars_changed(instance_dir, full, "WriteLine", instance_id)
     return f"Successfully replaced lines {start_line}–{end_line} in {path}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -836,6 +836,7 @@ async def execute_generate(
     args: dict[str, Any],
     user_id: str | None = None,
     run_uuid: str | None = None,
+    instance_id: str | None = None,
 ) -> str:
     """Generate tool — reads YAML config, resolves placeholders, calls writer LLM, writes result to file.
 
@@ -999,7 +1000,7 @@ async def execute_generate(
             )
             state.broadcast(
                 "file_changed",
-                {"path": dump_payload_str, "tool": "Generate.dump", "instance_id": instance_dir.name},
+                {"path": dump_payload_str, "tool": "Generate.dump", "instance_id": instance_id or instance_dir.name},
             )
         except ValueError as e:
             return f"Error: dump_payload_path 路径无效: {e}"
@@ -1035,7 +1036,7 @@ async def execute_generate(
             {
                 "run_uuid": run_uuid,
                 "path": output_path_str,
-                "instance_id": instance_dir.name,
+                "instance_id": instance_id or instance_dir.name,
                 "delta": delta if not done else "",
                 "accumulated_len": len(buffered),
                 "accumulated_text": buffered if done else "",
@@ -1052,7 +1053,7 @@ async def execute_generate(
             raise RuntimeError(f"写入输出文件失败: {e}") from e
         state.broadcast(
             "file_changed",
-            {"path": output_path_str, "tool": "Generate", "instance_id": instance_dir.name},
+            {"path": output_path_str, "tool": "Generate", "instance_id": instance_id or instance_dir.name},
         )
 
     try:
@@ -1155,7 +1156,7 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_file_ops(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Create directories, move/rename, or delete files and directories."""
     action = args["action"]
     path_str = args["path"]
@@ -1190,8 +1191,8 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(full), str(dest))
-        state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "action": "move", "instance_id": instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, dest, "FileOps")
+        state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "action": "move", "instance_id": instance_id or instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, dest, "FileOps", instance_id)
         return f"已移动：{path_str} → {destination_str}"
 
     if action == "delete":
@@ -1203,8 +1204,8 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any]) -> str:
         else:
             full.unlink()
 
-        state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "action": "delete", "instance_id": instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, full, "FileOps")
+        state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "action": "delete", "instance_id": instance_id or instance_dir.name})
+        _maybe_broadcast_vars_changed(instance_dir, full, "FileOps", instance_id)
         return f"已删除：{path_str}"
 
     return f"Error: 未知操作 '{action}'，支持 mkdir / move / delete"
@@ -1381,7 +1382,7 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
             update_summary_index(instance_dir, start, end)
         result = _git_commit(instance_dir, git_message, paths=paths)
         files_str = ", ".join(result["files_changed"]) if result["files_changed"] else "(none)"
-        state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_dir.name})
+        state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result["branch"], "instance_id": instance_id or instance_dir.name})
 
         # Update floor_count in DB for floor commits
         if commit_type == "floor" and instance_id:
@@ -1403,7 +1404,7 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
         return f"Git 提交失败: {error_msg}"
 
 
-async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_git_branch(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Execute branch operations: list, create, switch, delete, rename."""
     action = args["action"]
     name = args.get("name")
@@ -1414,7 +1415,7 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
             if not name or not new_name:
                 return "Error: rename 操作需要 name 和 new_name 参数"
             _git_branch_rename(instance_dir, name, new_name)
-            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "rename", "instance_id": instance_dir.name})
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "rename", "instance_id": instance_id or instance_dir.name})
             return f"分支 '{name}' 已重命名为 '{new_name}'"
 
         result = _git_branch(instance_dir, action, name)
@@ -1430,15 +1431,15 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
             return "\n".join(lines)
 
         if action == "create":
-            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "create", "instance_id": instance_dir.name})
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "create", "instance_id": instance_id or instance_dir.name})
             return f"分支 '{name}' 创建成功（基于当前 HEAD）"
 
         if action == "switch":
-            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "switch", "instance_id": instance_dir.name})
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "switch", "instance_id": instance_id or instance_dir.name})
             return f"已切换到分支 '{name}'"
 
         if action == "delete":
-            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "delete", "instance_id": instance_dir.name})
+            state.broadcast("workspace_changed", {"tool": "GitBranch", "action": "delete", "instance_id": instance_id or instance_dir.name})
             return f"分支 '{name}' 已删除"
 
         return f"未知操作: {action}"
@@ -1453,7 +1454,7 @@ async def execute_git_branch(instance_dir: Path, args: dict[str, Any]) -> str:
         return f"Git 分支操作失败: {error_msg}"
 
 
-async def execute_git_checkout(instance_dir: Path, args: dict[str, Any]) -> str:
+async def execute_git_checkout(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Checkout a historical commit: create temp branch at the hash and switch to it.
 
     Non-destructive — the original branch is untouched. The director can explore
@@ -1485,7 +1486,7 @@ async def execute_git_checkout(instance_dir: Path, args: dict[str, Any]) -> str:
     # Step 3: Confirm current HEAD
     current_hash = _git_rev_parse(instance_dir, "HEAD")
 
-    state.broadcast("workspace_changed", {"tool": "GitCheckout", "branch": temp_name, "instance_id": instance_dir.name})
+    state.broadcast("workspace_changed", {"tool": "GitCheckout", "branch": temp_name, "instance_id": instance_id or instance_dir.name})
 
     return (
         f"已回退到历史提交。\n"
@@ -1539,6 +1540,14 @@ async def execute_wait(instance_dir: Path, args: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
+
+# Tools whose executor accepts `instance_id` (DB uuid) as the 3rd positional
+# arg, so backend SSE broadcasts carry the uuid instead of the directory name.
+# GitCommit is excluded (handled by its own dispatcher branch above).
+_FILE_TOOL_EXECUTORS = {
+    "SetRuntimeVar", "Write", "Edit", "Report", "WriteLine", "FileOps",
+    "GitBranch", "GitCheckout",
+}
 
 TOOL_EXECUTORS = {
     "Read": execute_read,
@@ -1615,11 +1624,13 @@ async def execute_tool(
     if executor:
         try:
             if name == "Generate":
-                result = await executor(instance_dir, args, user_id, run_uuid)
+                result = await executor(instance_dir, args, user_id, run_uuid, instance_id)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
             elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession"):
                 result = await executor(instance_dir, args, session_id, instance_id, user_id)
+            elif name in _FILE_TOOL_EXECUTORS:
+                result = await executor(instance_dir, args, instance_id)
             else:
                 result = await executor(instance_dir, args)
             return result

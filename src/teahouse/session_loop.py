@@ -302,7 +302,7 @@ class SessionLoop:
         in-flight compact the same way it stops a tool loop.
         """
         compact_task = asyncio.create_task(
-            run_compact(client, self.instance_dir, self.session_id)
+            run_compact(client, self.instance_dir, self.session_id, instance_id=self.instance_id)
         )
         self._task = compact_task
         task_tracker.stats_start(self.instance_dir.name, self.session_id)
@@ -313,7 +313,7 @@ class SessionLoop:
         except asyncio.CancelledError:
             _event_log(self.instance_dir, self.session_id, "compact_interrupted", {})
             state.broadcast("session_event", {
-                "instance_id": self.instance_dir.name,
+                "instance_id": self.instance_id or self.instance_dir.name,
                 "session_id": self.session_id,
                 "type": "compact_done",
                 "error": "interrupted",
@@ -324,7 +324,7 @@ class SessionLoop:
         except Exception:
             _event_log(self.instance_dir, self.session_id, "compact_error", {})
             state.broadcast("session_event", {
-                "instance_id": self.instance_dir.name,
+                "instance_id": self.instance_id or self.instance_dir.name,
                 "session_id": self.session_id,
                 "type": "compact_done",
                 "error": "compact LLM call failed",
@@ -360,7 +360,7 @@ class SessionLoop:
             task_tracker.stats_tick(self.instance_dir.name, self.session_id)
             stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
             ev = dict(event)
-            ev["instance_id"] = self.instance_dir.name
+            ev["instance_id"] = self.instance_id or self.instance_dir.name
             ev["session_id"] = self.session_id
             ev["running"] = task_tracker.running_sessions(self.instance_dir.name)
             ev["stats"] = {
@@ -415,7 +415,7 @@ class SessionLoop:
         # fires, so we explicitly flip it here.
         running[self.session_id] = False
         state.broadcast("session_event", {
-            "instance_id": self.instance_dir.name,
+            "instance_id": self.instance_id or self.instance_dir.name,
             "session_id": self.session_id,
             "type": "done",
             "running": running,

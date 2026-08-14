@@ -78,6 +78,7 @@ async def run_compact(
     instance_dir: Path,
     session_id: str,
     tool_system: str = "",
+    instance_id: str | None = None,
 ) -> str | None:
     """Summarise session history, truncate it, and write the summary.
 
@@ -94,10 +95,9 @@ async def run_compact(
         return None
 
     instance_name = instance_dir.name
-
     # Broadcast compact start
     state.broadcast("session_event", {
-        "instance_id": instance_name,
+        "instance_id": instance_id or instance_name,
         "session_id": sid,
         "type": "compact_started",
         "running": task_tracker.running_sessions(instance_name),
@@ -110,7 +110,7 @@ async def run_compact(
         )
     except Exception:
         state.broadcast("session_event", {
-            "instance_id": instance_name,
+            "instance_id": instance_id or instance_name,
             "session_id": sid,
             "type": "compact_done",
             "error": "compact LLM call failed",
@@ -121,7 +121,7 @@ async def run_compact(
     if not summary or not summary.strip():
         # LLM returned nothing useful — don't truncate
         state.broadcast("session_event", {
-            "instance_id": instance_name,
+            "instance_id": instance_id or instance_name,
             "session_id": sid,
             "type": "compact_done",
             "error": "compact produced empty summary",
@@ -143,7 +143,7 @@ async def run_compact(
     # Broadcast compact done
     preview = summary[:200] + ("..." if len(summary) > 200 else "")
     state.broadcast("session_event", {
-        "instance_id": instance_name,
+        "instance_id": instance_id or instance_name,
         "session_id": sid,
         "type": "compact_done",
         "summary_preview": preview,

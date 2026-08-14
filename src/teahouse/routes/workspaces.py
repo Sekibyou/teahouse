@@ -132,11 +132,11 @@ class FileRenameRequest(BaseModel):
 router = APIRouter(prefix="/api", tags=["workspace"])
 
 
-def _broadcast_floors(instance_dir: Path) -> None:
+def _broadcast_floors(instance_dir: Path, instance_id: str) -> None:
     """Broadcast floors_changed SSE event with stats from the instance directory."""
     stats = get_floors_stats(instance_dir)
     if stats:
-        stats["instance_id"] = instance_dir.name
+        stats["instance_id"] = instance_id or instance_dir.name
         state.broadcast("floors_changed", stats)
 
 
@@ -901,7 +901,7 @@ async def run_instance_tools(
     # 每步完成后广播一条 tool_run（带 run_uuid / index / 结果 / 成败），组件据此
     # 自行数 index 判定本批完成。步骤内部还会发 file_changed 驱动楼层/沙盒刷新。
     task = asyncio.create_task(
-        _run_steps(instance_dir, user_id, run_uuid, body.steps)
+        _run_steps(instance_dir, user_id, run_uuid, body.steps, instance_id)
     )
     # 登记本批 task，供 POST .../tools/run/{run_uuid}/cancel 中途打断（Generate 等长步骤）
     from ..run_tool_tracker import run_tool_tracker
@@ -916,13 +916,14 @@ async def _run_steps(
     user_id: str,
     run_uuid: str,
     steps: list[ToolsRunStep],
+    instance_id: str,
 ) -> None:
     from ..run_tool_tracker import run_tool_tracker
     try:
         for i, step in enumerate(steps, 1):
             name = step.tool
             cargs = step.args or {}
-            result = await execute_tool(name, cargs, instance_dir, user_id, str(instance_dir.name), run_uuid)
+            result = await execute_tool(name, cargs, instance_dir, user_id, instance_id, run_uuid)
             ok = not result.startswith("Error")
             state.broadcast(
                 "tool_run",
@@ -932,7 +933,7 @@ async def _run_steps(
                     "tool": name,
                     "result": result,
                     "ok": ok,
-                    "instance_id": instance_dir.name,
+                    "instance_id": instance_id or instance_dir.name,
                 },
             )
             if not ok:
@@ -1794,7 +1795,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
     try:
         result = git_commit(instance_dir, git_message, paths=body.paths)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
-        _broadcast_floors(instance_dir)
+        _broadcast_floors(instance_dir, instance_id)
 
         if body.type == "floor" and body.number is not None:
             await update_floor_count(instance_id, body.number)
@@ -1822,7 +1823,7 @@ async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInf
         if action in ("switch", "create", "delete"):
             state.broadcast("workspace_changed", {"tool": "GitBranch", "action": action, "instance_id": instance_id})
         if action == "switch":
-            _broadcast_floors(instance_dir)
+            _broadcast_floors(instance_dir, instance_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1944,7 +1945,7 @@ async def api_git_reset(instance_id: str, body: GitResetRequest, user: UserInfo 
         out = git_reset_hard(instance_dir, body.target_hash)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
         state.broadcast("workspace_changed", {"tool": "GitReset", "branch": branch, "instance_id": instance_id})
-        _broadcast_floors(instance_dir)
+        _broadcast_floors(instance_dir, instance_id)
         return {"status": "ok", "branch": branch, "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2051,14 +2052,14 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
                 _git_run(["checkout", main_branch], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
-            _broadcast_floors(instance_dir)
+            _broadcast_floors(instance_dir, instance_id)
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交，分支 {body.branch_name} 已清理"}
         else:
             # Rename temp to original branch name
             _git_run(["branch", "-m", body.branch_name], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
-            _broadcast_floors(instance_dir)
+            _broadcast_floors(instance_dir, instance_id)
             return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
