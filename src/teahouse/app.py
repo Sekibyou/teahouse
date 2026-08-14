@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -950,13 +952,22 @@ async def status():
 # a phone can use the whole app at http://<host>:8888 without a separate dev
 # server. API prefixes are excluded and fall through to their own handlers /
 # 404. Absent = dist not built yet, no-op (API-only still works).
+#
+# In dev mode (`--dev` / TEAHOUSE_DEV=1) the frontend is served by Vite on
+# :5173 and proxies /api /v1 /events back here, so dist is never mounted and
+# the SPA catch-all returns 404 instead of HTML.
 # ---------------------------------------------------------------------------
+
+# Dev mode: frontend hot-reloaded by Vite, backend hot-reloaded via --reload.
+DEV_MODE = os.environ.get("TEAHOUSE_DEV") == "1" or "--dev" in sys.argv
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "teahouse-frontend" / "dist"
 _API_PREFIXES = ("/api", "/v1", "/events", "/docs", "/redoc", "/openapi.json")
 
 
 def _setup_static() -> None:
+    if DEV_MODE:
+        return
     if FRONTEND_DIST.is_dir():
         app.mount(
             "/assets",
@@ -971,8 +982,9 @@ _setup_static()
 @app.get("/{full_path:path}")
 async def frontend_spa(full_path: str) -> FileResponse:
     # Let the real API routers handle these (they're registered earlier, but a
-    # catch-all here must not return HTML for unknown API-ish paths).
-    if full_path.startswith(_API_PREFIXES):
+    # catch-all here must not return HTML for unknown API-ish paths). In dev
+    # mode the SPA is served by Vite, so never fall back to HTML here.
+    if DEV_MODE or full_path.startswith(_API_PREFIXES):
         raise HTTPException(status_code=404, detail="Not found")
     if FRONTEND_DIST.is_dir():
         target = (FRONTEND_DIST / full_path).resolve()
@@ -988,8 +1000,7 @@ async def frontend_spa(full_path: str) -> FileResponse:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    import sys
-    reload_flag = "--reload" in sys.argv
+    reload_flag = "--reload" in sys.argv or DEV_MODE
     cfg = Config.load_or_create()
     import uvicorn
     uvicorn.run(

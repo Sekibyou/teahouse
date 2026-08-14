@@ -1,0 +1,17 @@
+[Unit]
+Description=Teahouse — Frontend (Vite dev server, hot-reload)
+After=network-online.target teahouse.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lowstar
+WorkingDirectory=/home/lowstar/projects/teahouse/teahouse-frontend
+ExecStart=/usr/local/bin/pnpm dev
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
