@@ -545,14 +545,24 @@ export const floorsApi = {
 export interface SandboxVarEntry {
   name: string
   value: unknown
+  type?: "number" | "string" | "boolean" | "array"
+  min?: number
+  max?: number
   note?: string
   change_log?: unknown[]
+}
+
+export interface SandboxVarMeta {
+  type?: "number" | "string" | "boolean" | "array"
+  min?: number
+  max?: number
 }
 
 export interface SandboxVarsUpdate {
   updates?: Record<string, unknown>
   note?: Record<string, string>
   change_log?: Record<string, unknown>
+  meta?: Record<string, SandboxVarMeta>
   delete?: string[]
 }
 

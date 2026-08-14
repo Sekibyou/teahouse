@@ -23,14 +23,6 @@
     {{.teahouse/dyn_settings/characters.md}}
     ————动态设定结束————
 
-    ————变量操作块约定（teahouse-vars）————
-    在剧情产生变量变动的地方（紧跟在相关情节后），写下如下的 HTML 注释：
-    <!-- teahouse-vars: [ {"type": "set", "name": "<变量名>", "value": <值>} ] -->
-    合法 type：set（整体覆盖，名称不存在自动创建）、add（number 加减，未设按 0 起加）、
-    append（array 尾部追加）、pop（array 按值移除第一个）、x（array 按下标替换）。
-    你只能维护 boolean / string / number / array 四类；不要维护对象（对象仅程序内用）。
-    一次可写多条，从上到下按序执行。若本段剧情没有变量变动，就不写块。
-
 - role: user
   content: |
     以下是最近正文，请基于此续写下一章：

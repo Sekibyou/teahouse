@@ -549,9 +549,19 @@ def _eval_code_block(code: str, var_map: dict) -> str:
     return _stringify(value)
 
 
-def _resolve_one_block(inner: str, var_map: dict) -> str:
-    """Resolve a single `${...}` block's content. Returns the replacement string."""
+def _resolve_one_block(inner: str, var_map: dict, type_map: dict | None = None) -> str:
+    """Resolve a single `${...}` block's content. Returns the replacement string.
+
+    `${type:name}` resolves to the variable's type string from type_map (name→type).
+    Because variable names cannot contain `:`, this prefix is unambiguous. An unknown
+    name returns the literal block (no leak).
+    """
     stripped = inner.strip()
+    if stripped.startswith("type:"):
+        tname = stripped[5:].strip()
+        if type_map and tname in type_map:
+            return str(type_map[tname])
+        return "${" + inner + "}"
     if _CODE_BLOCK_TRIGGER in stripped:
         return _eval_code_block(stripped, var_map)
     # Ordinary variable block — reuse standard lookup, missing → literal.
@@ -612,13 +622,18 @@ def _strip_comments(text: str) -> str:
     return "".join(out)
 
 
-def resolve_conditional_slices(text: str, var_map: dict) -> str:
+def resolve_conditional_slices(text: str, var_map: dict, type_map: dict | None = None) -> str:
     """Replace every multi-line `${ ... }` conditional-slice block in `text`.
 
     Balanced-brace scan (nested `{}` supported), independent of _VARIABLE_RE so a
     multi-line block isn't truncated at the first `}`. Returns text with matched
     code/variable blocks materialized (or kept literal on failure); ${name} and
     {{path}} placeholders produced here are expanded by the caller's next pass.
+
+    `${type:name}` (the type-of-name syntax) is resolved here to the variable's
+    declared/inferred type string via `type_map` (name→type). Because variable names
+    are forbidden from containing `:` (see validate_var_name), the `type:` prefix is
+    unambiguous. Unknown names render literally (no leak).
 
     `${!-- ... --}` comment blocks (see _COMMENT_OPEN/_COMMENT_CLOSE) are stripped
     to empty here, before variable/code-block resolution — body may contain bare `}`.
@@ -658,7 +673,7 @@ def resolve_conditional_slices(text: str, var_map: dict) -> str:
                 i += 1
                 continue
             inner = text[i + 2:k]
-            out.append(_resolve_one_block(inner, var_map))
+            out.append(_resolve_one_block(inner, var_map, type_map))
             i = k + 1
         else:
             out.append(text[i])
@@ -671,9 +686,15 @@ def validate_var_name(name) -> Optional[str]:
 
     Names must not contain whitespace: they are referenced from `${...}` code blocks
     as Python identifiers (e.g. `if dice == 6`), and a spacey name can't be a Name.
+    Names must not contain `:`: it is the reserved prefix for the return-type syntax
+    `${type:name}` (e.g. `${type:金币}` → `number`), so a colon in a real variable
+    name would make that parse ambiguous.
     """
-    if any(ch.isspace() for ch in str(name)):
-        return f"变量名不能包含空白字符: '{name}'（它会作为 Python 标识符被 ${...} 条件切片代码块引用）"
+    if any(ch.isspace() for ch in str(name)) or ":" in str(name):
+        return (
+            f"变量名不能包含空白字符或冒号 ':': '{name}'"
+            "（空白会破坏 ${...} 代码块做 Python 标识符；冒号 ':' 是 `${type:名字}` 类型语法的保留前缀）"
+        )
     return None
 
 
@@ -682,7 +703,7 @@ def substitute_variables(text: str, var_map: dict) -> str:
     return _substitute_variable_literals(text, var_map)
 
 
-def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False) -> str:
+def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False, type_map: dict | None = None) -> str:
     """Resolve ${name} and {{path}} for AI-facing surfaces (system prompt / Generate).
 
     Alternates ${} → {{}} → ${} → ... until stable, so a {{path}} slice whose content
@@ -693,6 +714,7 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     Also resolves multi-line ${ ... } conditional-slice blocks (see
     resolve_conditional_slices): an `if ...: return ...` block selects one string to
     inline based on var_map, substituted ahead of the single-line variable pass.
+    `${type:name}` similarly resolves to the variable's type via type_map (name→type).
 
     Missing variables render literally; a bare `$` is never touched. File slices
     are lenient (strict=False): unresolvable `{{...}}` (a doc example) stays literal
@@ -709,7 +731,7 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     esc_literals.extend(pre)
     for _ in range(max_depth):
         before = text
-        text = resolve_conditional_slices(text, var_map)
+        text = resolve_conditional_slices(text, var_map, type_map)
         text = _substitute_variable_literals(text, var_map)
         # 变量值注入后，把新增的转义占位符保护为哨兵
         text, extra = _hide_escaped_placeholders(text)

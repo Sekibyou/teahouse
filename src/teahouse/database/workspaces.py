@@ -568,12 +568,21 @@ def write_asset(instance_dir: Path, file_path: str, data: bytes) -> None:
 #
 # The single authority for instance variables ("文件即状态"). jsonl: one variable
 # per line, each a JSON object that can carry optional metadata:
-#     {"name":"金币","value":140}
-#     {"name":"修为","value":"炼气四层"}
+#     {"name":"金币","value":140,"type":"number","min":0,"max":1000}
+#     {"name":"修为","value":"炼气四层","type":"string"}
 #     {"name":"A_擂台赛胜负","value":"2胜1负","note":"仅本剧本段",
 #      "change_log":[{"at":"floor-010","to":"1胜0负","why":"首胜"}]}
 # Convention:
 #   - Values are any JSON-serializable object.
+#   - `type` is the declared strong type of the variable, one of:
+#       number | string | boolean | array
+#     (object is reserved for program-internal use and is not maintainable by the
+#     正文 bot). When absent (legacy lines), it is inferred from the value. Type is
+#     enforced on write: a new value whose type mismatches the declared `type`
+#     raises ValueError.
+#   - `min` / `max` (numeric only) bound the value: on every set/add the value is
+#     clamped to [min, max] so it can never exceed the range. Out-of-range writes
+#     are silently clamped, not rejected.
 #   - `note` is overwritten on update; `change_log` is appended on update.
 #   - SetRuntimeVar writes, GetRuntimeVars reads, delete removes a name.
 # ---------------------------------------------------------------------------
@@ -586,6 +595,49 @@ def _runtime_vars_path(instance_dir: Path) -> Path:
     if not str(full).startswith(str(instance_dir.resolve())):
         raise ValueError("Path traversal detected")
     return full
+
+
+_VALID_VAR_TYPES = {"number", "string", "boolean", "array"}
+
+
+def infer_var_type(value) -> str:
+    """Infer a declared `type` from a value (backward-compat for legacy entries).
+
+    object cannot be represented by any maintainable type and is mapped to `string`
+    as the least-surprising fallback for legacy entries carrying non-scalar data.
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    return "string"
+
+
+def clamp_number(value, lo=None, hi=None):
+    """Clamp a numeric value to [lo, hi]. Bounds that are None are ignored."""
+    if hi is not None:
+        value = min(value, hi)
+    if lo is not None:
+        value = max(value, lo)
+    return value
+
+
+def build_type_map(instance_dir: Path) -> dict:
+    """Flat name→type map of the instance sandbox variables (declared or inferred).
+
+    Used to resolve the `${type:name}` placeholder (returns the type string).
+    """
+    try:
+        items = read_sandbox_vars(instance_dir, None)
+    except Exception:
+        return {}
+    out: dict = {}
+    for item in items:
+        t = item.get("type")
+        out[item["name"]] = t if t and t in _VALID_VAR_TYPES else infer_var_type(item.get("value"))
+    return out
 
 
 def read_sandbox_vars(instance_dir: Path, names: list[str] | None = None) -> list[dict]:
@@ -631,6 +683,7 @@ def write_sandbox_vars(
     updates: dict,
     note: dict | None = None,
     change_log: dict | None = None,
+    meta: dict | None = None,
 ) -> None:
     """Merge variables into the jsonl file.
 
@@ -638,6 +691,9 @@ def write_sandbox_vars(
     - `note`: {name: content} — overwrite that variable's note.
     - `change_log`: {name: entry} — append an entry to that variable's change_log
       list (each entry is a JSON-serializable object, e.g. {"at","to","why"}).
+    - `meta`: {name: {type?, min?, max?}} — declare/overwrite type & numeric bounds
+      for that variable. `type` is validated against each written value; out-of-range
+      numbers (set/add) are silently clamped to [min, max].
 
     Missing names in updates are created (with optional metadata). No name is
     ever duplicated — one line per name.
@@ -662,11 +718,55 @@ def write_sandbox_vars(
 
     note = note or {}
     change_log = change_log or {}
+    meta = meta or {}
 
     for name, value in updates.items():
         entry = data.get(name, {"name": name})
+
+        # Resolve effective type & bounds: declared in meta or carried on the entry.
+        declared = (meta.get(name) or {}).get("type")
+        type_ = declared if declared else entry.get("type")
+        if type_ is not None and type_ not in _VALID_VAR_TYPES:
+            raise ValueError(f"变量「{name}」声明的类型不合法: {type_}（合法为 {sorted(_VALID_VAR_TYPES)}）")
+        effective_type = type_ if type_ is not None else infer_var_type(value)
+
+        if effective_type == "number" and not (isinstance(value, (int, float)) and not isinstance(value, bool)):
+            raise ValueError(f"变量「{name}」声明为 number，收到值 {value!r}")
+        if effective_type == "string" and not isinstance(value, str):
+            raise ValueError(f"变量「{name}」声明为 string，收到值 {value!r}")
+        if effective_type == "boolean" and not isinstance(value, bool):
+            raise ValueError(f"变量「{name}」声明为 boolean，收到值 {value!r}")
+        if effective_type == "array" and not isinstance(value, list):
+            raise ValueError(f"变量「{name}」声明为 array，收到值 {value!r}")
+
+        # Clamp numeric values to declared bounds (set + add both funnel through here).
+        meta_bounds = meta.get(name) or {}
+        lo = meta_bounds.get("min", entry.get("min"))
+        hi = meta_bounds.get("max", entry.get("max"))
+        if effective_type == "number" and (lo is not None or hi is not None):
+            value = clamp_number(value, lo, hi)
+
         entry["value"] = value
+        if declared:
+            entry["type"] = declared
         data[name] = entry
+
+    for name, m in meta.items():
+        if not m:
+            continue
+        if name not in data:
+            data[name] = {"name": name, "value": None}
+        entry = data[name]
+        if "type" in m:
+            entry["type"] = m["type"]
+        if "min" in m:
+            entry["min"] = m["min"]
+        if "max" in m:
+            entry["max"] = m["max"]
+        # A meta-only update must not leave the value declared but empty when the
+        # entry was pristine & had no value — but that's acceptable (type-first decl).
+        data[name] = entry
+
     for name, content in note.items():
         entry = data.get(name, {"name": name, "value": None})
         entry["note"] = content

@@ -25,7 +25,7 @@ from typing import Any
 from .placeholder import resolve_placeholders, resolve_variables, validate_var_name
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
-from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars
+from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
@@ -297,17 +297,20 @@ async def execute_get_runtime_vars(instance_dir: Path, args: dict[str, Any]) -> 
 
 
 async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Write runtime variables. Merges `updates` (+ optional `note`/`change_log`).
+    """Write runtime variables. Merges `updates` (+ optional `note`/`change_log`/`meta`).
 
     - `updates`: {name: value} — overwrite value; missing names are created.
     - `note`: {name: content} — overwrite that variable's note (metadata).
     - `change_log`: {name: entry} — APPEND an entry to that variable's change_log.
+    - `meta`: {name: {type?, min?, max?}} — declare/overwrite the strong type and
+      numeric bounds. Type is enforced on write; out-of-range numbers are clamped.
     - `delete`: list of names — remove those variables entirely.
     File-as-state: persisted to .teahouse/runtime_vars.jsonl, authoritative + git-tracked.
     """
     updates = args.get("updates")
     note = args.get("note")
     change_log = args.get("change_log")
+    meta = args.get("meta")
     delete = args.get("delete")
 
     if not isinstance(delete, list):
@@ -320,13 +323,15 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
         return "Error: 'note' must be an object of {name: content}"
     if change_log is not None and not isinstance(change_log, dict):
         return "Error: 'change_log' must be an object of {name: entry}"
-    if not updates and not note and not change_log and not delete:
-        return "Error: provide at least one of updates / note / change_log / delete"
+    if meta is not None and not isinstance(meta, dict):
+        return "Error: 'meta' must be an object of {name: {type, min, max}}"
+    if not updates and not note and not change_log and not meta and not delete:
+        return "Error: provide at least one of updates / note / change_log / meta / delete"
 
-    # Whitespace in a variable name makes it unusable as a Python identifier inside
-    # ${ ... } conditional-slice code blocks — reject up front rather than silently.
+    # Whitespace/colon in a variable name breaks ${...} identifiers / ${type:name}
+    # syntax — reject up front rather than silently.
     bad_names: set[str] = set()
-    for mapping in (updates, note, change_log):
+    for mapping in (updates, note, change_log, meta):
         if not mapping:
             continue
         for k in mapping:
@@ -338,14 +343,13 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
         if err:
             bad_names.add(str(k))
     if bad_names:
-        return "Error: " + "; ".join(
-            validate_var_name(k) for k in sorted(bad_names)
-        ) + "。变量名禁止空白字符。"
+        detail = "; ".join(validate_var_name(k) for k in sorted(bad_names))
+        return "Error: " + detail
 
     # Reserved namespace guard across every name-bearing arg
     prefix_warn = ""
     reserved = []
-    for mapping in (updates, note, change_log):
+    for mapping in (updates, note, change_log, meta):
         if not mapping:
             continue
         for k in mapping:
@@ -360,7 +364,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
             f"Ignoring reserved key(s): {', '.join(reserved)}."
         )
         reserved_key_set = set(reserved)
-        for mapping in (updates, note, change_log):
+        for mapping in (updates, note, change_log, meta):
             if not mapping:
                 continue
             for k in list(mapping):
@@ -369,8 +373,8 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
         delete = [d for d in delete if d not in reserved_key_set]
 
     try:
-        if updates:
-            _write_sandbox_vars(instance_dir, updates, note=note, change_log=change_log)
+        if updates or meta:
+            _write_sandbox_vars(instance_dir, updates or {}, note=note, change_log=change_log, meta=meta)
         elif note or change_log:
             # metadata-only update with no value change
             _write_sandbox_vars(instance_dir, {}, note=note, change_log=change_log)
@@ -388,6 +392,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any]) -> s
     affected = list(updates.keys()) if updates else []
     affected += list(note.keys()) if note else []
     affected += list(change_log.keys()) if change_log else []
+    affected += list(meta.keys()) if meta else []
     if delete:
         return "Variables deleted: " + ", ".join(delete) + prefix_warn
 
@@ -415,11 +420,12 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
     regex on the resolved text.
     """
     var_map = _sandbox_var_map(instance_dir)
+    type_map = _build_type_map(instance_dir)
 
     def _resolve_value(v):
         if isinstance(v, str):
             if "{{" in v or "${" in v:
-                return resolve_variables(v, var_map, instance_dir)
+                return resolve_variables(v, var_map, instance_dir, type_map=type_map)
             return v
         if isinstance(v, dict):
             return {k: _resolve_value(x) for k, x in v.items()}

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from .placeholder import resolve_variables
-from .database.workspaces import read_sandbox_vars as _read_sandbox_vars
+from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, build_type_map as _build_type_map
 
 # ---------------------------------------------------------------------------
 # Template directory — path relative to this file
@@ -314,7 +314,7 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     # Resolve sandbox variables + file slices across the whole prompt (no-cache).
     var_map = _build_var_map(instance_dir)
     if "{{" in text or "${" in text:
-        text = resolve_variables(text, var_map, instance_dir)
+        text = resolve_variables(text, var_map, instance_dir, type_map=_build_type_map(instance_dir))
 
     return text
 
@@ -389,10 +389,11 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
     (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
     """
     data = yaml.safe_load(yaml_text) or {}
+    type_map = _build_type_map(instance_dir)
 
     # Resolve system template with ${variable} + {{path}} substitution
     system_template = data.get("system", "") or ""
-    system_prompt = resolve_variables(system_template, variables, instance_dir)
+    system_prompt = resolve_variables(system_template, variables, instance_dir, type_map=type_map)
 
     # Collect fake messages: explicit `messages` key takes priority,
     # then fall back to top-level `user`/`assistant` shorthand
@@ -405,15 +406,15 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
                 content = msg.get("content", "") or ""
                 fake_messages.append({
                     "role": msg["role"],
-                    "content": resolve_variables(str(content), variables, instance_dir),
+                    "content": resolve_variables(str(content), variables, instance_dir, type_map=type_map),
                 })
     else:
         fake_messages = []
         user_text = data.get("user")
         assistant_text = data.get("assistant")
         if user_text:
-            fake_messages.append({"role": "user", "content": resolve_variables(str(user_text).strip(), variables, instance_dir)})
+            fake_messages.append({"role": "user", "content": resolve_variables(str(user_text).strip(), variables, instance_dir, type_map=type_map)})
         if assistant_text:
-            fake_messages.append({"role": "assistant", "content": resolve_variables(str(assistant_text).strip(), variables, instance_dir)})
+            fake_messages.append({"role": "assistant", "content": resolve_variables(str(assistant_text).strip(), variables, instance_dir, type_map=type_map)})
 
     return system_prompt, fake_messages

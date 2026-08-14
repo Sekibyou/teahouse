@@ -238,9 +238,10 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
               updates?: Record<string, unknown>
               note?: Record<string, string>
               change_log?: Record<string, unknown>
+              meta?: Record<string, import("@/lib/api").SandboxVarMeta>
               delete?: string[]
             }
-            // Accept either the full payload {updates,note,change_log,delete} or a bare
+            // Accept either the full payload {updates,note,change_log,meta,delete} or a bare
             // updates object for backward compat.
             const normalized = payload && typeof payload === "object" && "updates" in payload
               ? payload

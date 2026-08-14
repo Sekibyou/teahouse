@@ -728,6 +728,7 @@ class RuntimeVarsUpdateRequest(BaseModel):
     updates: dict = {}
     note: dict = {}
     change_log: dict = {}
+    meta: dict = {}
     delete: list[str] = []
 
 
@@ -743,10 +744,9 @@ async def set_runtime_vars(
         raise HTTPException(status_code=404, detail="Instance not found")
 
     instance_dir = _resolve_instance_dir(inst)
-    # Whitespace in a variable name makes it unusable as a Python identifier in
-    # ${ ... } conditional-slice code blocks — reject before writing.
+    # Whitespace/colon in a variable name is unusable in ${...} identifier / ${type:name} syntax.
     bad_names: set[str] = set()
-    for mapping in (body.updates, body.note, body.change_log):
+    for mapping in (body.updates, body.note, body.change_log, body.meta):
         for k in mapping:
             if validate_var_name(k):
                 bad_names.add(str(k))
@@ -755,11 +755,11 @@ async def set_runtime_vars(
             bad_names.add(str(k))
     if bad_names:
         detail = "; ".join(validate_var_name(k) for k in sorted(bad_names))
-        raise HTTPException(status_code=400, detail=detail + "。变量名禁止空白字符。")
+        raise HTTPException(status_code=400, detail=detail)
 
     try:
-        if body.updates:
-            write_sandbox_vars(instance_dir, body.updates, note=body.note, change_log=body.change_log)
+        if body.updates or body.meta:
+            write_sandbox_vars(instance_dir, body.updates, note=body.note, change_log=body.change_log, meta=body.meta)
         elif body.note or body.change_log:
             write_sandbox_vars(instance_dir, {}, note=body.note, change_log=body.change_log)
         if body.delete:

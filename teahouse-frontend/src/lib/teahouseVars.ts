@@ -118,11 +118,12 @@ function tryParseVarBlock(jsonStr: string): { ok: boolean; value: unknown[] | nu
   }
 }
 
-/** 断言 name 无空白 —— 与后端 validate_var_name 一致（空白会破坏 ${...} 标识符）。 */
+/** 断言 name 无空白、无冒号 —— 与后端 validate_var_name 一致（空白破坏 ${...} 标识符；冒号是 ${type:名字} 类型语法的保留前缀）。 */
 function validateName(name: unknown): string | null {
   if (typeof name !== "string") return "name 必须是字符串"
   if (name.trim() === "") return "name 不能为空"
   if (/\s/.test(name)) return `变量名「${name}」禁止含空白字符`
+  if (name.includes(":")) return `变量名「${name}」禁止含冒号「:」（它是 \${type:名字} 类型语法的保留前缀）`
   return null
 }
 

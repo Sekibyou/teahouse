@@ -49,7 +49,7 @@
 | **静态设定 (static_settings/)** | 根目录，**长期稳定、不入 git**（已 gitignore）的背景设定——时代特征、修为分段、各大势力、背景板等。只读引用（`{{static_settings/...}}` 切片），不建议修改，无版本历史、不受分支切换影响 |
 | **导演 (Director)** | 执行编排流程的 AI 主体，通过工具集操作文件系统 |
 | **teahouse.md** | 每个实例一份的配置，始终实时注入导演上下文 |
-| **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache） |
+| **变量 (Runtime Var)** | `.teahouse/runtime_vars.jsonl` 里每行一个变量，文件即状态。导演 `SetRuntimeVar` 写、`GetRuntimeVars` 读；核心变量注入导演系统提示词（no cache）。**强类型**（`type`: number/string/boolean/array，set 时声明并强制校验）+ **数值边界**（`min`/`max`，set/add 写时自动夹取） |
 | **`.teahouse/` 目录** | **引擎内部 + 沙盒运行时** 目录。存放与运行、展示、状态相关的引擎内容：`output/`（`floors/` 正文历史、`sandbox/` 沙盒渲染代码）、`dyn_settings/`（动态设定 + 总结流水账 + 归档界）、`runtime_vars.jsonl`、`text-style-rules.yaml` 等。**区别于** `static_settings/`（根，不入 git 的长期背景，非代码）、`floors/`（已提交正文归档）。**输出即状态**：放文件进 `output/sandbox/`（bootstrap.js / \*.css / \*.js）即作为玩家可见的沙盒渲染，放 `output/floors/` 即作为正文历史。沙盒「确定批处理」用 `runTool(steps)`——内联工具数组、**即发即返**（返回 `run_uuid`，在后台串行执行，每步经 `tool_run` 事件广播结果与成败，组件按 `run_uuid` 数 `index` 判完成），不依赖脚本文件；产出落地经 `file_changed` → `output.refresh` 刷新楼层。**`Generate` 流式在生成中不落盘**，仅经 `generate_progress` 事件广播累计进度（含 diff），结束/中断/报错才落盘并广播一次 `file_changed`。导演侧若要引用 `.jsonl` 流程可用 `BatchExecute`。 |
 
 ## 占位符语法
@@ -60,6 +60,7 @@
 |---|---|---|
 | `{{path\|切片}}` | **文件切片**（复制/搬运，不修改内容），如 `{{static_settings/characters.yaml\|from="## 秦悠"}}`、`{{glob:output/floors/floor-*.md:last30}}` | Write/Edit/WriteLine 显式 `resolve_placeholders=true`；系统提示词/预设模板（lenient，文档示例保持字面量） |
 | `${name}` | **普通变量引用**（沙盒变量），如 `${金币}`、`${user_name}` | 导演系统提示词组装 + Generate 发送给正文 AI 前（酒馆式展开为值）；沙盒内手动 `Teahouse.replacePlaceholders()` 替换 |
+| `${type:name}` | **取变量类型**（非值，展开为类型字符串），如 `${type:金币}` → `number`。变量名已禁冒号故无歧义 | 同 `${name}` 的所有解析表面；未知变量名原样保留不外泄 |
 | `${ if...: return... }` | **条件切片**（代码块），按变量值就地选一段返回，如 `${ if dice == 6: return "{{room1}}" else: return "{{room2}}" }` | 所有 AI 表面（导演系统提示词组装 + Generate），解析阶段就地选分支；块内可用白名单函数 `roll("1d6")` / `random(lo, hi)`；坏块回退字面量不报错 |
 | `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词预设模板组装时临时注入；其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
 
@@ -68,6 +69,7 @@
 - `teahouse.` 前缀为系统保留命名空间，setVar/SetRuntimeVar 禁止用其命名（会告警忽略）。
 - 喂给 AI（系统提示词、Generate）的内容替换 `${}` + 展开 `{{}}`；`Write/Edit/WriteLine`（文件编辑）只做 `{{}}` 切片、不解变量。
 - **变量名禁止空白**（空格/tab/换行）：代码块用 `if dice == 6` 引用变量需作合法 Python 标识符，写含空白变量名会被 SetRuntimeVar / 沙盒 setVar 拒绝。
+- **变量名禁止冒号 `:`**：它是 `${type:名字}` 取类型语法的保留前缀（与空白同由 `validate_var_name`/沙盒 `validateName` 拒绝）。
 - **转义语法**：在开括号前加反斜杠 `\`，强制该占位符保持**字面量**、不解析：`\{{path}}` → `{{path}}`、`\${name}` → `${name}`、`\$ { if...: }` → 不执行的条件块；`\\` → `\`。在解析全部结束后才被去掉反斜杠还原，故多轮交替展开期间也不会被吞。**必须给"教学示例/要展示的字面 `{{}}`、`${}`"加转义**——否则若该占位符恰好匹配到实例真实文件（如 `{{glob:...}}`），会被当成真实引用执行、把文件内容注进系统提示词（曾因此泄漏楼层正文）。tools.json 的 usage 说明即属此类，均已转义。
 
 
