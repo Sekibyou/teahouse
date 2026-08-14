@@ -25,27 +25,41 @@ Monaco.languages.register({ id: "teahouse" })
 Monaco.languages.setMonarchTokensProvider("teahouse", {
   tokenizer: {
     root: [
-      // 1. Comment — `${!-- ... --}` (leading space required after "{").
-      [/\$\{!--[\s\S]*?--\}/, "comment.teahouse"],
+      // ---- Fenced code block — enter state; Monarch is line-based, close via @pop ----
+      [/^\s*```.*$/, "codeblock", "codeblock"],
 
-      // 2. Python code block — `${ ... return ... }` (contains spaces + `return`).
-      //    Must come before the bare variable rule so a code block isn't swallowed
-      //    as a variable prefix.
-      [/\$\{[\s\S]*?\breturn\b[\s\S]*?\}/, "keyword.teahouse"],
-
-      // 3. Variable — `${name}`, no whitespace inside.
-      [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
+      // ---- Minimal markdown subset ----
+      [/^(#{1,6})\s/, "header.teahouse"],
 
       // 4. Snippet — `{{path}}` (a file path / glob).
       [/{{[\s\S]*?}}/, "string.teahouse"],
 
-      // ---- Minimal markdown subset ----
-      [/^(#{1,6})\s/, "header.teahouse"],
-      [/^\s*```.*$/, "codeblock", "@codeblock"],
+      // 1. Comment — `${!-- ... --}` (leading space required after "{"). Single line.
+      [/\$\{!--[^\n]*--\}/, "comment.teahouse"],
+      // 1b. Comment multiline — `${!-- ...` opens a state that closes on `--}`.
+      [/\$\{!--[^\n]*$/, "comment.teahouse", "commentBlock"],
+
+      // 2. Code block single-line — `${ ... }` with spaces inside, closes at the
+      //    LAST `}` on the line so inner braces in strings don't truncate it.
+      [/\$\{[^\n}]*\s[^\n]*\}/, "keyword.teahouse"],
+      // 2b. Code block multiline — `${ ...` doesn't close this line → state.
+      [/\$\{[^\n}]*\s[^\n]*$/, "keyword.teahouse", "block"],
+
+      // 3. Variable — `${name}`, no whitespace inside. Must come after code blocks
+      //    (which require a space) so `${var1}` lands here, not as a block prefix.
+      [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
     ],
     codeblock: [
-      [/^\s*```\s*$/, "@pop"],
-      [/[^]*/, "codeblock"],
+      [/^\s*```.*$/, "codeblock", "@pop"],
+      [/[^\n]*$/, "codeblock"],
+    ],
+    commentBlock: [
+      [/[^\n]*--\}\s*$/, "comment.teahouse", "@pop"],
+      [/[^\n]*$/, "comment.teahouse"],
+    ],
+    block: [
+      [/[^\n]*\}[^\n]*$/, "keyword.teahouse", "@pop"],
+      [/[^\n]*$/, "keyword.teahouse"],
     ],
   },
 })
