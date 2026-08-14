@@ -715,14 +715,17 @@ def delete_sandbox_vars(instance_dir: Path, names: list[str]) -> None:
 
 
 def delete_file_or_dir(instance_dir: Path, file_path: str) -> None:
-    """Delete a file or empty directory."""
+    """Delete a file or a directory (recursively)."""
+    root = instance_dir.resolve()
     full = (instance_dir / file_path).resolve()
-    if not str(full).startswith(str(instance_dir.resolve())):
+    if full == root:
+        raise ValueError("Cannot delete instance root")
+    if str(full) != str(root) and not str(full).startswith(str(root) + os.sep):
         raise ValueError("Path traversal detected")
     if not full.exists():
         raise FileNotFoundError(file_path)
     if full.is_dir():
-        full.rmdir()  # only removes if empty
+        shutil.rmtree(full)
     else:
         full.unlink()
 
