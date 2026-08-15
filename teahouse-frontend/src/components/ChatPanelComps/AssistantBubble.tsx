@@ -39,14 +39,10 @@ export const AssistantBubble = memo(function AssistantBubble({
             {thinkingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             <Brain className="h-3 w-3" />
             <span>思维链</span>
-            {status === "reasoning" && (
+            {status === "reasoning" && !isIdle && isLatest && (
               <span className="flex items-center gap-1 ml-auto">
-                {isIdle || !isLatest ? (
-                  <XCircle className="h-2.5 w-2.5 text-muted-foreground/50" />
-                ) : (
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                )}
-                {isIdle || !isLatest ? "已中断" : "思考中..."}
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                思考中...
               </span>
             )}
           </button>
