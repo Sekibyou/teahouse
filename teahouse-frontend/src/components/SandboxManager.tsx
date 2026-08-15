@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
-import { renderText } from "@/lib/htmlSanitizer"
+import { renderText, clearRenderTextCache } from "@/lib/htmlSanitizer"
 import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi } from "@/lib/api"
 import type { ToolsRunStep, SandboxVarEntry } from "@/lib/api"
 import { consumeVars } from "@/lib/teahouseVars"
@@ -56,13 +56,18 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
   }, [hostIsDark, sendToSandbox])
 
   // ---- text style rules ----
-  useEffect(() => {
+  const reloadTextStyleRules = useCallback(async () => {
     if (!instanceId) { setTextStyleRules([]); return }
-    ;(async () => {
-      const res = await textStyleRulesApi.get(instanceId)
-      if (res.ok && res.data) setTextStyleRules(res.data.rules ?? [])
-    })()
+    const res = await textStyleRulesApi.get(instanceId)
+    if (res.ok && res.data) {
+      clearRenderTextCache()
+      setTextStyleRules(res.data.rules ?? [])
+    }
   }, [instanceId])
+
+  useEffect(() => {
+    reloadTextStyleRules()
+  }, [reloadTextStyleRules])
 
   // ---- file_changed watchdog: route to srcdoc rebuild vs sandbox refresh ----
   useSSERefresh({
@@ -70,6 +75,12 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
     instanceName,
     onFileChanged: useCallback((path: string) => {
       if (!path) return
+      // 样式规则变更：先刷新宿主侧的规则（renderRichText 用它着色）并清缓存，
+      // 再让沙盒重渲染正文，避免沙盒用旧的规则集重渲染而看起来"没反应"。
+      if (path.includes("text-style-rules.yaml")) {
+        reloadTextStyleRules().then(() => sendToSandbox("output.refresh", { path }))
+        return
+      }
       // srcdoc is built solely from .teahouse/output/sandbox/. Any change under
       // .teahouse/output/ that is NOT floors/ (sandbox code moved/edited/written,
       // or moved to/from output/sandbox/disabled) can alter that directory's contents,
@@ -79,10 +90,10 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
       if (isOutput && !isFloors) {
         setSrcdocVersion((v) => v + 1)
       } else {
-        // floors / text-style-rules / anything else → ask sandbox to re-read
+        // floors / anything else → ask sandbox to re-read
         sendToSandbox("output.refresh", { path })
       }
-    }, [sendToSandbox]),
+    }, [sendToSandbox, reloadTextStyleRules]),
     onWorkspaceChanged: useCallback(() => {
       sendToSandbox("output.refresh", { path: "*" })
     }, [sendToSandbox]),
