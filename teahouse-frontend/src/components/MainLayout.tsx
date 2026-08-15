@@ -30,7 +30,7 @@ export function MainLayout() {
 
   if (isLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
+      <div className="h-dvh flex items-center justify-center bg-background">
         <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
       </div>
     )
@@ -38,7 +38,7 @@ export function MainLayout() {
 
   if (!isAuthenticated) {
     return (
-      <div className="h-screen flex flex-col bg-background">
+      <div className="h-dvh flex flex-col bg-background">
         <header className="h-12 border-b border-border flex items-center justify-between px-4 shrink-0">
           <span className="font-semibold">LowStar's Teahouse</span>
           <div className="flex items-center gap-1">
@@ -57,7 +57,7 @@ export function MainLayout() {
   // Mobile: no global top bar — pages render fullscreen with their own navigation
   if (isMobile) {
     return (
-      <div className="h-screen flex flex-col overflow-hidden bg-background">
+      <div className="h-dvh flex flex-col overflow-hidden bg-background">
         <div className="flex-1 flex overflow-hidden">
           <main className="flex-1 overflow-auto">
             <Outlet context={{ isMobile: true, toggleTheme }} />
@@ -70,7 +70,7 @@ export function MainLayout() {
 
   // Desktop header with full navigation
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background">
+    <div className="h-dvh flex flex-col overflow-hidden bg-background">
       <header className="h-14 border-b border-border flex items-center justify-between px-5 shrink-0 relative z-[60] bg-background">
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
