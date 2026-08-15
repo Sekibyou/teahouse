@@ -34,13 +34,19 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       // 4. Snippet — `{{path}}` (a file path / glob).
       [/{{[\s\S]*?}}/, "string.teahouse"],
 
-      // 0. ${@...} directive (explicit) — `${@type name}` / `${@max [...]}` etc.,
-      //    single-line form. Must precede the code-block rules so `${@note ...}`
-      //    (which contains spaces) doesn't land in the space-based block rule.
-      [/\$\{@[^\n}]*\}/, "comment.teahouse"],
-      // 0b. ${@...} directive multiline (e.g. `${@note` spanning several lines) —
-      //     enters a state that closes on a line-start `}`.
-      [/\$\{@[^\n}]*$/, "comment.teahouse", "atBlock"],
+      // 0. ${@op ...} 显式指令 — 按操作枚举分类（旧 `${!--}`/`${type:name}` 已废弃）：
+      //    @note                        → 注释（剥空）→ comment
+      //    @var / @type                 → 取变量值/类型 → variable
+      //    其余 @op（@python/@condition/@max/@min/@len/@random 及未注册）→ 可执行 → keyword
+      //    单行形式先匹配；未闭合到行尾的进入对应颜色的块状态。必须排在裸写代码块
+      //    规则之前，避免含空白/return 的 `${@note ...}` 落进空格块规则。
+      //    注意：Monarch 里 `@word` 会被当属性引用，故字面 `@` 后跟字母须写成 `@@`；
+      //    `@(` / `@[` 不触发引用，可裸写。
+      [/\$\{@@note\b[^\n}]*\}/, "comment.teahouse"],
+      [/\$\{@@note\b[^\n}]*$/, "comment.teahouse", "atBlock"],
+      [/\$\{@(?:var|type)\b[^\n}]*\}/, "variable.teahouse"],
+      [/\$\{@[^\n}]*\}/, "keyword.teahouse"],
+      [/\$\{@[^\n}]*$/, "keyword.teahouse", "block"],
 
       // 2. Code block (return-based) — any `${ ... return ... }`, no space needed
       //    (so `${return}` lands here, not the variable rule). Closes at the LAST
@@ -49,7 +55,13 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       // 2b. Code block multiline (return) — line doesn't close → state.
       [/\$\{[^\n]*\breturn\b[^\n]*$/, "keyword.teahouse", "block"],
 
-      // 2c. Code block (space-based) — `${ ... }` with spaces inside, closes at
+      // 2c. Condition (colon-based) — 裸写含冒号：判定层「有冒号就不可能是变量」，
+      //     单冒号判 condition、多冒号判字面量，高亮统一归 keyword。必须排在
+      //     variable 规则之前，否则 `${a:b}`（无空白）会被误判成变量。
+      [/\$\{[^\n}]*:[^\n}]*\}/, "keyword.teahouse"],
+      [/\$\{[^\n}]*:[^\n}]*$/, "keyword.teahouse", "block"],
+
+      // 2d. Code block (space-based) — `${ ... }` with spaces inside, closes at
       //     the last `}` on the line. Covers multi-line blocks whose first line
       //     holds the return on a later line.
       [/\$\{[^\n}]*\s[^\n]*\}/, "keyword.teahouse"],
@@ -62,9 +74,9 @@ Monaco.languages.setMonarchTokensProvider("teahouse", {
       //     variable rule; `${name}` closes on the same line so it is unaffected.
       [/\$\{[^\n}]*$/, "keyword.teahouse", "block"],
 
-      // 3. Variable — `${name}`, no whitespace inside. Must come after code blocks
-      //    (which require a return or space) so `${var1}` lands here, not as a block.
-      [/\$\{[^\s}][^}]*\}/, "variable.teahouse"],
+      // 3. Variable — `${name}`，无空白、无冒号。冒号会让判定层走 condition 路径，
+      //    故变量名绝不包含冒号（含冒号已在 2c 拦截）。
+      [/\$\{[^\s:}][^:}]*\}/, "variable.teahouse"],
     ],
     codeblock: [
       [/^\s*```.*$/, "codeblock", "@pop"],
