@@ -16,87 +16,155 @@ loader.config({ monaco: Monaco })
 
 // ---- Custom "teahouse" language: placeholder syntax highlighting ----
 // A bespoke language for markdown / yaml / plaintext files that carry teahouse
-// placeholder syntax. Monarch tokenizers are per-language (we can't graft extra
-// tokens onto an existing language without rewriting all of its rules), so we
-// ship a deliberately small grammar: the placeholders + a minimal markdown
-// subset (headings & fenced code blocks). Other host languages (py/ts/js/css/
-// html/shell) keep their native highlighting untouched.
+// placeholder syntax. We ship a deliberately small grammar: the placeholders +
+// a minimal markdown subset (headings & fenced code blocks). Other host
+// languages (py/ts/js/css/html/shell) keep their native highlighting untouched.
+//
+// We use a hand-written TokensProvider (not Monarch) because placeholder
+// boundaries need **brace-depth matching**: the end of `${...}` is the `}` that
+// balances the outermost `{`, and inner `{{切片}}` / f-string `{}` must not
+// truncate it. Monarch regex rules can't count arbitrary nesting, so a stateful
+// scanner is the faithful mirror of the engine's `_match_brace_group`.
 Monaco.languages.register({ id: "teahouse" })
-Monaco.languages.setMonarchTokensProvider("teahouse", {
-  tokenizer: {
-    root: [
-      // ---- Fenced code block — enter state; Monarch is line-based, close via @pop ----
-      [/^\s*```.*$/, "codeblock", "codeblock"],
 
-      // ---- Minimal markdown subset ----
-      [/^(#{1,6})\s*[^\n]*$/, "header.teahouse"],
+class TeahouseState implements Monaco.languages.IState {
+  readonly inCodeblock: boolean
+  readonly braceDepth: number
+  readonly placeholderToken: string
 
-      // 4. Snippet — `{{path}}` (a file path / glob).
-      [/{{[\s\S]*?}}/, "string.teahouse"],
+  constructor(inCodeblock: boolean, braceDepth: number, placeholderToken: string) {
+    this.inCodeblock = inCodeblock
+    this.braceDepth = braceDepth
+    this.placeholderToken = placeholderToken
+  }
 
-      // 0. ${@op ...} 显式指令 — 按操作枚举分类（旧 `${!--}`/`${type:name}` 已废弃）：
-      //    @note                        → 注释（剥空）→ comment
-      //    @var / @type                 → 取变量值/类型 → variable
-      //    其余 @op（@python/@condition/@max/@min/@len/@random 及未注册）→ 可执行 → keyword
-      //    单行形式先匹配；未闭合到行尾的进入对应颜色的块状态。必须排在裸写代码块
-      //    规则之前，避免含空白/return 的 `${@note ...}` 落进空格块规则。
-      //    注意：Monarch 里 `@word` 会被当属性引用，故字面 `@` 后跟字母须写成 `@@`；
-      //    `@(` / `@[` 不触发引用，可裸写。
-      [/\$\{@@note\b[^\n}]*\}/, "comment.teahouse"],
-      [/\$\{@@note\b[^\n}]*$/, "comment.teahouse", "atBlock"],
-      [/\$\{@(?:var|type)\b[^\n}]*\}/, "variable.teahouse"],
-      [/\$\{@[^\n}]*\}/, "keyword.teahouse"],
-      [/\$\{@[^\n}]*$/, "keyword.teahouse", "block"],
+  clone(): TeahouseState {
+    return new TeahouseState(this.inCodeblock, this.braceDepth, this.placeholderToken)
+  }
 
-      // 2. Code block (return-based) — any `${ ... return ... }`, no space needed
-      //    (so `${return}` lands here, not the variable rule). Closes at the LAST
-      //    `}` on the line so inner braces in strings don't truncate it.
-      [/\$\{[^\n]*\breturn\b[^\n]*\}/, "keyword.teahouse"],
-      // 2b. Code block multiline (return) — line doesn't close → state.
-      [/\$\{[^\n]*\breturn\b[^\n]*$/, "keyword.teahouse", "block"],
+  equals(other: Monaco.languages.IState): boolean {
+    return (
+      other instanceof TeahouseState &&
+      other.inCodeblock === this.inCodeblock &&
+      other.braceDepth === this.braceDepth &&
+      other.placeholderToken === this.placeholderToken
+    )
+  }
+}
 
-      // 2c. Condition (colon-based) — 裸写含冒号：判定层「有冒号就不可能是变量」，
-      //     单冒号判 condition、多冒号判字面量，高亮统一归 keyword。必须排在
-      //     variable 规则之前，否则 `${a:b}`（无空白）会被误判成变量。
-      [/\$\{[^\n}]*:[^\n}]*\}/, "keyword.teahouse"],
-      [/\$\{[^\n}]*:[^\n}]*$/, "keyword.teahouse", "block"],
+// Count `{` / `}` from `start` until depth returns to 0. Mirrors the engine's
+// `_match_brace_group`: every single brace counts, so a `{{...}}` inside a
+// `${...}` increments/decrements by two and can't prematurely close it.
+function scanBrace(line: string, start: number): { end: number; depth: number } {
+  let depth = 0
+  let end = start
+  while (end < line.length) {
+    const ch = line[end]
+    if (ch === "{") depth++
+    else if (ch === "}") {
+      depth--
+      if (depth === 0) {
+        end++
+        break
+      }
+    }
+    end++
+  }
+  return { end, depth }
+}
 
-      // 2d. Code block (space-based) — `${ ... }` with spaces inside, closes at
-      //     the last `}` on the line. Covers multi-line blocks whose first line
-      //     holds the return on a later line.
-      [/\$\{[^\n}]*\s[^\n]*\}/, "keyword.teahouse"],
-      // 2d. Code block multiline (space) → state.
-      [/\$\{[^\n}]*\s[^\n]*$/, "keyword.teahouse", "block"],
+// Classify the inner text of a `${...}` placeholder. `closed` is true when the
+// matching `}` was found on the same line (single-line placeholder).
+function classifyPlaceholder(inner: string, closed: boolean): string {
+  const s = inner.trim()
+  if (s === "@note" || s.startsWith("@note ")) return "comment.teahouse"
+  if (closed) {
+    if (s === "@var" || s.startsWith("@var ") || s === "@type" || s.startsWith("@type ")) {
+      return "variable.teahouse"
+    }
+    // bare variable: no @ / return / colon / whitespace
+    if (s !== "" && !s.startsWith("@") && !s.includes("return") && !s.includes(":") && !/\s/.test(s)) {
+      return "variable.teahouse"
+    }
+  }
+  return "keyword.teahouse"
+}
 
-      // 2e. Unclosed `${` — any line starting `${` that doesn't close by EOL is a
-      //     multi-line block, even if the first line has no return/space (e.g. a
-      //     YAML value `${111` with the return on a later line). Must precede the
-      //     variable rule; `${name}` closes on the same line so it is unaffected.
-      [/\$\{[^\n}]*$/, "keyword.teahouse", "block"],
+function tokenize(line: string, state: Monaco.languages.IState): Monaco.languages.ILineTokens {
+  const s = state as TeahouseState
+  const tokens: Monaco.languages.IToken[] = []
+  let i = 0
 
-      // 3. Variable — `${name}`，无空白、无冒号。冒号会让判定层走 condition 路径，
-      //    故变量名绝不包含冒号（含冒号已在 2c 拦截）。
-      [/\$\{[^\s:}][^:}]*\}/, "variable.teahouse"],
-    ],
-    codeblock: [
-      [/^\s*```.*$/, "codeblock", "@pop"],
-      [/[^\n]*$/, "codeblock"],
-    ],
-    atBlock: [
-      // ${@...} directive closes on a line-start `}`; inner `{{...}}` slices don't
-      // start a line with `}` so they won't truncate it.
-      [/^[ \t]*\}[ \t]*.*$/, "comment.teahouse", "@pop"],
-      // 其余行整行染 directive 色。
-      [/[^\n]*$/, "comment.teahouse"],
-    ],
-    block: [
-      // 块闭合：整行经前导空白后以 `}` 开头（return 里的 {{切片}} 不以行首
-      // `}` 开头，不会误判）。仅凭“行内含 }”会因切片 `{{...}}` 提前关闭。
-      [/^[ \t]*\}[ \t]*.*$/, "keyword.teahouse", "@pop"],
-      // 其余行整行染代码块色（含 return 里的切片）。
-      [/[^\n]*$/, "keyword.teahouse"],
-    ],
-  },
+  // Fenced code block: whole line is codeblock until a closing ``` fence.
+  if (s.inCodeblock) {
+    const closes = /^\s*```/.test(line)
+    tokens.push({ startIndex: 0, scopes: "codeblock" })
+    return { tokens, endState: new TeahouseState(!closes, 0, "") }
+  }
+
+  // Continue a multi-line placeholder opened on a previous line.
+  let depth = s.braceDepth
+  let phToken = s.placeholderToken
+  if (depth > 0) {
+    let end = 0
+    while (end < line.length && depth > 0) {
+      const ch = line[end]
+      if (ch === "{") depth++
+      else if (ch === "}") depth--
+      end++
+    }
+    tokens.push({ startIndex: 0, scopes: phToken })
+    i = end
+    if (depth > 0) {
+      return { tokens, endState: new TeahouseState(false, depth, phToken) }
+    }
+  }
+
+  while (i < line.length) {
+    if (i === 0) {
+      if (/^\s*```/.test(line)) {
+        tokens.push({ startIndex: 0, scopes: "codeblock" })
+        return { tokens, endState: new TeahouseState(true, 0, "") }
+      }
+      if (/^#{1,6}/.test(line)) {
+        tokens.push({ startIndex: 0, scopes: "header.teahouse" })
+        return { tokens, endState: new TeahouseState(false, 0, "") }
+      }
+    }
+
+    const c = line[i]
+    if (c === "$" && line[i + 1] === "{") {
+      const { end, depth: d } = scanBrace(line, i)
+      const closed = d === 0
+      const inner = closed ? line.slice(i + 2, end - 1) : line.slice(i + 2)
+      const token = classifyPlaceholder(inner, closed)
+      tokens.push({ startIndex: i, scopes: token })
+      if (!closed) {
+        return { tokens, endState: new TeahouseState(false, d, token) }
+      }
+      i = end
+      continue
+    }
+
+    if (c === "{" && line[i + 1] === "{") {
+      const { end, depth: d } = scanBrace(line, i)
+      tokens.push({ startIndex: i, scopes: "string.teahouse" })
+      if (d > 0) {
+        return { tokens, endState: new TeahouseState(false, d, "string.teahouse") }
+      }
+      i = end
+      continue
+    }
+
+    i++
+  }
+
+  return { tokens, endState: new TeahouseState(false, 0, "") }
+}
+
+Monaco.languages.setTokensProvider("teahouse", {
+  getInitialState: () => new TeahouseState(false, 0, ""),
+  tokenize,
 })
 
 // ---- Theme helpers ----
