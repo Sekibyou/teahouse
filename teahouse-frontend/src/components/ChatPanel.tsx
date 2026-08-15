@@ -6,6 +6,7 @@ import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { FloorsStats, ContextUsage } from "@/lib/types"
 import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
@@ -17,6 +18,7 @@ import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
 
 export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () => void; onClosePanel?: () => void }) {
+  const isMobile = useIsMobile()
   const [messages, setMessages] = useState<RichMessage[]>([])
 
   // ── Per-session UI state ─────────────────────────────────────────
@@ -1564,6 +1566,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         }}
         reasoningEffort={currentEffort}
         onCycleReasoningEffort={cycleSessionEffort}
+        floorsStats={floorsStats}
+        contextUsage={contextUsage}
         onClosePanel={onClosePanel}
       />
 
@@ -1715,8 +1719,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         }}
       />
 
-      {/* Floor stats footer + context usage */}
-      {((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
+      {/* Floor stats footer + context usage（移动端已上移到头部右上角） */}
+      {!isMobile && ((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
         <div className="px-3 pb-2 shrink-0">
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
             {floorsStats && floorsStats.latest_floor != null && (

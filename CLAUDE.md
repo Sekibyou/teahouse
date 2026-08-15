@@ -160,15 +160,14 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahous
 **WorkspacePage.tsx（核心）**：移动端用悬浮球替代常驻面板——
 - 主区域：游玩模式显示 `OutputPanel`（沙盒）全屏；后台模式显示**简化 textarea 编辑器**（不用 Monaco，无 diff 追踪）。
 - **左上悬浮球**（仅后台模式，File 图标）：点开半屏文件树浮层（左侧 `w-[75%] max-w-[320px]`，点击右侧空白关闭）。文件树 `FileTreeView` 传 `isMobile` prop 加大触控目标（`py-3`）。
-- **右上悬浮球**（常驻，模式名 + 汉堡菜单）：下拉菜单含 游玩/后台 Switch、版本控制、设置、主题切换、退出到主页。
-- **左下悬浮球**（常驻，MessageCircle 图标）：触发**全屏导演栏**（ChatPanel 全屏 + 导航栏返回）。
-- 全屏面板状态用 `fullscreenPanel: "director" | "settings" | "git" | null` 管理。
+- **右上悬浮球**（常驻，模式名 + 汉堡菜单）：下拉菜单含 游玩/后台 Switch、**导演**（进入全屏导演栏）、版本控制、文件清单、设置、主题切换、退出到主页。
+- 全屏面板状态用 `fullscreenPanel: "director" | "git" | "files" | null` 管理。
 
 **SessionSelectPage.tsx**：移动端顶部 "原型/实例" tab 切换 + 全宽列表 → 选中进入**全屏详情页**（`MobileProtoDetail` / `MobileInstanceDetail`，带返回按钮），类似 master-detail。底部放操作按钮（开始会话/继续会话）。
 
 **SettingsPage.tsx / PluginsSettingsPage.tsx**：移动端为全屏页面，`h-10` 导航栏 + `ChevronLeft` 返回。tab 栏加 `overflow-x-auto` 允许横向滚动。LLM 管理弹窗（`LLMManagementDialog`）在移动端用 `absolute inset-0` 全屏容器包裹。
 
-**ChatPanel.tsx**：结构不变，移动端在全屏容器内渲染即可。发送按钮注意触控尺寸（≥44px）。
+**ChatPanel.tsx**：移动端在全屏容器内渲染。头部（`ChatHeader`）在移动端把会话切换/思考强度/插件/模型/版本控制/自动提交收进**右上角菜单**，楼层统计 + 上下文用量条精简显示在菜单按钮左侧，底部 footer（楼层/用量）仅桌面端保留。发送按钮注意触控尺寸（≥44px）。
 
 ### 桌面拖拽手柄
 

@@ -673,6 +673,13 @@ export function WorkspacePage() {
                   <div className="border-t border-border" />
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    导演
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
                     onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
                   >
                     <GitBranch className="h-4 w-4" />
@@ -713,18 +720,6 @@ export function WorkspacePage() {
                 </div>
               </>
             )}
-          </div>
-        )}
-
-        {/* Bottom-left: director trigger */}
-        {!fullscreenPanel && (
-          <div className="fixed bottom-6 left-3 z-30">
-            <button
-              className="w-12 h-12 rounded-full bg-secondary text-secondary-foreground shadow-lg flex items-center justify-center active:scale-95 transition-transform border border-border"
-              onClick={() => setFullscreenPanel("director")}
-            >
-              <MessageCircle className="h-6 w-6" />
-            </button>
           </div>
         )}
 
