@@ -20,7 +20,8 @@
 
     ${@note 如果要让正文直接维护变量的话，需要移除掉注释
     ————变量维护要求开始————
-    {{static_settings/正文变量维护.md}}
+    {{static_settings/正文变量维护规则.md}}
+    {{.teahouse/dyn_settings/正文助手维护的变量.md}}
     ————变量维护要求结束————
     }
     
