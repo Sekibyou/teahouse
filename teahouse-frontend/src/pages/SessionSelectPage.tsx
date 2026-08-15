@@ -768,18 +768,21 @@ function MobileMain({
   const [showMenu, setShowMenu] = useState(false)
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <header className="h-10 relative border-b border-border flex items-center justify-between px-3 shrink-0">
-        <span className="font-serif font-semibold text-sm">LowStar's Teahouse</span>
+      <header className="h-14 relative border-b border-border flex items-center justify-between px-3 shrink-0">
+        <div className="flex-1 min-w-0 flex flex-col justify-center">
+          <span className="font-serif font-semibold text-sm leading-tight">LowStar's Teahouse</span>
+          <span className="text-[11px] text-muted-foreground leading-tight truncate">基于 Harness 的交互式小说创作引擎</span>
+        </div>
         <button
-          className="p-1 rounded hover:bg-muted"
+          className="p-2 rounded hover:bg-muted shrink-0"
           onClick={() => setShowMenu(!showMenu)}
           aria-label="菜单"
         >
-          <Settings className="h-4 w-4" />
+          <Settings className="h-5 w-5" />
         </button>
         {showMenu && (
           <>
-            <div className="absolute inset-0 z-40" onClick={() => setShowMenu(false)} />
+            <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
             <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[140px]">
               <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted" onClick={() => { onToggleTheme(); setShowMenu(false) }}>
                 {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
