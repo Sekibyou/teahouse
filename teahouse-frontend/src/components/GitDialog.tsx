@@ -999,7 +999,7 @@ function GitGraphView({ commits, branches, currentBranch, onNodeClick }: GitGrap
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        attributionPosition="bottom-left"
+        proOptions={{ hideAttribution: true }}
         minZoom={0.3}
         maxZoom={2}
         panOnDrag
