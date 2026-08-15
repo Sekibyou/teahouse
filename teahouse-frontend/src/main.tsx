@@ -24,3 +24,10 @@ createRoot(document.getElementById('root')!).render(
     <AppRouter />
   </ErrorBoundary>,
 )
+
+// 仅生产构建注册 Service Worker（dev 下 Vite 热更新会与之冲突）。
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  })
+}

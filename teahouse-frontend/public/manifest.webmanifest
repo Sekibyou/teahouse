@@ -2,6 +2,7 @@
   "name": "Teahouse",
   "short_name": "Teahouse",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#171717",
   "theme_color": "#171717",
@@ -14,8 +15,13 @@
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
       "src": "/apple-touch-icon.png",
