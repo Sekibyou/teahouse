@@ -23,6 +23,7 @@ import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
+import { SandboxFileList } from "@/components/SandboxFileList"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { GitDialog } from "@/components/GitDialog"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
@@ -49,7 +50,7 @@ export function WorkspacePage() {
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | null>(null)
+  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | "files" | null>(null)
   useDialogBackClose(fullscreenPanel === "director", () => setFullscreenPanel(null))
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
@@ -520,6 +521,15 @@ export function WorkspacePage() {
           />
         )}
 
+        {fullscreenPanel === "files" && (
+          <SandboxFileList
+            instanceId={instId}
+            instanceName={activeInstance?.name}
+            variant="fullscreen"
+            onClose={() => setFullscreenPanel(null)}
+          />
+        )}
+
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {mode === "play" ? (
@@ -667,6 +677,13 @@ export function WorkspacePage() {
                   >
                     <GitBranch className="h-4 w-4" />
                     版本控制
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                    onClick={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
+                  >
+                    <FileText className="h-4 w-4" />
+                    文件清单
                   </button>
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
