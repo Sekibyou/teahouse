@@ -705,28 +705,31 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
   // Slot state — lightweight model info display
   const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
+  const settingsOpen = useSettingsDialogStore((s) => s.open)
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
   const [enabledPluginCount, setEnabledPluginCount] = useState(0)
 
-  useEffect(() => {
-    llmSlotsApi.getAll().then(res => {
-      if (res.ok) {
-        const slots = res.data!.slots
-        const modelIds = [slots.director.model_id, slots.writer.model_id].filter(Boolean) as string[]
-        if (modelIds.length > 0) {
-          llmModelsApi.list().then(mRes => {
-            if (mRes.ok) {
-              const modelMap = new Map(mRes.data!.models.map(m => [m.id, m.name]))
-              setSlotModels({
-                director: slots.director.model_id ? modelMap.get(slots.director.model_id) || slots.director.model_id : null,
-                writer: slots.writer.model_id ? modelMap.get(slots.writer.model_id) || slots.writer.model_id : null,
-              })
-            }
-          })
-        }
-      }
+  const refreshSlotModels = useCallback(async () => {
+    const res = await llmSlotsApi.getAll()
+    if (!res.ok) return
+    const slots = res.data!.slots
+    const modelIds = [slots.director.model_id, slots.writer.model_id].filter(Boolean) as string[]
+    if (modelIds.length === 0) {
+      setSlotModels({ director: null, writer: null })
+      return
+    }
+    const mRes = await llmModelsApi.list()
+    if (!mRes.ok) return
+    const modelMap = new Map(mRes.data!.models.map(m => [m.id, m.name]))
+    setSlotModels({
+      director: slots.director.model_id ? modelMap.get(slots.director.model_id) || slots.director.model_id : null,
+      writer: slots.writer.model_id ? modelMap.get(slots.writer.model_id) || slots.writer.model_id : null,
     })
-  }, [messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
+  }, [])
+
+  useEffect(() => {
+    refreshSlotModels()
+  }, [refreshSlotModels, messages.length > 0])  // reload on first message sent (hack: refresh when messages change from 0)
 
   // Enabled plugin count for the header trigger
   const refreshPluginCount = useCallback(async () => {
@@ -736,6 +739,16 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   useEffect(() => {
     refreshPluginCount()
   }, [refreshPluginCount, messages.length > 0])
+
+  // Re-sync header previews after the settings dialog closes (slot/plugin changes there)
+  const prevSettingsOpenRef = useRef(settingsOpen)
+  useEffect(() => {
+    if (prevSettingsOpenRef.current && !settingsOpen) {
+      refreshSlotModels()
+      refreshPluginCount()
+    }
+    prevSettingsOpenRef.current = settingsOpen
+  }, [settingsOpen, refreshSlotModels, refreshPluginCount])
 
   // ------------------------------------------------------------------
   // History loading — memory is owned by the backend (.sessions/). We pull a
