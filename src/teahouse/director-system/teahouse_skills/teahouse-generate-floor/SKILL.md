@@ -223,20 +223,20 @@ FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 
 **必须等用户明确确认满意后**，才执行转正。**转正不再是导演做 `FileOps move` + `GitCommit`**——改由沙盒 `Teahouse.commitDraft(N)`（host 侧的确定性闸门）一次性完成：
 
-> 沙盒（本实例的 `.teahouse/output/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 标记 msg 写回 → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
+> 沙盒（本实例的 `.teahouse/output/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 剥离块写回纯正文 + 把变量操作记入 `floor-N-meta.json` → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
 
-作为导演，你的职责是确保正文**末尾/文中**已正确产出 `<!-- teahouse-vars: [...] -->` 变量操作块（见下节「正文变量块约定」），并让用户理解转正由 front-end 触发，**不要自己 move + commit**。
+作为导演，你的职责是确保正文**末尾**已正确产出 `<!-- teahouse-vars: [...] -->` 变量操作块（见下节「正文变量块约定」），并让用户理解转正由 front-end 触发，**不要自己 move + commit**。
 
 如果用户通过对话要求"提交/定稿"，你可以提醒：转正是草稿页的「确认」按钮动作；若正文里没有需要生效的变量块，沙盒会直接转正（无变量操作）。
 
 ## 正文变量块约定（teahouse-vars）
 
-正文可携带变量操作，**由正文 AI 在剧情变动处（文中/章节任意位置）就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、标记并 git 提交。约定源：`tests/teahouse-commit-draft-api.md`（v2）。
+正文可携带变量操作，**由正文 AI 在正文末尾就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、剥离块（记入 `floor-N-meta.json`）并 git 提交。约定源：`tests/teahouse-commit-draft-api.md`（v2）。
 
 ```html
 <!-- teahouse-vars: [
   {"type": "set",   "name": "金币",  "value": 120},
-  {"type": "add",   "name": "金币",  "value": -30},
+  {"type": "add",   "name": "金币",  "value": -30, "note": "买米"},
   {"type": "append","name": "背包",  "value": {"type": "item", "name": "回血药"}},
   {"type": "pop",   "name": "背包",  "value": {"type": "item", "name": "生锈匕首"}},
   {"type": "x",     "name": "背包",  "index": 2, "value": {"type": "item", "name": "钥匙"}},
@@ -255,14 +255,16 @@ FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 | `x` | array | index 处整体替换；index 可负；越界失败 |
 
 - **顺序敏感**：数组从上到下逐条执行；同批按序叠加。
+- **块位置**：变量块统一放在正文**最末尾**，且一次输出只用一个块；不要插在正文中间。
+- **note 字段**：每条操作可加 `"note"` 极简说明这次变动指代什么剧情（如 `"note": "买米"`），便于回溯；尽量 10 字以内，没有明确指代可省略。
 - **类型约束（硬）**：正文 bot 只维护 boolean/string/number/array 四类；**对象仅程序内用，正文 bot 不维护对象**（非要用只能 `set` 整体替换，非最佳实践）。
 - **强类型与数值边界**：每个变量声明了类型（见 `正文变量维护.md` 清单的 `type` 列），`set` 值必须与类型相符；数值变量可有 `min`/`max`，`set`/`add` 写入自动夹取（超界压回边界，正文 AI 按剧情写期望值即可）。正文 AI 可用 `${@type 变量名}` 读取变量的类型（发送前展开），用 `${变量名}` 读值。
-- **失败留痕**：转正时成功的 action 写 `"msg":"consumed"`，失败的写 `"msg":"error:<原因>"`，**全部保留不删**（导演借此看到哪些成功/失败及正文上下文）。带 `msg` 的 action 后续不再被消费。
-- 变量变更需绑定单一时刻（转正那次 git 提交），故**不要在正文里反复改同一个块**；正式稿被 git 锁定，二次补解析仅处理"无 msg 的裸 action"。
+- **失败留痕**：转正时成功的 action 写 `"msg":"consumed"`，失败的写 `"msg":"error:<原因>"`；这些变量操作会被剥离出正文、记入 `floor-N-meta.json`（JSON 不进正文渲染、不回灌正文 AI）。导演可读 `floor-N-meta.json` 看到哪些成功/失败及 note。带 `msg` 的 action 后续不再被消费。
+- 变量变更需绑定单一时刻（转正那次 git 提交），故**不要在正文里反复改同一个块**；正式稿被 git 锁定，二次补解析仅处理"无 msg 的裸 action"，并把这些新操作并入该楼的 `floor-N-meta.json`。
 
 ### 导演如何保证正文产块
 
-- 在 `generate-config-{{N}}.yaml` 的 **system 段**维护一段「章末/适当处用 teahouse-vars 块输出变量操作」的指令（正文 AI 真正读它），并给出上文表格的 type 语义 + 当前关键变量快照（名/值/类型）。
+- 在 `generate-config-{{N}}.yaml` 的 **system 段**维护一段「章末用 teahouse-vars 块输出变量操作」的指令（正文 AI 真正读它），并给出上文表格的 type 语义 + note 说明 + 当前关键变量快照（名/值/类型）。
 - 当前变量快照通常已实时注入系统提示词（no cache）。若正文 AI 需要更细的现值类型，用 `GetRuntimeVars(names=[...])` 喂给它；`Generate` 配置里也可直接写 `${@type 变量名}` 让其展开为类型。导演尽量在配置里帮 bot 建好「要更新的变量」白名单（含类型与边界），减少类型/命名错误。
 
 ## 注意事项

@@ -2,7 +2,7 @@
 //
 // 本文件是纯逻辑模块（无 React / 无 API 依赖），可独立测试。宿主 SandboxManager
 // 的 `commitDraft` 复用它：解析块 → 逐条应用 → 给每条标记 msg(consumed/error) →
-// 把标记后的正文文本写回。
+// 把块从正文剥离（记入 floor-N-meta.json），正文只保留纯 prose。
 //
 // 约定源：tests/teahouse-commit-draft-api.md (v2)。所有语义须与之保持一致。
 
@@ -54,8 +54,10 @@ export interface CommitDraftResult {
   failed: FailedAction[]
   /** 成功写入的变量（name → 新值），调用方据此组装一次 setVar。 */
   updates: Record<string, unknown>
-  /** 标注后的正文文本（成功加 consumed、失败加 error），写回用它。 */
-  markedMarkdown: string
+  /** 剥离 teahouse-vars 块后的纯正文（写回 floor-N.md / floor-N-draft.md）。 */
+  strippedMarkdown: string
+  /** 变量操作（含 msg 与 note），写入 floor-N-meta.json，正文不再携带。 */
+  metaActions: Array<Record<string, unknown>>
 }
 
 // ---- 序号 => 中文名（用于错误信息）----
@@ -186,6 +188,16 @@ export function replaceVarsBlock(markdown: string, block: Array<Record<string, u
   const re = /<!--\s*teahouse-vars\s*:\s*[\s\S]*?\s*-->/m
   if (!re.test(markdown)) return markdown
   return markdown.replace(re, `<!-- teahouse-vars: ${json} -->`)
+}
+
+/**
+ * 剥离正文里的整个 teahouse-vars 块（含 `-->`），返回纯正文。
+ * 转正/二次补解析时把变量操作移出正文，改记入 floor-N-meta.json，
+ * 使正文 AI 通过 {{glob}} 回灌楼层时不再读到 msg 等引擎留痕。
+ */
+export function stripVarsBlock(markdown: string): string {
+  const re = /<!--\s*teahouse-vars\s*:\s*[\s\S]*?\s*-->/m
+  return markdown.replace(re, "").trimEnd()
 }
 
 /**
@@ -401,8 +413,9 @@ export function consumeVars(markdown: string, vars: Array<{ name: string; value?
       applied: [],
       failed: [{ type: "_block", name: "", error: badBlock }],
       updates: {},
-      // 原文写回（坏块留着，供人工修复），绝不改写为空
-      markedMarkdown: markdown,
+      // 坏块不剥离，原文写回留人工修复
+      strippedMarkdown: markdown,
+      metaActions: [],
     }
   }
 
@@ -411,20 +424,36 @@ export function consumeVars(markdown: string, vars: Array<{ name: string; value?
   const actions = rawActions.filter((a) => a && !("msg" in a))
   if (actions.length === 0) {
     // 无块或无待消费 → 正文原样，无操作
-    return { applied: [], failed: [], updates: {}, markedMarkdown: markdown }
+    return { applied: [], failed: [], updates: {}, strippedMarkdown: markdown, metaActions: [] }
   }
-  // 重新解析原始 blocks JSON，保持未消费的条目逐字保留
+  // 重新解析原始 blocks JSON，逐条保留原始字段（含 note/index）
   const blocks = extractRawActions(markdown)
   const { applied, failed, updates, marked } = applyActions(actions, vars)
-  // 用 marked 覆盖对应下标的条目
-  for (const [idx, obj] of marked.entries()) {
-    if (idx < blocks.length) {
-      // 合并：保留原条目未提及字段（如 index 只在 x 有），并覆盖 msg
-      blocks[idx] = { ...blocks[idx], ...obj }
+
+  // 变量操作从正文剥离，改记入 floor-N-meta.json（正文 AI 回灌楼层时不再读到 msg）。
+  // 已识别 action 覆盖 msg；未识别/缺字段条目留痕「无法识别的操作」，避免随剥离丢失。
+  const metaActions: Array<Record<string, unknown>> = []
+  for (let i = 0; i < blocks.length; i++) {
+    const obj = marked.get(i)
+    if (obj) {
+      metaActions.push({ ...blocks[i], ...obj })
+    } else if ("msg" in blocks[i]) {
+      // 已带 msg 的旧条目（legacy）原样保留，不重复留痕
+      metaActions.push(blocks[i])
+    } else {
+      metaActions.push({ ...blocks[i], msg: "error: 无法识别的操作" })
+      const rawType = blocks[i].type
+      const rawName = blocks[i].name
+      failed.push({
+        type: typeof rawType === "string" ? rawType : "_unknown",
+        name: typeof rawName === "string" ? rawName : "",
+        error: "无法识别的操作",
+      })
     }
   }
-  const newMarkdown = replaceVarsBlock(markdown, blocks)
-  return { applied, failed, updates, markedMarkdown: newMarkdown }
+
+  const strippedMarkdown = stripVarsBlock(markdown)
+  return { applied, failed, updates, strippedMarkdown, metaActions }
 }
 
 /**

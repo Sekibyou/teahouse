@@ -346,7 +346,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           break
         }
         case "commitDraft": {
-          // 转正：解析 teahouse-vars → 应用变量 → 标记 msg 写回 → 改名 → git 提交。
+          // 转正：解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交。
           // 详见 tests/teahouse-commit-draft-api.md (v2)。
           if (!instanceId || typeof _args[0] !== "number") {
             result = { ok: false, error: "commitDraft requires {num}" }
@@ -396,7 +396,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
 // ============================================================
 // commitDraft 宿主实现
 //
-// 把「解析 teahouse-vars → 应用变量 → 标记 msg 写回 → 改名 → git 提交」绑定为
+// 把「解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交」绑定为
 // 一个请求-响应单向闸门，由沙盒 Teahouse.commitDraft(N) 触发。返回
 // {num, title, commit_hash, applied, failed, committed_draft}。失败 reject。
 //
@@ -436,7 +436,7 @@ async function runCommitDraft(
   }))
 
   // 3) 解析 + 应用（mutate varMap 为新值；返回 updates 供一次 setVar）
-  const { applied, failed, updates, markedMarkdown } = consumeVars(markdown, varMap)
+  const { applied, failed, updates, strippedMarkdown, metaActions } = consumeVars(markdown, varMap)
   const hasConsumed = applied.length > 0
 
   // 若正文没有变化（既无待消费 action，又已是正式稿）→ 幂等返回，不动正文/git。
@@ -453,10 +453,32 @@ async function runCommitDraft(
     if (!setRes.ok) return { ok: false, error: `应用变量失败：${setRes.error}` }
   }
 
-  // 5) 写回正文：有 action 被标记则写回标记版；纯转正（有块但那章已转正）正文不变也写回无害
+  // 5) 写回：正文剥离 teahouse-vars 块（纯 prose），变量操作记入 floor-N-meta.json。
   if (hasConsumed) {
-    const writeRes = await instancesApi.writeFile(instanceId, isDraft ? draftPath : finalPath, markedMarkdown)
-    if (!writeRes.ok) return { ok: false, error: `写回正文失败：${writeRes.error}` }
+    const metaPath = `.teahouse/output/floors/floor-${num}-meta.json`
+
+    const writeFloorRes = await instancesApi.writeFile(instanceId, isDraft ? draftPath : finalPath, strippedMarkdown)
+    if (!writeFloorRes.ok) return { ok: false, error: `写回正文失败：${writeFloorRes.error}` }
+
+    // 二次补解析（正式稿再出现裸 action）需并入既有 meta；草稿转正无既有 meta。
+    let mergedVars = metaActions
+    if (!isDraft) {
+      const metaRes = await instancesApi.readText(instanceId, metaPath)
+      if (metaRes.ok && metaRes.data?.content) {
+        try {
+          const existing = JSON.parse(metaRes.data.content)
+          const prev = existing && Array.isArray(existing.vars)
+            ? existing.vars
+            : Array.isArray(existing) ? existing : []
+          mergedVars = prev.concat(metaActions)
+        } catch {
+          mergedVars = metaActions
+        }
+      }
+    }
+    const metaBody = { floor: num, vars: mergedVars }
+    const writeMetaRes = await instancesApi.writeFile(instanceId, metaPath, JSON.stringify(metaBody, null, 2))
+    if (!writeMetaRes.ok) return { ok: false, error: `写入 floor-${num}-meta.json 失败：${writeMetaRes.error}` }
   }
 
   // 6) 改名（仅草稿分支）：floor-N-draft.md → floor-N.md
@@ -473,6 +495,7 @@ async function runCommitDraft(
   //    识别为 rename(R100)。若 draft 纯 untracked，git add 未跟踪的已删文件会 fatal
   //    pathspec 报错，故只有它在 git status 里被列为变更（tracked）时才含入 paths。
   const commitPaths = [finalPath, ".teahouse/runtime_vars.jsonl"]
+  if (hasConsumed) commitPaths.push(`.teahouse/output/floors/floor-${num}-meta.json`)
   if (isDraft) {
     const fileRes = await gitApi.fileStatus(instanceId)
     const listed = fileRes.ok ? fileRes.data?.files ?? [] : []

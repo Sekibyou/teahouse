@@ -328,11 +328,11 @@ Teahouse.runTool([
 
 ### 转正：`Teahouse.commitDraft(N)` / 回档：`Teahouse.gitDiscard()`（v2 新增）
 
-草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md` **不再由导演 `FileOps move` + `GitCommit`**，改由沙盒调用 `commitDraft` 一次性完成（正文末尾/文中可能带 `<!-- teahouse-vars: [...] -->` 变量操作块，见「正文变量块」）。
+草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md` **不再由导演 `FileOps move` + `GitCommit`**，改由沙盒调用 `commitDraft` 一次性完成（正文末尾可能带 `<!-- teahouse-vars: [...] -->` 变量操作块，见「正文变量块」）。
 
 #### `Teahouse.commitDraft(N) → Promise<{ok, data|error}>`
 
-把「解析 teahouse-vars → 应用变量 → 标记 msg 写回正文 → 改名 → git 提交」绑定为一个**单向闸门**（请求-响应语义，失败 reject）。`data`：
+把「解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交」绑定为一个**单向闸门**（请求-响应语义，失败 reject）。`data`：
 
 ```js
 { num, title, commit_hash,
@@ -343,8 +343,8 @@ Teahouse.runTool([
 ```
 
 分支语义：
-- `floor-N-draft.md` 存在 → 正常转正（consumed_draft=true）；同时应用正文里的变量块，成功/失败的都写回 `msg`（`consumed` / `error:…`），一并提交。
-- `floor-N.md` 已存在但还有**未带 msg 的裸 action** → 二次补解析（`committed_draft=false`，git type=other「正文变量维护」），把上次失败的变量再解析一遍。
+- `floor-N-draft.md` 存在 → 正常转正（consumed_draft=true）；同时应用正文里的变量块，成功/失败的都带 `msg`（`consumed` / `error:…`）并记入 `floor-N-meta.json`，正文剥离为纯 prose，一并提交。
+- `floor-N.md` 已存在但还有**未带 msg 的裸 action** → 二次补解析（`committed_draft=false`，git type=other「正文变量维护」），把新裸 action 再解析一遍，并入该楼的 `floor-N-meta.json`。
 - 已全部消费 → 幂等返回（不动正文/git）。
 
 判断「是否有失败」用 `data.failed.length > 0`；沙盒据此决定是否引导导演人工修正失败的 action 后**再次 commitDraft** 补解析。

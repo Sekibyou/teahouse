@@ -1675,7 +1675,7 @@ def _list_floors(instance_dir: Path) -> list[dict]:
     best: dict[int, dict] = {}
     if floors_dir.is_dir():
         _num_re = re.compile(r"(\d+)")
-        for p in sorted(floors_dir.glob("floor-*")):
+        for p in sorted(floors_dir.glob("floor-*.md")):
             if not p.is_file():
                 continue
             m = _num_re.search(p.name)
