@@ -12,7 +12,7 @@ interface SandboxFileListProps {
 }
 
 /**
- * SandboxFileList — 列出 .teahouse/output/ 下的沙盒代码文件与楼层文件。
+ * SandboxFileList — 列出 runtime/sandbox/ 下的沙盒代码文件与 runtime/floors/ 下的楼层文件。
  *
  * 宽屏作为沙盒底部折叠调试栏；窄屏底部折叠栏意义不大，改由右上角菜单
  * 触发，以全屏面板展示。
@@ -88,14 +88,14 @@ function FileListContent({
 }) {
   return (
     <>
-      <div className="opacity-60">.teahouse/output/sandbox/</div>
+      <div className="opacity-60">runtime/sandbox/</div>
       {Object.keys(sandboxFiles).length === 0 && (
         <div className="pl-3 opacity-40">（无沙盒代码）</div>
       )}
       {Object.keys(sandboxFiles).map((k) => (
         <div key={k} className="pl-3">{k}</div>
       ))}
-      <div className="opacity-60 pt-1">.teahouse/output/floors/</div>
+      <div className="opacity-60 pt-1">runtime/floors/</div>
       {floors.length === 0 && (
         <div className="pl-3 opacity-40">（无楼层）</div>
       )}

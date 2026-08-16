@@ -140,7 +140,7 @@ async def list_instances(user_id: str) -> list[dict]:
         (user_id,),
     )
     # Override the stale DB floor_count with a live count from the working
-    # floor history (.teahouse/output/floors/). Lazy import to avoid a cycle.
+    # floor history (runtime/floors/). Lazy import to avoid a cycle.
     from ..director_system import get_floors_stats
     for inst in rows:
         dir_path = inst.get("dir_path")
@@ -219,20 +219,22 @@ def summary_file_name(start: int, end: int) -> str:
     return f"sum-{start}.md" if start == end else f"sum-{start}-{end}.md"
 
 
-# Dynamic settings dir: mutable settings + summary ledgers + archive index.
-# Lives under .teahouse/ so it is internal (not player-rendered) and git-tracked
-# (unlike static_settings/ which is gitignored). Summary commits scope to this.
-DYN_SETTINGS_REL = ".teahouse/dyn_settings"
+# Dynamic settings dir: mutable author settings. Lives under settings/ (git-tracked)
+# and is scoped by summary commits. Distinct from settings/static_settings/ (long-term
+# stable background, also git-tracked in this engine). Summary ledger + archive index
+# live in the top-level summary/ dir (SUMMARY_REL), separate from the settings content.
+DYN_SETTINGS_REL = "settings/dyn_settings"
+SUMMARY_REL = "summary"
 
 
 def update_summary_index(instance_dir: Path, start: int, end: int) -> str:
-    """Record a summary range in <dyn_settings>/summary/index.json (authoritative archive boundary).
+    """Record a summary range in <summary>/index.json (authoritative archive boundary).
 
     Called by the backend on GitCommit(type="summary", start, end). Appends one
     entry per call (deduped by exact range) and advances summarized_through to the
     reported `end`. Returns the ledger file path written for reference.
     """
-    idx_path = instance_dir / DYN_SETTINGS_REL / "summary" / "index.json"
+    idx_path = instance_dir / SUMMARY_REL / "index.json"
     if idx_path.exists():
         data = json.loads(idx_path.read_text(encoding="utf-8"))
     else:
@@ -258,7 +260,7 @@ def copy_instance(
 ) -> str:
     """Snapshot-copy the full source instance dir to target_dir (new instance).
 
-    Copies everything (floors, .teahouse/, settings/, skills/, assets/,
+    Copies everything (floors, runtime/, settings/, skills/, assets/,
     building/, ...) and re-initializes git, mirroring instantiate_prototype's
     commit behavior. Returns the new dir_path (target_dir)."""
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -564,7 +566,7 @@ def write_asset(instance_dir: Path, file_path: str, data: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime vars — .teahouse/runtime_vars.jsonl
+# Runtime vars — runtime/runtime_vars.jsonl
 #
 # The single authority for instance variables ("文件即状态"). jsonl: one variable
 # per line, each a JSON object that can carry optional metadata:
@@ -587,7 +589,7 @@ def write_asset(instance_dir: Path, file_path: str, data: bytes) -> None:
 #   - SetRuntimeVar writes, GetRuntimeVars reads, delete removes a name.
 # ---------------------------------------------------------------------------
 
-_RUNTIME_VARS_PATH = ".teahouse/runtime_vars.jsonl"
+_RUNTIME_VARS_PATH = "runtime/runtime_vars.jsonl"
 
 
 def _runtime_vars_path(instance_dir: Path) -> Path:

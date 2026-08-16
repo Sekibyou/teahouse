@@ -195,9 +195,9 @@ async def create_prototype_from_instance(
                 sha.update(chunk)
     content_hash = sha.hexdigest()
 
-    # Write metadata into the source directory before packing
-    metadata_dir = source_dir / ".teahouse"
-    metadata_dir.mkdir(parents=True, exist_ok=True)
+    # Write metadata into the source directory before packing (a root-level
+    # prototype.json, alongside teahouse.md / README.md).
+    metadata_dir = source_dir
     metadata = {
         "name": body.name,
         "description": body.description,
@@ -222,10 +222,6 @@ async def create_prototype_from_instance(
 
     # Clean up metadata file from source dir
     (metadata_dir / "prototype.json").unlink()
-    try:
-        metadata_dir.rmdir()
-    except OSError:
-        pass
 
     # Create DB record
     source_path = str(zip_path.resolve())
@@ -326,7 +322,7 @@ async def get_prototype_readme(prototype_id: str, user: UserInfo = Depends(requi
     readme = ""
     with _zipfile.ZipFile(source, "r") as zf:
         try:
-            with zf.open(".teahouse/prototype.json") as mf:
+            with zf.open("prototype.json") as mf:
                 metadata = json.loads(mf.read().decode("utf-8"))
         except KeyError:
             pass
@@ -394,10 +390,10 @@ async def import_prototype(
     content_hash_from_meta = ""
     with _zipfile.ZipFile(bio, "r") as zf:
         names = sorted(zf.namelist())
-        # Compute hash from all files except .teahouse/prototype.json
+        # Compute hash from all files except prototype.json
         sha = hashlib.sha256()
         for n in names:
-            if n == ".teahouse/prototype.json":
+            if n == "prototype.json":
                 continue
             sha.update(n.encode("utf-8"))
             sha.update(zf.read(n))
@@ -405,7 +401,7 @@ async def import_prototype(
 
         # Read metadata if present
         try:
-            with zf.open(".teahouse/prototype.json") as mf:
+            with zf.open("prototype.json") as mf:
                 meta = json.loads(mf.read().decode("utf-8"))
                 proto_name = meta.get("name", "").strip()
                 proto_desc = meta.get("description", "")
@@ -653,16 +649,13 @@ async def save_instance_file(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # 用户编辑器就地保存 —— 与导演工具一致，广播 file_changed：
-    #  - path 落在沙盒数据区(.teahouse/output/) → 正文/沙盒刷新
-    #  - path 是 runtime_vars.jsonl → 变量变更，正文占位符重解析出新值
+    #  - path 落在运行时区(runtime/) → 正文/沙盒刷新
+    #  - path 是 runtime/runtime_vars.jsonl → 变量变更，正文占位符重解析出新值
     p = path.replace("\\", "/")
     if p.startswith("./"):
         p = p[2:]
     parts = p.split("/")
-    if parts[0] == ".teahouse" and (
-        len(parts) > 1
-        and (parts[1] == "output" or "/".join(parts[1:]) == "runtime_vars.jsonl")
-    ):
+    if parts[0] == "runtime" and len(parts) > 1:
         state.broadcast(
             "file_changed",
             {"path": p, "tool": "EditorSave", "instance_id": instance_id},
@@ -769,7 +762,7 @@ async def set_runtime_vars(
 
     state.broadcast(
         "file_changed",
-        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id},
+        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id},
     )
     # Read back the full current vars so the caller (sandbox) can reconcile.
     return {"status": "ok", "vars": read_sandbox_vars(instance_dir, None)}
@@ -978,7 +971,7 @@ async def cancel_run_tools(
 
 # ===== Skills =====
 
-SKILLS_DIR = ".teahouse/skills"
+SKILLS_DIR = "skills"
 
 
 def _get_skill_dir(instance_dir: Path, skill_name: str) -> Path:
@@ -1138,7 +1131,7 @@ def _user_skills_lib_dir(user_row: dict) -> Path:
 
 @router.post("/instances/{instance_id}/skills/{skill_name}/enable-from-library")
 async def enable_skill_from_library(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
-    """Copy a skill from the user's library into this instance's .teahouse/skills/.
+    """Copy a skill from the user's library into this instance's skills/.
 
     user -> instance. The library is a stock/inventory only; copying it in is what
     makes the skill take effect (instance skills override system ones).
@@ -1614,15 +1607,15 @@ async def get_text_style_rules(instance_id: str, user: UserInfo = Depends(requir
 # ===== Sandbox source & floors (file-system driven output) =====
 
 def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
-    """Read all files under .teahouse/output/sandbox/, keyed by relative path.
+    """Read all files under runtime/sandbox/, keyed by relative path.
 
     The sandbox renderer owns this directory exclusively — it is the single
     content source for *.css / *.js UI component scripts. Files under the
     ``disabled/`` subfolder are NOT served — moving a script into
-    output/sandbox/disabled/ disables it while keeping it versioned in place.
+    runtime/sandbox/disabled/ disables it while keeping it versioned in place.
     bootstrap.js is excluded — it's engine-built and served via _read_bootstrap_scripts().
     """
-    sandbox_dir = instance_dir / ".teahouse" / "output" / "sandbox"
+    sandbox_dir = instance_dir / "runtime" / "sandbox"
     files: dict[str, str] = {}
     if not sandbox_dir.is_dir():
         return files
@@ -1664,14 +1657,14 @@ def _read_bootstrap_scripts() -> list[str]:
 
 
 def _list_floors(instance_dir: Path) -> list[dict]:
-    """List floors in .teahouse/output/floors/, sorted ascending by floor number.
+    """List floors in runtime/floors/, sorted ascending by floor number.
 
     Returns [{num, path, draft}] where {num} is the file's leading numeric segment
     and {draft} is True for floor-N-draft.md (semi-formal). A formal floor wins
     over its draft when both exist for the same number.
     """
     import re
-    floors_dir = instance_dir / ".teahouse" / "output" / "floors"
+    floors_dir = instance_dir / "runtime" / "floors"
     best: dict[int, dict] = {}
     if floors_dir.is_dir():
         _num_re = re.compile(r"(\d+)")
@@ -1706,7 +1699,7 @@ async def get_sandbox_src(instance_id: str, user: UserInfo = Depends(require_use
 
 @router.get("/instances/{instance_id}/floors")
 async def get_floors(instance_id: str, user: UserInfo = Depends(require_user)):
-    """Get the sorted floor listing from .teahouse/output/floors/."""
+    """Get the sorted floor listing from runtime/floors/."""
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:

@@ -32,7 +32,7 @@ TEMPLATE_FILES = [
 ]
 
 INSTANCE_TEAHOUSE = "teahouse.md"
-INSTANCE_SKILLS_DIR = ".teahouse/skills"
+INSTANCE_SKILLS_DIR = "skills"
 
 # Directories excluded entirely from tree display
 TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions", "building"}
@@ -41,7 +41,7 @@ TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions", 
 def get_floors_stats(dir_path: Path) -> dict | None:
     """Return structured floors statistics for the WORKING floors history.
 
-    The canonical floor history is `.teahouse/output/floors/`. Caller may pass
+    The canonical floor history is `runtime/floors/`. Caller may pass
     that dir directly (already a "floors" dir), or an instance root — in which
     case the canonical location is resolved.
 
@@ -55,10 +55,10 @@ def get_floors_stats(dir_path: Path) -> dict | None:
     # resolve the working floors location.
     if dir_path.name == "floors":
         canonical = dir_path
-        instance_dir = dir_path.parents[2]  # floors -> output -> .teahouse -> instance root
+        instance_dir = dir_path.parents[1]  # floors -> runtime -> instance root
     else:
         instance_dir = dir_path
-        canonical = dir_path / ".teahouse" / "output" / "floors"
+        canonical = dir_path / "runtime" / "floors"
         if not canonical.is_dir():
             canonical = dir_path / "floors"
     if not canonical.is_dir():
@@ -85,11 +85,11 @@ def get_floors_stats(dir_path: Path) -> dict | None:
         latest_floor = newest_confirmed
 
     # Archive boundary ("summarized to floor N") is maintained by the backend in
-    # <dyn_settings>/summary/index.json on GitCommit(type=summary) — not derived
+    # <summary>/index.json on GitCommit(type=summary) — not derived
     # from file names. Falls back to "nothing summarized" for older instances.
     last_sum_start = None
     last_sum_end = None
-    index_path = instance_dir / ".teahouse" / "dyn_settings" / "summary" / "index.json"
+    index_path = instance_dir / "summary" / "index.json"
     if index_path.is_file():
         try:
             idx = json.loads(index_path.read_text(encoding="utf-8"))
@@ -146,13 +146,19 @@ def _floors_summary(dir_path: Path) -> str:
     return f"floors/  ({'; '.join(parts)})"
 
 
+# Top-level instance dirs that are fully expanded in the tree (they hold the
+# author-facing content a director works with). Everything else is one line.
+FULLY_EXPAND_TREE = {"runtime", "settings", "skills"}
+
+
 def _scan_tree(instance_dir: Path) -> str:
     """Build a listing of the instance root directory.
 
-    - Root-level files and dirs are listed (including .teahouse/).
-    - Normal directories are shown as a single line, but .teahouse/ is fully
-      expanded. building/ is excluded (meta-workspace, not shipped content).
-    - The working floor history under .teahouse/output/floors/ gets stats.
+    - Root-level files and dirs are listed.
+    - Content-rich top-level dirs (runtime/, settings/, skills/) are fully
+      expanded; others (generate-config/, summary/, temp/, building/) collapse
+      to one line. building/ is excluded (meta-workspace, not shipped content).
+    - The working floor history under runtime/floors/ gets stats.
     - Use Glob to explore inside directories when needed.
     """
     lines: list[str] = []
@@ -163,18 +169,13 @@ def _scan_tree(instance_dir: Path) -> str:
         key=lambda e: (not e.is_dir(), e.name),
     )
 
-    # .teahouse/ is a special dir that should appear in the tree
-    teahouse_dir = root / ".teahouse"
-    if teahouse_dir.is_dir():
-        entries.append(teahouse_dir)
-
     for i, entry in enumerate(entries):
         is_last = i == len(entries) - 1
         connector = "└── " if is_last else "├── "
 
-        if entry.is_dir() and entry.name == ".teahouse":
-            lines.append(f"{connector}.teahouse/")
-            _scan_teahouse_dir(entry, lines, indent="    ")
+        if entry.is_dir() and entry.name in FULLY_EXPAND_TREE:
+            lines.append(f"{connector}{entry.name}/")
+            _scan_recursive(entry, lines, indent="    ")
         elif entry.is_dir():
             lines.append(f"{connector}{entry.name}/")
         else:
@@ -186,11 +187,11 @@ def _scan_tree(instance_dir: Path) -> str:
     return "\n".join(lines)
 
 
-def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str) -> None:
-    """Recursively scan .teahouse/ directory, fully expanding all subdirectories.
+def _scan_recursive(dir_path: Path, lines: list[str], indent: str) -> None:
+    """Recursively scan a content-rich top-level dir, fully expanding subdirs.
 
-    output/floors/ is summarized via get_floors_stats; output/sandbox/ is expanded
-    as normal files; output/sandbox/disabled/ is shown collapsed as a disable toggle.
+    runtime/floors/ is summarized via get_floors_stats; runtime/sandbox/disabled/
+    is shown collapsed as a disable toggle. Everything else is expanded normally.
     """
     entries = sorted(
         [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
@@ -201,16 +202,16 @@ def _scan_teahouse_dir(dir_path: Path, lines: list[str], indent: str) -> None:
         is_last = i == len(entries) - 1
         connector = "└── " if is_last else "├── "
 
-        if entry.is_dir() and entry.name == "floors" and dir_path.name == "output":
-            # .teahouse/output/floors/ — the context-engine's floor history
+        if entry.is_dir() and entry.name == "floors" and dir_path.name == "runtime":
+            # runtime/floors/ — the context-engine's floor history
             lines.append(f"{indent}{connector}{_floors_summary(entry)}")
         elif entry.is_dir() and entry.name == "disabled" and dir_path.name == "sandbox":
-            # .teahouse/output/sandbox/disabled/ — collapsed disable toggle
+            # runtime/sandbox/disabled/ — collapsed disable toggle
             count = sum(1 for f in entry.rglob("*") if f.is_file())
             lines.append(f"{indent}{connector}disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
         elif entry.is_dir():
             lines.append(f"{indent}{connector}{entry.name}/")
-            _scan_teahouse_dir(entry, lines, indent + "    ")
+            _scan_recursive(entry, lines, indent + "    ")
         else:
             lines.append(f"{indent}{connector}{entry.name}")
 
@@ -219,7 +220,7 @@ def _scan_skills(instance_dir: Path) -> str:
     """Scan system skills and instance skills, extract name + description from SKILL.md frontmatter.
 
     System skills (teahouse_skills/) are always loaded.
-    Instance skills (.teahouse/skills/) are loaded on top — if a skill with the same
+    Instance skills (skills/) are loaded on top — if a skill with the same
     name exists in both, the instance version overrides the system version.
     """
     system_skills_dir = TEMPLATE_DIR / "teahouse_skills"

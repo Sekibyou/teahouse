@@ -107,11 +107,11 @@
   var currentDraft = null;   // { path, text, accumulated_len } 或 null
   var generationStatus = 'idle';  // 'idle' | 'generating' | 'done'
 
-  // 只监测直接写进正文历史的生成（.teahouse/output/floors/）。其余路径
+  // 只监测直接写进正文历史的生成（runtime/floors/）。其余路径
   // （temp/、settings/ 等后台 generate）的流式进度不进入状态机，避免干扰
   // 沙盒当前渲染。currentDraft 是单槽位缓冲，path 变化即替换、绝不混串。
   function isWatchableFloorProgress(path) {
-    return typeof path === 'string' && path.indexOf('.teahouse/output/floors/') === 0;
+    return typeof path === 'string' && path.indexOf('runtime/floors/') === 0;
   }
 
   function handleGenerateProgress(data) {

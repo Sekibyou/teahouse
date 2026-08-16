@@ -14,9 +14,9 @@
 
 | 文件 | 说明 |
 |---|---|
-| `static_settings/world.md` | 世界观：灰石镇、地牢、冒险者公会 |
-| `.teahouse/dyn_settings/characters.md` | 主角设定（`${user}` 处会替换为当前用户名）|
-| `.teahouse/output/floors/floor-1~3.md` | 三章现成开局，直接从酒馆夜话 / 公会灯火处续写 |
+| `settings/static_settings/world.md` | 世界观：灰石镇、地牢、冒险者公会 |
+| `settings/dyn_settings/characters.md` | 主角设定（`${user}` 处会替换为当前用户名）|
+| `runtime/floors/floor-1~3.md` | 三章现成开局，直接从酒馆夜话 / 公会灯火处续写 |
 
 ### 玩法操作（底部输入条）
 
@@ -43,9 +43,9 @@
 ## 怎么用
 
 1. **直接玩**：点击 `开始会话`，切换至 `游玩` 模式，在输入条选「生成下一章」输入要点，即可续写剧情。
-2. **当模板改**：把 `static_settings/`、`dyn_settings/characters.md`、`output/floors/` 里的开局换成你自己的世界观与人物，正文生成配置会沿用。
+2. **当模板改**：把 `settings/static_settings/`、`settings/dyn_settings/characters.md`、`runtime/floors/` 里的开局换成你自己的世界观与人物，正文生成配置会沿用。
 3. **学对接**：沙盒 `input-bar.js` / `page-bar.js` / `var-editor/` 是引擎工具链（`runTool`、`sessionSend`、`getVars`）的参考实现，前端对接可照此写。
 
 ## 定制起点
 
-先从修改 `teahouse.md`（工作内容定义 + Skill 路由）和 `static_settings/`（世界观）开始吧。
+先从修改 `teahouse.md`（工作内容定义 + Skill 路由）和 `settings/static_settings/`（世界观）开始吧。

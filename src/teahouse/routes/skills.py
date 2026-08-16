@@ -4,7 +4,7 @@ zip preview/confirm), delete, download.
 
 The user skill library lives at data/{safe_name}/skills/<skill_name>/ and is a
 **stock/inventory** only: skills are copied into an instance's
-.teahouse/skills/ to take effect (see the instance enable/export routes in
+skills/ to take effect (see the instance enable/export routes in
 workspaces.py). It is decoupled from any instance — no reference tracking.
 """
 from __future__ import annotations

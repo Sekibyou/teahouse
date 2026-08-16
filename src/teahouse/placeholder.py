@@ -1097,14 +1097,9 @@ def _resolve_glob(raw_pattern: str, instance_dir: Path) -> str:
             else:
                 raise PlaceholderError(f"Invalid lastN suffix in glob: {raw_pattern}")
 
-    # Match against the instance root. `.teahouse/` is a hidden directory that
-    # plain globs skip, so a shorthand pattern like "output/floors/floor-*.md"
-    # (per the {{glob:...:lastN}} design) is retried under `.teahouse/output/`.
+    # Match against the instance root. Patterns are relative to the instance root
+    # and glob directly (runtime/floors/, settings/..., etc. are normal dirs now).
     matched = sorted(instance_dir.glob(pattern))
-    if not matched and not pattern.startswith(".teahouse/"):
-        prefixed = sorted(instance_dir.glob(f".teahouse/{pattern}"))
-        if prefixed:
-            matched = prefixed
     if not matched:
         raise PlaceholderError(f"glob pattern matched no files: {pattern}")
 

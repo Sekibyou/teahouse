@@ -30,7 +30,7 @@ uniformly — there is no separate "direct SSE" vs "background _drain" path.
 Diagnostic event log
 --------------------
 When ``TEHOUSE_EVENT_LOG=1`` is set in the environment, every broadcast event
-is appended to ``<instance_dir>/.teahouse/event_log.jsonl`` so the developer
+is appended to ``<instance_dir>/runtime/event_log.jsonl`` so the developer
 can cross-reference backend events with frontend-side observations.
 """
 
@@ -55,7 +55,7 @@ def _event_log(instance_dir: Path, session_id: str, event_type: str, data: dict)
     if not _EVENT_LOG_ENABLED:
         return
     try:
-        log_path = instance_dir / ".teahouse" / "event_log.jsonl"
+        log_path = instance_dir / "runtime" / "event_log.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "ts": asyncio.get_event_loop().time(),

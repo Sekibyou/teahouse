@@ -1,0 +1,33 @@
+# 正文生成 Payload 配置模板
+# 放在 generate-config/ 下。Generate 用它组织发往正文模型的输入结构。
+# {{path}} 占位符会在 Generate 时自动展开为文件内容。
+#
+# 更新跟随总结：动态设定切片（dyn_settings）或整个配置重组通常在总结阶段发生。
+# 本目录与 summary/、settings/dyn_settings/ 一起，由总结提交 paths=["settings/dyn_settings", "generate-config", "summary"] 提交。
+# 若某轮总结本配置没变，git 自动跳过，不会产生空改动提交。
+#
+# 引用约定：
+#   - 长期静态背景 → {{settings/static_settings/...}}
+#   - 中短期动态设定 / 总结 → {{settings/dyn_settings/...}} 或 {{summary/...}}
+#   - 历史正文 → {{glob:runtime/floors/floor-*.md:lastN}}
+
+- role: system
+  content: |
+    你是一位资深小说作家，请参考以下设定进行创作。
+
+    ————长期背景开始————
+    {{settings/static_settings/world.md}}
+    ————长期背景结束————
+
+    ————动态设定开始————
+    {{settings/dyn_settings/characters.md}}
+    ————动态设定结束————
+
+- role: user
+  content: |
+    以下是最近正文，请基于此续写下一章：
+    {{glob:runtime/floors/floor-*.md:last10}}
+
+- role: user
+  content: |
+    （在此填入用户的写作要求）

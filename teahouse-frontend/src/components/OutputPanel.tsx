@@ -13,7 +13,7 @@ interface OutputPanelProps {
 /**
  * OutputPanel — 文件系统驱动的统一沙盒面板。
  *
- * - 沙盒 iframe 由 SandboxManager 从 .teahouse/output/sandbox/ 构建，
+ * - 沙盒 iframe 由 SandboxManager 从 runtime/sandbox/ 构建，
  *   正文由沙盒运行时经 listFloors/readFile 读取。
  * - 宽屏底部提供一个稳定调试栏（文件清单）；窄屏底部折叠栏意义不大，
  *   改由右上角菜单以全屏面板触发，此处不再渲染。

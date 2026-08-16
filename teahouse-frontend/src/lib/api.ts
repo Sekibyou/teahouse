@@ -528,7 +528,7 @@ export const sandboxSrcApi = {
   },
 }
 
-// Floors API — sorted floor listing from .teahouse/output/floors/
+// Floors API — sorted floor listing from runtime/floors/
 export interface FloorEntry {
   num: number
   path: string
@@ -541,7 +541,7 @@ export const floorsApi = {
   },
 }
 
-// Sandbox vars API — instance variable state persisted to .teahouse/runtime_vars.jsonl
+// Sandbox vars API — instance variable state persisted to runtime/runtime_vars.jsonl
 export interface SandboxVarEntry {
   name: string
   value: unknown

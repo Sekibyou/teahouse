@@ -12,10 +12,10 @@ import { useThemeStore } from "@/stores/themeStore"
 // ============================================================
 // SandboxManager — file-system driven sandbox iframe + TeahouseBridge
 //
-// Sources of truth (instance .teahouse/output/ tree):
-//   - .teahouse/output/sandbox/  → bootstrap.js (first), *.css (inject <head>),
+// Sources of truth (instance runtime/ tree):
+//   - runtime/sandbox/           → bootstrap.js (first), *.css (inject <head>),
 //                                  other *.js (append). Read via sandboxSrcApi.
-//   - .teahouse/output/floors/   → prose history the sandbox reads at runtime
+//   - runtime/floors/            → prose history the sandbox reads at runtime
 //                                  via listFloors + readText.
 // No output blocks / content_type. The host watches file_changed SSE:
 //   - sandbox file changed → rebuild srcdoc
@@ -81,16 +81,16 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
         reloadTextStyleRules().then(() => sendToSandbox("output.refresh", { path }))
         return
       }
-      // srcdoc is built solely from .teahouse/output/sandbox/. Any change under
-      // .teahouse/output/ that is NOT floors/ (sandbox code moved/edited/written,
-      // or moved to/from output/sandbox/disabled) can alter that directory's contents,
-      // so rebuild the iframe. Only floor changes are handled in-sandbox.
-      const isFloors = path.includes(".teahouse/output/floors/")
-      const isOutput = path.includes(".teahouse/output")
-      if (isOutput && !isFloors) {
+      // srcdoc is built solely from runtime/sandbox/. Only changes under
+      // runtime/sandbox/ (sandbox code edited/written, or moved to/from
+      // runtime/sandbox/disabled) can alter the iframe's contents, so rebuild it.
+      // Floors / runtime_vars.jsonl / text-style-rules.yaml are DATA the sandbox
+      // re-reads — route them to output.refresh so prose ${name} re-resolves.
+      const isSandboxCode = path.includes("runtime/sandbox/")
+      if (isSandboxCode) {
         setSrcdocVersion((v) => v + 1)
       } else {
-        // floors / anything else → ask sandbox to re-read
+        // floors / vars / style → ask sandbox to re-read & re-render
         sendToSandbox("output.refresh", { path })
       }
     }, [sendToSandbox, reloadTextStyleRules]),
@@ -411,8 +411,8 @@ async function runCommitDraft(
   num: number,
   sendToSandbox: (event: string, data: unknown) => void,
 ): Promise<unknown> {
-  const draftPath = `.teahouse/output/floors/floor-${num}-draft.md`
-  const finalPath = `.teahouse/output/floors/floor-${num}.md`
+  const draftPath = `runtime/floors/floor-${num}-draft.md`
+  const finalPath = `runtime/floors/floor-${num}.md`
 
   // 1) 读取正文：优先草稿，否则正式稿（二次补解析）。都读不到 → 报错。
   const draftRes = await instancesApi.readText(instanceId, draftPath)
@@ -455,7 +455,7 @@ async function runCommitDraft(
 
   // 5) 写回：正文剥离 teahouse-vars 块（纯 prose），变量操作记入 floor-N-meta.json。
   if (hasConsumed) {
-    const metaPath = `.teahouse/output/floors/floor-${num}-meta.json`
+    const metaPath = `runtime/floors/floor-${num}-meta.json`
 
     const writeFloorRes = await instancesApi.writeFile(instanceId, isDraft ? draftPath : finalPath, strippedMarkdown)
     if (!writeFloorRes.ok) return { ok: false, error: `写回正文失败：${writeFloorRes.error}` }
@@ -494,8 +494,8 @@ async function runCommitDraft(
   //    暂存过），删除必须一并 stage，否则提交后旧文件成脏改动；git 会自动把"同名新旧"
   //    识别为 rename(R100)。若 draft 纯 untracked，git add 未跟踪的已删文件会 fatal
   //    pathspec 报错，故只有它在 git status 里被列为变更（tracked）时才含入 paths。
-  const commitPaths = [finalPath, ".teahouse/runtime_vars.jsonl"]
-  if (hasConsumed) commitPaths.push(`.teahouse/output/floors/floor-${num}-meta.json`)
+  const commitPaths = [finalPath, "runtime/runtime_vars.jsonl"]
+  if (hasConsumed) commitPaths.push(`runtime/floors/floor-${num}-meta.json`)
   if (isDraft) {
     const fileRes = await gitApi.fileStatus(instanceId)
     const listed = fileRes.ok ? fileRes.data?.files ?? [] : []

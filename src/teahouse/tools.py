@@ -33,7 +33,7 @@ from .state import state
 # is the "file-as-state" authority for variables, a few file tools may also touch
 # it directly (not just SetRuntimeVar). When that happens we broadcast the same
 # file_changed the sandbox relies on to re-resolve ${name} placeholders in prose.
-RUNTIME_VARS_RELPATH = ".teahouse/runtime_vars.jsonl"
+RUNTIME_VARS_RELPATH = "runtime/runtime_vars.jsonl"
 
 
 def _maybe_broadcast_vars_changed(instance_dir: Path, full: Path, tool: str, instance_id: str | None = None) -> None:
@@ -305,7 +305,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any], inst
     - `meta`: {name: {type?, min?, max?}} — declare/overwrite the strong type and
       numeric bounds. Type is enforced on write; out-of-range numbers are clamped.
     - `delete`: list of names — remove those variables entirely.
-    File-as-state: persisted to .teahouse/runtime_vars.jsonl, authoritative + git-tracked.
+    File-as-state: persisted to runtime/runtime_vars.jsonl, authoritative + git-tracked.
     """
     updates = args.get("updates")
     note = args.get("note")
@@ -387,7 +387,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any], inst
 
     state.broadcast(
         "file_changed",
-        {"path": ".teahouse/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id or instance_dir.name},
+        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id or instance_dir.name},
     )
 
     affected = list(updates.keys()) if updates else []
@@ -1127,12 +1127,12 @@ async def execute_generate(
 
 
 async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Read a skill's SKILL.md content. Looks in instance .teahouse/skills/ first,
+    """Read a skill's SKILL.md content. Looks in instance skills/ first,
     then falls back to the system teahouse_skills/ directory."""
     name = args["name"]
 
     # Instance skills take priority
-    instance_skill_dir = instance_dir / ".teahouse" / "skills" / name
+    instance_skill_dir = instance_dir / "skills" / name
     skill_dir = instance_skill_dir
 
     if not skill_dir.is_dir():
@@ -1212,18 +1212,18 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any], instance_id
 
 
 # ---------------------------------------------------------------------------
-# Text style rules — .teahouse/text-style-rules.yaml
+# Text style rules — runtime/text-style-rules.yaml
 # ---------------------------------------------------------------------------
 
-TEHOUSE_DIR = ".teahouse"
+RUNTIME_DIR = "runtime"
 TEXT_STYLE_RULES_FILE = "text-style-rules.yaml"
 
 
 def _text_style_rules_path(instance_dir: Path) -> Path:
-    """Get the path to text-style-rules.yaml, ensuring .teahouse/ exists."""
-    teahouse_dir = instance_dir / TEHOUSE_DIR
-    teahouse_dir.mkdir(parents=True, exist_ok=True)
-    return teahouse_dir / TEXT_STYLE_RULES_FILE
+    """Get the path to text-style-rules.yaml, ensuring runtime/ exists."""
+    runtime_dir = instance_dir / RUNTIME_DIR
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_dir / TEXT_STYLE_RULES_FILE
 
 
 def _load_text_style_rules(instance_dir: Path) -> list[dict]:
@@ -1345,7 +1345,7 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
 
     If ``paths`` is provided, only those paths are staged (into this commit),
     leaving other uncommitted changes untouched — this is what lets a background
-    summary sub-session commit .teahouse/dyn_settings while the main session is
+    summary sub-session commit settings/dyn_settings while the main session is
     mid-floor without their changes bleeding into each other.
     """
     commit_type = args["type"]

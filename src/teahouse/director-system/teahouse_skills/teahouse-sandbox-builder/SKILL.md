@@ -1,6 +1,6 @@
 ---
 name: teahouse-sandbox-builder
-description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `.teahouse/output/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
+description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `runtime/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
 ---
 
 # Sandbox Builder Skill
@@ -23,13 +23,13 @@ description: 教导导演如何设计和构建前端沙盒代码（UI 组件、�
 Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离的独立运行环境。沙盒分为两层：
 
 - **基础设施层（引擎内置，不出现于实例）**：`bootstrap.js` — postMessage 通信桥、Teahouse API、runTool 封装、流式草稿管理、事件系统、UI 组件管理、DOM 容器创建。由引擎提供，随引擎升级自动更新。
-- **UI 组件层（实例 `.teahouse/output/sandbox/`）**：用户的组件文件 — 正文渲染器、翻页器、变量面板、生成按钮、主题样式等。热重载热插拔，写文件即生效。
+- **UI 组件层（实例 `runtime/sandbox/`）**：用户的组件文件 — 正文渲染器、翻页器、变量面板、生成按钮、主题样式等。热重载热插拔，写文件即生效。
 
-**沙盒代码是文件系统驱动的**，UI 组件唯一来源是 `.teahouse/output/sandbox/` 目录。前端渲染器（SandboxManager）遍历该目录构建 srcdoc，**无需任何推送工具**——你只需 Write 文件，前端自动读取并重建 iframe。
+**沙盒代码是文件系统驱动的**，UI 组件唯一来源是 `runtime/sandbox/` 目录。前端渲染器（SandboxManager）遍历该目录构建 srcdoc，**无需任何推送工具**——你只需 Write 文件，前端自动读取并重建 iframe。
 
 ### 沙盒目录结构 —— 一个组件 = 一个文件，或一个文件夹
 
-`.teahouse/output/sandbox/` **根目录只允许两类条目，每个组件一份，不留多余文件**：
+`runtime/sandbox/` **根目录只允许两类条目，每个组件一份，不留多余文件**：
 
 | 条目 | 含义 |
 |---|---|
@@ -47,7 +47,7 @@ Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离�
 
 **注意**：`bootstrap.js` 是引擎内置的，不在实例目录中。不要创建 `bootstrap.js`——即使创建了也会被忽略。
 
-**正文历史不在 `.teahouse/output/sandbox/`**——它位于 `.teahouse/output/floors/`。沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
+**正文历史不在 `runtime/sandbox/`**——它位于 `runtime/floors/`。沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
 
 ### 注入规则（由文件名/扩展名决定，无 content_type 概念）
 
@@ -90,11 +90,11 @@ FastAPI 后端
 
 ### 楼层（正文历史）
 
-正文历史位于 `.teahouse/output/floors/`，按楼层数字排序。沙盒通过文件操作接口读取：
+正文历史位于 `runtime/floors/`，按楼层数字排序。沙盒通过文件操作接口读取：
 
 #### `Teahouse.listFloors() → Promise<FloorEntry[]>`
 
-获取排序后的楼层清单。每个元素是 `{ num, path, draft }`：`{num}` 为楼层数字，`{path}` 为相对实例根目录的路径（如 `.teahouse/output/floors/floor-5.md`），`{draft}` 为 `true` 表示半正式稿 `floor-N-draft.md`（正式稿优先于草稿）。
+获取排序后的楼层清单。每个元素是 `{ num, path, draft }`：`{num}` 为楼层数字，`{path}` 为相对实例根目录的路径（如 `runtime/floors/floor-5.md`），`{draft}` 为 `true` 表示半正式稿 `floor-N-draft.md`（正式稿优先于草稿）。
 
 ```js
 const floors = await Teahouse.listFloors()
@@ -127,10 +127,10 @@ container.innerHTML = html
 
 #### `Teahouse.readText(path) → Promise<string | null>`
 
-读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"static_settings/world.yaml"`、`.teahouse/output/floors/floor-001.md`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
+读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"settings/static_settings/world.yaml"`、`runtime/floors/floor-001.md`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
 
 ```js
-const yaml = await Teahouse.readText("static_settings/world.yaml")
+const yaml = await Teahouse.readText("settings/static_settings/world.yaml")
 ```
 
 #### `Teahouse.readAsset(path) → Promise<string | null>`
@@ -161,10 +161,10 @@ MIME 后端按文件头（magic bytes）探测，任何文件类型都接受，�
 
 ```js
 // 组件包方式：数据写入组件自己的文件夹，写在 .json 上（不被注入、随 git 追踪）
-await Teahouse.writeFile(".teahouse/output/sandbox/var-editor/important-vars.json",
+await Teahouse.writeFile("runtime/sandbox/var-editor/important-vars.json",
                          JSON.stringify({ important: ["金币", "修为"] }))
 // 读取：
-const prefs = JSON.parse(await Teahouse.readText(".teahouse/output/sandbox/var-editor/important-vars.json"))
+const prefs = JSON.parse(await Teahouse.readText("runtime/sandbox/var-editor/important-vars.json"))
 ```
 
 **权限**：文件操作受 JWT 身份控制，与当前用户权限一致。沙盒可读写实例内任意路径。
@@ -173,7 +173,7 @@ const prefs = JSON.parse(await Teahouse.readText(".teahouse/output/sandbox/var-e
 
 #### `Teahouse.setVar(updates) → Promise<{name,value}[]>`
 
-原子合并写入实例变量，落盘到 `.teahouse/runtime_vars.jsonl`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
+原子合并写入实例变量，落盘到 `runtime/runtime_vars.jsonl`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
 
 ```js
 await Teahouse.setVar({
@@ -182,7 +182,7 @@ await Teahouse.setVar({
 })
 ```
 
-**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetRuntimeVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `.teahouse/dyn_settings/` 动态设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
+**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetRuntimeVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `settings/dyn_settings/` 动态设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
 
 #### `Teahouse.getVars(names) → Promise<{name,value}[]>`
 
@@ -195,7 +195,7 @@ const [user] = await Teahouse.getVars(["user_name"])
 
 > **🚨 空值 / 缺值语义（最容易写错的地方）**
 >
-> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `.teahouse/runtime_vars.jsonl` 不存在、或某个变量从未写入，效果完全一样——对应条目返回 `{name, value: null}`。
+> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `runtime/runtime_vars.jsonl` 不存在、或某个变量从未写入，效果完全一样——对应条目返回 `{name, value: null}`。
 >
 > **只在你明确传入 `names` 时才保证"每个名字都有"**；不传 `names`（读全部）时，未初始化的变量根本不在，返回的都是已存在的：
 >
@@ -240,7 +240,7 @@ Teahouse.replacePlaceholders()
 
 #### 导演侧读写：`GetRuntimeVars` / `SetRuntimeVar`
 
-导演**既能读也能写**变量（`GetRuntimeVars` 读、`SetRuntimeVar` 写，走同一 `.teahouse/runtime_vars.jsonl`）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetRuntimeVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。核心变量会注入导演系统提示词（no cache），导演通常无需额外读取。
+导演**既能读也能写**变量（`GetRuntimeVars` 读、`SetRuntimeVar` 写，走同一 `runtime/runtime_vars.jsonl`）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetRuntimeVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。核心变量会注入导演系统提示词（no cache），导演通常无需额外读取。
 
 ### 发送消息
 
@@ -302,7 +302,7 @@ var floorNum = 1;
 
 Teahouse.runTool([
   { tool: "Generate", args: { source_file: "temp/opening.yaml",
-                              path: ".teahouse/output/floors/floor-" + floorNum + "-draft.md" }},
+                              path: "runtime/floors/floor-" + floorNum + "-draft.md" }},
   { tool: "GitCommit", args: { message: "floor-" + floorNum + ": 开场" } },
 ]).then(function(result) {
   console.log("流水线完成", result.results);
@@ -403,7 +403,7 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 - `Teahouse.sessionDestroy(session_id, abort?)` → `Promise<{ok, data:true, error?}>`,销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。回收要你主动调,`session_done` 不会销毁。
 - 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。**注意**:`sessionSend` 成功时返回的是 `{ok:true, data:true}`,不是 `true` 裸布尔——沙盒侧务必用 `res.ok` 判断,不要写 `res === true` 或 `res.ok === undefined` 这类旧假设。
 
-**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、`.teahouse/dyn_settings/` 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
+**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、`settings/dyn_settings/` 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
 
 ### 事件监听
 
@@ -415,7 +415,7 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 
 | 事件 | payload | 触发时机 |
 |---|---|---|
-| `output.refresh` | `{ path }` | 导演写/改/移动 `.teahouse/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
+| `output.refresh` | `{ path }` | 导演写/改/移动 `runtime/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
 | `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条。**bootstrap 内部已封装完成判定**，UI 组件通常不需要直接订阅此事件——使用 `Teahouse.runTool()` 的 Promise/handle 接口即可 |
 | `tool_run_cancelled` | `{ run_uuid, instance_id }` | 某 runTool 批被后端取消（经 `handle.cancel()` / `Teahouse.cancelRunTool(run_uuid)`）时广播。bootstrap 内部据此 reject 对应批，UI 无需手动订阅 |
 | `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
@@ -477,7 +477,7 @@ Teahouse.on("generation.status", function(status) {
 });
 ```
 
-宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `.teahouse/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
+宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `runtime/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
 
 **⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。bootstrap 内部订阅 `generate_progress` 和 `tool_run` 维护 currentDraft 和 runTool 封装。用户代码不应再直接监听 `generate_progress` 或自行管理 `tool_run` 完成判定，应使用 `Teahouse.runTool()` Promise 和 `draft.change` 事件。
 
@@ -516,7 +516,7 @@ window.registerUI("statusbar", bar)
 ### 步骤 1：了解当前沙盒状态
 
 ```
-Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
+Glob runtime/sandbox/**/*     → 查看沙盒目录中的现有文件
 ```
 
 确认实例已有哪些 UI 组件。bootstrap 是引擎内置的，不需要也不应该创建。
@@ -532,11 +532,11 @@ Glob .teahouse/output/sandbox/**/*     → 查看沙盒目录中的现有文件
 
 编写时使用普通 function 和 var（兼容旧浏览器，因为 iframe 无 transpiler）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
 
-Write 到 `.teahouse/output/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
+Write 到 `runtime/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
 
 ### 步骤 3：编写全局主题 CSS（唯一允许的独立 css）
 
-全局级/换肤入口的 `*.css` 注入 iframe `<head>` 中的 `<style>` 标签。基础模板见实例现有 `theme.css`。Write 到 `.teahouse/output/sandbox/theme.css`。
+全局级/换肤入口的 `*.css` 注入 iframe `<head>` 中的 `<style>` 标签。基础模板见实例现有 `theme.css`。Write 到 `runtime/sandbox/theme.css`。
 
 `theme.css` 同时承载**主题换肤**：颜色一律抽成 CSS 变量（`--bg` / `--text` / `--panel` / `--accent` …），暗色为 `:root` 默认，亮色由 `html[data-theme="light"]` 覆盖。`theme-proxy.js` 订阅宿主 `theme.change` 切换 `data-theme`，所有用 `var(--…)` 的正文与悬浮组件自动跟随切换。**主题机制全量经此变量集驱动**，组件靠 CSS 变量而不靠各自监听宿主换肤。
 
@@ -582,7 +582,7 @@ UI 组件是固定定位的悬浮元素。模式：
 - **样式内嵌 js**（`style.cssText`），**所有逻辑收敛进单文件**（不拆辅助 js）
 
 ```js
-// .teahouse/output/sandbox/statusbar.js — 底栏状态条（简单组件：单文件即可）
+// runtime/sandbox/statusbar.js — 底栏状态条（简单组件：单文件即可）
 (function() {
   var bar = document.createElement('div')
   bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:200;display:flex;...'
@@ -591,11 +591,11 @@ UI 组件是固定定位的悬浮元素。模式：
 ```
 
 ```js
-// .teahouse/output/sandbox/var-editor/var-editor.js — 组件包：文件夹 = 组件
+// runtime/sandbox/var-editor/var-editor.js — 组件包：文件夹 = 组件
 //   数据文件在同文件夹：var-editor/important-vars.json
 (function() {
   var PANEL;
-  // ... 用 Teahouse.readText(".teahouse/output/sandbox/var-editor/important-vars.json")
+  // ... 用 Teahouse.readText("runtime/sandbox/var-editor/important-vars.json")
   //     读配置，Teahouse.writeFile(...) 写回，Teahouse.setVar/getVars 读写变量
   window.registerUI('var-editor', PANEL)
 })()
@@ -611,7 +611,7 @@ UI 组件是固定定位的悬浮元素。模式：
 
 #### 首次部署顺序
 
-先创建文件，再 Write 到 `.teahouse/output/sandbox/`：
+先创建文件，再 Write 到 `runtime/sandbox/`：
 
 1. **teahouse-maintext-renderer.js**：正文渲染器（最先执行，建立 _pageState 和渲染逻辑）
 2. **theme.css**（可选）：全局主题样式——唯一允许的独立 css，换肤入口
@@ -619,18 +619,18 @@ UI 组件是固定定位的悬浮元素。模式：
 
 #### 迭代修改
 
-- **修改组件 → 直接 Edit `.teahouse/output/sandbox/` 下对应 js（或组件文件夹内文件）**。前端监听到 `file_changed` 后重建 iframe srcdoc（热重载）。**数据文件变更和代码变更一样会触发重建**——改组件自持的 `*.json` 后，相当于改沙盒内容，iframe 也会刷新。
+- **修改组件 → 直接 Edit `runtime/sandbox/` 下对应 js（或组件文件夹内文件）**。前端监听到 `file_changed` 后重建 iframe srcdoc（热重载）。**数据文件变更和代码变更一样会触发重建**——改组件自持的 `*.json` 后，相当于改沙盒内容，iframe 也会刷新。
 - 修改正文渲染器 → iframe 全重建，DOM 状态全丢。
 
 #### 沙盒代码整体禁用
 
-如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `.teahouse/output/sandbox/` 下的代码**移动到 `.teahouse/output/sandbox/disabled/`**：
+如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `runtime/sandbox/` 下的代码**移动到 `runtime/sandbox/disabled/`**：
 
 ```
-FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/output/sandbox/disabled/teahouse-maintext-renderer.js
+FileOps move runtime/sandbox/teahouse-maintext-renderer.js runtime/sandbox/disabled/teahouse-maintext-renderer.js
 ```
 
-`.teahouse/output/sandbox/disabled/` 内的文件渲染器**不读取**（除 `disabled/` 外均启用），故移入即从沙盒移除、但仍保留在该子目录（git 追踪、可恢复）；需要恢复时移回 `.teahouse/output/sandbox/`。只服务沙盒代码，正文楼层无此需求。
+`runtime/sandbox/disabled/` 内的文件渲染器**不读取**（除 `disabled/` 外均启用），故移入即从沙盒移除、但仍保留在该子目录（git 追踪、可恢复）；需要恢复时移回 `runtime/sandbox/`。只服务沙盒代码，正文楼层无此需求。
 
 ## 最佳实践
 
@@ -658,7 +658,7 @@ FileOps move .teahouse/output/sandbox/teahouse-maintext-renderer.js .teahouse/ou
 - **iframe sandbox="allow-scripts"** 不允许 `allow-same-origin`、`allow-forms`、`allow-popups`。沙盒内无法访问 localStorage、Cookie、或宿主 DOM
 - **BBCode 渲染在宿主层**：沙盒代码中不要手动解析 BBCode，调用 `Teahouse.renderRichText()`
 - **文件操作有权限**：`readText` / `readAsset` / `writeFile` 受当前用户 JWT 权限限制
-- **正文楼层在 `.teahouse/output/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
+- **正文楼层在 `runtime/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
 - **组件数据放组件文件夹，不进根目录**：`foo/foo.js` + `foo/*.json`；`.json` 不被注入，用 `writeFile`/`readText` 自读写，随 git 追踪、导出随包
 - **数据文件是 `.json` 时不被当代码注入，安全**：但**别在组件文件夹放 `*.js`/`*.css` 之外的其他可执行东西**——无限深度扫描下，任何深度的 `.js`/`.css` 都会被注入进 srcdoc
 - **不确定时参考 sandbox 实例**：`data/lowstar/instances/sandbox/` 下有完整的 UI 组件参考

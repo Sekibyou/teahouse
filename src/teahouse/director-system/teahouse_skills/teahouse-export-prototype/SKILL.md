@@ -37,18 +37,18 @@ description: 教导导演如何把当前实例就地整理为一个可导出的�
 
 ## 简介（给用户的说明）
 
-原型包会包含当前实例里**所有未被排除的目标内容**：`teahouse.md`、`static_settings/`、`.teahouse/dyn_settings/`、`skills/`、`.teahouse/output/`（沙盒 + 楼层）、`.teahouse/runtime_vars.jsonl`、`assets/` 等。**什么保留、什么剔除，由你和导演就地决定**——比如楼层只留开场楼 `floor-001.md`、变量只裁成开局变量子集、`teahouse.md` 泛化——这些都是业务判断，不写死成代码规则。
+原型包会包含当前实例里**所有未被排除的目标内容**：`teahouse.md`、`settings/static_settings/`、`settings/dyn_settings/`、`skills/`、`runtime/`（沙盒 + 楼层）、`runtime/runtime_vars.jsonl`、`assets/` 等。**什么保留、什么剔除，由你和导演就地决定**——比如楼层只留开场楼 `floor-001.md`、变量只裁成开局变量子集、`teahouse.md` 泛化——这些都是业务判断，不写死成代码规则。
 
 ## SOP（就地整理）
 
 ### 步骤 1：了解当前实例全貌
 
 ```
-Glob static_settings/**/*                       → 了解长期静态设定
-Glob .teahouse/dyn_settings/**/*                → 了解动态设定与总结流水账
-Glob skills/*/SKILL.md  (或 .teahouse/skills/…)   → 了解现有 skills
-Glob .teahouse/output/sandbox/**/*                → 了解沙盒资源
-Glob .teahouse/**/*                               → 了解前端配置（含 runtime_vars）
+Glob settings/static_settings/**/*                       → 了解长期静态设定
+Glob settings/dyn_settings/**/*                → 了解动态设定与总结流水账
+Glob skills/*/SKILL.md  (或 skills/…)   → 了解现有 skills
+Glob runtime/sandbox/**/*                → 了解沙盒资源
+Glob runtime/**/*                               → 了解游玩运行时（含楼层、沙盒、runtime_vars、text-style-rules）
 Glob assets/**/*                                  → 了解静态资源
 Glob building/**/*                                → 了解创建者的元工作（点子/checklist/笔记），仅作参考，不打包
 ```
@@ -63,11 +63,11 @@ Glob building/**/*                                → 了解创建者的元工�
 
 在要打包的实例上，逐项清理。以下都是**业务判断**，导演与用户共同决定去留：
 
-- **楼层**：`.teahouse/output/floors/` 是新实例初始楼层的来源。通常只保留开场楼（如 `floor-001.md`）作为新实例的初始页面，删除测试过程的楼。若根级 `floors/` 归档里有不需要的测试楼，一并清理。
-- **变量**：`.teahouse/runtime_vars.jsonl` 裁剪为「开局变量」子集——删除只跟测试进度相关的运行时变量，保留设定/框架类变量（角色、世界观、初始状态）。
-- **`.teahouse/dyn_settings/`**：流水账是进度，不属于原型——删除 `.teahouse/dyn_settings/summary/sum-*.md` 及 `.teahouse/dyn_settings/summary/index.json`（归档界），让新实例从零开始。若想保留开场楼的"开篇设定"，体现在开场的动态设定文件里而非流水账。
-- **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界已由 `.teahouse/dyn_settings/summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需再写 `summarized_to`。
-- **静态设定（`static_settings/`）+ 动态设定（`.teahouse/dyn_settings/`）**：适度泛化。保留角色基础设定与世界观框架（静态），去掉"当前正在发生"的临时状态（动态）。`static_settings/` 已 gitignore，本就不进 git，但仍是原型内容，打包处理时按需保留。
+- **楼层**：`runtime/floors/` 是新实例初始楼层的来源。通常只保留开场楼（如 `floor-001.md`）作为新实例的初始页面，删除测试过程的楼。若根级 `floors/` 归档里有不需要的测试楼，一并清理。
+- **变量**：`runtime/runtime_vars.jsonl` 裁剪为「开局变量」子集——删除只跟测试进度相关的运行时变量，保留设定/框架类变量（角色、世界观、初始状态）。
+- **`settings/dyn_settings/`**：流水账是进度，不属于原型——删除 `summary/sum-*.md` 及 `summary/index.json`（归档界），让新实例从零开始。若想保留开场楼的"开篇设定"，体现在开场的动态设定文件里而非流水账。
+- **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界已由 `summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需再写 `summarized_to`。
+- **静态设定（`settings/static_settings/`）+ 动态设定（`settings/dyn_settings/`）**：适度泛化。保留角色基础设定与世界观框架（静态），去掉"当前正在发生"的临时状态（动态）。`settings/static_settings/` 已 gitignore，本就不进 git，但仍是原型内容，打包处理时按需保留。
 - **skills/**：保留该原型要复用的 skill。若某 skill 的 SKILL.md 含过于具体的故事信息，用 Edit 泛化。
 - **temp/**：删除未完成草稿（`draft.md` 等）。**temp/ 本就纳入 gitignore**（不随 GitCommit 提交、也不进原型包），即使残留下草稿也不污染产物。
 - **sessions/**：后端打包会自动排除，无需手动删（若看到也无需担忧）。**`.sessions/` 已 gitignore**,多会话文件（含临时子会话）不随 `GitCommit` 提交。
@@ -77,9 +77,9 @@ Glob building/**/*                                → 了解创建者的元工�
 用 checklist 形式向用户核对（哪些保留、哪些剔除），获得确认后再让用户去打包。
 
 ```
-Glob .teahouse/output/floors/**/*   → 确认只留预期楼层
-Glob .teahouse/runtime_vars.jsonl   → 确认变量子集
-Glob static_settings/**/* .teahouse/dyn_settings/**/* skills/**/* → 确认泛化完成
+Glob runtime/floors/**/*   → 确认只留预期楼层
+Glob runtime/runtime_vars.jsonl   → 确认变量子集
+Glob settings/static_settings/**/* settings/dyn_settings/**/* skills/**/* → 确认泛化完成
 Glob building/**/*                  → 确认元工作都放在 building/（不进包）
 ```
 

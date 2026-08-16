@@ -31,10 +31,10 @@
 
 **正文和沙盒代码的「输出」即文件落盘，没有任何推送工具。** 前端监听导演的工具调用（Write/Edit/FileOps 等触发 `file_changed`）后自动刷新读取：
 
-- **正文历史**：写入 `.teahouse/output/floors/` 下的 `floor-N-draft.md`（写稿中）或 `floor-N.md`（定稿）。前端靠**文件名中间数字**排序展示。
-- **沙盒代码**：写入 `.teahouse/output/sandbox/*.js` / `*.css`。**基础层 `bootstrap.js` 由平台在组装 iframe 时自动注入（不在实例 sandbox 目录，勿创建）**，渲染器对实例文件按文件名分派——`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
-- 调用 Generate 生成正文前，须先构建对应的 YAML 配置文件（`source_file`）组织消息结构；在配置文件内需引用历史楼层入上下文时，用 `{{glob:output/floors/floor-*.md:lastN}}` 占位符自动按楼层数字取最近 N 层窗口。
-- 沙盒代码需整体禁用时，把 `.teahouse/output/sandbox/` 下的文件移到 `.teahouse/output/sandbox/disabled/`（除 `disabled/` 外均启用；此子目录内文件渲染器不读，移入即禁用）。
+- **正文历史**：写入 `runtime/floors/` 下的 `floor-N-draft.md`（写稿中）或 `floor-N.md`（定稿）。前端靠**文件名中间数字**排序展示。
+- **沙盒代码**：写入 `runtime/sandbox/*.js` / `*.css`。**基础层 `bootstrap.js` 由平台在组装 iframe 时自动注入（不在实例 sandbox 目录，勿创建）**，渲染器对实例文件按文件名分派——`*.css` 注入 `<head>`、其余 `*.js` 追加挂载。
+- 调用 Generate 生成正文前，须先构建对应的 YAML 配置文件（`source_file`）组织消息结构；在配置文件内需引用历史楼层入上下文时，用 `{{glob:runtime/floors/floor-*.md:lastN}}` 占位符自动按楼层数字取最近 N 层窗口。
+- 沙盒代码需整体禁用时，把 `runtime/sandbox/` 下的文件移到 `runtime/sandbox/disabled/`（除 `disabled/` 外均启用；此子目录内文件渲染器不读，移入即禁用）。
 
 ## 实例目录结构
 
@@ -42,23 +42,23 @@
 
 | 目录 | 性质 | 用途 |
 |---|---|---|
-| `.teahouse/output/sandbox/` | 必需 | 沙盒渲染代码（平台注入 bootstrap，实例只写 *.css、其余 *.js） |
-| `.teahouse/output/sandbox/disabled/` | 可选 | 沙盒代码禁用区（除本子目录外均启用；移入即禁用，渲染器不读） |
-| `.teahouse/output/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
-| `.teahouse/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
-| `.teahouse/dyn_settings/` | 推荐 | 动态设定（关系、所在地、任务进展等可变状态，总结产出，入 git） |
-| `.teahouse/dyn_settings/summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
-| `.teahouse/generate-config/` | 推荐 | Generate 配置模板（引用 dyn_settings/static_settings 切片，更新跟随总结） |
-| `static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，gitignore，只读引用） |
+| `runtime/sandbox/` | 必需 | 沙盒渲染代码（平台注入 bootstrap，实例只写 *.css、其余 *.js） |
+| `runtime/sandbox/disabled/` | 可选 | 沙盒代码禁用区（除本子目录外均启用；移入即禁用，渲染器不读） |
+| `runtime/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
+| `runtime/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
+| `settings/dyn_settings/` | 推荐 | 动态设定（关系、所在地、任务进展等可变状态，总结产出，入 git） |
+| `summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
+| `generate-config/` | 推荐 | Generate 配置模板（引用 dyn_settings/static_settings 切片，更新跟随总结） |
+| `settings/static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，gitignore，只读引用） |
 | `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md） |
 
 ## 自建 Skill
 
-导演可以自建 skill（提示词包/方法论）。**实例自建 skill 放 `.teahouse/skills/<名字>/SKILL.md`，同名会覆盖系统内置 skill**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
+导演可以自建 skill（提示词包/方法论）。**实例自建 skill 放 `skills/<名字>/SKILL.md`，同名会覆盖系统内置 skill**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
 
 - **SKILL.md 格式**：开头 YAML frontmatter 写 `name` + `description`（`description` 兼作触发条件，写清「当用户要求 X 时触发」），正文写方法论 + SOP。
 - **加载机制**：系统提示词只注入每个 skill 的 `name` + `description`（正文不注入），导演用 `SkillRead(name)` 按需读全文。
-- **多文件 skill**：`SkillRead` 只读 `SKILL.md`。若拆成 `Step1.md` / `Step2.md` 等分步文件，在 `SKILL.md` 里写清编排规则——「按序逐个用 `Read` 读 `.teahouse/skills/<名字>/StepN.md`，每步完成并落盘、用户确认后才读下一步」。分步文件不在自动扫描范围内，用 `Read` 工具读。
+- **多文件 skill**：`SkillRead` 只读 `SKILL.md`。若拆成 `Step1.md` / `Step2.md` 等分步文件，在 `SKILL.md` 里写清编排规则——「按序逐个用 `Read` 读 `skills/<名字>/StepN.md`，每步完成并落盘、用户确认后才读下一步」。分步文件不在自动扫描范围内，用 `Read` 工具读。
 
 ## 建议设定格式
 
@@ -78,7 +78,7 @@
 
 ## 注释语法
 
-**`${@note ...}`** 是写给作者/导演的**元信息注释**，写在与导演相关的设定文件里（`teahouse.md`、`static_settings/`、`dyn_settings/` 等），解析时被**剥除（替换为空）**：
+**`${@note ...}`** 是写给作者/导演的**元信息注释**，写在与导演相关的设定文件里（`teahouse.md`、`settings/static_settings/`、`dyn_settings/` 等），解析时被**剥除（替换为空）**：
 
 - **导演（你）能看到**：用 `Read` 读原始 .md 文件时，注释原样可见——用来标注"这个宏/切片为何要保留"，比如指示某段切片值会随剧情变动、不要写死成当前量。
 - **正文 bot 看不到**：设定经注入（系统提示词 / Generate）发送给正文 AI 前，注释已被剥净，正文只会收到实际内容。

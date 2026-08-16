@@ -153,7 +153,7 @@ rich_text 内容的处理顺序（由前端 `renderText()` 执行）：
 
 ## 格式说明
 
-文本样式规则定义在 `.teahouse/text-style-rules.yaml`。每条规则定义了一对符号如何被包裹在自定义 HTML 中。规则在 BBCode 解析之后、Markdown 解析之前应用。
+文本样式规则定义在 `runtime/text-style-rules.yaml`。每条规则定义了一对符号如何被包裹在自定义 HTML 中。规则在 BBCode 解析之后、Markdown 解析之前应用。
 
 ```yaml
 rules:
@@ -187,7 +187,7 @@ rules:
 ### 查看规则
 
 ```
-Read .teahouse/text-style-rules.yaml
+Read runtime/text-style-rules.yaml
 ```
 
 若文件不存在，说明该实例尚未配置任何样式规则，可以创建新文件。
@@ -222,7 +222,7 @@ Read .teahouse/text-style-rules.yaml
 **用户**: 给《》着金色
 
 **导演**:
-1. Read `.teahouse/text-style-rules.yaml`
+1. Read `runtime/text-style-rules.yaml`
 2. 如果文件不存在，Write 新文件；否则 Edit 追加规则：
 ```yaml
   - start_symbol: "《"

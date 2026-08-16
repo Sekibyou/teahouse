@@ -15,12 +15,12 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 
 正文生成的核心思路：**先理解当前状态，再构造写作请求**。你不是自己写正文，而是通过 Generate 工具让正文 AI 来写。你的职责是提供准确、完整的上下文。
 
-正文「输出」即**文件落盘**：正文历史唯一来源是 `.teahouse/output/floors/`。半正式稿 `floor-N-draft.md`（每层唯一，就地覆盖）是写稿过程中的可见输出；用户在草稿页确认后，由沙盒 `Teahouse.commitDraft(N)` 自动转正为 `floor-N.md`（含解析正文变量块 + git 提交）。前端监听导演的工具调用后自动刷新读取，无需任何推送工具。
+正文「输出」即**文件落盘**：正文历史唯一来源是 `runtime/floors/`。半正式稿 `floor-N-draft.md`（每层唯一，就地覆盖）是写稿过程中的可见输出；用户在草稿页确认后，由沙盒 `Teahouse.commitDraft(N)` 自动转正为 `floor-N.md`（含解析正文变量块 + git 提交）。前端监听导演的工具调用后自动刷新读取，无需任何推送工具。
 
 ## 目录约定
 
-- `temp/` — 草稿/探索中间产物（**每章一份、就地覆盖**，不做多版本并存）。**temp/ 不纳入 git 版本控制**（GitCommit 不会提交其内容），草稿/探索中间产物放这里很安全。**写 temp/ 的 Generate 不进沙盒打字机**——流式仅在最终落进 `.teahouse/output/floors/` 后一次性渲染
-- `.teahouse/output/floors/` — 上下文引擎正文历史（半正式稿 + 定稿），每层最多一份，就地覆盖
+- `temp/` — 草稿/探索中间产物（**每章一份、就地覆盖**，不做多版本并存）。**temp/ 不纳入 git 版本控制**（GitCommit 不会提交其内容），草稿/探索中间产物放这里很安全。**写 temp/ 的 Generate 不进沙盒打字机**——流式仅在最终落进 `runtime/floors/` 后一次性渲染
+- `runtime/floors/` — 上下文引擎正文历史（半正式稿 + 定稿），每层最多一份，就地覆盖
   - `floor-N-draft.md` — 半正式稿（创作过程中）
   - `floor-N.md` — 正式定稿（满意后 rename）
 
@@ -28,10 +28,10 @@ description: 教导导演如何生成正文楼层，包括上下文准备和 Gen
 
 Generate 的 `path` 落在哪个目录，决定沙盒是否流式渲染，须按用户意图选择：
 
-- **生成全文 / 重写** → `path` **直接**写 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+- **生成全文 / 重写** → `path` **直接**写 `runtime/floors/floor-{{N}}-draft.md`。
   落盘即在正文历史 → 触发沙盒打字机并常驻渲染。
 - **续写 / 大幅度改写** → `path` 写 `temp/draft-{{N}}.md`，完成后读出现稿与之**对比合并**
-  （新增部分并入），再落进 `.teahouse/output/floors/floor-{{N}}-draft.md`。
+  （新增部分并入），再落进 `runtime/floors/floor-{{N}}-draft.md`。
   temp/ 阶段不打字机；落进 floors/ 后一次性渲染合并结果。
 
 ## SOP
@@ -41,12 +41,12 @@ Generate 的 `path` 落在哪个目录，决定沙盒是否流式渲染，须按
 检查以下目录和文件，如果不存在则创建：
 
 ```
-FileOps mkdir .teahouse/dyn_settings/
+FileOps mkdir settings/dyn_settings/
 FileOps mkdir temp/
-FileOps mkdir .teahouse/output/floors/
+FileOps mkdir runtime/floors/
 ```
 
-**变量系统不在此创建**。变量统一存放在 `.teahouse/runtime_vars.jsonl`（由 `SetRuntimeVar` 工具写、`GetRuntimeVars` 读），是实例内唯一的变量载体（文件即状态）。设定分两类：**长期静态设定**在根 `static_settings/`（gitignore，只读引用，不修改）；**中短期动态设定**在 `.teahouse/dyn_settings/`（入 git，总结产出）。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
+**变量系统不在此创建**。变量统一存放在 `runtime/runtime_vars.jsonl`（由 `SetRuntimeVar` 工具写、`GetRuntimeVars` 读），是实例内唯一的变量载体（文件即状态）。设定分两类：**长期静态设定**在根 `settings/static_settings/`（gitignore，只读引用，不修改）；**中短期动态设定**在 `settings/dyn_settings/`（入 git，总结产出）。导演既读写变量，也管理设定。不存在 `variables/` 目录——不要创建它。
 
 ### 步骤 1：理解楼层配置
 
@@ -58,24 +58,24 @@ FileOps mkdir .teahouse/output/floors/
 
 ### 步骤 3：阅读前文，理解剧情
 
-正文历史位于 `.teahouse/output/floors/`，按楼层数字排序：
+正文历史位于 `runtime/floors/`，按楼层数字排序：
 
 ```
-Glob .teahouse/output/floors/floor-*.md   → 列出所有楼层/草稿
-Glob .teahouse/dyn_settings/summary/sum-*.md                     → 列出所有总结
+Glob runtime/floors/floor-*.md   → 列出所有楼层/草稿
+Glob summary/sum-*.md                     → 列出所有总结
 ```
 
 **阅读策略：**
 
-- **最近楼层**：优先用 `{{glob:output/floors/floor-*.md:last10}}` 一次性注入最近 10 层正文（按楼层数字自动升序、正式稿优先于草稿）。如需精读某层，用 Read 直接读文件。
-- **更早楼层（已被总结覆盖）**：阅读 `.teahouse/dyn_settings/summary/sum-*.md` 总结，不必逐层读原文。
+- **最近楼层**：优先用 `{{glob:runtime/floors/floor-*.md:last10}}` 一次性注入最近 10 层正文（按楼层数字自动升序、正式稿优先于草稿）。如需精读某层，用 Read 直接读文件。
+- **更早楼层（已被总结覆盖）**：阅读 `summary/sum-*.md` 总结，不必逐层读原文。
 - 归档界标记在 `teahouse.md` 全局变量区——超过归档界、未被总结覆盖的楼层，正文必须进上下文；被总结覆盖的楼层看总结即可。
 
 充分理解用户的创作意图、叙事风格和当前剧情走向。
 
 ### 步骤 4：了解当前变量状态
 
-**核心变量已实时注入你的系统提示词**（no cache）——构建上下文时系统已把 `.teahouse/runtime_vars.jsonl` 当前的 `${name}` 变量快照拼进提示词开头，你通常已经看到它们的现值，无需再 Read（避免游玩时的读取往返）。
+**核心变量已实时注入你的系统提示词**（no cache）——构建上下文时系统已把 `runtime/runtime_vars.jsonl` 当前的 `${name}` 变量快照拼进提示词开头，你通常已经看到它们的现值，无需再 Read（避免游玩时的读取往返）。
 
 若需读取特定变量、或系统提示词里没体现，用 `GetRuntimeVars(names=[...])` 按名精确读取，例如：
 
@@ -89,15 +89,15 @@ GetRuntimeVars(names=["金币", "修为", "主角名"])
 SetRuntimeVar(updates={"金币": 140, "修为": "炼气四层"})
 ```
 
-记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `.teahouse/dyn_settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。
+记住：**变量是高度精炼的数值/重要值**（金币、修为、好感度、主角名）；较长的中短期文字状态（二人关系、任务描述、经历）属于**动态设定**，放 `settings/dyn_settings/` 下用 Write/Edit/WriteLine 管理，不要塞进变量。
 
 ### 步骤 5：阅读相关设定
 
-基于前文和用户的意图，从设定文件夹里阅读可能与这段剧情有关联的设定。**长期背景**（时代特征、势力、修为分段等）在根 `static_settings/`；**中短期动态**（关系、当前所在地、任务进展）在 `.teahouse/dyn_settings/`。使用 Glob 探索设定文件：
+基于前文和用户的意图，从设定文件夹里阅读可能与这段剧情有关联的设定。**长期背景**（时代特征、势力、修为分段等）在根 `settings/static_settings/`；**中短期动态**（关系、当前所在地、任务进展）在 `settings/dyn_settings/`。使用 Glob 探索设定文件：
 
 ```
-Glob static_settings/**/*
-Glob .teahouse/dyn_settings/**/*
+Glob settings/static_settings/**/*
+Glob settings/dyn_settings/**/*
 ```
 
 在摘抄设定时：
@@ -109,22 +109,22 @@ Glob .teahouse/dyn_settings/**/*
 
 | # | 内容类别 | 建议位置 | 说明 |
 |---|---|---|---|
-| 1 | 固定不变设定（正文生成标准、宏观设定） | `static_settings/` | 全剧恒定，只读引用 |
-| 2 | 分阶段设定（按变量动态切片） | `static_settings/` | 用 `${@condition ...}` / `${@python ...}` 按变量现值就地选阶段；切片**产物**属动态 |
-| 3 | 动态设定模板（如某类型人物模板） | `static_settings/` | 游玩/总结时按需**读取模板 → 去 `dyn_settings/` 物化实例**，模板本身不动 |
-| 4 | 总结产出的设定 | `.teahouse/dyn_settings/` | teahouse-summarize 产出：人物关系、所在地、任务进展等 |
-| 5 | 游玩中途产生的设定 | `.teahouse/dyn_settings/` | 导演在游玩中即时代落地的新设定 |
-| 6 | 随游玩变动的设定（切片产物、模板物化实例） | `.teahouse/dyn_settings/` | 会随剧情变，不是变量 |
-| 7 | 变量（数值/重要值的精炼状态） | `.teahouse/runtime_vars.jsonl` | `SetRuntimeVar`/`GetRuntimeVars`，不放进设定文件 |
+| 1 | 固定不变设定（正文生成标准、宏观设定） | `settings/static_settings/` | 全剧恒定，只读引用 |
+| 2 | 分阶段设定（按变量动态切片） | `settings/static_settings/` | 用 `${@condition ...}` / `${@python ...}` 按变量现值就地选阶段；切片**产物**属动态 |
+| 3 | 动态设定模板（如某类型人物模板） | `settings/static_settings/` | 游玩/总结时按需**读取模板 → 去 `dyn_settings/` 物化实例**，模板本身不动 |
+| 4 | 总结产出的设定 | `settings/dyn_settings/` | teahouse-summarize 产出：人物关系、所在地、任务进展等 |
+| 5 | 游玩中途产生的设定 | `settings/dyn_settings/` | 导演在游玩中即时代落地的新设定 |
+| 6 | 随游玩变动的设定（切片产物、模板物化实例） | `settings/dyn_settings/` | 会随剧情变，不是变量 |
+| 7 | 变量（数值/重要值的精炼状态） | `runtime/runtime_vars.jsonl` | `SetRuntimeVar`/`GetRuntimeVars`，不放进设定文件 |
 
-**模板 → 实例的模式**：第 3 类放**静态**（框架、可复用的形状），真正的内容在游玩/总结时按需读取模板、到 `.teahouse/dyn_settings/` 内创建实例（对应第 5、6 类）。模板本身长期不动，物化出的实例随剧情演变。
+**模板 → 实例的模式**：第 3 类放**静态**（框架、可复用的形状），真正的内容在游玩/总结时按需读取模板、到 `settings/dyn_settings/` 内创建实例（对应第 5、6 类）。模板本身长期不动，物化出的实例随剧情演变。
 
 ### 步骤 6：检查当前层草稿状态
 
-检查 `.teahouse/output/floors/` 中当前层（或最近层）的半正式稿状态：
+检查 `runtime/floors/` 中当前层（或最近层）的半正式稿状态：
 
 ```
-Glob .teahouse/output/floors/floor-*.md
+Glob runtime/floors/floor-*.md
 ```
 
 - **没有当前层草稿**：正常开始生成新楼层。
@@ -138,13 +138,13 @@ Glob .teahouse/output/floors/floor-*.md
 **工作流**：
 
 1. **复制配置模板**（每章一份 `generate-config-{{N}}.yaml`，就地覆盖、不做多版本）：
-   - 如果是首次创作：复制 `.teahouse/generate-config/generate-config.yaml` → `temp/generate-config-{{N}}.yaml`
+   - 如果是首次创作：复制 `generate-config/generate-config.yaml` → `temp/generate-config-{{N}}.yaml`
    - 如果是续写：复制上一楼层的 config（如 `temp/generate-config-{{N-1}}.yaml`）→ `temp/generate-config-{{N}}.yaml`
 
 2. **编辑配置文件**（使用 Edit 工具进行精确修改）：
-   - 用 `{{glob:output/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{.teahouse/dyn_settings/summary/sum-*.md}}` 而非逐层）
+   - 用 `{{glob:runtime/floors/floor-*.md:lastN}}` 注入最近 N 层正文（N 由归档界窗口决定，一般 10；被总结覆盖的早期楼层用 `{{summary/sum-*.md}}` 而非逐层）
    - 更新设定引用范围（基于当前变量值调整锚点/行号）
-   - 在 user 消息中用 `${name}` 变量字面量引用当前变量值（如 `${金币}`、`${主角名}`、`${修为}`），Generate 发送给正文 AI 前会统一展开为值；也可用 `{{.teahouse/dyn_settings/xxx.yaml|...}}` 切片注入相关动态设定。**`${ }` 本身就代表「环境」**：括号内是变量命名空间，变量名（或条件表达式）一律**裸写**，无需再加任何包裹——无论是 `${user}` 这种普通变量、还是 `${@python return ... }` 这种条件块，里面的 `user`、`好感度` 都是直接写的裸变量名。
+   - 在 user 消息中用 `${name}` 变量字面量引用当前变量值（如 `${金币}`、`${主角名}`、`${修为}`），Generate 发送给正文 AI 前会统一展开为值；也可用 `{{settings/dyn_settings/xxx.yaml|...}}` 切片注入相关动态设定。**`${ }` 本身就代表「环境」**：括号内是变量命名空间，变量名（或条件表达式）一律**裸写**，无需再加任何包裹——无论是 `${user}` 这种普通变量、还是 `${@python return ... }` 这种条件块，里面的 `user`、`好感度` 都是直接写的裸变量名。
    - **显式占位符（注册式框架 `${@...}`）**：除花括号外，可用反斜杠前缀的独立指令精确表达语义，全部统一进一个判定框架——写清楚比靠猜好：
      - `${@var 金币}` — 变量值（与裸写 `${金币}` 等价）
      - `${@type 金币}` — 变量的类型串（`number`/`string`/`boolean`/`array`），喂给正文 AI 判断类型用
@@ -156,7 +156,7 @@ Glob .teahouse/output/floors/floor-*.md
      - 未注册的 `@xxx` → 原样保留不报错；变量/路径不存在 → 原样保留
    - **进阶：条件切片**——当需要"按变量值从几段里就地选一段灌给正文"（如骰子分档、好感度阶梯提示词）时，**单条件真/假两大支**用 `${@condition 条件: 真输出 [else 假输出]}`（见上，`else` 可选，无 else 假→空），**多档位阶梯**（三档及以上）用 `${@python }` 代码块在解析阶段命中一段，未命中的分支不进入上下文。示例（每档一份独立设定文件，命中即物化整段）：
      ```
-     ${@python return "{{.teahouse/dyn_settings/heartful-zhongqing.md}}" if 好感度 >= 80 else ("{{.teahouse/dyn_settings/heartful-xindong.md}}" if 好感度 >= 50 else "{{.teahouse/dyn_settings/heartful-chujian.md}}")}
+     ${@python return "{{settings/dyn_settings/heartful-zhongqing.md}}" if 好感度 >= 80 else ("{{settings/dyn_settings/heartful-xindong.md}}" if 好感度 >= 50 else "{{settings/dyn_settings/heartful-chujian.md}}")}
      ```
      （等价的多行 if/elif/else 写法见下）`return` 的值也可以是别的占位符（`{{file:line}}`、`${变量}`），会继续被后续解析展开。也可写成多行块（旧裸写 `${ if... }` 仍兼容自动降级，等价）：
      ```
@@ -169,14 +169,14 @@ Glob .teahouse/output/floors/floor-*.md
      ```
      注意：条件里引用的变量名必须不含空白字符（空格/tab/换行）；块内可调用白名单函数 `roll("1d6")` / `random(lo, hi)`。**排查用三态**：`@condition` 假条件 → 该位置变**空**（正常，分支不命中即不注入）；**坏块**（语法/越权/变量不存在）→ **整块原样残留**（说明写错，需改）。写出 payload 后检查是否有未展开的 `${ if... }` / `${@...}` 残留（残留=坏块）。
 
-     **路径基准（重要）**：占位符里的文件路径一律**相对实例根目录**（而非项目根），必须带完整前缀、按实际目录层级写全（可视为"绝对路径"）。引用 `.teahouse/` 下的文件必须写 `.teahouse/output/floors/...` 这类完整前缀；漏写前缀等于指向一个不存在的路径，会**原样残留**。glob 是唯一允许省略 `.teahouse/` 的偷懒写法（引擎会自动补 `.teahouse/` 重试），其余切片请勿依赖此行为。
+     **路径基准（重要）**：占位符里的文件路径一律**相对实例根目录**（而非项目根），必须带完整前缀、按实际目录层级写全（可视为"绝对路径"）。引用 `runtime/`、`settings/` 等顶层目录下的文件必须写 `runtime/floors/...`、`settings/assemble.md` 这类完整前缀；漏写前缀等于指向一个不存在的路径，会**原样残留**。
 
      **语法要点**：块内是**标准 Python**——字面量布尔必须写 `True`/`False`（大写，小写 `true` 是未定义名会整块残留）。**单行 if 链有引擎兜底但也最不抗造**：`if a: return x elif b: return y else: return z` 这种单行多分支，引擎会拿 token 驱动重写成合法多行（`_rebuild_single_line_if`），`:`/关键字在引号值内不会被误切——但前提是那行**原封不动**地进了 Python 解析。只要 YAML 引号层先动过手脚（见下节），文本走样后照样整块残留。所以踩坑经验仍是：**多分支一律写多行块**（`return "a" if cond else "b"` 这种单行三元可留），把容错面拉到最大，别依赖单行兜底。
 
      **YAML 引号与转义**：Generate 配置是 **YAML 文件**，占位符/条件块是写在这个文件里的字符串——YAML 的引号规则会**先于**占位符解析生效，内嵌引号常在这里二次破坏。三层经验，从「绕开」到「彻底根治」：
      - **`\"` 反斜杠转义在 YAML 里几乎不生效**：双引号字符串里 YAML 才认 `\"`，普通块引号/单引号里反斜杠是字面量。与其跟转义搏斗，不如**直接写引号**——用 YAML 单引号 `'...'` 或块标量（`|`）包住整段，内嵌的双引号原样保留不冲突。只要"外层包装"与"内嵌引号"用了不同引号对，就不需要转义。
      - **优先"值引用"而非"引号锚点"**：当要按值从几段里选一段时，`return "{{xxx.md}}"`（整文件）最稳；需要部分截取时，让切片文件本身固定、靠条件块选文件，而不是在 return 内部写带引号的 `from=` 锚点截取。
-     - **组装器中转（根治，最佳实践）**：最彻底的做法是**别把占位符/条件块写进 YAML**——用一个 `.md` 文件做**组装器**（中转），把所有含内嵌引号、`${}`、条件切片、`{{}}` 文件引用的设定与变量组织逻辑都挪进去；YAML 只留「历史正文 + 用户正文要求」这种纯文本段落，并在 content 里用 **`{{path}}` 整文件引用那个组装器 `.md`**。这样 YAML 一处引号都不必写，内嵌引号/花括号/反斜杠全部留在这个非 YAML 的 `.md` 里自然存活，引号层再无破坏机会。**嵌套展开语义已验证**：Generate 发送前走 `resolve_variables`（多轮循环直到稳定，`MAX_RESOLVE_DEPTH`），组装器 `.md` 内的 `{{path}}`、`${}` 会被下一轮继续展开——组装器里再引设定/变量完全可行。**适用边界**：凡"要按变量动态拼内容（条件/骰子/多档设定）"的段落，应放组装器；YAML 本身退化为薄壳。具体到本仓库的第一个落地实践见 prototype `example` 的 `.teahouse/dyn_settings/` 下的组装器 md 与 `generate-config/*.yaml`（yaml 只写历史+要求，设定/变量全在组装器）。
+     - **组装器中转（根治，最佳实践）**：最彻底的做法是**别把占位符/条件块写进 YAML**——用一个 `.md` 文件做**组装器**（中转），把所有含内嵌引号、`${}`、条件切片、`{{}}` 文件引用的设定与变量组织逻辑都挪进去；YAML 只留「历史正文 + 用户正文要求」这种纯文本段落，并在 content 里用 **`{{path}}` 整文件引用那个组装器 `.md`**。这样 YAML 一处引号都不必写，内嵌引号/花括号/反斜杠全部留在这个非 YAML 的 `.md` 里自然存活，引号层再无破坏机会。**嵌套展开语义已验证**：Generate 发送前走 `resolve_variables`（多轮循环直到稳定，`MAX_RESOLVE_DEPTH`），组装器 `.md` 内的 `{{path}}`、`${}` 会被下一轮继续展开——组装器里再引设定/变量完全可行。**适用边界**：凡"要按变量动态拼内容（条件/骰子/多档设定）"的段落，应放组装器；YAML 本身退化为薄壳。具体到本仓库的第一个落地实践见 prototype `example` 的 `settings/dyn_settings/` 下的组装器 md 与 `generate-config/*.yaml`（yaml 只写历史+要求，设定/变量全在组装器）。
 
      **锚点必须唯一（切片最容易踩的硬约束）**：`{{file|from="A"|to="B"}}` 的锚点是**子串 + 唯一匹配**——`_find_anchor_line` 要求锚点**恰好命中一行**才放行：找不到报「Anchor not found」，命中多行报「Anchor appears on multiple lines」；两类错误在宽松模式下都会让**整片占位符原样残留在 payload 里**（表现成该片设定没被注入）。所以写带锚点切片时有两条铁律：
      - **锚点在目标文件里必须唯一**：避免用它常出现的词句做锚点（人名、常用动作、章节号这类会重复的都不行）。要截一个 `## 章节` 或 `<标签>` 围起的段落，务必确认开/闭标签在全文件只出现一次。
@@ -189,7 +189,7 @@ Glob .teahouse/output/floors/floor-*.md
      ${
      result = roll("1d6")
      if result >= 5:
-         return f"当前骰子结果是{result}。" + "{{.teahouse/dyn_settings/encounter.md}}"
+         return f"当前骰子结果是{result}。" + "{{settings/dyn_settings/encounter.md}}"
      else:
          return "未触发特殊遭遇"
      }
@@ -203,7 +203,7 @@ Glob .teahouse/output/floors/floor-*.md
      ```
      Generate(
        source_file: "temp/generate-config-{{N}}.yaml",
-       path: ".teahouse/output/floors/floor-{{N}}-draft.md"
+       path: "runtime/floors/floor-{{N}}-draft.md"
      )
      ```
    - **续写 / 大幅度改写**（先落 temp 不打字机，完成后再对比合并、落进 floors）：
@@ -218,11 +218,11 @@ Glob .teahouse/output/floors/floor-*.md
 
 ### 步骤 8：落半正式稿（把正文交给前端展示）
 
-- **生成全文 / 重写场景**：Generate 已直接写 `.teahouse/output/floors/floor-{{N}}-draft.md`，前端已自动展示，**无需 move**。
+- **生成全文 / 重写场景**：Generate 已直接写 `runtime/floors/floor-{{N}}-draft.md`，前端已自动展示，**无需 move**。
 - **续写 / 大幅度改写场景**：Generate 产出的 temp 草稿定稿后，与现有稿件对比合并，再落为唯一半正式稿：
 
 ```
-FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
+FileOps move temp/draft-{{N}}.md runtime/floors/floor-{{N}}-draft.md
 ```
 
 半正式稿 `floor-N-draft.md` **每层唯一**——返工/修改时直接覆盖它（FileOps move 会覆盖已有同名目标）。它是前端在写稿过程中看到的正文版本。
@@ -231,14 +231,14 @@ FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 
 通知用户查看产物（前端已自动展示 `floor-{{N}}-draft.md`）。等待用户进一步指示。
 
-- **如果用户要求返工**：直接修改 `temp/generate-config-{{N}}.yaml`（或对应场景的产出）后再次生成，就地覆盖 `.teahouse/output/floors/floor-{{N}}-draft.md`（续写/改写场景需再对比合并后 move）。
-- **如果用户要求修改这一层**：不要重新生成，直接对 `.teahouse/output/floors/floor-{{N}}-draft.md` 用 Edit 或 WriteLine 精确替换。除非用户明确要求重写。
+- **如果用户要求返工**：直接修改 `temp/generate-config-{{N}}.yaml`（或对应场景的产出）后再次生成，就地覆盖 `runtime/floors/floor-{{N}}-draft.md`（续写/改写场景需再对比合并后 move）。
+- **如果用户要求修改这一层**：不要重新生成，直接对 `runtime/floors/floor-{{N}}-draft.md` 用 Edit 或 WriteLine 精确替换。除非用户明确要求重写。
 
 ### 步骤 10：用户确认后，交由沙盒转正（commitDraft）
 
 **必须等用户明确确认满意后**，才执行转正。**转正不再是导演做 `FileOps move` + `GitCommit`**——改由沙盒 `Teahouse.commitDraft(N)`（host 侧的确定性闸门）一次性完成：
 
-> 沙盒（本实例的 `.teahouse/output/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 剥离块写回纯正文 + 把变量操作记入 `floor-N-meta.json` → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
+> 沙盒（本实例的 `runtime/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 剥离块写回纯正文 + 把变量操作记入 `floor-N-meta.json` → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
 
 作为导演，你的职责是确保正文**末尾**已正确产出 `<!-- teahouse-vars: [...] -->` 变量操作块（见下节「正文变量块约定」），并让用户理解转正由 front-end 触发，**不要自己 move + commit**。
 
@@ -285,7 +285,7 @@ FileOps move temp/draft-{{N}}.md .teahouse/output/floors/floor-{{N}}-draft.md
 ## 注意事项
 
 - **不要一次性塞入太多设定全文**——这会导致上下文过长。使用行号范围或锚点语法截取与当前剧情有关的关键部分。
-- **最近章节的正文需完整塞入 Generate 请求中**——用 `{{glob:output/floors/floor-*.md:lastN}}` 自动取窗口，并按归档界判断哪些已被总结覆盖。
-- **如果用户的要求是续写**，你应该先检查 `.teahouse/output/floors/` 中的草稿状态。
+- **最近章节的正文需完整塞入 Generate 请求中**——用 `{{glob:runtime/floors/floor-*.md:lastN}}` 自动取窗口，并按归档界判断哪些已被总结覆盖。
+- **如果用户的要求是续写**，你应该先检查 `runtime/floors/` 中的草稿状态。
 - **如果用户要求修改某一层**，不要重新生成，使用 Edit 或 WriteLine 对对应 floor 文件精确替换；除非用户明确要求重写。
 - **半正式稿每层唯一**：返工覆盖而非累加新文件。
