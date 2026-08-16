@@ -41,6 +41,12 @@ SAFE_IMPORT_MODULES = {
     "itertools",
     "pathlib",      # allowed for Path typing; file I/O must still go via ctx
     "uuid",
+    # Pure-data binary codecs needed to decode third-party container formats
+    # (e.g. SillyTavern .png cards carry base64+zlib JSON in a tEXt chunk).
+    # All three are data-only — no file/network/process escape primitives.
+    "struct",
+    "base64",
+    "zlib",
 }
 
 # Always-permitted special modules with no runtime side effects.

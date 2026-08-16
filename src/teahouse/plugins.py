@@ -80,10 +80,17 @@ class PluginContext:
         self.plugin_id = plugin_id
         self.user_id = user_id
         self._instance_dir = instance_dir
+        # DB UUID of the bound instance, threaded in via bind_instance. Used for
+        # SSE file_changed instance filtering on the frontend.
+        self.instance_id = ""
 
-    def bind_instance(self, instance_dir: Path) -> None:
-        """Bind (or re-bind) the instance this plugin runs against. Idempotent."""
+    def bind_instance(self, instance_dir: Path, instance_id: str = "") -> None:
+        """Bind (or re-bind) the instance this plugin runs against. Idempotent.
+        instance_id is the DB UUID; when empty it falls back to the dir name in
+        file_changed broadcasts."""
         self._instance_dir = instance_dir
+        if instance_id:
+            self.instance_id = instance_id
 
     def _require_instance(self) -> Path:
         if self._instance_dir is None:
@@ -102,6 +109,23 @@ class PluginContext:
     def broadcast(self, event: str, data: object) -> None:
         state.broadcast(event, data)
 
+    def emit_file_changed(self, path: str, tool: str = "PluginWrite", action: str | None = None) -> None:
+        """Broadcast a file_changed event (matches the director-tool schema) so the
+        frontend refreshes its file tree / open file for this instance.
+
+        Defaults to the DB instance_id when bound, else the instance dir name —
+        the frontend (useSSERefresh) accepts either for per-instance filtering.
+        """
+        instance_dir = self._instance_dir
+        data = {
+            "path": path,
+            "tool": tool,
+            "instance_id": self.instance_id or (instance_dir.name if instance_dir is not None else ""),
+        }
+        if action:
+            data["action"] = action
+        self.broadcast("file_changed", data)
+
     # ---- instance file I/O (confined by _validate_path) ----
     def read_file(self, path: str) -> str:
         from .tools import _validate_path
@@ -113,12 +137,26 @@ class PluginContext:
             raise IsADirectoryError(f"路径是目录而非文件: {path}")
         return full.read_text(encoding="utf-8")
 
+    def read_bytes(self, path: str) -> bytes:
+        """Read a raw binary file (guarded by _validate_path). Needed to decode
+        binary container formats like SillyTavern's .png card."""
+        from .tools import _validate_path
+        instance_dir = self._require_instance()
+        full = _validate_path(instance_dir, path)
+        if not full.exists():
+            raise FileNotFoundError(f"文件不存在: {path}")
+        if full.is_dir():
+            raise IsADirectoryError(f"路径是目录而非文件: {path}")
+        return full.read_bytes()
+
     def write_file(self, path: str, content: str) -> None:
         from .tools import _validate_path
         instance_dir = self._require_instance()
         full = _validate_path(instance_dir, path)
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
+        # File-as-state: any plugin write should refresh the frontend.
+        self.emit_file_changed(path)
 
     def list_files(self) -> list[str]:
         instance_dir = self._require_instance()

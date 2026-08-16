@@ -1645,7 +1645,7 @@ async def execute_tool(
         if plugin_exec:
             ctx = find_plugin_context_for_tool(name, user_id or "")
             if ctx is not None and instance_dir is not None:
-                ctx.bind_instance(instance_dir)
+                ctx.bind_instance(instance_dir, instance_id or "")
             try:
                 result = await plugin_exec(args, ctx, instance_dir, user_id)
                 return result
