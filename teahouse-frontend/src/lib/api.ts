@@ -211,7 +211,7 @@ export const instancesApi = {
   },
 
   readAsset: async (instanceId: string, path: string) => {
-    return get<{ path: string; mime: string; data: string }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(path)}`)
+    return get<{ path: string; mime: string; data: string; size: readonly [number, number] | null }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(path)}`)
   },
 
   getCover: async (instanceId: string) => {

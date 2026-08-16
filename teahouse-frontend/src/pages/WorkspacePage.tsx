@@ -67,6 +67,9 @@ export function WorkspacePage() {
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [isImageOpen, setIsImageOpen] = useState(false)
+  const [imageDataUri, setImageDataUri] = useState<string | null>(null)
+  const [imageMeta, setImageMeta] = useState<{ w: number; h: number } | null>(null)
   const [fileContent, setFileContent] = useState("")
   const [editedContent, setEditedContent] = useState("")
   const [isDirty, setIsDirty] = useState(false)
@@ -130,6 +133,14 @@ export function WorkspacePage() {
   // 当前文件是否为 Markdown（决定是否显示预览切换）
   const isMarkdown = !!selectedFile?.endsWith(".md")
 
+  // 图片扩展名判定——此类文件不进入文本编辑器，改为在工作区直接渲染 <img>
+  const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
+  const isImageFile = (p: string | null | undefined) => {
+    if (!p) return false
+    const lower = p.toLowerCase()
+    return IMAGE_EXTS.some((ext) => lower.endsWith(ext))
+  }
+
   // 进入 workspace 时按视口设置默认模式：移动端默认游玩，宽屏默认后台。
   // 用 ref 仅在首次挂载（进入）时生效，不随用户后续切换或窗口 resize 覆盖。
   const defaultModeAppliedRef = useRef(false)
@@ -180,6 +191,9 @@ export function WorkspacePage() {
   // editor state whenever the instance changes.
   useEffect(() => {
     setSelectedFile(null)
+    setIsImageOpen(false)
+    setImageDataUri(null)
+    setImageMeta(null)
     setFileContent("")
     setEditedContent("")
     setGitHeadContent("")
@@ -236,6 +250,9 @@ export function WorkspacePage() {
     await instancesApi.deleteEntry(instId, path)
     if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
       setSelectedFile(null)
+      setIsImageOpen(false)
+      setImageDataUri(null)
+      setImageMeta(null)
       setFileContent("")
       setEditedContent("")
       setIsDirty(false)
@@ -355,18 +372,42 @@ export function WorkspacePage() {
   fileContentRef.current = fileContent
   const gitHeadContentRef = useRef(gitHeadContent)
   gitHeadContentRef.current = gitHeadContent
+  const imageDataUriRef = useRef(imageDataUri)
+  imageDataUriRef.current = imageDataUri
 
   // Load a file (content + git HEAD) then open it. Loads first so Monaco mounts
   // once with the correct defaultValue and a clean undo stack.
   const openFile = useCallback(async (path: string) => {
     if (!instId || path === selectedFileRef.current) return
     const seq = ++loadSeqRef.current
+
+    // 图片文件走 readAsset 渲染，不经历文本加载/脏标记/编辑器挂载
+    if (isImageFile(path)) {
+      const [assetRes] = await Promise.all([
+        instancesApi.readAsset(instId, path),
+        gitApi.showFile(instId, path).catch(() => ({ ok: false as const })),
+      ])
+      if (seq !== loadSeqRef.current) return // stale response
+      if (!assetRes.ok) return // file gone; keep current selection
+      setIsImageOpen(true)
+      setImageDataUri(`data:${assetRes.data!.mime};base64,${assetRes.data!.data}`)
+      setImageMeta(assetRes.data!.size ? { w: assetRes.data!.size[0], h: assetRes.data!.size[1] } : null)
+      setFileContent("")
+      setEditedContent("")
+      setGitHeadContent("")
+      setIsDirty(false)
+      setEditorView("code")
+      setSelectedFile(path)
+      return
+    }
+
     const [fileRes, headRes] = await Promise.all([
       instancesApi.readText(instId, path),
       gitApi.showFile(instId, path),
     ])
     if (seq !== loadSeqRef.current) return // stale response
     if (!fileRes.ok) return // file gone; keep current selection
+    setIsImageOpen(false)
     setFileContent(fileRes.data!.content)
     setEditedContent(fileRes.data!.content)
     setGitHeadContent(headRes.ok && headRes.data?.content != null ? headRes.data.content : "")
@@ -382,6 +423,25 @@ export function WorkspacePage() {
     const path = selectedFileRef.current
     if (!path) return
     const seq = ++loadSeqRef.current
+
+    // 图片：外部变更时重拉资产刷新显示
+    if (isImageFile(path)) {
+      const res = await instancesApi.readAsset(instId, path)
+      if (seq !== loadSeqRef.current) return
+      if (!res.ok) {
+        setSelectedFile(null)
+        setIsImageOpen(false)
+        setImageDataUri(null)
+        setImageMeta(null)
+        return
+      }
+      const nextUri = `data:${res.data!.mime};base64,${res.data!.data}`
+      if (nextUri === imageDataUriRef.current) return
+      setImageDataUri(nextUri)
+      setImageMeta(res.data!.size ? { w: res.data!.size[0], h: res.data!.size[1] } : null)
+      return
+    }
+
     const [fileRes, headRes] = await Promise.all([
       instancesApi.readText(instId, path),
       gitApi.showFile(instId, path),
@@ -398,6 +458,7 @@ export function WorkspacePage() {
     const content = fileRes.data!.content
     const head = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
     if (content === fileContentRef.current && head === gitHeadContentRef.current) return
+    setIsImageOpen(false)
     setFileContent(content)
     setEditedContent(content)
     setGitHeadContent(head)
@@ -549,7 +610,7 @@ export function WorkspacePage() {
                 <span className="flex-1 text-sm text-muted-foreground truncate">
                   {selectedFile ?? "未选择文件"}
                 </span>
-                {selectedFile && (
+                {selectedFile && !isImageOpen && (
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && <span className="text-xs text-orange-500">未保存</span>}
                     {isMarkdown && (
@@ -572,7 +633,11 @@ export function WorkspacePage() {
                 )}
               </div>
               {selectedFile ? (
-                isMarkdown && editorView === "preview" ? (
+                isImageOpen ? (
+                  <div className="flex-1 overflow-auto flex items-start justify-center p-4">
+                    <img src={imageDataUri ?? undefined} alt={selectedFile} className="max-w-full max-h-full object-contain rounded shadow-sm" />
+                  </div>
+                ) : isMarkdown && editorView === "preview" ? (
                   <div className="flex-1 overflow-auto">
                     <MarkdownRenderer content={editedContent} />
                   </div>
@@ -985,29 +1050,47 @@ export function WorkspacePage() {
                 <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
                   <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
                   <div className="flex items-center gap-2 shrink-0">
-                    {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
-                    {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
-                    {isMarkdown && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
-                        className="gap-1"
-                        title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
-                      >
-                        {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                        {editorView === "code" ? "预览" : "代码"}
-                      </Button>
+                    {isImageOpen ? (
+                      <span className="text-xs text-muted-foreground">
+                        {imageMeta ? `${imageMeta.w} × ${imageMeta.h}` : "图片"}
+                      </span>
+                    ) : (
+                      <>
+                        {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
+                        {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
+                        {isMarkdown && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
+                            className="gap-1"
+                            title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
+                          >
+                            {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
+                            {editorView === "code" ? "预览" : "代码"}
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
+                          {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                          保存
+                        </Button>
+                      </>
                     )}
-                    <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
-                      {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                      保存
-                    </Button>
                   </div>
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
+                  {/* 图片预览 */}
+                  {isImageOpen && (
+                    <div className="h-full overflow-auto flex items-start justify-center p-4">
+                      <img
+                        src={imageDataUri ?? undefined}
+                        alt={selectedFile}
+                        className="max-w-full max-h-full object-contain rounded shadow-sm"
+                      />
+                    </div>
+                  )}
                   {/* 代码编辑器常驻挂载，预览时用 CSS 隐藏以保留撤销栈与光标 */}
-                  <div className={editorView === "code" ? "h-full" : "hidden"}>
+                  <div className={isImageOpen ? "hidden" : editorView === "code" ? "h-full" : "hidden"}>
                     <MonacoEditor
                       key={`${selectedFile}#${editorEpoch}`}
                       path={selectedFile}
