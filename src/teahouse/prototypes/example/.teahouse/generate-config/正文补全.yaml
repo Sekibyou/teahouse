@@ -9,22 +9,10 @@
     {{glob:output/floors/floor-*.md:last10}}
     ————历史正文结束————
 
-    ————生成要求开始————
-    {{static_settings/完整章节生成要求.md}}
-    ————生成要求结束————
+    ————设定、生成要求与变量维护开始————
+    {{.teahouse/dyn_settings/generate-assembler.md}}
+    ————设定、生成要求与变量维护结束————
 
-    ————设定开始————
-    {{.teahouse/dyn_settings/characters.md}}
-    {{static_settings/world.md}}
-    ————设定结束————
-
-    ${@note 如果要让正文直接维护变量的话，需要移除掉注释
-    ————变量维护要求开始————
-    {{static_settings/正文变量维护规则.md}}
-    {{.teahouse/dyn_settings/正文助手维护的变量.md}}
-    ————变量维护要求结束————
-    }
-    
 - role: user
   content: |
     ${user_msg}。

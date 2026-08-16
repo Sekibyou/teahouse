@@ -87,7 +87,13 @@ Read .teahouse/output/floors/floor-032.md
 
 ### 步骤 5：更新设定（关键！）与变量
 
-**先读生成配置，再谈改动。** 正文 Bot 不读总结文本，它靠**设定切片**记住过去；而这些切片由 `.teahouse/generate-config/*.yaml`（发给正文 Bot 的配置文件）按既有结构组织。动手前先：
+**先定位本 skill 的属性：它是泛用的方法论、是建议，不是金科玉律。** 真正规定"本次要总结哪些动态设定、维护哪些变量、检查哪些静态切片源"的是作者维护的**总结提示词**——即实例 `.teahouse/output/sandbox/input-bar/summarize-prompt.md`（input-bar「总结归纳」模式把该文件派发给总结子会话）。每个故事要总结的内容、挂载到正文 Bot 的内容都不一样，故该提示词由作者按实例定制。执行总结时**优先以 `summarize-prompt.md` 指定的规范为准**，本 skill 只在你缺依据时兜底提供通用做法。动手前先读它：
+
+```
+Read .teahouse/output/sandbox/input-bar/summarize-prompt.md → 作者定制的总结规范（维护哪些设定/变量/切片源）
+```
+
+**再读生成配置，再谈改动。** 正文 Bot 不读总结文本，它靠**设定切片**记住过去；而这些切片由 `.teahouse/generate-config/*.yaml`（发给正文 Bot 的配置文件）按既有结构组织。动手前先：
 
 ```
 Read .teahouse/generate-config/*.yaml    → 看正文 Bot 到底"吃"进哪些设定、按什么顺序拼、引用了哪些变量
@@ -107,6 +113,20 @@ Read .teahouse/generate-config/*.yaml    → 看正文 Bot 到底"吃"进哪些�
 
 - **变量**（`SetRuntimeVar` 管理）：高度精炼、会频繁变动的数值/重要值（`金币`、`修为`、`好感度`）。核心变量注入系统提示词（no cache）。**只改既有键的值，不新建键**。
 - **动态设定**（`.teahouse/dyn_settings/` 文件管理）：较长、中短期生效的文字状态——人物关系变化、任务进展、二人闹别扭等。会随剧情变，但**不是变量**，用 Write/Edit/WriteLine 就地维护对应板块/锚点，识别到变化时就地更新内容。**只在既有结构内改**。
+
+**归位表（方法论建议）**：下面按内容类别给建议存放位置，供你判断一段内容该落哪一侧。具体到"本实例维护哪些"仍以 `summarize-prompt.md` 的清单为准，这张表是通行的归位参考：
+
+| # | 内容类别 | 建议位置 | 说明 |
+|---|---|---|---|
+| 1 | 固定不变设定（正文生成标准、宏观设定） | `static_settings/` | 只读引用，总结不写它 |
+| 2 | 分阶段设定（按变量动态切片） | `static_settings/` | 用 `${@condition ...}` / `${@python ...}` 按变量现值选阶段；切片**产物**属动态 |
+| 3 | 动态设定模板（如某类型人物模板） | `static_settings/` | 总结/游玩按需**读模板 → 去 `dyn_settings/` 物化实例**，模板本身不动 |
+| 4 | 总结产出的设定 | `.teahouse/dyn_settings/` | 本流程核心产物：人物关系、所在地、任务进展等 |
+| 5 | 游玩中途产生的设定 | `.teahouse/dyn_settings/` | 导演游玩中落地的新设定 |
+| 6 | 随游玩变动的设定（切片产物、模板物化实例） | `.teahouse/dyn_settings/` | 会随剧情变，不是变量 |
+| 7 | 变量（数值/重要值的精炼状态） | `.teahouse/runtime_vars.jsonl` | `SetRuntimeVar`/`GetRuntimeVars`，不放进设定文件 |
+
+**模板 → 实例**：第 3 类（模板）放**静态**，真正内容在总结/游玩时按需读取模板、到 `.teahouse/dyn_settings/` 内创建实例（第 5、6 类）。模板本身长期不动，物化实例随剧情演变。
 
 #### 临时设定：纳入动态设定，注释标注生效周期
 
