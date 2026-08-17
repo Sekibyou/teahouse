@@ -783,6 +783,10 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     pattern = args["pattern"]
     text_extensions = {".md", ".yaml", ".yml", ".json", ".txt", ".py", ".js", ".ts", ".css", ".html"}
 
+    # Normalize once so relative_to() against .resolve()'d wrapper paths never
+    # trips mismatched forms (e.g. Windows 8.3 short names vs long names).
+    instance_dir = instance_dir.resolve()
+
     try:
         regex = _re.compile(pattern)
     except _re.error as e:
@@ -805,7 +809,8 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     else:
         wrapper = [p for p in instance_dir.rglob("*")]
 
-    results: list[tuple[str, int]] = []
+    # result: (path, line_numbers_sorted, total_match_count)
+    results: list[tuple[str, list[int], int]] = []
     for filepath in wrapper:
         if not filepath.is_file():
             continue
@@ -813,21 +818,28 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
             continue
         rel = str(filepath.relative_to(instance_dir)).replace("\\", "/")
         try:
-            content = filepath.read_text(encoding="utf-8")
+            lines = filepath.read_text(encoding="utf-8").splitlines()
         except Exception:
             continue
-        count = len(regex.findall(content))
+        hit_lines: list[int] = []
+        count = 0
+        for lineno, text in enumerate(lines, start=1):
+            n = len(regex.findall(text))
+            if n > 0:
+                hit_lines.append(lineno)
+                count += n
         if count > 0:
-            results.append((rel, count))
+            results.append((rel, hit_lines, count))
 
     if not results:
         return f"No files matched pattern: {pattern}"
 
-    results.sort(key=lambda x: (-x[1], x[0]))
+    results.sort(key=lambda x: (-x[2], x[0]))
     lines = [f"({len(results)} files)"]
-    for path, count in results:
+    for path, hit_lines, count in results:
+        lineno_str = ", ".join(str(n) for n in hit_lines)
         suffix = f" ({count} matches)" if count > 1 else ""
-        lines.append(f"{path}{suffix}")
+        lines.append(f"{path} : {lineno_str}{suffix}")
     return "\n".join(lines)
 
 

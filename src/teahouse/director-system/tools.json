@@ -170,8 +170,8 @@
   {
     "name": "Grep",
     "short": "正则搜索内容",
-    "description": "在文件内容中按正则表达式搜索",
-    "usage": "按正则表达式搜索实例中的文件内容，返回匹配的文件路径和行数。\n\n参数：\n- `pattern`（必填）：正则表达式搜索模式。例如 张三 搜索包含\"张三\"的文件，log.*Error 搜索匹配模式的日志行\n- `path`（可选）：限定的搜索路径（文件或目录，相对实例根目录，如 runtime/sandbox/theme.css 或 skills/）。传入时只在该路径下搜索；省略则递归搜索整个实例目录\n\n注意：返回匹配文件列表及各文件中的匹配行数。找到匹配后用 Read 读取对应文件的具体内容。",
+    "description": "在文件内容中按正则表达式搜索，返回命中文件与行号",
+    "usage": "按正则表达式搜索实例中的文件内容，返回匹配的文件路径、命中行号和总匹配数。\n\n参数：\n- `pattern`（必填）：正则表达式搜索模式。例如 张三 搜索包含\"张三\"的文件，log.*Error 搜索匹配模式的日志行\n- `path`（可选）：限定的搜索路径（文件或目录，相对实例根目录，如 runtime/sandbox/theme.css 或 skills/）。传入时只在该路径下搜索；省略则递归搜索整个实例目录\n\n返回格式：\n  (N files)\n  runtime/sandbox/theme.css : 42, 88, 120 (12 matches)\n  runtime/floors/floor-007.md : 183\n\n路径后紧跟命中行号列表（升序、去重），括号内为该文件总匹配数（单行多笔匹配会计入）。找到命中行后，用 Read 工具（path + offset=行号 + limit 取上下文）读取对应内容。",
     "parameters": {
       "type": "object",
       "properties": {
