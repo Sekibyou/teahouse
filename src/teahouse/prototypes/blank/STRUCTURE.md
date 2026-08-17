@@ -34,7 +34,7 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
 
   skills/               实例自建 Skill（提示词包，同名覆盖系统内置 skill）
   temp/                 （不入 git）草稿/中间文件，子会话 Report 只写这里
-  building/             （永进原型包）打包期元工作区：点子/checklist/设计笔记
+  building/             （永不进原型包）打包期元工作区：点子/checklist/设计笔记
 ```
 
 ## 被引用的文件（引用关系图谱）
