@@ -559,6 +559,71 @@ export function WorkspacePage() {
   // Mobile layout
   // ============================================================================
   if (isMobile) {
+    // 移动端主菜单下拉面板（游玩模式悬浮球 / 后台模式顶部栏最右共用同一份）
+    const mobileMenuDropdown = (
+      <>
+        <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
+        <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[160px]">
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm">游玩模式</span>
+            <Switch
+              checked={mode === "backstage"}
+              onCheckedChange={(v) => {
+                useViewModeStore.getState().setMode(v ? "backstage" : "play")
+                setShowMobileMenu(false)
+              }}
+            />
+          </div>
+          <div className="border-t border-border" />
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
+          >
+            <MessageCircle className="h-4 w-4" />
+            导演
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
+          >
+            <GitBranch className="h-4 w-4" />
+            版本控制
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
+          >
+            <FileText className="h-4 w-4" />
+            文件清单
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => { openSettings(); setShowMobileMenu(false) }}
+          >
+            <Settings className="h-4 w-4" />
+            设置
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
+          >
+            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            主题切换
+          </button>
+          <div className="border-t border-border" />
+          <button
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+            onClick={() => {
+              setActiveInstance(null)
+              navigate("/", { replace: true })
+            }}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            退出到主页
+          </button>
+        </div>
+      </>
+    )
     return (
       <div className="h-full flex flex-col overflow-hidden bg-background">
         {/* Fullscreen panels */}
@@ -631,6 +696,18 @@ export function WorkspacePage() {
                     </Button>
                   </div>
                 )}
+                {/* 后台模式：主菜单并入顶部栏最右侧（悬浮球仅游玩模式显示） */}
+                <div className="relative shrink-0">
+                  <button
+                    className="px-2 py-1 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
+                    onClick={() => setShowMobileMenu(!showMobileMenu)}
+                    title="菜单"
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                    <Menu className="h-3.5 w-3.5" />
+                  </button>
+                  {showMobileMenu && mobileMenuDropdown}
+                </div>
               </div>
               {selectedFile ? (
                 isImageOpen ? (
@@ -708,83 +785,18 @@ export function WorkspacePage() {
           </>
         )}
 
-        {/* Floating balls + bottom bar */}
-        {/* Top-right: menu trigger */}
-        {!fullscreenPanel && (
+        {/* 右上悬浮球 — 仅游玩模式（后台模式菜单已并入顶部栏） */}
+        {!fullscreenPanel && mode === "play" && (
           <div className="fixed top-3 right-3 z-30">
             <button
               className="px-3 py-2 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
               onClick={() => setShowMobileMenu(!showMobileMenu)}
             >
-              {mode === "play" ? <Gamepad2 className="h-3.5 w-3.5" /> : <Wrench className="h-3.5 w-3.5" />}
-              {mode === "backstage" && <span>后台</span>}
+              <Gamepad2 className="h-3.5 w-3.5" />
               <Menu className="h-3.5 w-3.5" />
             </button>
 
-            {showMobileMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[160px]">
-                  <div className="flex items-center justify-between px-3 py-2">
-                    <span className="text-sm">游玩模式</span>
-                    <Switch
-                      checked={mode === "backstage"}
-                      onCheckedChange={(v) => {
-                        useViewModeStore.getState().setMode(v ? "backstage" : "play")
-                        setShowMobileMenu(false)
-                      }}
-                    />
-                  </div>
-                  <div className="border-t border-border" />
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    导演
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
-                  >
-                    <GitBranch className="h-4 w-4" />
-                    版本控制
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
-                  >
-                    <FileText className="h-4 w-4" />
-                    文件清单
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { openSettings(); setShowMobileMenu(false) }}
-                  >
-                    <Settings className="h-4 w-4" />
-                    设置
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
-                  >
-                    {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                    主题切换
-                  </button>
-                  <div className="border-t border-border" />
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => {
-                      setActiveInstance(null)
-                      navigate("/", { replace: true })
-                    }}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    退出到主页
-                  </button>
-                </div>
-              </>
-            )}
+            {showMobileMenu && mobileMenuDropdown}
           </div>
         )}
 
