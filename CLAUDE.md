@@ -30,6 +30,7 @@
 - **Tailwind CSS v4** + OKLCH 色彩空间 + 暗黑模式
 - **pnpm** 进行包管理，严禁混用npm
 - **前端检查以 `build` 为准**：验证前端改动时直接 `pnpm run build`（即 `tsc -b && vite build`），不要只做 `tsc --noEmit` 之类的语法/类型检查——`tsc -b` 走 project references 全量检查，比 `tsc --noEmit` 严格，后者会漏报错误
+- **⚠️ PWA 缓存版本号**：每次前端改动、`pnpm run build` 部署前，须手动把 `teahouse-frontend/public/sw.js` 里的 `CACHE_NAME` 版本号 +1（`teahouse-v2` → `teahouse-v3` …）。否则浏览器因 sw.js 内容没变不重建缓存，PWA/浏览器仍可能回退到旧 bundle（磁盘 HTTP 缓存删 PWA、重装都清不掉）
 - **⚠️ 禁止使用浏览器原生弹窗**（`alert`、`confirm`、`prompt`），一律使用 `ConfirmDialog` 组件（`@/components/ConfirmDialog`）
 
 ## 项目定位

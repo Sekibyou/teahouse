@@ -1,5 +1,5 @@
 // Teahouse 应用壳缓存 + PWA 安装支持。
-const CACHE_NAME = "teahouse-v1";
+const CACHE_NAME = "teahouse-v2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 const API_PREFIXES = ["/api/", "/v1/", "/events"];
 
@@ -38,17 +38,20 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 静态资源缓存优先；hash 化资源不可变，其余（manifest/图标）很少变。
+  // 静态资源 stale-while-revalidate：先返回缓存立即渲染，同时后台 re-fetch 校验。
+  // 不能纯缓存优先——同名 URL 的旧 chunk 会永久命中磁盘 HTTP 缓存（删 PWA/重装也清不掉），
+  // 部署新构建后仍可能回退到旧 bundle。缓存命中则先回旧、后台用网络替换，兼顾速度与时效。
   event.respondWith(
     caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
+      const network = fetch(request).then((response) => {
         if (response.ok) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
         }
         return response;
       });
+      // cache.addAll 只在 install 时写缓存，此处保证未命中过也常驻时可回填；缓存命中则优先回旧。
+      return cached || network;
     })
   );
 });
