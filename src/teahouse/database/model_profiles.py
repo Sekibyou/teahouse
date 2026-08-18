@@ -107,7 +107,16 @@ async def match_profiles(model_name: str, user_id: str) -> list[dict]:
     """Return profiles whose match_pattern regex matches the given model_name."""
     import re
     profiles = await list_profiles(user_id)
-
+    matches = []
+    for p in profiles:
+        if not p.get("match_pattern"):
+            continue
+        try:
+            if re.search(p["match_pattern"], model_name, re.IGNORECASE):
+                matches.append(p)
+        except re.error:
+            continue
+    return matches
 
 async def ensure_builtin_profile(user_id: str) -> dict:
     """Ensure a built-in default profile exists. Returns it."""
@@ -122,6 +131,7 @@ async def ensure_builtin_profile(user_id: str) -> dict:
         name="默认",
         temperature=0.7,
         max_tokens=50000,
+        is_builtin=True,
     )
 
 
@@ -131,13 +141,3 @@ async def get_builtin_profile(user_id: str) -> Optional[dict]:
         (user_id,),
     )
     return dict(row) if row else None
-    matches = []
-    for p in profiles:
-        if not p.get("match_pattern"):
-            continue
-        try:
-            if re.search(p["match_pattern"], model_name, re.IGNORECASE):
-                matches.append(p)
-        except re.error:
-            continue
-    return matches
