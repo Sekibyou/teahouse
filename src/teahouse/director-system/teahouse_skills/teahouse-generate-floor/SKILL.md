@@ -1,6 +1,6 @@
 ---
 name: teahouse-generate-floor
-description: 教导导演如何生成正文楼层，包括上下文准备和 Generate 工具的使用。当用户要求"开始写下一层"或"继续写作"时触发。
+description: 教导导演如何生成正文楼层，包括上下文准备和 Generate 工具的使用。当用户要求"开始写下一层"或"继续写作"时触发。所有占位符语法（{{path|切片}}、${name}、${@type}、${ if...: }、转义语法）均在本 skill 详细介绍——导演被问及变量/占位符语法时，应加载本 skill 查阅。
 ---
 
 # 正文生成 Skill
