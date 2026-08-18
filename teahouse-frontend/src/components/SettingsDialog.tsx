@@ -305,7 +305,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // ─── Model handlers ───
 
   const toggleModelEnabled = async (model: LLMModel) => {
-    await llmModelsApi.update(model.id, { is_enabled: !model.is_enabled })
+    // 列表里出现的是已激活模型：点星的语义是「取消激活」，即从模型池删除。
+    await llmModelsApi.delete(model.id)
     await loadAll()
   }
 
@@ -954,6 +955,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         const form = getProviderFormFor(p)
                         const saveNeeded = isProviderSaveNeeded(p)
                         const providerModels = getProviderModels(p.id)
+                        // 该供应商已激活模型，用于导入面板去重（已激活即以灰色点亮显示、不可再选）
+                        const enabledModelNames = new Set(providerModels.filter(mm => mm.is_enabled).map(mm => mm.model_name))
 
                         return (
                           <div key={p.id} className={`rounded-lg border p-4 space-y-3 ${p.is_enabled ? "border-border" : "border-muted opacity-60"}`}>
@@ -978,14 +981,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 </span>
                               )}
                               <div className="flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  onClick={() => openImportForProvider(p.id)}
-                                  title="批量导入模型"
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </Button>
                                 <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProviderTarget(p.id)} title="删除供应商">
                                   <Trash2 className="h-3.5 w-3.5 text-red-500" />
                                 </Button>
@@ -1042,7 +1037,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             {/* Model list under provider — always visible */}
                             <div className="border-t border-border pt-3 space-y-1">
                               {providerModels.length === 0 ? (
-                                <p className="text-xs text-muted-foreground py-2">暂无已导入模型，请点击 + 按钮批量导入</p>
+                                <p className="text-xs text-muted-foreground py-2">还未导入模型</p>
                               ) : (
                                 providerModels.map(m => (
                                   <div
@@ -1053,17 +1048,34 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   >
                                     <button
                                       onClick={() => m.stale ? toggleModelStale(m) : toggleModelEnabled(m)}
-                                      className={`shrink-0 transition-colors ${m.stale ? "text-red-500" : m.is_enabled ? "text-yellow-500" : "text-muted-foreground"}`}
-                                      title={m.stale ? "已过期（不在远端列表中），点击移除" : m.is_enabled ? "已启用，点击禁用" : "已禁用，点击启用"}
+                                      className={`shrink-0 transition-colors ${m.stale ? "text-red-500" : "text-yellow-500"}`}
+                                      title={m.stale ? "已过期（不在远端列表中），点击移除" : "点击取消激活，从模型池移除"}
                                     >
-                                      <Star className={`h-4 w-4 ${(m.is_enabled && !m.stale) ? "fill-current" : ""}`} />
+                                      <Star className={`h-4 w-4 ${m.stale ? "" : "fill-current"}`} />
                                     </button>
                                     <span className="flex-1 font-medium truncate">{m.name}</span>
-                                    <span className="text-xs font-mono text-muted-foreground truncate">{m.model_name}</span>
                                     {m.stale && <span className="text-[10px] text-red-500 shrink-0">已过期</span>}
                                   </div>
                                 ))
                               )}
+                            </div>
+
+                            {/* Model list footer — prominent import trigger (default style) */}
+                            <div className="border-t border-border pt-3 flex items-center justify-between">
+                              <p className="text-xs text-muted-foreground">
+                                {providerModels.length === 0
+                                  ? "还没有模型，先导入"
+                                  : `已导入 ${providerModels.length} 个模型`}
+                              </p>
+                              <Button
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => openImportForProvider(p.id)}
+                                title="从供应商拉取模型列表并批量导入到模型池"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                导入模型
+                              </Button>
                             </div>
 
                             {/* Import models sub-panel */}
@@ -1082,27 +1094,47 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                       <button
                                         className="text-xs text-primary hover:underline"
                                         onClick={() => {
-                                          if (selectedModels.size === availableModels.length) setSelectedModels(new Set())
-                                          else setSelectedModels(new Set(availableModels.map(m => m.id)))
+                                          // 全选只针对未导入的可导入模型；已激活的不可再选
+                                          const selectable = availableModels.filter(m => !enabledModelNames.has(m.id))
+                                          if (selectable.every(m => selectedModels.has(m.id))) setSelectedModels(new Set())
+                                          else setSelectedModels(new Set(selectable.map(m => m.id)))
                                         }}
                                       >
-                                        {selectedModels.size === availableModels.length ? "取消全选" : "全选"}
+                                        {(() => {
+                                          const selectable = availableModels.filter(m => !enabledModelNames.has(m.id))
+                                          return selectable.length > 0 && selectable.every(m => selectedModels.has(m.id)) ? "取消全选" : "全选"
+                                        })()}
                                       </button>
-                                      <span className="text-xs text-muted-foreground">已选 {selectedModels.size}/{availableModels.length}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        已选 {selectedModels.size}/{availableModels.filter(m => !enabledModelNames.has(m.id)).length}
+                                      </span>
                                     </div>
                                     <div className="max-h-48 overflow-auto space-y-0.5">
-                                      {availableModels.map(m => (
-                                        <label key={m.id} className="flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-muted/30 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            checked={selectedModels.has(m.id)}
-                                            onChange={() => toggleModelSelection(m.id)}
-                                            className="rounded"
-                                          />
-                                          <span className="font-mono">{m.id}</span>
-                                          {m.name && <span className="text-muted-foreground">— {m.name}</span>}
-                                        </label>
-                                      ))}
+                                      {availableModels.map(m => {
+                                        const alreadyEnabled = enabledModelNames.has(m.id)
+                                        if (alreadyEnabled) {
+                                          return (
+                                            <div key={m.id} className="flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground opacity-50">
+                                              <Star className="h-3.5 w-3.5 fill-current text-yellow-500 shrink-0" />
+                                              <span className="font-mono">{m.id}</span>
+                                              {m.name && <span className="text-muted-foreground">— {m.name}</span>}
+                                              <span className="ml-auto text-[10px]">已激活</span>
+                                            </div>
+                                          )
+                                        }
+                                        return (
+                                          <label key={m.id} className="flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-muted/30 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={selectedModels.has(m.id)}
+                                              onChange={() => toggleModelSelection(m.id)}
+                                              className="rounded"
+                                            />
+                                            <span className="font-mono">{m.id}</span>
+                                            {m.name && <span className="text-muted-foreground">— {m.name}</span>}
+                                          </label>
+                                        )
+                                      })}
                                     </div>
                                     <div className="flex gap-2">
                                       <Button size="sm" onClick={importSelectedModels} disabled={selectedModels.size === 0 || importModelLoading}>
@@ -1351,7 +1383,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {slotsLoading ? (
                     <div className="flex items-center justify-center flex-1"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
                   ) : (
-                    <div className="flex gap-6 flex-1 overflow-hidden">
+                    <div className="flex flex-col gap-4 flex-1 overflow-y-auto">
                       <SlotCard
                         slotId="director"
                         label="导演模型"

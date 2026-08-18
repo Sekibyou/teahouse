@@ -16,6 +16,8 @@ import { useSessionStore } from "@/stores/sessionStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import { useSetupStatus } from "@/hooks/useSetupStatus"
+import { WelcomeWizard } from "@/components/WelcomeWizard/WelcomeWizard"
 import { CoverWithFetch } from "@/components/Cover"
 import type { Prototype, Instance } from "@/lib/types"
 
@@ -371,7 +373,9 @@ function DesktopMain({
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto min-h-0">
         {instances.length === 0 ? (
-          <DesktopEmptyState onNew={onNew} />
+          <SetupGateEmpty onNew={onNew}>
+            <DesktopEmptyState onNew={onNew} />
+          </SetupGateEmpty>
         ) : (
           <div className="p-8 pt-6">
             <InstanceWaterfall instances={instances} onOpenInstance={onOpenInstance} onQuickStart={onQuickStart} onNew={onNew} />
@@ -380,6 +384,16 @@ function DesktopMain({
       </div>
     </div>
   )
+}
+
+/**
+ * 空实例的空态入口：当模型体系（供应商/模型/槽位）没配好时，显示 Welcome Wizard
+ * 引导（不渲染「新建实例」，实现新用户拦截）；配好后再显示正常空态。
+ */
+function SetupGateEmpty({ children }: { onNew: () => void; children: React.ReactNode }) {
+  const { complete } = useSetupStatus()
+  if (!complete) return <WelcomeWizard />
+  return <>{children}</>
 }
 
 function DesktopEmptyState({ onNew }: { onNew: () => void }) {
@@ -815,16 +829,18 @@ function MobileMain({
 
       <div className="flex-1 overflow-y-auto min-h-0 p-3">
         {instances.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center gap-4 py-24">
-            <BookOpen className="h-10 w-10 text-muted-foreground opacity-40" />
-            <p className="text-sm text-muted-foreground">还没有实例</p>
-            <button
-              onClick={onNew}
-              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border-2 border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-            >
-              <Plus className="h-4 w-4" />新建实例
-            </button>
-          </div>
+          <SetupGateEmpty onNew={onNew}>
+            <div className="flex flex-col items-center justify-center text-center gap-4 py-24">
+              <BookOpen className="h-10 w-10 text-muted-foreground opacity-40" />
+              <p className="text-sm text-muted-foreground">还没有实例</p>
+              <button
+                onClick={onNew}
+                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border-2 border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+              >
+                <Plus className="h-4 w-4" />新建实例
+              </button>
+            </div>
+          </SetupGateEmpty>
         ) : (
           <div className="columns-2 gap-3">
             <NewInstanceCard onNew={onNew} />

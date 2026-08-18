@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
+import { toast } from "sonner"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
 
@@ -111,6 +112,10 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     const modelId = selectedModelId || null
     const profileId = selectedProfileId || null
     const presetId = showPresets ? (selectedPresetId || null) : null
+    if (!modelId) {
+      toast.error("请先选择一个模型")
+      return
+    }
     const result = await llmSlotsApi.setSlot(slotId, {
       model_id: modelId,
       profile_id: profileId,
@@ -118,6 +123,9 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     })
     if (result.ok) {
       onChange({ model_id: modelId, profile_id: profileId, prompt_preset_id: presetId })
+      toast.success(`${label} 槽位已保存`)
+    } else {
+      toast.error(result.error || "保存失败")
     }
   }
 
@@ -186,12 +194,14 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
         </div>
       )}
 
-      <button
-        className="w-full bg-primary text-primary-foreground rounded px-3 py-1.5 text-sm hover:bg-primary/90"
-        onClick={handleSave}
-      >
-        保存
-      </button>
+      <div className="flex justify-end">
+        <button
+          className="bg-primary text-primary-foreground rounded px-4 py-1.5 text-sm hover:bg-primary/90"
+          onClick={handleSave}
+        >
+          保存
+        </button>
+      </div>
     </div>
   )
 }
