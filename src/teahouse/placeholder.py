@@ -567,12 +567,13 @@ def _eval_code_block(code: str, var_map: dict, fail_literal: str | None = None) 
 #   `${@max [..]}` / `${@min [..]}` / `${@len ...}`   从列表/变量取 max/min/len
 #   `${@random [a,b,c]}`  随机取列表一项（字面量或数组变量）
 #   `${@python return ...}`  白名单 python 代码块（须含 return）
-#   `${@condition 条件: 输出 [else 假输出]}`  最简条件切片（if/else 均可选，宽松）：
-#                                封装成 `if 条件: return 输出 [else: return 假输出]`；
+#   `${@condition 条件: 输出 else 假输出}`  最简条件切片（if/else 均可选，宽松）：
+#                                封装成 `if 条件: return 输出 else: return 假输出`；
 #                                真→输出，假+else→假输出，假无else→空，坏块→原样
+#                                （else 是识别符、后不带冒号；[] 仅为可选标记，勿写入）
 #   `${@note ...}`        注释，恒剥为空（不做内部展开）
 #   `${ if ...: return ... }`   裸写带 return → 自动降级为 python（兼容旧写法）
-#   `${条件: 输出 [else 假]}` / `${a:b}`  裸写含最外层冒号（含/不含 else）→ 自动判为 condition
+#   `${条件: 输出 else 假}` / `${a:b}`  裸写含最外层冒号（含/不含 else）→ 自动判为 condition
 #   `${a:b:c}` (≥2 最外层冒号，无 else)    原样保留，不解析
 #
 # 兜底原则：绝大多数失败（变量不存在、未注册指令、坏块、语法错）统一"回退原样字面量"，
@@ -769,7 +770,7 @@ def _find_outer_keyword(text: str, kw: str) -> int:
 
 
 def _split_condition(text: str) -> tuple[str, str, str | None] | None:
-    """Parse a condition body `[if ]条件: 真输出 [else 假输出]`.
+    """Parse a condition body `if 条件: 真输出 else 假输出`.
 
     Rules (宽松、小白友好)：
       - 可选前导 `if `。
@@ -841,9 +842,9 @@ def _count_outer_colons(text: str) -> int:
 def _resolve_condition(value: str, var_map: dict, type_map: dict | None, original: str | None = None) -> str:
     """`@condition` — 最简条件切片（统一裸写与显式入口）。
 
-    宽松写法 `${[if ]条件: 真输出 [else 假输出]}`（`if`/`else` 均可选，`else` 后
+    宽松写法 `${if 条件: 真输出 else 假输出}`（`if`/`else` 均可选，`else` 后
     不带冒号），引擎把**最外层冒号**切出条件/真输出、把 `else` 关键字切出假分支，
-    封装为 `if 条件: return 真输出 [else: return 假输出]` 丢进白名单 python 解释器
+    封装为 `if 条件: return 真输出 else: return 假输出` 丢进白名单 python 解释器
     执行。单分支（无 else）或多分支（有 else）均可；不支持 elif/三元。
     切片/引号内的冒号与 `else` 不计。输出为裸 `{{...}}` 切片时自动套引号
     （`{{file:10-30}}` → `"{{file:10-30}}"`）。条件即 python 比较式；输出即 return
@@ -924,12 +925,175 @@ def _judge_and_resolve(inner: str, var_map: dict, type_map: dict | None) -> str:
     return literal
 
 
-def _resolve_one_round_braces(text: str, var_map: dict, type_map: dict | None) -> str:
+# =====================================================================
+# `${@mention <kw1>, <kw2>, ... : <output>}` — 关键词灯（就地逐轮求值）
+# =====================================================================
+#
+# 用于「散碎且量大、按需才注入」的设定（传说道具、传闻、武器、配角）。冒号前是
+# 逗号分隔的**多个正则**，一旦它所在的那一层完整文本里任一正则有命中，就输出
+# 冒号后的内容（内容可含 `${}`/`{{}}`，交由后续轮正常展开）；未命中则原样透传
+# 到下一层再试（更深层可能才展开出关键词）。与 `@condition`/`@random` 同类：
+# 就地求值，不拖到最后一层统一清扫。
+#
+# 唯一的特殊点是：它要匹配「它所在的整篇 text」，而普通 handler 签名
+# (inner, var_map, type_map) 拿不到。因此不进 PLACEHOLDER_HANDLERS 注册表，由
+# `_resolve_one_round_braces` 循环体内特判，把当前 text 一并传入。
+#
+# 销毁：未命中的 `@mention` 从头透传、循环收敛后仍是字面量；由 resolve_variables
+# 在收敛出口调用 `_drop_unmatched_mentions` 统一删除（不留脏文本喂给 AI）。被
+# `\` 转义的 `\${@mention...}` 已被哨兵隐藏，天然跳过命中与销毁。
+
+
+def _split_mention(text: str) -> tuple[list[str], str] | None:
+    """解析 `${@mention 关键词区: 输出区}`，返回 (keywords, output)，坏块返回 None。
+
+    按**最外层**冒号切分（引号/`{{...}}` 内的冒号不计，复用 `_first_outer_colon`），
+    关键词段按 `,` 拆分并 strip；输出可为任意含 `{{}}`/`${}` 的值表达式（下一轮展开）。
+    `text` 为含 `@mention` 前缀的 inner 全文，先剥掉该指令头再拆分。
+    与 `_split_condition` 风格一致：宽松、坏块降级字面量，不外泄报错。
+    """
+    s = text.strip()
+    if s.startswith("@mention"):
+        s = s[len("@mention"):].strip()
+    elif s.startswith("@"):
+        s = s[1:].strip()
+    cpos = _first_outer_colon(s)
+    if cpos == -1:
+        return None
+    kw_part = s[:cpos].strip()
+    out_part = s[cpos + 1:].strip()
+    if not kw_part:
+        return None
+    kws = [k.strip() for k in kw_part.split(",")]
+    kws = [k for k in kws if k]
+    if not kws:
+        return None
+    return kws, out_part
+
+
+def _resolve_mention(inner: str, mention_source: str, var_map: dict, self_literal: str | None = None) -> str | None:
+    """对单个 `${@mention ...}` inner 就地求值。命中→输出表达式求值结果；全未命中→None。
+
+    关键词是逗号分隔的多个正则：任一在 `mention_source` 上 `re.search` 命中即命中。
+    `mention_source` 是「正文全文」——在 Generate 跨消息场景它是**上一轮所有 msg 拼接**的
+    只读变量（prev_joined）；单文本场景回退为当前文本。
+    **匹配源排除 mention 自身**：从 `mention_source` 中剔除本探针字面量 `${@mention ...}`
+    （`self_literal` 传入）——否则关键词出现在 `${@mention 剑: ...}` 自己里会"自己匹配自己"
+    的无条件命中，"提到才触发"失效。跨消息拼接下也能正确剔除（字面量替换，不依赖索引）。
+
+    output 与 `@condition` 同为 **python 值表达式**（裸值语义）：`"字符串"`→剥引号得到
+    字符串内容、变量名→变量值、`[1,2]`→数组、`roll(...)`→函数调用；`"{{xx.md}}"`
+    求值后得到 `{{xx.md}}` 这串字符，交由后续 resolve 继续解析。
+    坏正则降级为字面匹配（经 re.escape）；坏块/坏表达式 → None 走字面量透传。
+    """
+    parsed = _split_mention(inner)
+    if parsed is None:
+        return None
+    kws, output = parsed
+    # 排除自身字面量，避免关键词自匹配
+    search_text = mention_source
+    if self_literal and self_literal in search_text:
+        search_text = search_text.replace(self_literal, "")
+    try:
+        hit = False
+        for kw in kws:
+            try:
+                pattern = re.compile(kw)
+            except re.error:
+                pattern = re.compile(re.escape(kw))
+            if pattern.search(search_text):
+                hit = True
+                break
+    except Exception:
+        return None
+    if not hit:
+        return None
+    # 命中：output 作为 python 值表达式求值（同 @condition：包 return 再喂解释器）。
+    # 裸 `{{slice}}` 输出不是合法 python（`return {{w.md}}` 语法错）→ 先套引号成 `"{{w.md}}"`
+    # 再求值，得到 `{{w.md}}` 字符串、由后续 resolve 轮次展开（与 @condition 的 _quote_if_bare_slice 同源）。
+    try:
+        ok, val = _eval_code_block_value(f"return {_quote_if_bare_slice(output)}", var_map)
+    except Exception:
+        return None
+    if not ok:
+        return None
+    return val
+
+
+def _drop_unmatched_mentions(text: str) -> str:
+    """删除整篇 text 里仍残留的、**良构但未命中**的 `${@mention ...}` 字面量。
+
+    用在 resolve_variables 循环**收敛后**、哨兵还原之前：此刻普通占位符已全解，
+    良构的未命中 `@mention` 从头透传、仍是字面量，应销毁以免脏文本喂给 AI；命中过的
+    输出已展开、不再是 `${@mention` 字面量，不受影响。**坏块（无有效冒号/关键词，
+    `_split_mention` 返回 None）保留原样**——与 `@condition` 坏块降级为字面量一致，
+    不销毁，便于创作者排查。被 `\` 转义的 `\${@mention...}` 已被哨兵隐藏
+    （以 `_ESC_SENTINEL_*` 形式存在于 text），不会以 `${@mention` 字面量出现，天然跳过。
+    """
+    if "@mention" not in text:
+        return text
+    pieces: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if (
+            text[i] == "$"
+            and i + 1 < n and text[i + 1] == "{"
+        ):
+            j = i + 2
+            while j < n and text[j].isspace():
+                j += 1
+            if text[j:j + len("@mention")] == "@mention":
+                res = _match_brace_group(text, i)
+                if res is not None:
+                    inner, end = res
+                    # 良构（能拆出关键词+输出）才视为待销毁的未命中；坏块保留
+                    if _split_mention(inner) is not None:
+                        i = end  # 丢弃整段
+                        continue
+        pieces.append(text[i])
+        i += 1
+    return "".join(pieces)
+
+
+# 公开别名：供 Generate 跨消息路径（tools._resolve_messages_vars）在所有轮结束后统一销毁
+# 未命中的 @mention 残留。
+drop_unmatched_mentions = _drop_unmatched_mentions
+
+
+def strip_placeholder_shells(text: str) -> str:
+    """剥掉所有**最外层** `${...}` / `{{...}}` 占位符组字面量，保留其余正文。
+
+    供 Generate 跨消息路径构建 @mention 的只读匹配源（prev_joined）前调用。目标：
+    - 占位符外壳（指令名、切片文件名等）非正文，不应参与关键词命中判定；
+    - 否则 `${@mention 黄泉...}`、`{{黄泉.md}}` 这类字面量会让触发词在**正文其实没提**时
+      被文件名/指令文字误命中（如 `{{zzz.md}}` 含 "zzz"、内容却无 "zzz"，仍误触发 @mention zzz）。
+    - 只剥最外层、不分析嵌套：`${@condition some: "{{xxx.md}}"}` 匹配外层 `${...}` 整组删除，
+      内层 `{{xxx.md}}` 随外层一并消失。
+    - `${@note ...}` 注释也是 `${...}` 子集，一并剥空。
+    匹配源经 resolve 多轮后通常是"已展开正文"（无外壳），此剥壳只影响仍以字面量存在的
+    未展开/待激活占位符——目的是让匹配源贴近"最终会进正文的内容"。
+    """
+    if "${" not in text and "{{" not in text:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for _kind, _inner, start, end in _scan_top_level(text):
+        pieces.append(text[cursor:start])
+        # 不拼接占位符段（丢弃），保留其余
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _resolve_one_round_braces(text: str, var_map: dict, type_map: dict | None, mention_source: str | None = None) -> str:
     """One pass: match every top-level `${...}` and replace via the judgment layer.
 
     Only `${}` groups are handled here. `{{}}` slices are handled by
     resolve_placeholders separately in the resolve_variables loop (which owns
     instance_dir). Produced strings may contain fresh `${`/`{{`, fed to the next round.
+    `mention_source` 供 `@mention` 做关键词匹配源（Generate 跨消息场景为上一轮全部 msg
+    拼接；None 时回退用当前 `text` 本身）。
     """
     pieces: list[str] = []
     cursor = 0
@@ -937,7 +1101,14 @@ def _resolve_one_round_braces(text: str, var_map: dict, type_map: dict | None) -
         if kind != "var":
             continue  # stay out of `{{}}` — resolve_placeholders owns those
         pieces.append(text[cursor:start])
-        pieces.append(_judge_and_resolve(inner, var_map, type_map))
+        # @mention 特判：就地求值需看到关键词源文本，不进注册表（见其上方注释）
+        if inner.strip().startswith("@mention"):
+            src = mention_source if mention_source is not None else text
+            self_lit = "${" + inner + "}"
+            out = _resolve_mention(inner, src, var_map, self_lit)
+            pieces.append(out if out is not None else self_lit)
+        else:
+            pieces.append(_judge_and_resolve(inner, var_map, type_map))
         cursor = end
     pieces.append(text[cursor:])
     return "".join(pieces)
@@ -969,7 +1140,7 @@ def substitute_variables(text: str, var_map: dict) -> str:
     return _substitute_variable_literals(text, var_map)
 
 
-def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False, type_map: dict | None = None) -> str:
+def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, strict: bool = False, type_map: dict | None = None, mention_source: str | None = None) -> str:
     """Resolve `${}` and `{{path}}` for AI-facing surfaces (system prompt / Generate).
 
     Pure per-round model (§3.4): each round matches every top-level placeholder,
@@ -993,7 +1164,7 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
     for _ in range(max_depth):
         before = text
         # ${} 一组（搜索状态机 → 判定 → 处理器），再解本轮新产出的 {{}} 切片。
-        text = _resolve_one_round_braces(text, var_map, type_map)
+        text = _resolve_one_round_braces(text, var_map, type_map, mention_source)
         if "{{" in text:
             text = resolve_placeholders(text, instance_dir, strict=strict)
         # 变量值注入后，把新增的转义占位符保护为哨兵
@@ -1001,6 +1172,13 @@ def resolve_variables(text: str, var_map: dict, instance_dir: Path, max_depth: i
         esc_literals.extend(extra)
         if text == before:
             break
+    # 单文本调用面（mention_source=None）：在此销毁未命中的 @mention 残留（否则脏文本喂 AI）。
+    # 跨 msg 调用面（mention_source 非 None）：**不在此销毁**——未命中的 @mention 需透传保留
+    # 给外层 `_resolve_messages_vars` 的全部轮结束后统一销毁（跨消息最后一轮才销毁），
+    # 否则第一轮未命中就被删，后续轮即便 mention_source 更新也无 @mention 可匹配。
+    # 位置在哨兵还原之前：被 \ 转义的 \${@mention...} 已以哨兵形式存在，天然跳过。
+    if mention_source is None:
+        text = _drop_unmatched_mentions(text)
     return _restore_escaped_placeholders(text, esc_literals)
 
 

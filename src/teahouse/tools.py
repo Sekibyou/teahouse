@@ -22,7 +22,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .placeholder import resolve_placeholders, resolve_variables, validate_var_name
+from .placeholder import resolve_placeholders, resolve_variables, validate_var_name, drop_unmatched_mentions, strip_placeholder_shells, MAX_RESOLVE_DEPTH
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
@@ -419,22 +419,70 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
     writer/Generate path materializes `${name}` to its value so the prose `AI` writes
     uses real values (not placeholders) — the sandbox later applies special effects via
     regex on the resolved text.
+
+    @mention 的跨消息匹配：`mention_source` 传「上一轮全部消息 content 拼接」的只读变量
+    （prev_joined），使 system 里的 @mention 能匹配到 user/assistant 其它消息的正文。
+    因此这里用**跨消息多轮**：每轮以当轮 prev_joined 作 @mention 匹配源，逐条 resolve 各
+    content，直到稳定；全部轮结束后统一销毁仍未命中的 @mention 残留（跨消息最后一轮才销毁，
+    resolve_variables 内部在 mention_source 非 None 时不销毁、透传保留）。
     """
     var_map = _sandbox_var_map(instance_dir)
     type_map = _build_type_map(instance_dir)
 
-    def _resolve_value(v):
+    def _msg_content_str(m: dict) -> str:
+        c = m.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "\n".join(
+                p.get("text") if isinstance(p, dict) and isinstance(p.get("text"), str) else ""
+                for p in c
+            )
+        return ""
+
+    def _resolve_value(v, mention_source):
         if isinstance(v, str):
             if "{{" in v or "${" in v:
-                return resolve_variables(v, var_map, instance_dir, type_map=type_map)
+                return resolve_variables(v, var_map, instance_dir, type_map=type_map,
+                                         mention_source=mention_source)
             return v
         if isinstance(v, dict):
-            return {k: _resolve_value(x) for k, x in v.items()}
+            return {k: _resolve_value(x, mention_source) for k, x in v.items()}
         if isinstance(v, list):
-            return [_resolve_value(x) for x in v]
+            return [_resolve_value(x, mention_source) for x in v]
         return v
 
-    return [_resolve_value(m) for m in messages]
+    def _resolve_content(v, mention_source):
+        """解析一条消息的 content（str 或 list-of-parts），返回替换后的同构结构。"""
+        return _resolve_value(v, mention_source)
+
+    resolved = [dict(m) for m in messages]
+    prev_joined = ""
+    for _ in range(MAX_RESOLVE_DEPTH):
+        before = [_msg_content_str(m) for m in resolved]
+        # @mention 匹配源（prev_joined）：剥掉最外层占位符外壳（含 ${@note ...} 注释），
+        # 避免占位符文件名/指令文字/注释污染关键词命中判定（如 {{zzz.md}} 的名字 "zzz" 误命中）
+        joined = "\n".join(strip_placeholder_shells(s) for s in before)
+        for m in resolved:
+            if m.get("content") is not None:
+                m["content"] = _resolve_content(m["content"], joined)
+        after = [_msg_content_str(m) for m in resolved]
+        if after == before:
+            break
+        prev_joined = joined
+    # 跨消息所有轮结束：统一销毁仍未命中的 @mention 残留
+    for m in resolved:
+        c = m.get("content")
+        if isinstance(c, str) and "${" in c:
+            m["content"] = drop_unmatched_mentions(c)
+        elif isinstance(c, list):
+            m["content"] = [
+                {**p, "text": drop_unmatched_mentions(p["text"])}
+                if isinstance(p, dict) and isinstance(p.get("text"), str) and "@mention" in p["text"]
+                else p
+                for p in c
+            ]
+    return resolved
 
 
 async def execute_write(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
