@@ -26,6 +26,27 @@ async def require_user(request: Request) -> UserInfo:
     return user
 
 
+async def require_user_for_download(request: Request) -> UserInfo:
+    """Auth identical to require_user, but ALSO accepts a `?token=` query param.
+
+    Used by zip-download endpoints that open in a new tab via window.open(url),
+    which cannot attach an Authorization header. Header takes precedence; the
+    query token is a fallback for direct navigation.
+    """
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    user = await validate_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Request/response models
 # ---------------------------------------------------------------------------

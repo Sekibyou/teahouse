@@ -9,6 +9,7 @@ interface RequestResult<T> {
   ok: boolean
   data?: T
   error?: string
+  status?: number
 }
 
 async function request<T>(
@@ -52,7 +53,7 @@ async function request<T>(
     const json = await response.json()
 
     if (!response.ok) {
-      return { ok: false, error: json.detail || `请求失败 (${response.status})` }
+      return { ok: false, status: response.status, error: json.detail || `请求失败 (${response.status})` }
     }
 
     return { ok: true, data: json as T }
@@ -728,6 +729,30 @@ export interface InstanceSkill {
   has_examples: boolean
 }
 
+// ── Types for the prompt-package library ──
+export interface MyPackage {
+  name: string
+  has_readme: boolean
+  file_count: number
+  size: number
+  updated_at: number
+}
+
+export interface PackagePreview {
+  preview_id: string
+  available: boolean
+  name: string
+  preview: { name: string; has_readme: boolean; file_count: number }
+}
+
+export interface InstancePackage {
+  name: string
+  has_readme: boolean
+  file_count: number
+  size: number
+  updated_at: number
+}
+
 // Skills API — user-level skill library + instance enable/export
 export const skillsApi = {
   // User library
@@ -758,8 +783,44 @@ export const skillsApi = {
     get<InstanceSkill[]>(`/api/instances/${instanceId}/skills`),
   enableFromLibrary: (instanceId: string, name: string) =>
     post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}/enable-from-library`),
-  exportToLibrary: (instanceId: string, name: string) =>
-    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}/export-to-library`),
+  exportToLibrary: (instanceId: string, name: string, overwrite = false) =>
+    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}/export-to-library`, { overwrite }),
   removeFromInstance: (instanceId: string, name: string) =>
     del<{ name: string; status: string }>(`/api/instances/${instanceId}/skills/${encodeURIComponent(name)}`),
+}
+
+// Prompt packages API — user-level package library + instance enable/remove
+export const packagesApi = {
+  // User library
+  listMy: () => get<{ packages: MyPackage[] }>("/api/my-packages"),
+  preview: (form: FormData) => {
+    const token = getAuthToken()
+    const headers: Record<string, string> = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    return fetch(`${getApiBaseUrl()}/api/my-packages/preview`, {
+      method: "POST",
+      headers,
+      body: form,
+    }).then(async r => {
+      if (r.ok) return { ok: true as const, data: await r.json() as PackagePreview }
+      const detail = (await r.json().catch(() => null))?.detail
+      return { ok: false as const, error: typeof detail === "string" ? detail : "提示词包预检失败" }
+    })
+  },
+  confirmInstall: (previewId: string) =>
+    post<{ status: string; name: string; message: string }>("/api/my-packages/import/confirm", { preview_id: previewId }),
+  deleteMy: (name: string) => del<{ status: string; name: string; message: string }>(`/api/my-packages/${encodeURIComponent(name)}`),
+  downloadUrl: (name: string) => {
+    const token = getAuthToken()
+    return `${getApiBaseUrl()}/api/my-packages/${encodeURIComponent(name)}/download?token=${encodeURIComponent(token || "")}`
+  },
+  // Instance packages
+  listInInstance: (instanceId: string) =>
+    get<{ packages: InstancePackage[] }>(`/api/instances/${instanceId}/packages`),
+  enableInInstance: (instanceId: string, name: string) =>
+    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/packages/${encodeURIComponent(name)}/enable-from-library`),
+  removeFromInstance: (instanceId: string, name: string) =>
+    del<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/packages/${encodeURIComponent(name)}`),
+  exportToLibrary: (instanceId: string, name: string, overwrite = false) =>
+    post<{ name: string; status: string; message: string }>(`/api/instances/${instanceId}/packages/${encodeURIComponent(name)}/export-to-library`, { overwrite }),
 }

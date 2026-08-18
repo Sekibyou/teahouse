@@ -53,6 +53,7 @@ from .routes.workspaces import router as workspaces_router
 from .routes.session import router as session_router
 from .routes.plugins import router as plugins_router
 from .routes.skills import router as skills_router
+from .routes.packages import router as packages_router
 from .routes.settings import router as settings_router
 from .plugins import load_all_enabled_plugins
 from .database.plugins import configure_plugin_crypto
@@ -155,6 +156,7 @@ app.include_router(workspaces_router)
 app.include_router(session_router)
 app.include_router(plugins_router)
 app.include_router(skills_router)
+app.include_router(packages_router)
 app.include_router(settings_router)
 
 

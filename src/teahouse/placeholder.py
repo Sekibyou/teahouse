@@ -1056,7 +1056,77 @@ def _resolve_msg_item(item, instance_dir: Path):
 def _resolve_one(raw: str, instance_dir: Path) -> str:
     if raw.startswith("glob:"):
         return _resolve_glob(raw[5:].strip(), instance_dir)
+    if raw.startswith("@"):
+        return _resolve_package(raw, instance_dir)
     return _resolve_file(raw, instance_dir)
+
+
+def _split_package_ref(raw: str) -> tuple[str, str]:
+    """Split `{{@<包名>/<rest>}}` inner text into (pkg_name, rest).
+
+    raw is the content after the leading `@` (may include modifiers in rest that
+    _resolve_file understands). Package name = whole segment before the first `/`.
+    """
+    stripped = raw.strip()
+    if stripped.startswith("@"):
+        stripped = stripped[1:]
+    stripped = stripped.strip()
+    slash = stripped.find("/")
+    if slash == -1:
+        return stripped.strip(), ""
+    return stripped[:slash].strip(), stripped[slash + 1:].strip()
+
+
+def check_package_ref(instance_dir: Path, raw: str) -> tuple[bool, str]:
+    """Validate a single `{{@包名/rest}}` reference. Returns (ok, reason).
+
+    Public helper so the CheckPackageRefs director tool and the resolver share the
+    exact same package-root semantics (包缺失/路径不存在/路径穿越判定) — no drift.
+    `raw` may be the whole `{{@...}}` inner text or just `@包名/rest`.
+    """
+    pkg_name, rest = _split_package_ref(raw)
+    if not pkg_name:
+        return False, "空包名"
+    pkg_root = instance_dir / "packages" / pkg_name
+    if not pkg_root.is_dir():
+        return False, f"包 '{pkg_name}' 未安装"
+    if not rest:
+        # 只引用包根目录本身，不具体到文件——可指向 README 之类，但此处视为"未指定文件"
+        return False, f"包 '{pkg_name}' 未指定具体文件（只写了包名）"
+    # rest 可能带 :行段 / |from=to——解析前的裸路径不含这些语法也行；这里用
+    # _resolve_file_path 判定文件可达，遇到行段修饰则先截出纯路径段。
+    base_file = rest.split("|", 1)[0].split(":", 1)[0].strip()
+    if not base_file:
+        return False, "未指定文件路径"
+    try:
+        _resolve_file_path(instance_dir, base_file, base_dir=pkg_root)
+    except PlaceholderError as e:
+        return False, str(e)
+    return True, ""
+
+
+
+def _resolve_package(raw: str, instance_dir: Path) -> str:
+    """Resolve `{{@包名/rest}}` against `<instance>/packages/<包名>/rest`.
+
+    包名 = 第一个 `/` 前的整段（包名本身可含空格/点号/中文，作识别符带版本号）。
+    rest 支持与普通切片相同的 `:行段`/`|from=to` 修饰（经 _resolve_file 转发）。
+    包缺失或不存在的路径：
+      - strict=True（resolve_placeholders）时抛 PlaceholderError
+      - 否则在 _replacer 里被捕获，原样保留字面量（文档示例不炸）。
+    路径穿越由 _resolve_file_path 的 resolve()+startswith 防护。
+    """
+    pkg_name, rest = _split_package_ref(raw)
+    if not pkg_name:
+        raise PlaceholderError(f"Package path empty: {raw}")
+
+    pkg_root = instance_dir / "packages" / pkg_name
+    if not pkg_root.is_dir():
+        raise PlaceholderError(f"Package not installed: {pkg_name}")
+    if not rest:
+        raise PlaceholderError(f"Package path is a directory: {pkg_name}")
+    # 包内文件不搞 glob，仅走普通切片（含行段/anchor）
+    return _resolve_file(rest, instance_dir, base_dir=pkg_root)
 
 
 _NUM_SEGMENT_RE = re.compile(r"(\d+)")
@@ -1140,7 +1210,7 @@ def _take_last_by_number(matched: list[Path], last_n: int) -> list[Path]:
     return [p for p, _ in ordered]
 
 
-def _resolve_file(raw: str, instance_dir: Path) -> str:
+def _resolve_file(raw: str, instance_dir: Path, base_dir: Path | None = None) -> str:
     # Split on | to separate file/line-range from anchor modifiers
     # e.g. "test.md:10-30|from=A|to=B" → ["test.md:10-30", "from=A", "to=B"]
     pipe_parts = _split_pipes_outside_quotes(raw)
@@ -1156,7 +1226,7 @@ def _resolve_file(raw: str, instance_dir: Path) -> str:
         file_path = base_part[:colon_pos].strip()
         line_range = _extract_line_range(base_part[colon_pos + 1:].strip())
 
-    full = _resolve_file_path(instance_dir, file_path)
+    full = _resolve_file_path(instance_dir, file_path, base_dir=base_dir)
     content = full.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
 
@@ -1190,10 +1260,12 @@ def _read_full(file_path: str, instance_dir: Path) -> str:
     return _resolve_file_path(instance_dir, file_path).read_text(encoding="utf-8")
 
 
-def _resolve_file_path(instance_dir: Path, file_path: str) -> Path:
+def _resolve_file_path(instance_dir: Path, file_path: str, base_dir: Path | None = None) -> Path:
+    # base_dir 默认取 instance_dir；传包根时可让 `{{@pkg/...}}` 在包目录内解析。
+    root = base_dir or instance_dir
     # 多平台：把反斜杠规范化为正斜杠，Windows 上写惯的 `\` 路径在 Linux 也能解析。
-    full = (instance_dir / file_path.replace("\\", "/")).resolve()
-    if not str(full).startswith(str(instance_dir.resolve())):
+    full = (root / file_path.replace("\\", "/")).resolve()
+    if not str(full).startswith(str(root.resolve())):
         raise PlaceholderError(f"Path traversal detected: {file_path}")
     if not full.exists():
         raise PlaceholderError(f"File not found: {file_path}")

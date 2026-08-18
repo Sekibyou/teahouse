@@ -1158,11 +1158,15 @@ async def enable_skill_from_library(instance_id: str, skill_name: str, user: Use
 
 
 @router.post("/instances/{instance_id}/skills/{skill_name}/export-to-library")
-async def export_skill_to_library(instance_id: str, skill_name: str, user: UserInfo = Depends(require_user)):
+async def export_skill_to_library(instance_id: str, skill_name: str, body: Optional[dict] = None, user: UserInfo = Depends(require_user)):
     """Copy a skill from this instance into the user's skill library.
 
     instance -> user. This is how a skill authored in an instance becomes
     reusable across other instances (the library is the stock).
+
+    If a same-named skill already exists in the library, the request is refused
+    with 409 unless `overwrite: true` is passed (body JSON) — the client must
+    show a confirm dialog before overwriting, matching prompt-package export.
     """
     import re as _re
     if not _re.match(r'^[a-zA-Z0-9_-]+$', skill_name):
@@ -1177,13 +1181,146 @@ async def export_skill_to_library(instance_id: str, skill_name: str, user: UserI
     if not source:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不在该实例中")
 
+    overwrite = bool(body and body.get("overwrite"))
     lib_dir = _user_skills_lib_dir(u)
     lib_dir.mkdir(parents=True, exist_ok=True)
     target = lib_dir / skill_name
     if target.exists():
+        if not overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail=f"skill 库中已存在同名 skill '{skill_name}'，需确认覆盖后重发",
+            )
         shutil.rmtree(target)
     shutil.copytree(source, target)
     return {"name": skill_name, "status": "exported", "message": f"skill '{skill_name}' 已加入你的 skill 库"}
+
+
+# ── 提示词包（instance packages）─────────────────────────────────
+
+
+def _user_packages_lib_dir(user_row: dict) -> Path:
+    """Path to the user's prompt-package library (decoupled inventory dir)."""
+    safe_name = user_row.get("safe_name") or user_row["username"].lower().replace(" ", "_")
+    return Path(state.workspace_base) / safe_name / "packages"
+
+
+def _instance_packages_dir(instance_dir: Path) -> Path:
+    return instance_dir / "packages"
+
+
+def _scan_instance_package(pkg_dir: Path) -> dict:
+    return {
+        "name": pkg_dir.name,
+        "has_readme": (pkg_dir / "README.md").is_file(),
+        "file_count": sum(1 for p in pkg_dir.rglob("*") if p.is_file()),
+        "size": sum(p.stat().st_size for p in pkg_dir.rglob("*") if p.is_file()),
+        "updated_at": pkg_dir.stat().st_mtime,
+    }
+
+
+@router.get("/instances/{instance_id}/packages")
+async def list_instance_packages(instance_id: str, user: UserInfo = Depends(require_user)):
+    """List the prompt packages installed in an instance."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    pkg_root = _instance_packages_dir(instance_dir)
+    packages: list[dict] = []
+    if pkg_root.is_dir():
+        for entry in sorted(pkg_root.iterdir(), key=lambda e: e.name):
+            if entry.is_dir():
+                packages.append(_scan_instance_package(entry))
+    return {"packages": packages}
+
+
+@router.post("/instances/{instance_id}/packages/{package_name}/enable-from-library")
+async def enable_package_from_library(instance_id: str, package_name: str, user: UserInfo = Depends(require_user)):
+    """Copy a prompt package from the user's library into this instance's packages/.
+
+    user -> instance. The library is a stock/inventory only; copying it in is what
+    makes the package available for {{@包名/路径}} slices.
+    """
+    from .packages import validate_package_name
+    validate_package_name(package_name)
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    lib_pkg = _user_packages_lib_dir(u) / package_name
+    if not lib_pkg.is_dir():
+        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在你的包库中")
+
+    target = _instance_packages_dir(instance_dir) / package_name
+    if target.exists():
+        raise HTTPException(status_code=409, detail=f"该实例已启用包 '{package_name}'")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(lib_pkg, target)
+    return {"name": package_name, "status": "enabled", "message": f"提示词包 '{package_name}' 已启用"}
+
+
+@router.delete("/instances/{instance_id}/packages/{package_name}")
+async def remove_instance_package(instance_id: str, package_name: str, user: UserInfo = Depends(require_user)):
+    """Remove (卸载) a prompt package from an instance by deleting its packages/ dir.
+
+    References in assembler/manifest to it become inert (server skips them), so
+    removal is a clean uninstall.
+    """
+    from .packages import validate_package_name
+    validate_package_name(package_name)
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    pkg_dir = _instance_packages_dir(instance_dir) / package_name
+    if not pkg_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在该实例中")
+    shutil.rmtree(pkg_dir)
+    return {"name": package_name, "status": "removed", "message": f"提示词包 '{package_name}' 已卸载"}
+
+
+@router.post("/instances/{instance_id}/packages/{package_name}/export-to-library")
+async def export_package_to_library(instance_id: str, package_name: str, body: Optional[dict] = None, user: UserInfo = Depends(require_user)):
+    """Copy a prompt package from this instance into the user's package library.
+
+    instance -> user. The instance's packages/<name>/ is the working area the
+    director/user composes into; exporting copies it into the user library
+    (stock) so it can be enabled in other instances or downloaded as a zip.
+
+    Same-named package in the library → 409 unless `overwrite: true` (client
+    shows a confirm dialog first), matching skill export.
+    """
+    from .packages import validate_package_name
+    validate_package_name(package_name)
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+
+    source = _instance_packages_dir(instance_dir) / package_name
+    if not source.is_dir():
+        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在该实例中")
+
+    overwrite = bool(body and body.get("overwrite"))
+    lib_dir = _user_packages_lib_dir(u)
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    target = lib_dir / package_name
+    if target.exists():
+        if not overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail=f"包库中已存在同名提示词包 '{package_name}'，需确认覆盖后重发",
+            )
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    return {"name": package_name, "status": "exported", "message": f"提示词包 '{package_name}' 已加入你的包库"}
+
 
 
 @router.post("/instances/{instance_id}/skills/{skill_name}/export")
@@ -1614,12 +1751,20 @@ def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
     ``disabled/`` subfolder are NOT served — moving a script into
     runtime/sandbox/disabled/ disables it while keeping it versioned in place.
     bootstrap.js is excluded — it's engine-built and served via _read_bootstrap_scripts().
+
+    A fixed manifest file ``runtime/sandbox/manifest.md`` aggregates **package** UI
+    resources: each line is a ``{{@包名/runtime/sandbox/xxx.js}}`` (or .css) slice,
+    and the referenced file is read from packages/<包名>/** and inlined alongside
+    the local scripts. manifest.md itself is not served; its references keep package
+    sources out of the instance sandbox dir (职权清晰: 自己写的 vs 引用自包).
+    Broken references (package missing / file gone) are skipped silently.
     """
     sandbox_dir = instance_dir / "runtime" / "sandbox"
     files: dict[str, str] = {}
     if not sandbox_dir.is_dir():
         return files
     disabled_dir = sandbox_dir / "disabled"
+    manifest_path = sandbox_dir / "manifest.md"
     for p in sorted(sandbox_dir.rglob("*")):
         if p.is_file():
             # Files under disabled/ are not served (deactivated but kept in place)
@@ -1628,12 +1773,65 @@ def _list_sandbox_files(instance_dir: Path) -> dict[str, str]:
             # 引擎内置 bootstrap，实例中的 bootstrap.js 忽略
             if p.name == "bootstrap.js":
                 continue
+            # manifest 是聚合清单自身，不作为独立资源服务
+            if p == manifest_path:
+                continue
             rel = str(p.relative_to(instance_dir)).replace("\\", "/")
             try:
                 files[rel] = p.read_text(encoding="utf-8")
             except Exception:
                 continue
+    _aggregate_sandbox_manifest(manifest_path, instance_dir, files)
     return files
+
+
+def _aggregate_sandbox_manifest(manifest_path: Path, instance_dir: Path, files: dict[str, str]) -> None:
+    """Inline package UI resources referenced by the sandbox manifest.md.
+
+    Each non-empty, non-comment line is a ``{{@包名/runtime/sandbox/foo.js|.css}}``
+    slice. Reuses placeholder path resolution so traversal guarding and the
+    package-root semantics stay identical to {{@pkg}} slices elsewhere.
+    """
+    from ..placeholder import _resolve_file_path, PlaceholderError
+    import re as _re
+    if not manifest_path.is_file():
+        return
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    slice_re = _re.compile(r"\{\{@([^}]+?)\}\}")
+    for line in text.splitlines():
+        ln = line.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        for m in slice_re.finditer(ln):
+            raw = m.group(1).strip()
+            # raw = "<包名>/rest"，rest 内不允许再带 glob（包内只走普通切片）
+            slash = raw.find("/")
+            if slash == -1:
+                continue
+            pkg_name = raw[:slash].strip()
+            rest = raw[slash + 1:].strip()
+            if not pkg_name or not rest:
+                continue
+            pkg_root = instance_dir / "packages" / pkg_name
+            if not pkg_root.is_dir():
+                continue
+            # 只聚合 js/css 资源；其余(其它切片或无效后缀)跳过
+            if not (rest.endswith(".js") or rest.endswith(".css")):
+                continue
+            try:
+                full = _resolve_file_path(instance_dir, rest, base_dir=pkg_root)
+            except (PlaceholderError, OSError):
+                continue
+            try:
+                content = full.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            key = f"@{pkg_name}/{rest}"
+            if key not in files:
+                files[key] = content
 
 
 def _read_bootstrap_scripts() -> list[str]:

@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ..state import state
 from ..database.users import get_user_by_id
-from ..routes.auth import require_user, UserInfo
+from ..routes.auth import require_user, require_user_for_download, UserInfo
 
 router = APIRouter(prefix="/api/my-skills", tags=["my-skills"])
 
@@ -250,7 +250,7 @@ async def api_delete_my_skill(skill_name: str, user: UserInfo = Depends(require_
 
 
 @router.get("/{skill_name}/download")
-async def api_download_my_skill(skill_name: str, user: UserInfo = Depends(require_user)):
+async def api_download_my_skill(skill_name: str, user: UserInfo = Depends(require_user_for_download)):
     import zipfile, tempfile
     if not SKILL_NAME_RE.match(skill_name):
         raise HTTPException(status_code=400, detail="skill 名不合法")

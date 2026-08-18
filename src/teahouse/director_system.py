@@ -33,6 +33,7 @@ TEMPLATE_FILES = [
 
 INSTANCE_TEAHOUSE = "teahouse.md"
 INSTANCE_SKILLS_DIR = "skills"
+INSTANCE_PACKAGES_DIR = "packages"
 
 # Directories excluded entirely from tree display
 TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions", "building"}
@@ -271,6 +272,45 @@ def _scan_skills(instance_dir: Path) -> str:
     return "可用 Skill：\n" + "\n".join(entries)
 
 
+def _scan_packages(instance_dir: Path) -> str:
+    """Scan installed prompt packages (packages/) and summarize each for the Director.
+
+    A package is 约束力较弱的"提示词包"——本质是被复制进实例 packages/<名>/ 的一组
+    文件（设定/描写词/UI/组装器），作者在组装器/正文里写 {{@包名/路径}} 显式引用才生效。
+    这里只为导演提供"有哪些包可用 + 各自怎么用"的清单，具体引用粒度由导演自行决定。
+    每包读 README.md 前 N 行作描述（若有），并列出顶层目录名。
+    """
+    packages_dir = instance_dir / INSTANCE_PACKAGES_DIR
+    if not packages_dir.is_dir():
+        return "（没有安装任何提示词包）"
+
+    pkg_dirs = sorted(
+        (e for e in packages_dir.iterdir() if e.is_dir()),
+        key=lambda p: p.name,
+    )
+    if not pkg_dirs:
+        return "（没有安装任何提示词包）"
+
+    entries = []
+    for pkg in pkg_dirs:
+        name = pkg.name
+        readme = pkg / "README.md"
+        if readme.is_file():
+            lines = [ln.strip() for ln in readme.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            summary = " ".join(lines[:3])[:300]
+        else:
+            summary = "（无 README.md，请读包内文件了解用途）"
+        # 顶层目录名（去掉隐藏/内部目录）
+        tops = sorted(
+            e.name for e in pkg.iterdir()
+            if e.is_dir() and e.name not in TREE_EXCLUDE
+        )
+        top_txt = f"结构：{', '.join(tops)}" if tops else "结构：无子目录"
+        entries.append(f"- **{name}**：{summary}\n  {top_txt}")
+
+    return "已安装提示词包（写 \\{{@包名/路径}} 引用生效）：\n" + "\n".join(entries)
+
+
 def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> str:
     """Assemble the full system prompt for the Director.
 
@@ -309,6 +349,10 @@ def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "") -> st
     # 5. Skills catalogue (name + description from SKILL.md)
     skills = _scan_skills(instance_dir)
     parts.append(f"————可用 Skill 列表开始————\n\n{skills}\n\n————可用 Skill 列表结束————")
+
+    # 6. Prompt packages catalogue (packages/ README summaries)
+    packages = _scan_packages(instance_dir)
+    parts.append(f"————已安装提示词包列表开始————\n\n{packages}\n\n————已安装提示词包列表结束————")
 
     text = "\n\n".join(parts)
 

@@ -843,6 +843,73 @@ async def execute_grep(instance_dir: Path, args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+async def execute_check_package_refs(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Scan the instance tree for broken {{@包名/路径}} references.
+
+    A package reference resolves against <instance>/packages/<包名>/<路径>. We
+    report every `{{@...}}` whose package is missing or path no longer exists,
+    as 文件 : 行号 + 原因 — so the director can learn where a package slice
+    broke before a Generate/assemble hits it.
+
+    Scope: whole instance tree, EXCLUDING packages/ itself (no chain deps:
+    an instance references packages, packages don't reference each other, so
+    包内 {{@...}} is teaching copy about how to reference — nothing to check)
+    and internal/metadata dirs (.git, building, sessions, disabled/).
+    """
+    from .placeholder import check_package_ref
+
+    instance_dir = instance_dir.resolve()
+    text_extensions = {".md", ".yaml", ".yml", ".json", ".txt", ".py", ".js", ".ts", ".css", ".html"}
+    exclude_rel_dirs = {
+        "packages",
+        ".git",
+        "building",
+        "sessions",
+        ".sessions",
+        "runtime/sandbox/disabled",
+    }
+    slice_re = _re.compile(r"\{\{@([^}]+?)\}\}")
+
+    # result: (rel, line_no, pkg_ref_raw, reason)
+    broken: list[tuple[str, int, str, str]] = []
+    seen_files = 0
+    for p in sorted(instance_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.suffix not in text_extensions:
+            continue
+        rel = str(p.relative_to(instance_dir)).replace("\\", "/")
+        # skip excluded dirs by path prefix
+        if any(rel == d or rel.startswith(d + "/") for d in exclude_rel_dirs):
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        for lineno, text in enumerate(lines, start=1):
+            for m in slice_re.finditer(text):
+                raw = m.group(1).strip()
+                ok, reason = check_package_ref(instance_dir, raw)
+                if not ok:
+                    broken.append((rel, lineno, raw, reason))
+                else:
+                    seen_files += 1
+
+    if not broken:
+        return "所有 {{@包名/路径}} 引用均有效" + (f"（检查了 {seen_files} 处引用）" if seen_files else "")
+
+    lines = [f"({len(broken)} broken package refs)"]
+    # 归并同一文件的多个行号
+    from collections import OrderedDict
+    per_file: OrderedDict[str, list[tuple[int, str, str]]] = OrderedDict()
+    for rel, lineno, raw, reason in broken:
+        per_file.setdefault(rel, []).append((lineno, raw, reason))
+    for rel, hits in per_file.items():
+        for lineno, raw, reason in hits:
+            lines.append(f"{rel} : {lineno}  [{reason}]  ({{{{@{raw}}}}})")
+    return "\n".join(lines)
+
+
 async def execute_generate(
     instance_dir: Path,
     args: dict[str, Any],
@@ -1568,6 +1635,7 @@ TOOL_EXECUTORS = {
     "WriteLine": execute_edit_line,
     "Glob": execute_glob,
     "Grep": execute_grep,
+    "CheckPackageRefs": execute_check_package_refs,
     "Generate": execute_generate,
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
@@ -1598,6 +1666,7 @@ SUB_SESSION_BASE_TOOLS = {
     "Read",
     "Glob",
     "Grep",
+    "CheckPackageRefs",
     "SkillRead",
     "GetRuntimeVars",
     "GitStatus",

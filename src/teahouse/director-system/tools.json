@@ -189,6 +189,17 @@
     }
   },
   {
+    "name": "CheckPackageRefs",
+    "short": "检查失效的包引用",
+    "description": "扫描实例中所有 {{@包名/路径}} 提示词包引用，报告失效项（包未安装或文件不存在）",
+    "usage": "扫描实例中所有写法为 \\{{@包名/路径}} 的提示词包引用，验证每个引用能否解析到已安装的包及包内文件，报告失效项（包未安装 / 包内文件不存在）。\n\n背景：提示词包是装在实例 packages/<包名>/ 下的一组资源，导演在组装器/正文里用 \\{{@包名/路径}} 显式引用其内容才生效。包未安装或包内路径写错会导致组装时该引用原样保留、正文丢掉该段设定——用它可在 Generate/组装前发现断链。\n\n作用范围：遍历实例目录树中的文本文件（md/yaml/json 等），但**排除 packages/ 目录自身**——实例只会引用包、包之间不存在链式引用，包内的 \\{{@...}} 属教学文本无需检查。\n\n参数：无结构参数，直接调用即可。\n\n返回格式：\n  (2 broken package refs)\n  settings/assemble.md : 14  [包 '某人的修仙设定' 未安装]  ({{@某人的修仙设定/settings/AAA.md}})\n  generate-config/generate.yaml : 5  [File not found: settings/static_settings/ZZZ.md]  ({{@修仙 v1.0/settings/static_settings/ZZZ.md}})\n\n找到失效引用后，用 Edit 修正路径（包名需与实际 packages/ 下的目录名一致），或先安装对应包。所有引用均有效时返回「所有 {{@包名/路径}} 引用均有效」。",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
     "name": "Generate",
     "short": "调用正文模型生成",
     "description": "调用正文模型生成内容并写入指定文件。通过 YAML 配置文件组织消息结构，支持 {{path}} 占位符引用文件内容。",

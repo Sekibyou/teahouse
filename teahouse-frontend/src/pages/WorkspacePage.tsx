@@ -16,7 +16,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import { instancesApi, gitApi, prototypesApi, skillsApi, type InstanceSkill } from "@/lib/api"
+import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, type InstanceSkill, type InstancePackage } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -114,7 +114,7 @@ export function WorkspacePage() {
 
   // Export prototype state
   const [showExportDialog, setShowExportDialog] = useState(false)
-  const [exportType, setExportType] = useState<"prototype" | "skill">("prototype")
+  const [exportType, setExportType] = useState<"prototype" | "skill" | "package">("prototype")
   const [exportName, setExportName] = useState("")
   const [exportDescription, setExportDescription] = useState("")
   const [exportAuthor, setExportAuthor] = useState("")
@@ -127,6 +127,14 @@ export function WorkspacePage() {
   const [exportSelectedSkill, setExportSelectedSkill] = useState("")
   const [exportSkillError, setExportSkillError] = useState("")
   const [exportSkillLoading, setExportSkillLoading] = useState(false)
+  // Export-package plane: list instance packages, pick one, export to user library
+  const [instPackages, setInstPackages] = useState<InstancePackage[]>([])
+  const [instPackagesLoading, setInstPackagesLoading] = useState(false)
+  const [exportSelectedPackage, setExportSelectedPackage] = useState("")
+  const [exportPackageError, setExportPackageError] = useState("")
+  const [exportPackageLoading, setExportPackageLoading] = useState(false)
+  // Overwrite confirmation: a same-named target already exists in the library.
+  const [pendingOverwrite, setPendingOverwrite] = useState<{ kind: "skill" | "package"; name: string } | null>(null)
 
   const instId = activeInstance?.id
 
@@ -301,10 +309,11 @@ export function WorkspacePage() {
     await refresh()
   }
 
-  const openExportDialog = async (type: "prototype" | "skill") => {
+  const openExportDialog = async (type: "prototype" | "skill" | "package") => {
     setExportType(type)
     setExportError("")
     setExportSkillError("")
+    setExportPackageError("")
     if (type === "skill") {
       setExportSelectedSkill("")
       if (!instId) return
@@ -317,8 +326,44 @@ export function WorkspacePage() {
         setExportSkillError(res.error || "加载 skill 列表失败")
       }
       setInstSkillsLoading(false)
+    } else if (type === "package") {
+      setExportSelectedPackage("")
+      if (!instId) return
+      setInstPackagesLoading(true)
+      const res = await packagesApi.listInInstance(instId)
+      if (res.ok) {
+        setInstPackages(res.data!.packages)
+      } else {
+        setExportPackageError(res.error || "加载提示词包列表失败")
+      }
+      setInstPackagesLoading(false)
     }
     setShowExportDialog(true)
+  }
+
+  // Shared "export a library item into the user's library" with overwrite confirm.
+  const doExportToLibrary = async (kind: "skill" | "package", name: string, overwrite: boolean, setLoading: (v: boolean) => void, setErr: (v: string) => void) => {
+    if (!instId) return
+    setLoading(true)
+    setErr("")
+    let res: { ok: boolean; error?: string; status?: number }
+    if (kind === "skill") {
+      res = await skillsApi.exportToLibrary(instId, name, overwrite)
+    } else {
+      res = await packagesApi.exportToLibrary(instId, name, overwrite)
+    }
+    setLoading(false)
+    if (res.ok) {
+      setShowExportDialog(false)
+      if (kind === "skill") setExportSelectedSkill("")
+      else setExportSelectedPackage("")
+      showSaveToast()
+    } else if (!overwrite && res.status === 409) {
+      // Same-named target already exists in the library → ask before overwriting.
+      setPendingOverwrite({ kind, name })
+    } else {
+      setErr(res.error || "导出失败")
+    }
   }
 
   const handleExport = async () => {
@@ -342,19 +387,40 @@ export function WorkspacePage() {
         setExportError(res.error || "导出失败")
       }
       setExportLoading(false)
+    } else if (exportType === "package") {
+      if (!exportSelectedPackage) return
+      await doExportToLibrary("package", exportSelectedPackage, false, setExportPackageLoading, setExportPackageError)
     } else {
       if (!exportSelectedSkill) return
-      setExportSkillLoading(true)
-      setExportSkillError("")
-      const res = await skillsApi.exportToLibrary(instId, exportSelectedSkill)
-      setExportSkillLoading(false)
+      await doExportToLibrary("skill", exportSelectedSkill, false, setExportSkillLoading, setExportSkillError)
+    }
+  }
+
+  const handleConfirmOverwrite = async () => {
+    if (!pendingOverwrite) return
+    const { kind, name } = pendingOverwrite
+    setPendingOverwrite(null)
+    if (!instId) return
+    if (kind === "skill") {
+      const setL = setExportSkillLoading
+      const setE = setExportSkillError
+      setL(true); setE("")
+      const res = await skillsApi.exportToLibrary(instId, name, true)
+      setL(false)
       if (res.ok) {
         setShowExportDialog(false)
         setExportSelectedSkill("")
         showSaveToast()
-      } else {
-        setExportSkillError(res.error || "导出失败")
-      }
+      } else setE(res.error || "导出失败")
+    } else {
+      setExportPackageLoading(true); setExportPackageError("")
+      const res = await packagesApi.exportToLibrary(instId, name, true)
+      setExportPackageLoading(false)
+      if (res.ok) {
+        setShowExportDialog(false)
+        setExportSelectedPackage("")
+        showSaveToast()
+      } else setExportPackageError(res.error || "导出失败")
     }
   }
 
@@ -865,7 +931,7 @@ export function WorkspacePage() {
             <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
 
               {/* Type toggle */}
-              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted">
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
                 <button
                   className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => openExportDialog("prototype")}
@@ -877,6 +943,12 @@ export function WorkspacePage() {
                   onClick={() => openExportDialog("skill")}
                 >
                   导出 Skill
+                </button>
+                <button
+                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => openExportDialog("package")}
+                >
+                  导出提示词包
                 </button>
               </div>
 
@@ -928,6 +1000,42 @@ export function WorkspacePage() {
                     <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
                       {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                       导出
+                    </Button>
+                  </div>
+                </>
+              ) : exportType === "package" ? (
+                <>
+                  <h3 className="font-semibold">导出提示词包到包库</h3>
+                  <p className="text-xs text-muted-foreground">
+                    选取当前实例 packages/ 里的一个提示词包，复制到你的提示词包库（可在设置页「提示词包」中管理，也可到其他实例里启用）。
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">选择提示词包</label>
+                    {instPackagesLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                      </div>
+                    ) : instPackages.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">该实例没有可作为提示词包导出的条目。</p>
+                    ) : (
+                      <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择一个提示词包" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {instPackages.map(p => (
+                            <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                  {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
+                      {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                      导出到库里
                     </Button>
                   </div>
                 </>
@@ -1252,7 +1360,7 @@ export function WorkspacePage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             {/* Type toggle */}
-            <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted">
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
               <button
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => openExportDialog("prototype")}
@@ -1264,6 +1372,12 @@ export function WorkspacePage() {
                 onClick={() => openExportDialog("skill")}
               >
                 导出 Skill
+              </button>
+              <button
+                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => openExportDialog("package")}
+              >
+                导出提示词包
               </button>
             </div>
 
@@ -1318,6 +1432,42 @@ export function WorkspacePage() {
                   </Button>
                 </div>
               </>
+            ) : exportType === "package" ? (
+              <>
+                <h3 className="font-semibold">导出提示词包到包库</h3>
+                <p className="text-xs text-muted-foreground">
+                  选取当前实例 packages/ 里的一个提示词包，复制到你的提示词包库（可在设置页「提示词包」中管理，也可到其他实例里启用）。
+                </p>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">选择提示词包</label>
+                  {instPackagesLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                    </div>
+                  ) : instPackages.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">该实例没有可作为提示词包导出的条目。</p>
+                  ) : (
+                    <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择一个提示词包" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {instPackages.map(p => (
+                          <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
+                    {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                    导出到库里
+                  </Button>
+                </div>
+              </>
             ) : (
               <>
                 <h3 className="font-semibold">导出 Skill 到 skill 库</h3>
@@ -1358,6 +1508,17 @@ export function WorkspacePage() {
           </div>
         </div>
       )}
+
+      {/* Overwrite confirm — same-named package/skill already exists in library */}
+      <ConfirmDialog
+        open={pendingOverwrite !== null}
+        title={pendingOverwrite?.kind === "package" ? "覆盖提示词包" : "覆盖 skill"}
+        message={`你的${pendingOverwrite?.kind === "package" ? "提示词包库" : "skill 库"}中已有同名「${pendingOverwrite?.name}」。覆盖会删除库里已有的旧版本并用当前实例里的覆盖，已复制进其它实例的副本不受影响。确认覆盖？`}
+        variant="destructive"
+        confirmText="覆盖"
+        onConfirm={handleConfirmOverwrite}
+        onCancel={() => setPendingOverwrite(null)}
+      />
 
       {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
       {isDragging && (

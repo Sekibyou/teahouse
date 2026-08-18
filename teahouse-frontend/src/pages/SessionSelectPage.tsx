@@ -2,13 +2,13 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import {
   Play, Loader2, X, Upload, Download, Trash2, Clock, Hash, Sun, Moon, LogOut,
-  Settings, ArrowLeft, Copy, BookOpen, Plus, Pencil,
+  Settings, ArrowLeft, Copy, BookOpen, Plus, Pencil, Package,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { prototypesApi, instancesApi, sessionApi, skillsApi, type MySkill, type InstanceSkill } from "@/lib/api"
+import { prototypesApi, instancesApi, sessionApi, skillsApi, packagesApi, type MySkill, type InstanceSkill, type MyPackage, type InstancePackage } from "@/lib/api"
 import { renderText } from "@/lib/htmlSanitizer"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { useAuthActions } from "@/stores/authStore"
@@ -54,6 +54,7 @@ export function SessionSelectPage() {
 
   // Instance skill management (enable library skills into this instance)
   const [manageSkillsFor, setManageSkillsFor] = useState<Instance | null>(null)
+  const [managePackagesFor, setManagePackagesFor] = useState<Instance | null>(null)
 
   // Import
   const [importState, setImportState] = useState<"idle" | "loading">("idle")
@@ -272,6 +273,7 @@ export function SessionSelectPage() {
           onDelete={() => setInstanceToDelete(dialogInstance)}
           onCopy={() => openCopyDialog(dialogInstance)}
           onManageSkills={() => setManageSkillsFor(dialogInstance)}
+          onManagePackages={() => setManagePackagesFor(dialogInstance)}
           onClose={() => setDialogInstance(null)}
         />
       )}
@@ -293,6 +295,11 @@ export function SessionSelectPage() {
       {/* Instance skill management overlay */}
       {manageSkillsFor && (
         <InstanceSkillsDialog instance={manageSkillsFor} onClose={() => setManageSkillsFor(null)} />
+      )}
+
+      {/* Instance prompt-package management overlay */}
+      {managePackagesFor && (
+        <InstancePackagesDialog instance={managePackagesFor} onClose={() => setManagePackagesFor(null)} />
       )}
 
       {/* Confirm delete prototype */}
@@ -490,7 +497,7 @@ function formatDateShort(ts: number) {
 function InstanceDialog({
   instance, readmeData, readmeLoading, renaming, renameValue, isMobile,
   onRenameValue, onToggleRename, onConfirmRename, actionLoading,
-  onContinue, onDelete, onCopy, onClose, onManageSkills,
+  onContinue, onDelete, onCopy, onClose, onManageSkills, onManagePackages,
 }: {
   instance: Instance
   readmeData: { metadata: Record<string, unknown>; readme: string } | null
@@ -507,6 +514,7 @@ function InstanceDialog({
   onCopy: () => void
   onClose: () => void
   onManageSkills: () => void
+  onManagePackages: () => void
 }) {
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
   useDialogBackClose(true, onClose)
@@ -630,6 +638,9 @@ function InstanceDialog({
               <Button variant="outline" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill（从你的 skill 库启用）">
                 <BookOpen className="h-4 w-4" />
               </Button>
+              <Button variant="outline" onClick={onManagePackages} disabled={actionLoading} title="管理提示词包（从你的包库启用）">
+                <Package className="h-4 w-4" />
+              </Button>
               <Button variant="outline" onClick={onCopy} disabled={actionLoading} title="复制实例">
                 <Copy className="h-4 w-4" />
               </Button>
@@ -710,6 +721,9 @@ function InstanceDialog({
                   <div className="flex items-center gap-2 mt-2">
                     <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill">
                       <BookOpen className="h-3.5 w-3.5" />Skill
+                    </Button>
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManagePackages} disabled={actionLoading} title="管理提示词包">
+                      <Package className="h-3.5 w-3.5" />提示词包
                     </Button>
                     <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onCopy} disabled={actionLoading} title="复制实例">
                       <Copy className="h-3.5 w-3.5" />复制
@@ -1421,3 +1435,153 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
     </div>
   )
 }
+
+function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+  useDialogBackClose(true, onClose)
+
+  const [library, setLibrary] = useState<MyPackage[]>([])
+  const [enabled, setEnabled] = useState<InstancePackage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState("")
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    setError("")
+    const [libRes, instRes] = await Promise.all([
+      packagesApi.listMy(),
+      packagesApi.listInInstance(instance.id),
+    ])
+    if (libRes.ok) setLibrary(libRes.data!.packages)
+    if (instRes.ok) setEnabled(instRes.data!.packages)
+    setLoading(false)
+  }, [instance.id])
+
+  useEffect(() => { reload() }, [reload])
+
+  const enabledNames = new Set(enabled.map(p => p.name))
+
+  const handleEnable = async (name: string) => {
+    setBusy(name)
+    setError("")
+    const res = await packagesApi.enableInInstance(instance.id, name)
+    setBusy(null)
+    if (!res.ok) setError(res.error || "启用失败")
+    else await reload()
+  }
+
+  const handleConfirmRemove = async () => {
+    if (!removeTarget) return
+    setBusy(removeTarget)
+    setError("")
+    const res = await packagesApi.removeFromInstance(instance.id, removeTarget)
+    setBusy(null)
+    setRemoveTarget(null)
+    if (!res.ok) setError(res.error || "移除失败")
+    else await reload()
+  }
+
+  return (
+    <div className="absolute inset-0 z-[60] bg-background/70 backdrop-blur-lg flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-w-md max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div>
+            <div className="font-semibold flex items-center gap-2">
+              <Package className="h-4 w-4 text-muted-foreground" />
+              提示词包管理
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">为「{instance.name}」启用或移除提示词包</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">{error}</div>
+          )}
+
+          <div className="text-xs font-medium text-muted-foreground">该实例已启用的提示词包</div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+            </div>
+          ) : enabled.length === 0 ? (
+            <p className="text-xs text-muted-foreground">尚未启用任何提示词包</p>
+          ) : (
+            <div className="space-y-2">
+              {enabled.map(p => (
+                <div key={p.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                  <span className="text-sm">{p.name}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-500 hover:text-red-500 h-7 text-xs"
+                    onClick={() => setRemoveTarget(p.name)}
+                    disabled={busy === p.name}
+                  >
+                    {busy === p.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1" />}
+                    卸载
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="text-xs font-medium text-muted-foreground pt-3 border-t border-border">
+            从你的提示词包库添加
+          </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+            </div>
+          ) : library.length === 0 ? (
+            <p className="text-xs text-muted-foreground">你的提示词包库还是空的，可先在设置页「提示词包」导入，或在实例里导出。</p>
+          ) : (
+            <div className="space-y-2">
+              {library.map(p => {
+                const isEnabled = enabledNames.has(p.name)
+                return (
+                  <div key={p.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm truncate">{p.name}</div>
+                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">已启用</div>}
+                    </div>
+                    {isEnabled ? (
+                      <span className="text-[11px] text-muted-foreground shrink-0">已在实例中</span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleEnable(p.name)}
+                        disabled={busy === p.name}
+                      >
+                        {busy === p.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3 mr-1" />}
+                        启用
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="卸载提示词包"
+        message={`确定卸载「${removeTarget}」吗？这只会从该实例包库删除，你的提示词包库里仍保留。`}
+        variant="destructive"
+        confirmText="卸载"
+        onConfirm={handleConfirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
+    </div>
+  )
+}
+

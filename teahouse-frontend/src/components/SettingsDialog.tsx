@@ -3,13 +3,13 @@ import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
-  BookOpen,
+  BookOpen, Package,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
-import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi } from "@/lib/api"
+import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi, packagesApi } from "@/lib/api"
 import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import { SlotCard } from "@/components/SlotCard"
 import { useThemeStore } from "@/stores/themeStore"
@@ -17,7 +17,7 @@ import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
-import type { MySkill, SkillPreview } from "@/lib/api"
+import type { MySkill, SkillPreview, MyPackage, PackagePreview } from "@/lib/api"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -25,7 +25,7 @@ interface SettingsDialogProps {
   defaultTab?: TabKey
 }
 
-type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills"
+type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills" | "packages"
 
 const API_FORMAT_OPTIONS = [
   { value: "openai", label: "openai" },
@@ -41,6 +41,7 @@ const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string }[] = [
   { key: "general", Icon: SlidersHorizontal, label: "通用设置" },
   { key: "plugins", Icon: Puzzle, label: "插件管理" },
   { key: "skills", Icon: BookOpen, label: "Skill 管理" },
+  { key: "packages", Icon: Package, label: "提示词包" },
 ]
 
 const permLabels: Record<string, string> = {
@@ -158,6 +159,17 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [skillDeleting, setSkillDeleting] = useState<string | null>(null)
   const [skillDeleteTarget, setSkillDeleteTarget] = useState<string | null>(null)
 
+  // ─── Prompt packages state (user-level package library) ───
+  const [myPackages, setMyPackages] = useState<MyPackage[]>([])
+  const [packagesLoading, setPackagesLoading] = useState(false)
+  const packageFileInputRef = useRef<HTMLInputElement>(null)
+  const [packagePreview, setPackagePreview] = useState<PackagePreview | null>(null)
+  const [packagePreviewError, setPackagePreviewError] = useState("")
+  const [packageUploading, setPackageUploading] = useState(false)
+  const [packageInstalling, setPackageInstalling] = useState(false)
+  const [packageDeleting, setPackageDeleting] = useState<string | null>(null)
+  const [packageDeleteTarget, setPackageDeleteTarget] = useState<string | null>(null)
+
   const [error, setError] = useState("")
 
   // ─── Provider form overrides per card ───
@@ -223,6 +235,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const settingsLoadedRef = useRef(false)
   const pluginsLoadedRef = useRef(false)
   const skillsLoadedRef = useRef(false)
+  const packagesLoadedRef = useRef(false)
   useEffect(() => {
     if (!open) return
     if (tab === "general" && !settingsLoadedRef.current) {
@@ -236,6 +249,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (tab === "skills" && !skillsLoadedRef.current) {
       skillsLoadedRef.current = true
       loadMySkills()
+    }
+    if (tab === "packages" && !packagesLoadedRef.current) {
+      packagesLoadedRef.current = true
+      loadMyPackages()
     }
   }, [open, tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -598,6 +615,60 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setSkillDeleting(null)
     setSkillDeleteTarget(null)
     if (res.ok) await loadMySkills()
+  }
+
+  // ─── Prompt packages handlers ───
+  const loadMyPackages = async () => {
+    setPackagesLoading(true)
+    const res = await packagesApi.listMy()
+    if (res.ok) setMyPackages(res.data!.packages)
+    setPackagesLoading(false)
+  }
+
+  const handlePackageImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPackageUploading(true)
+    setPackagePreviewError("")
+    try {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await packagesApi.preview(form)
+      if (res.ok) {
+        setPackagePreview(res.data)
+      } else {
+        setPackagePreviewError(res.error || "提示词包预检失败")
+        setPackagePreview(null)
+      }
+    } finally {
+      setPackageUploading(false)
+      if (packageFileInputRef.current) packageFileInputRef.current.value = ""
+    }
+  }
+
+  const handlePackageConfirmInstall = async () => {
+    if (!packagePreview) return
+    setPackageInstalling(true)
+    try {
+      const res = await packagesApi.confirmInstall(packagePreview.preview_id)
+      setPackagePreview(null)
+      if (res.ok) {
+        await loadMyPackages()
+      } else {
+        setPackagePreviewError(res.error || "导入失败")
+      }
+    } finally {
+      setPackageInstalling(false)
+    }
+  }
+
+  const handlePackageDelete = async () => {
+    if (!packageDeleteTarget) return
+    setPackageDeleting(packageDeleteTarget)
+    const res = await packagesApi.deleteMy(packageDeleteTarget)
+    setPackageDeleting(null)
+    setPackageDeleteTarget(null)
+    if (res.ok) await loadMyPackages()
   }
 
   // ─── Network allowlist handlers ───
@@ -1843,6 +1914,120 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   </div>
                 )
               )}
+
+              {tab === "packages" && (
+                packagesLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="p-5 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        你的提示词包库共 {myPackages.length} 个包
+                      </p>
+                      <div>
+                        <input
+                          ref={packageFileInputRef}
+                          type="file"
+                          accept=".zip"
+                          onChange={handlePackageImport}
+                          className="hidden"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => packageFileInputRef.current?.click()}
+                          disabled={packageUploading}
+                        >
+                          {packageUploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
+                          导入提示词包
+                        </Button>
+                      </div>
+                    </div>
+
+                    {packagePreviewError && (
+                      <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{packagePreviewError}</span>
+                      </div>
+                    )}
+
+                    {packagePreview && (
+                      <div className="border rounded-md p-4 space-y-3 bg-card">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="font-medium">导入提示词包「{packagePreview.name}」</div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              {packagePreview.preview.file_count} 个文件，确认后加入你的提示词包库
+                            </p>
+                          </div>
+                          <button onClick={() => setPackagePreview(null)} className="text-muted-foreground hover:text-foreground">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button size="sm" variant="outline" onClick={() => setPackagePreview(null)}>取消</Button>
+                          <Button size="sm" onClick={handlePackageConfirmInstall} disabled={packageInstalling}>
+                            {packageInstalling ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                            确认导入
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {myPackages.length === 0 ? (
+                      <div className="text-center text-muted-foreground py-12">
+                        <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                        <p className="text-sm">你的提示词包库还是空的</p>
+                        <p className="text-xs mt-1 opacity-60">
+                          点击「导入提示词包」上传 .zip 打包的包文件夹（内含 README.md + 若干设定/描写词/沙盒资源，编辑引用时以包名作命名空间）
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {myPackages.map((p) => (
+                          <div key={p.name} className="rounded-lg border p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium flex items-center gap-2">
+                                  <Package className="h-4 w-4 text-muted-foreground" />
+                                  {p.name}
+                                </div>
+                                <p className="text-[11px] text-muted-foreground mt-1">
+                                  {p.file_count} 个文件
+                                  {p.has_readme ? " · 含 README" : " · 无 README"}
+                                  {p.size ? ` · ${(p.size / 1024).toFixed(1)} KB` : ""}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button size="sm" variant="outline" onClick={() => window.open(packagesApi.downloadUrl(p.name), "_blank")}>
+                                  <Download className="h-3 w-3 mr-1" />
+                                  下载
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-500 hover:text-red-500"
+                                  onClick={() => setPackageDeleteTarget(p.name)}
+                                  disabled={packageDeleting === p.name}
+                                >
+                                  <Trash2 className="h-3 w-3 mr-1" />
+                                  删除
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
+                      提示：提示词包库是你的库存。要让它对某实例生效，请在该实例中安装（复制进实例 packages/）；然后在组装器/正文里用 @包名/路径 引用形式（外层花括号）显式引用其内容。包名可含空格与版本号，如 `某人的修仙设定 v1.01`。
+                    </div>
+                  </div>
+                )
+              )}
             </div>
           </div>
         </div>
@@ -1897,6 +2082,16 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
         confirmText={skillDeleting ? "删除中..." : "删除"}
         onConfirm={handleSkillDelete}
         onCancel={() => setSkillDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={packageDeleteTarget !== null}
+        title="删除提示词包"
+        message={`确定从你的提示词包库删除「${packageDeleteTarget}」吗？只会从你的库存删除，已将其复制进实例的不受影响。`}
+        variant="destructive"
+        confirmText={packageDeleting ? "删除中..." : "删除"}
+        onConfirm={handlePackageDelete}
+        onCancel={() => setPackageDeleteTarget(null)}
       />
     </>
   )
