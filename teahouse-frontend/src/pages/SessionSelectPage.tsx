@@ -472,7 +472,9 @@ function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Insta
       <div className="flex items-center gap-3 p-3">
         {/* Left: text stack (title over meta) */}
         <div className="flex-1 min-w-0 flex flex-col">
-          <div className="font-semibold text-base leading-snug line-clamp-2">{instance.name}</div>
+          <div className="font-semibold text-base leading-snug line-clamp-2">
+            {instance.prototype_name ? `${instance.prototype_name} - ${instance.name}` : instance.name}
+          </div>
           <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Hash className="h-3.5 w-3.5" />
@@ -868,7 +870,9 @@ function MobileInstanceCard({ instance, onOpen, onQuickStart }: { instance: Inst
       <div className="flex items-center gap-2 p-2">
         {/* Left: text stack (title over meta) */}
         <div className="flex-1 min-w-0 flex flex-col">
-          <div className="font-semibold text-[13px] leading-snug line-clamp-2">{instance.name}</div>
+          <div className="font-semibold text-[13px] leading-snug line-clamp-2">
+            {instance.prototype_name ? `${instance.prototype_name} - ${instance.name}` : instance.name}
+          </div>
           <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-0.5"><Hash className="h-3 w-3" />{instance.floor_count}</span>
             <span className="flex items-center gap-0.5"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
