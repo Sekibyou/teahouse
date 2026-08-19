@@ -443,7 +443,10 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path, max_depth: 
     def _resolve_value(v, mention_source):
         if isinstance(v, str):
             if "{{" in v or "${" in v:
-                return resolve_variables(v, var_map, instance_dir, max_depth=max_depth, type_map=type_map,
+                # 阶段二外层循环是唯一的层数推进源：内层 resolve_variables 每轮只
+                # 推进一层（max_depth=1），这样 max_depth 精确等于「总展开层数」，
+                # 不会因内层又跑一个 range(max_depth) 而被放大（off-by-one）。
+                return resolve_variables(v, var_map, instance_dir, max_depth=1, type_map=type_map,
                                          mention_source=mention_source)
             return v
         if isinstance(v, dict):
@@ -458,27 +461,44 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path, max_depth: 
 
     resolved = [dict(m) for m in messages]
 
-    # —— 阶段一：仅展开文件切片 {{...}}（楼层 glob/path/组装器等）→ 得到稳定正文 ——
+    # —— 阶段一：仅展开文件切片 {{...}} 的第 1 层（计入 max_depth 预算）——
     # 不用 resolve_variables（那会连 @mention 一起处理、并展开其 return 值里的 {{}}，破坏
-    # ${@mention ...: "{{file}}"} 的字面量结构）。这里只 resolve_placeholders，把切片全展开成
-    # 真实正文（楼层历史、设定文件等），作为稍后 @mention 的判定依据。
-    for m in resolved:
-        c = m.get("content")
-        if isinstance(c, str) and "{{" in c:
-            m["content"] = resolve_placeholders(c, instance_dir)
+    # ${@mention ...: "{{file}}"} 的字面量结构）。这里只 resolve_placeholders，把初始切片
+    # 展开一层成真实正文，作为稍后 @mention 的判定依据。max_depth=0 时一步都不展开
+    # （占位符全部按字面量保留）。
+    budget = max(int(max_depth), 0)
+    # 阶段一：预展开初始 `{{}}` 的第 1 层（计入预算，仅当确有顶层 `{{}}` 可解时才扣减——
+    # 纯 `${}` 链没有 `{{}}`，阶段一不推进，预算全部留给阶段二解 `${}`，保证两类链精确）。
+    had_slice = False
+    if budget > 0:
+        for m in resolved:
+            c = m.get("content")
+            if isinstance(c, str) and "{{" in c:
+                m["content"] = resolve_placeholders(c, instance_dir)
+                had_slice = True
+        if had_slice:
+            budget -= 1
 
-    # —— 阶段二：跨消息快照 + 完整占位符（含 @mention）判定 ——
-    # 快照 = 阶段一展开后全部消息正文剥壳拼接（跨消息全局匹配源）。@mention 用它对全部条目做
-    # 命中判定：命中→注入 return 值（含 {{}}/变量再由 resolve_variables 展开）；未命中→保留。
-    snapshot = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
-    for _ in range(max_depth):
-        prev_snapshot = snapshot
+    # —— 阶段二：跨消息快照 + 完整占位符（含 @mention）判定，推进剩余预算层 ——
+    # 快照分两个用途：
+    #   稳定判定用「完整 content 拼接」（保留占位符）——若用 strip_placeholder_shells
+    #   剥壳，则中间产物 `{{refN}}` 会被剥成空串，导致纯 `{{}}` 链每轮快照都相等而被
+    #   误判「已稳定」提前 break，无法推进到预算层数。
+    #   @mention 匹配源用「剥壳拼接」（strip_placeholder_shells）——去掉 ${@mention 剑: "x"}
+    #   这类占位符参数，避免触发词来自占位符参数本身。
+    # 剩余预算轮是唯一的外层层数源，每轮经 _resolve_value 的内层 resolve_variables(max_depth=1)
+    # 恰好推进一层，故 total 展开层数 === max_depth。
+    snapshot_full = "\n".join(_msg_content_str(m) for m in resolved)
+    snapshot_trim = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
+    for _ in range(budget):
+        prev_full = snapshot_full
         for m in resolved:
             c = m.get("content")
             if c is not None:
-                m["content"] = _resolve_content(c, snapshot)
-        snapshot = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
-        if snapshot == prev_snapshot:
+                m["content"] = _resolve_content(c, snapshot_trim)
+        snapshot_full = "\n".join(_msg_content_str(m) for m in resolved)
+        snapshot_trim = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
+        if snapshot_full == prev_full:
             break
 
     # —— 阶段三：最终统一销毁仍未命中的 @mention 残留 ——
