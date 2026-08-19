@@ -139,6 +139,7 @@ export interface DirectorPromptPreset {
 export interface AppSettings {
   max_retries: number
   max_tool_rounds: number
+  max_parse_depth: number
 }
 
 export interface AvailableModel {

@@ -138,7 +138,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [slotsLoading, setSlotsLoading] = useState(false)
 
   // ─── General settings state ───
-  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15 })
+  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15, max_parse_depth: 10 })
   const [settingsLoading, setSettingsLoading] = useState(false)
 
   // ─── Plugins state ───
@@ -1538,6 +1538,41 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               onChange={(e) => {
                                 const v = Math.max(1, Math.min(200, Number(e.target.value) || 1))
                                 setAppSetting({ max_tool_rounds: v })
+                              }}
+                              className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border p-4 space-y-4">
+                        <div>
+                          <label className="text-sm font-medium flex items-center justify-between">
+                            <span>{t("general.maxParseDepth")}</span>
+                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
+                              {appSettings.max_parse_depth}
+                            </span>
+                          </label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {t("general.maxParseDepthDesc")}
+                          </p>
+                          <div className="mt-3 flex items-center gap-3">
+                            <input
+                              type="range"
+                              min={0}
+                              max={30}
+                              value={appSettings.max_parse_depth}
+                              onChange={(e) => setAppSetting({ max_parse_depth: Number(e.target.value) })}
+                              className="flex-1 h-2 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={30}
+                              value={appSettings.max_parse_depth}
+                              onChange={(e) => {
+                                const v = Math.max(0, Math.min(30, Number(e.target.value) || 0))
+                                setAppSetting({ max_parse_depth: v })
                               }}
                               className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />

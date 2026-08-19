@@ -138,6 +138,8 @@ export const zhSettings = {
     maxRetriesDesc: "网络波动时自动重试 LLM API 请求。不重试业务错误（4xx/5xx）。设为 0 则禁用重试。",
     maxToolRounds: "单轮最大调用次数",
     maxToolRoundsDesc: "导演工具调用循环的轮数上限，防止单轮陷入过长的工具循环。",
+    maxParseDepth: "占位符最大解析深度",
+    maxParseDepthDesc: "${} 与 {{path}} 的多轮解析上界，尤其影响跨消息 @mention 的匹配。设 0 则禁用占位符解析（全部按字面量保留）。默认 10。",
   },
 
   // ─── Plugins tab ───

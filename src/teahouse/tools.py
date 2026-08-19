@@ -412,7 +412,7 @@ def _sandbox_var_map(instance_dir: Path) -> dict:
     return {item["name"]: item["value"] for item in items}
 
 
-def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dict]:
+def _resolve_messages_vars(messages: list[dict], instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH) -> list[dict]:
     """Resolve ${name} + {{path}} in every string value of a messages list (Generate).
 
     Both surfaces an LLM consumes resolve variables before send (酒馆-style): the
@@ -443,7 +443,7 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
     def _resolve_value(v, mention_source):
         if isinstance(v, str):
             if "{{" in v or "${" in v:
-                return resolve_variables(v, var_map, instance_dir, type_map=type_map,
+                return resolve_variables(v, var_map, instance_dir, max_depth=max_depth, type_map=type_map,
                                          mention_source=mention_source)
             return v
         if isinstance(v, dict):
@@ -471,7 +471,7 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
     # 快照 = 阶段一展开后全部消息正文剥壳拼接（跨消息全局匹配源）。@mention 用它对全部条目做
     # 命中判定：命中→注入 return 值（含 {{}}/变量再由 resolve_variables 展开）；未命中→保留。
     snapshot = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
-    for _ in range(MAX_RESOLVE_DEPTH):
+    for _ in range(max_depth):
         prev_snapshot = snapshot
         for m in resolved:
             c = m.get("content")
@@ -1052,7 +1052,9 @@ async def execute_generate(
             return f"Error: 删除旧文件失败，无法覆盖: {output_path_str}: {e}"
 
     # Step 2: Resolve ${variables} + {{path}} file slices before sending to the writer LLM.
-    resolved = _resolve_messages_vars(messages, instance_dir)
+    from .routes.settings import _user_max_parse_depth
+    parse_depth = await _user_max_parse_depth(user_id)
+    resolved = _resolve_messages_vars(messages, instance_dir, max_depth=parse_depth)
 
     # Step 4: Resolve writer slot LLM client
     if not user_id:

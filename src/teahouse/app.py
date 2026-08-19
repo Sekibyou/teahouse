@@ -601,18 +601,20 @@ async def _tool_use_loop(
     tools_usage = await load_tools_usage(user_id=user_id)
 
     # Resolve prompt preset from director slot binding
+    from .routes.settings import _user_max_parse_depth
+    parse_depth = await _user_max_parse_depth(user_id)
     tool_system = None
     if user_id:
         binding_full = await get_slot_binding_resolved(user_id, "director")
         if binding_full and binding_full.get("preset_template_yaml"):
             variables = build_template_variables(instance_dir, tools_usage)
             tool_system, fake_msgs = resolve_preset_template(
-                binding_full["preset_template_yaml"], variables, instance_dir
+                binding_full["preset_template_yaml"], variables, instance_dir, max_depth=parse_depth
             )
             if fake_msgs:
                 msg = fake_msgs + msg
     if tool_system is None:
-        tool_system = assemble_system_prompt(instance_dir, tools_usage)
+        tool_system = assemble_system_prompt(instance_dir, tools_usage, max_depth=parse_depth)
 
     # Scoped session framing: when the session has restricted tool access (enabled_tools
     # is not None), tell the director it is a scoped one-shot task.
