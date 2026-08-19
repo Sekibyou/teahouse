@@ -12,6 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS } from "@/i18n/config"
+import { resolvePluginText } from "@/lib/pluginI18n"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi, packagesApi } from "@/lib/api"
@@ -1608,10 +1609,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         <div className="flex items-start justify-between">
                           <div>
                             <div className="font-medium flex items-center gap-2">
-                              {preview.manifest.name}
+                              {resolvePluginText(preview.manifest.name, preview.manifest.i18n, currentLang)}
                               <span className="text-[10px] text-muted-foreground font-normal">v{preview.manifest.version}</span>
                               {preview.manifest.description && (
-                                <span className="text-xs text-muted-foreground font-normal truncate max-w-[220px]">{preview.manifest.description}</span>
+                                <span className="text-xs text-muted-foreground font-normal truncate max-w-[220px]">{resolvePluginText(preview.manifest.description, preview.manifest.i18n, currentLang)}</span>
                               )}
                             </div>
                             <p className="text-[10px] text-muted-foreground mt-0.5">{t("plugin.pluginId", { id: preview.manifest.id })}</p>
@@ -1701,10 +1702,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             <div className="flex items-center justify-between">
                               <div>
                                 <div className="font-medium flex items-center gap-2">
-                                  {p.name}
+                                  {resolvePluginText(p.name, p.i18n, currentLang)}
                                   <span className="text-[10px] text-muted-foreground font-normal">v{p.version}</span>
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">{resolvePluginText(p.description, p.i18n, currentLang)}</p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <Button
@@ -2148,7 +2149,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t("del.pluginTitle")}
-        message={t("del.pluginMessage", { name: deleteTarget?.name })}
+        message={t("del.pluginMessage", { name: resolvePluginText(deleteTarget?.name, deleteTarget?.i18n, currentLang) })}
         variant="destructive"
         confirmText={deleting ? t("del.uninstalling") : t("common:delete")}
         onConfirm={handleDelete}

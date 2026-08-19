@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { pluginsApi } from "@/lib/api"
 import type { ConfigField, PluginData } from "@/lib/pluginTypes"
 import { useCurrentLang } from "@/i18n/config"
+import { resolvePluginText } from "@/lib/pluginI18n"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -254,26 +255,4 @@ function RenderField({
         />
       )
   }
-}
-
-/**
- * Resolve a plugin-declared UI string against the active locale's i18n dict.
- *
- * Plugin authors may write a literal value (displayed as-is, e.g. legacy
- * Chinese label) or a `key:`-prefixed key looked up in the manifest's `i18n`
- * dict. Unknown keys / missing locale fall back to the literal value so old
- * plugins and incomplete dictionaries degrade gracefully.
- */
-function resolvePluginText(
-  value: string | undefined,
-  dict: Record<string, Record<string, string>> | undefined,
-  lang: string,
-): string {
-  if (!value) return value ?? ""
-  if (value.startsWith("key:") && dict) {
-    const key = value.slice("key:".length)
-    const langDict = dict[lang]
-    if (langDict && key in langDict) return langDict[key]
-  }
-  return value
 }

@@ -52,6 +52,7 @@ export interface PluginPreview {
     description: string
     permissions: string[]
     tools: { name: string; description: string; parameters: Record<string, unknown> }[]
+    i18n?: Record<string, Record<string, string>>
   }
   conflicts: string[]
   network_allowlist: { scheme: string; host: string; port: number | null }[]

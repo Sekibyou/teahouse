@@ -142,9 +142,9 @@ async def api_list_plugins(user: UserInfo = Depends(require_user)):
         "plugins": [
             {
                 "id": p["id"],
-                "name": p["name"],
+                "name": _read_manifest_field(p, "name", p.get("name", "")),
                 "version": p["version"],
-                "description": p["description"],
+                "description": _read_manifest_field(p, "description", p.get("description", "")),
                 "enabled": bool(p["enabled"]),
                 "permissions": p["permissions"],
                 "has_backend": bool(p["has_backend"]),
@@ -164,9 +164,9 @@ async def api_get_plugin(plugin_id: str, user: UserInfo = Depends(require_user))
         raise HTTPException(status_code=404, detail="Plugin not found")
     return {
         "id": p["id"],
-        "name": p["name"],
+        "name": _read_manifest_field(p, "name", p.get("name", "")),
         "version": p["version"],
-        "description": p["description"],
+        "description": _read_manifest_field(p, "description", p.get("description", "")),
         "enabled": bool(p["enabled"]),
         "permissions": p["permissions"],
         "has_backend": bool(p["has_backend"]),
@@ -437,6 +437,7 @@ def _manifest_preview_dict(m: PluginManifest) -> dict:
             {"name": t.get("name", ""), "description": t.get("description", ""), "parameters": t.get("parameters", {})}
             for t in m.tools
         ],
+        "i18n": m.i18n,
     }
 
 
