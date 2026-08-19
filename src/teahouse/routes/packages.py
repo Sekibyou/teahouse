@@ -57,11 +57,11 @@ def validate_package_name(name: str) -> None:
     """Blacklist check so a package identifier can't break {{@pkg/path}} parsing."""
     name = name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="包名不能为空")
+        raise HTTPException(status_code=400, detail="package name must not be empty")
     if len(name) > _PACKAGE_NAME_MAXLEN:
-        raise HTTPException(status_code=400, detail=f"包名过长（上限 {_PACKAGE_NAME_MAXLEN} 字符）")
+        raise HTTPException(status_code=400, detail=f"package name too long (max {_PACKAGE_NAME_MAXLEN} characters)")
     if PACKAGE_NAME_BLACKLIST_RE.search(name):
-        raise HTTPException(status_code=400, detail="包名含非法字符（禁止 | : { } \\ / 等）")
+        raise HTTPException(status_code=400, detail="package name contains illegal characters (forbidden: | : { } \\ / etc.)")
 
 
 async def _get_safe_name(user_id: str) -> str:
@@ -88,7 +88,7 @@ def _zip_package_base(names: list[str]) -> str:
     """
     files = [n for n in names if not n.endswith("/")]
     if not files:
-        raise HTTPException(status_code=400, detail="包内没有文件")
+        raise HTTPException(status_code=400, detail="package contains no files")
     dirs = {n.split("/", 1)[0] for n in files}
     # 单一顶层目录包裹 → 视为包容器，解压进该目录内
     if len(dirs) == 1:
@@ -100,7 +100,7 @@ def _zip_package_base(names: list[str]) -> str:
 def _validate_zip_path_guard(dest: Path, rel: str, name: str) -> None:
     target = (dest / rel).resolve()
     if not str(target).startswith(str(dest.resolve())):
-        raise HTTPException(status_code=400, detail=f"包包含非法路径: {name}")
+        raise HTTPException(status_code=400, detail=f"package contains an illegal path: {name}")
 
 
 def _extract_package_tree(zf, names: list[str], base: str, dest: Path) -> None:
@@ -159,12 +159,12 @@ async def api_preview_package(
     """Stage + validate a package zip WITHOUT installing. Returns preview info +
     a short-lived preview_id that import/confirm consumes."""
     if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="只支持 .zip 格式的提示词包")
+        raise HTTPException(status_code=400, detail="only .zip prompt packages are supported")
 
     _preview_cleanup()
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="提示词包过大 (上限 20MB)")
+        raise HTTPException(status_code=413, detail="prompt package is too large (20MB limit)")
 
     tmp_path = None
     try:
@@ -181,7 +181,7 @@ async def api_preview_package(
         if tmp_path:
             try: os.unlink(tmp_path)
             except OSError: pass
-        raise HTTPException(status_code=400, detail=f"提示词包无效: {e}")
+        raise HTTPException(status_code=400, detail=f"invalid prompt package: {e}")
 
     preview_id = uuid.uuid4().hex
     _previews[preview_id] = {"path": tmp_path, "created_at": time.time()}
@@ -212,7 +212,7 @@ def _preview_zip(zip_path: Path) -> dict:
             except HTTPException:
                 raise
         else:
-            raise HTTPException(status_code=400, detail="提示词包需以包名目录形式打包（或含 README.md 的文件夹）")
+            raise HTTPException(status_code=400, detail="prompt package must be packaged as a directory named after the package (or contain a README.md folder)")
         file_count = sum(1 for n in names if not n.endswith("/"))
         # 根级 README 检测（相对包根 base）
         root_readme = (base + "README.md") if base else "README.md"
@@ -233,7 +233,7 @@ async def api_import_package_confirm(
     _preview_cleanup()
     entry = _previews.pop(body.preview_id, None)
     if not entry:
-        raise HTTPException(status_code=400, detail="preview 已过期或无效，请重新上传提示词包")
+        raise HTTPException(status_code=400, detail="preview has expired or is invalid, please re-upload the prompt package")
     tmp_path = entry["path"]
 
     safe_name = await _get_safe_name(user.user_id)
@@ -244,18 +244,18 @@ async def api_import_package_confirm(
             base = _zip_package_base(names)
             name = base.rstrip("/").rsplit("/", 1)[-1] if base else ""
             if not name:
-                raise HTTPException(status_code=400, detail="包名无法确定")
+                raise HTTPException(status_code=400, detail="unable to determine the package name")
             validate_package_name(name)
             dest = _user_packages_dir(safe_name) / name
             if dest.exists():
                 shutil.rmtree(dest)
             dest.mkdir(parents=True, exist_ok=True)
             _extract_package_tree(zf, names, base, dest)
-        return {"status": "ok", "name": name, "message": f"提示词包 '{name}' 已导入"}
+        return {"status": "ok", "name": name, "message": f"prompt package '{name}' imported"}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导入失败: {e}")
+        raise HTTPException(status_code=500, detail=f"import failed: {e}")
     finally:
         try:
             os.unlink(tmp_path)
@@ -269,9 +269,9 @@ async def api_delete_my_package(package_name: str, user: UserInfo = Depends(requ
     safe_name = await _get_safe_name(user.user_id)
     pkg_dir = _user_packages_dir(safe_name) / package_name
     if not pkg_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在你的包库中")
+        raise HTTPException(status_code=404, detail=f"prompt package '{package_name}' not in your package library")
     shutil.rmtree(pkg_dir)
-    return {"status": "ok", "name": package_name, "message": f"提示词包 '{package_name}' 已删除"}
+    return {"status": "ok", "name": package_name, "message": f"prompt package '{package_name}' deleted"}
 
 
 @router.get("/{package_name}/download")
@@ -281,7 +281,7 @@ async def api_download_my_package(package_name: str, user: UserInfo = Depends(re
     safe_name = await _get_safe_name(user.user_id)
     pkg_dir = _user_packages_dir(safe_name) / package_name
     if not pkg_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在你的包库中")
+        raise HTTPException(status_code=404, detail=f"prompt package '{package_name}' not in your package library")
     zip_path = Path(tempfile.gettempdir()) / f"pkg-{package_name}-{uuid.uuid4().hex[:8]}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fp in pkg_dir.rglob("*"):

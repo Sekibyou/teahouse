@@ -134,7 +134,7 @@ async def api_login(body: LoginRequest):
 async def api_register(body: RegisterRequest):
     cfg = state.config
     if cfg is None or not cfg.auth.allow_registration:
-        raise HTTPException(status_code=403, detail="注册功能未开放，请联系管理员在 teahouse.yaml 中开启")
+        raise HTTPException(status_code=403, detail="registration is not open, please ask the administrator to enable it in teahouse.yaml")
     user = await create_user(body.username, body.password, body.display_name, role=ROLE_USER)
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")

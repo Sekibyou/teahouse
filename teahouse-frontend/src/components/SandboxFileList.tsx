@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react"
 import { ChevronLeft } from "lucide-react"
 import { sandboxSrcApi, floorsApi, type FloorEntry } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
+import { useTranslation } from "react-i18next"
 
 interface SandboxFileListProps {
   instanceId: string | undefined
@@ -18,6 +19,7 @@ interface SandboxFileListProps {
  * 触发，以全屏面板展示。
  */
 export function SandboxFileList({ instanceId, instanceName, variant, onClose }: SandboxFileListProps) {
+  const { t } = useTranslation("misc")
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({})
   const [floors, setFloors] = useState<FloorEntry[]>([])
   const [refresh, setRefresh] = useState(0)
@@ -51,11 +53,11 @@ export function SandboxFileList({ instanceId, instanceName, variant, onClose }: 
           <button
             className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
             onClick={onClose}
-            aria-label="返回"
+            aria-label={t("common:back")}
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <span className="font-semibold text-sm">文件清单</span>
+          <span className="font-semibold text-sm">{t("sandboxFileList.fileList")}</span>
           <span className="absolute right-3 text-[10px] text-muted-foreground font-mono">
             sandbox ({Object.keys(sandboxFiles).length}) | floors ({floors.length})
           </span>
@@ -70,7 +72,7 @@ export function SandboxFileList({ instanceId, instanceName, variant, onClose }: 
   return (
     <details className="border-t border-border shrink-0 max-h-[32%] overflow-auto group">
       <summary className="px-4 py-2 text-[10px] text-muted-foreground font-mono cursor-pointer hover:text-foreground select-none">
-        文件清单 | sandbox ({Object.keys(sandboxFiles).length}) | floors ({floors.length})
+        {t("sandboxFileList.fileListSummary", { sandbox: Object.keys(sandboxFiles).length, floors: floors.length })}
       </summary>
       <div className="space-y-1 px-2 pb-2 text-xs font-mono">
         <FileListContent sandboxFiles={sandboxFiles} floors={floors} />
@@ -86,22 +88,23 @@ function FileListContent({
   sandboxFiles: Record<string, string>
   floors: FloorEntry[]
 }) {
+  const { t } = useTranslation("misc")
   return (
     <>
       <div className="opacity-60">runtime/sandbox/</div>
       {Object.keys(sandboxFiles).length === 0 && (
-        <div className="pl-3 opacity-40">（无沙盒代码）</div>
+        <div className="pl-3 opacity-40">{t("sandboxFileList.noSandboxCode")}</div>
       )}
       {Object.keys(sandboxFiles).map((k) => (
         <div key={k} className="pl-3">{k}</div>
       ))}
       <div className="opacity-60 pt-1">runtime/floors/</div>
       {floors.length === 0 && (
-        <div className="pl-3 opacity-40">（无楼层）</div>
+        <div className="pl-3 opacity-40">{t("sandboxFileList.noFloors")}</div>
       )}
       {floors.map((f) => (
         <div key={f.num} className="pl-3">
-          {f.path} <span className="opacity-50">({f.draft ? "草稿" : "正式"})</span>
+          {f.path} <span className="opacity-50">({f.draft ? t("sandboxFileList.draft") : t("sandboxFileList.official")})</span>
         </div>
       ))}
     </>

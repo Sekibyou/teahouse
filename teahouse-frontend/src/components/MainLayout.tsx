@@ -10,8 +10,11 @@ import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { LoginPage } from "@/pages/LoginPage"
+import { useTranslation } from "react-i18next"
+import { LangSwitcher } from "@/components/LangSwitcher"
 
 export function MainLayout() {
+  const { t } = useTranslation("misc")
   const { isAuthenticated, isLoading, user } = useAuth()
   const { clearAuth } = useAuthActions()
   const navigate = useNavigate()
@@ -42,6 +45,7 @@ export function MainLayout() {
         <header className="h-12 border-b border-border flex items-center justify-between px-4 shrink-0">
           <span className="font-semibold">LowStar's Teahouse</span>
           <div className="flex items-center gap-1">
+            <LangSwitcher className="h-8 w-8 p-0 justify-center" />
             <Button variant="ghost" size="icon" onClick={toggleTheme}>
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -75,7 +79,7 @@ export function MainLayout() {
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="font-semibold whitespace-nowrap">LowStar's Teahouse</span>
-            <span className="text-xs text-muted-foreground truncate">基于 Harness 的交互式小说创作引擎</span>
+            <span className="text-xs text-muted-foreground truncate">{t("layout.engineTagline")}</span>
           </div>
           {/* 这两个按钮只在 workspace 内显示：用路由判断，而不是仅靠 activeInstance，
               否则用浏览器后退/直接改回大厅 URL 时，persist 的 activeInstance 仍在，
@@ -90,10 +94,10 @@ export function MainLayout() {
                   setActiveInstance(null)
                   navigate("/", { replace: true })
                 }}
-                title="返回会话选择"
+                title={t("layout.backToSessionTitle")}
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                返回大厅
+                {t("layout.backToSessionText")}
               </Button>
               <div className="flex items-center rounded-md border border-border overflow-hidden">
                 <button
@@ -105,7 +109,7 @@ export function MainLayout() {
                   onClick={() => useViewModeStore.getState().setMode("play")}
                 >
                   <Gamepad2 className="h-3.5 w-3.5 inline mr-1" />
-                  游玩
+                  {t("layout.play")}
                 </button>
                 <button
                   className={`px-3 py-1 text-xs font-medium transition-colors ${
@@ -116,7 +120,7 @@ export function MainLayout() {
                   onClick={() => useViewModeStore.getState().setMode("backstage")}
                 >
                   <Wrench className="h-3.5 w-3.5 inline mr-1" />
-                  后台
+                  {t("layout.backstage")}
                 </button>
               </div>
             </div>
@@ -128,10 +132,11 @@ export function MainLayout() {
             <span>{user?.display_name || user?.username}</span>
           </div>
           {isAdminRole(user?.role) && (
-            <Button variant="ghost" size="icon" onClick={() => openSettings("users")} title="用户管理">
+            <Button variant="ghost" size="icon" onClick={() => openSettings("users")} title={t("layout.userManagement")}>
               <Users className="h-4 w-4" />
             </Button>
           )}
+          <LangSwitcher className="h-8 w-8 p-0 justify-center" />
           <Button variant="ghost" size="icon" onClick={toggleTheme}>
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>

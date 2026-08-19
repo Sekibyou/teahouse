@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
+import { useTranslation } from "react-i18next"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,6 +8,7 @@ import { useAuthActions } from "@/stores/authStore"
 import { authApi } from "@/lib/api"
 
 export function LoginPage() {
+  const { t } = useTranslation("login")
   const { setAuth } = useAuthActions()
   const [mode, setMode] = useState<"login" | "register">("login")
   const [username, setUsername] = useState("")
@@ -35,7 +37,7 @@ export function LoginPage() {
     e.preventDefault()
     setError(null)
     if (!username.trim() || !password.trim()) {
-      setError("请输入用户名和密码")
+      setError(t("loginRequired"))
       return
     }
     setIsLoading(true)
@@ -44,10 +46,10 @@ export function LoginPage() {
       if (result.ok && result.data?.token && result.data?.user) {
         setAuth(result.data.user, result.data.token)
       } else {
-        setError(result.error || "登录失败")
+        setError(result.error || t("loginFail"))
       }
     } catch {
-      setError("网络错误，请检查连接")
+      setError(t("networkError"))
     } finally {
       setIsLoading(false)
     }
@@ -57,11 +59,11 @@ export function LoginPage() {
     e.preventDefault()
     setError(null)
     if (!username.trim() || !password.trim()) {
-      setError("请填写所有必填字段")
+      setError(t("registerRequired"))
       return
     }
     if (password.length < 6) {
-      setError("密码长度不能少于 6 位")
+      setError(t("passwordMinLength"))
       return
     }
     setIsLoading(true)
@@ -70,10 +72,10 @@ export function LoginPage() {
       if (result.ok && result.data?.token && result.data?.user) {
         setAuth(result.data.user, result.data.token)
       } else {
-        setError(result.error || "注册失败")
+        setError(result.error || t("registerFail"))
       }
     } catch {
-      setError("网络错误，请检查连接")
+      setError(t("networkError"))
     } finally {
       setIsLoading(false)
     }
@@ -85,16 +87,16 @@ export function LoginPage() {
     <div className="h-full flex items-center justify-center bg-muted/30">
       <Card className="w-full max-w-md mx-4">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Teahouse</CardTitle>
+          <CardTitle className="text-2xl">{t("title")}</CardTitle>
           <CardDescription>
-            {isRegister ? "创建新账号开始使用" : "登录到您的账号"}
+            {isRegister ? t("subtitleRegister") : t("subtitleLogin")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={isRegister ? handleRegister : handleLogin} className="space-y-4">
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium">
-                用户名
+                {t("username")}
               </label>
               <Input
                 id="username"
@@ -107,7 +109,7 @@ export function LoginPage() {
             {isRegister && (
               <div className="space-y-2">
                 <label htmlFor="displayName" className="text-sm font-medium">
-                  显示名 <span className="text-muted-foreground text-xs">（可选）</span>
+                  {t("displayName")} <span className="text-muted-foreground text-xs">{t("displayNameOptional")}</span>
                 </label>
                 <Input
                   id="displayName"
@@ -119,7 +121,7 @@ export function LoginPage() {
 
             <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium">
-                密码
+                {t("password")}
               </label>
               <div className="relative">
                 <Input
@@ -149,18 +151,18 @@ export function LoginPage() {
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isRegister ? "注册" : "登录"}
+              {isRegister ? t("submitRegister") : t("submitLogin")}
             </Button>
 
             {allowRegistration && (
               <div className="text-center text-sm text-muted-foreground">
-                {isRegister ? "已有账号？" : "没有账号？"}
+                {isRegister ? t("switchToLogin") : t("switchToRegister")}
                 <button
                   type="button"
                   className="text-primary hover:underline ml-1"
                   onClick={() => { setMode(isRegister ? "login" : "register"); setError(null) }}
                 >
-                  {isRegister ? "去登录" : "注册新账号"}
+                  {isRegister ? t("goLogin") : t("goRegister")}
                 </button>
               </div>
             )}

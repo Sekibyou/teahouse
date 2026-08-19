@@ -4,6 +4,7 @@ import { AppRouter } from './router'
 import { Toaster } from 'sonner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useIsMobile } from './hooks/useMediaQuery'
+import { initI18n } from './i18n/config'
 
 function AppToaster() {
   const isMobile = useIsMobile()
@@ -18,12 +19,18 @@ function AppToaster() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <AppToaster />
-    <AppRouter />
-  </ErrorBoundary>,
-)
+async function bootstrap() {
+  await initI18n()
+
+  createRoot(document.getElementById('root')!).render(
+    <ErrorBoundary>
+      <AppToaster />
+      <AppRouter />
+    </ErrorBoundary>,
+  )
+}
+
+bootstrap()
 
 // 仅生产构建注册 Service Worker（dev 下 Vite 热更新会与之冲突）。
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

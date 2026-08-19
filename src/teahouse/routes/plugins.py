@@ -95,6 +95,24 @@ class NetworkRuleBody(BaseModel):
     port: Optional[int] = None
 
 
+def _read_manifest_field(p: dict, field: str, default):
+    """Read a top-level field from a plugin's plugin.json on disk, live.
+
+    Manifest-declared data (config, i18n) is not per-user, so we read it live
+    from source_path like the backend loads the plugin. Returns default if the
+    manifest can't be read or the field is absent.
+    """
+    import json as _json
+    source_path = p.get("source_path")
+    if not source_path:
+        return default
+    try:
+        manifest = _json.loads((Path(source_path) / "plugin.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+    return manifest.get(field, default)
+
+
 def _config_for_plugin(p: dict) -> list[dict]:
     """Read a plugin's declarative config schema from its plugin.json on disk.
 
@@ -102,15 +120,12 @@ def _config_for_plugin(p: dict) -> list[dict]:
     source_path like the backend is loaded — no separate DB column needed.
     Returns [] if the manifest can't be read or has no config.
     """
-    import json as _json
-    source_path = p.get("source_path")
-    if not source_path:
-        return []
-    try:
-        manifest = _json.loads((Path(source_path) / "plugin.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    return manifest.get("config", [])
+    return _read_manifest_field(p, "config", [])
+
+
+def _i18n_for_plugin(p: dict) -> dict:
+    """Read a plugin's per-locale i18n dictionary (`i18n: {lang: {key: text}}`)"""
+    return _read_manifest_field(p, "i18n", {})
 
 
 # ── Routes ────────────────────────────────────────────────────────
@@ -135,6 +150,7 @@ async def api_list_plugins(user: UserInfo = Depends(require_user)):
                 "has_backend": bool(p["has_backend"]),
                 "has_frontend": bool(p["has_frontend"]),
                 "config": _config_for_plugin(p),
+                "i18n": _i18n_for_plugin(p),
             }
             for p in plugins
         ]
@@ -156,6 +172,7 @@ async def api_get_plugin(plugin_id: str, user: UserInfo = Depends(require_user))
         "has_backend": bool(p["has_backend"]),
         "has_frontend": bool(p["has_frontend"]),
         "config": _config_for_plugin(p),
+        "i18n": _i18n_for_plugin(p),
     }
 
 
@@ -202,7 +219,7 @@ async def api_uninstall_plugin(plugin_id: str, user: UserInfo = Depends(require_
     safe_name = await _get_safe_name(user.user_id)
     await uninstall_plugin(user.user_id, plugin_id, safe_name)
 
-    return {"status": "ok", "plugin_id": plugin_id, "message": "插件已卸载"}
+    return {"status": "ok", "plugin_id": plugin_id, "message": "plugin uninstalled"}
 
 
 # ── Network allowlist (three-state: declared-enable / declared-disable / user) ──
@@ -257,7 +274,7 @@ async def api_update_network_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule["source"] != "user":
-        raise HTTPException(status_code=403, detail="插件声明的白名单项不可修改，只能启用/禁用；如需自定义请新增规则")
+        raise HTTPException(status_code=403, detail="whitelist entries declared by the plugin cannot be modified; you can only enable/disable them, please add a new rule for customization")
 
     try:
         parsed = parse_network_rule({"scheme": body.scheme, "host": body.host, "port": body.port})
@@ -293,7 +310,7 @@ async def api_delete_network_rule(rule_id: str, plugin_id: str, user: UserInfo =
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
     if rule["source"] != "user":
-        raise HTTPException(status_code=403, detail="插件声明的白名单项不可删除")
+        raise HTTPException(status_code=403, detail="whitelist entries declared by the plugin cannot be deleted")
 
     await delete_network_rule(rule_id, user.user_id)
     return {"status": "ok", "rule_id": rule_id}
@@ -320,12 +337,12 @@ async def api_preview_plugin(
     """Stage + validate a plugin zip WITHOUT installing. Returns manifest +
     conflicts + a short-lived preview_id that import/confirm consumes."""
     if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="只支持 .zip 格式的插件包")
+        raise HTTPException(status_code=400, detail="only .zip plugin packages are supported")
 
     _preview_cleanup()
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="插件包过大 (上限 20MB)")
+        raise HTTPException(status_code=413, detail="plugin package is too large (20MB limit)")
 
     tmp_path = None
     try:
@@ -342,7 +359,7 @@ async def api_preview_plugin(
         if tmp_path:
             try: os.unlink(tmp_path)
             except OSError: pass
-        raise HTTPException(status_code=400, detail=f"插件包无效: {e}")
+        raise HTTPException(status_code=400, detail=f"invalid plugin package: {e}")
 
     conflicts = _detect_tool_conflicts(m)
     preview_id = uuid.uuid4().hex
@@ -373,7 +390,7 @@ async def api_import_plugin_confirm(
     _preview_cleanup()
     entry = _previews.pop(body.preview_id, None)
     if not entry:
-        raise HTTPException(status_code=400, detail="preview 已过期或无效，请重新上传插件包")
+        raise HTTPException(status_code=400, detail="preview has expired or is invalid, please re-upload the plugin package")
     tmp_path = entry["path"]
 
     safe_name = await _get_safe_name(user.user_id)
@@ -384,7 +401,7 @@ async def api_import_plugin_confirm(
         if conflicts:
             raise HTTPException(
                 status_code=400,
-                detail=f"插件声明的工具与内置工具冲突，无法安装: {', '.join(conflicts)}",
+                detail=f"tools declared by the plugin conflict with built-in tools and cannot be installed: {', '.join(conflicts)}",
             )
 
         plugin_id = await install_plugin_from_path(user.user_id, safe_name, Path(tmp_path))
@@ -395,13 +412,13 @@ async def api_import_plugin_confirm(
         await seed_declared_network_rules(
             plugin_id, user.user_id, [r.to_dict() for r in m.network_allowlist]
         )
-        return {"status": "ok", "plugin_id": plugin_id, "message": f"插件 '{plugin_id}' 已安装"}
+        return {"status": "ok", "plugin_id": plugin_id, "message": f"plugin '{plugin_id}' installed"}
     except HTTPException:
         raise
     except NetworkRuleError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"安装失败: {e}")
+        raise HTTPException(status_code=500, detail=f"installation failed: {e}")
     finally:
         try:
             os.unlink(tmp_path)

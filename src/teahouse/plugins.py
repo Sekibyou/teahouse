@@ -41,6 +41,7 @@ class PluginManifest:
     tools: list[dict] = field(default_factory=list)
     network_allowlist: list[NetworkRule] = field(default_factory=list)
     config: list[dict] = field(default_factory=list)
+    i18n: dict = field(default_factory=dict)
     has_backend: bool = False
     has_frontend: bool = False
     source_path: str = ""
@@ -62,6 +63,7 @@ class PluginManifest:
             tools=data.get("tools", []),
             network_allowlist=rules,
             config=data.get("config", []),
+            i18n=data.get("i18n", {}),
         )
 
 

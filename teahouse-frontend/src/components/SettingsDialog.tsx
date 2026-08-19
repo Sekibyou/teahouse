@@ -1,12 +1,17 @@
 import { useEffect, useState, useCallback, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
-  BookOpen, Package, Users,
+  BookOpen, Package, Users, Languages,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS } from "@/i18n/config"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi, packagesApi } from "@/lib/api"
@@ -36,23 +41,23 @@ const API_FORMAT_OPTIONS = [
 ]
 
 const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string; adminOnly?: boolean }[] = [
-  { key: "models", Icon: Server, label: "模型池" },
-  { key: "profiles", Icon: Sliders, label: "参数预设" },
-  { key: "presets", Icon: FileText, label: "导演提示词预设" },
-  { key: "slots", Icon: Link2, label: "槽位指定" },
-  { key: "general", Icon: SlidersHorizontal, label: "通用设置" },
-  { key: "plugins", Icon: Puzzle, label: "插件管理" },
-  { key: "skills", Icon: BookOpen, label: "Skill 管理" },
-  { key: "packages", Icon: Package, label: "提示词包" },
-  { key: "users", Icon: Users, label: "用户管理", adminOnly: true },
+  { key: "models", Icon: Server, label: "tab.models" },
+  { key: "profiles", Icon: Sliders, label: "tab.profiles" },
+  { key: "presets", Icon: FileText, label: "tab.presets" },
+  { key: "slots", Icon: Link2, label: "tab.slots" },
+  { key: "general", Icon: SlidersHorizontal, label: "tab.general" },
+  { key: "plugins", Icon: Puzzle, label: "tab.plugins" },
+  { key: "skills", Icon: BookOpen, label: "tab.skills" },
+  { key: "packages", Icon: Package, label: "tab.packages" },
+  { key: "users", Icon: Users, label: "tab.users", adminOnly: true },
 ]
 
 const permLabels: Record<string, string> = {
-  tool: "导演工具",
-  frontend: "前端面板",
-  network: "网络请求",
-  file_read: "读取文件",
-  file_write: "写入文件",
+  tool: "perm.tool",
+  frontend: "perm.frontend",
+  network: "perm.network",
+  file_read: "perm.file_read",
+  file_write: "perm.file_write",
 }
 
 // ─── Inline field helper ───
@@ -76,6 +81,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const onClose = onCloseProp ?? closeSettings
   const defaultTab = (defaultTabProp ?? storeDefaultTab) as TabKey | undefined
   const [tab, setTab] = useState<TabKey>("models")
+  const { t } = useTranslation("settings")
+  const currentLang = useCurrentLang()
+  const setLang = useLangStore((s) => s.setLang)
   const isMobile = useIsMobile()
   useDialogBackClose(open, onClose)
   const [tabMenuOpen, setTabMenuOpen] = useState(false)
@@ -208,17 +216,17 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (pRes.ok) {
       setProviders(pRes.data!.providers)
     }
-    else setError(pRes.error || "加载供应商失败")
+    else setError(pRes.error || t("errLoadProviders"))
 
     if (mRes.ok) setModels(mRes.data!.models)
-    else setError(mRes.error || "加载模型失败")
+    else setError(mRes.error || t("errLoadModels"))
 
     if (profRes.ok) setProfiles(profRes.data!.profiles)
 
     if (presRes.ok) setPresets(presRes.data!.presets)
 
     if (sRes.ok) setSlotBindings(sRes.data!.slots)
-    else setError(sRes.error || "加载槽位失败")
+    else setError(sRes.error || t("errLoadSlots"))
 
     setProvidersLoading(false)
     setProfilesLoading(false)
@@ -281,7 +289,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const saveProviderCreate = async () => {
     const f = providerCreateForm
-    if (!f.name || !f.api_url || !f.api_key) { setProviderError("请填写所有必填字段"); return }
+    if (!f.name || !f.api_url || !f.api_key) { setProviderError(t("provider.needAllFields")); return }
     setProviderSaving(true)
     setProviderError("")
     const res = await llmProvidersApi.create({ name: f.name.trim(), api_url: f.api_url.trim(), api_key: f.api_key.trim(), api_format: f.api_format })
@@ -289,7 +297,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       setShowProviderCreate(false)
       setProviderCreateForm({ name: "", api_url: "", api_key: "", api_format: "openai" })
       await loadAll()
-    } else setProviderError(res.error || "创建失败")
+    } else setProviderError(res.error || t("errCreate"))
     setProviderSaving(false)
   }
 
@@ -332,7 +340,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     const form = getProviderFormFor(providers.find(p => p.id === providerId)!)
     const res = await llmProvidersApi.availableModels(providerId, form.model_fetch_url)
     if (res.ok) setAvailableModels(res.data!.models)
-    else setError(res.error || "获取模型列表失败")
+    else setError(res.error || t("errFetchModels"))
     setImportModelLoading(false)
   }
 
@@ -356,7 +364,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       setAvailableModels([])
       setSelectedModels(new Set())
       await loadAll()
-    } else setError(res.error || "导入失败")
+    } else setError(res.error || t("errImport"))
     setImportModelLoading(false)
   }
 
@@ -387,7 +395,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const saveProfile = async () => {
     const f = profileForm
-    if (!f.name) { setProfileFormError("请填写名称"); return }
+    if (!f.name) { setProfileFormError(t("profile.needName")); return }
     setProfileFormSaving(true)
     setProfileFormError("")
 
@@ -405,11 +413,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (editingProfile) {
       const res = await modelProfilesApi.update(editingProfile.id, payload as Record<string, unknown>)
       if (res.ok) { setCreateProfileOpen(false); setEditingProfile(null); await loadAll() }
-      else setProfileFormError(res.error || "更新失败")
+      else setProfileFormError(res.error || t("errUpdate"))
     } else {
       const res = await modelProfilesApi.create(payload as ModelProfile & { name: string })
       if (res.ok) { setCreateProfileOpen(false); await loadAll() }
-      else setProfileFormError(res.error || "创建失败")
+      else setProfileFormError(res.error || t("errCreate"))
     }
     setProfileFormSaving(false)
   }
@@ -441,7 +449,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const savePreset = async () => {
     const f = presetForm
-    if (!f.name || !f.template_yaml) { setPresetFormError("请填写名称和模板 YAML"); return }
+    if (!f.name || !f.template_yaml) { setPresetFormError(t("preset.needNameTemplate")); return }
     setPresetFormSaving(true)
     setPresetFormError("")
 
@@ -449,11 +457,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (editingPreset) {
       const res = await directorPromptPresetsApi.update(editingPreset.id, { name: f.name.trim(), template_yaml: f.template_yaml, match_pattern: f.match_pattern.trim() || null })
       if (res.ok) success = true
-      else setPresetFormError(res.error || "更新失败")
+      else setPresetFormError(res.error || t("errUpdate"))
     } else {
       const res = await directorPromptPresetsApi.create({ name: f.name.trim(), template_yaml: f.template_yaml, match_pattern: f.match_pattern.trim() || null })
       if (res.ok) success = true
-      else setPresetFormError(res.error || "创建失败")
+      else setPresetFormError(res.error || t("errCreate"))
     }
     setPresetFormSaving(false)
     if (success) {
@@ -545,7 +553,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
         pendingZipRef.current = file
         setPreview(res.data)
       } else {
-        setPreviewError(res.error || "插件预检失败")
+        setPreviewError(res.error || t("errPluginPreview"))
         setPreview(null)
       }
     } finally {
@@ -564,7 +572,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       if (res.ok) {
         await loadPlugins()
       } else {
-        setPreviewError(res.error || "安装失败")
+        setPreviewError(res.error || t("errInstall"))
       }
     } finally {
       setInstalling(false)
@@ -591,7 +599,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       if (res.ok) {
         setSkillPreview(res.data)
       } else {
-        setSkillPreviewError(res.error || "skill 预检失败")
+        setSkillPreviewError(res.error || t("errSkillPreview"))
         setSkillPreview(null)
       }
     } finally {
@@ -609,7 +617,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       if (res.ok) {
         await loadMySkills()
       } else {
-        setSkillPreviewError(res.error || "导入失败")
+        setSkillPreviewError(res.error || t("errImport"))
       }
     } finally {
       setSkillInstalling(false)
@@ -645,7 +653,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       if (res.ok) {
         setPackagePreview(res.data)
       } else {
-        setPackagePreviewError(res.error || "提示词包预检失败")
+        setPackagePreviewError(res.error || t("errPackagePreview"))
         setPackagePreview(null)
       }
     } finally {
@@ -663,7 +671,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       if (res.ok) {
         await loadMyPackages()
       } else {
-        setPackagePreviewError(res.error || "导入失败")
+        setPackagePreviewError(res.error || t("errImport"))
       }
     } finally {
       setPackageInstalling(false)
@@ -686,7 +694,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setNetRuleError("")
     const res = await pluginsApi.getNetworkRules(p.id)
     if (res.ok && res.data) setNetRules(res.data.rules)
-    else setNetRuleError(res.error || "加载网络白名单失败")
+    else setNetRuleError(res.error || t("errLoadNetRules"))
     setNetRulesLoading(false)
   }
 
@@ -698,9 +706,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const handleAddRule = async () => {
     if (!netRulesFor) return
     const port = newRule.port.trim() === "" ? null : Number(newRule.port)
-    if (!newRule.host.trim()) { setNetRuleError("host 不能为空"); return }
+    if (!newRule.host.trim()) { setNetRuleError(t("errNetRuleHostEmpty")); return }
     if (newRule.port.trim() !== "" && !(port && port >= 1 && port <= 65535)) {
-      setNetRuleError("port 需在 1-65535 之间")
+      setNetRuleError(t("errNetRulePortRange"))
       return
     }
     const res = await pluginsApi.addNetworkRule(netRulesFor.id, {
@@ -713,7 +721,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       setNewRule({ scheme: "https", host: "", port: "" })
       setNetRuleError("")
     } else {
-      setNetRuleError(res.error || "新增规则失败")
+      setNetRuleError(res.error || t("errNetRuleAdd"))
     }
   }
 
@@ -789,7 +797,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       setProviderFormOverrides(prev => { const n = { ...prev }; delete n[providerId]; return n })
       await loadAll()
     } else {
-      setError(res.error || "保存失败")
+      setError(res.error || t("errSave"))
     }
   }
 
@@ -818,17 +826,17 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
               <button
                 className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
                 onClick={onClose}
-                aria-label="返回"
+                aria-label={t("common:back")}
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
-              <span className="font-semibold text-sm">设置</span>
+              <span className="font-semibold text-sm">{t("title")}</span>
               {/* Right: tab dropdown trigger */}
               <div className="absolute right-1">
                 <button
                   className="p-2 rounded hover:bg-muted flex items-center gap-1 text-sm"
                   onClick={() => setTabMenuOpen((v) => !v)}
-                  aria-label="切换设置分类"
+                  aria-label={t("ariaSwitchTab")}
                 >
                   {(() => { const cur = visibleTabs.find((t) => t.key === tab); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
                 </button>
@@ -845,7 +853,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           onClick={() => { setTab(key); setTabMenuOpen(false) }}
                         >
                           <Icon className="h-4 w-4 shrink-0" />
-                          <span className="flex-1">{label}</span>
+                          <span className="flex-1">{t(label)}</span>
                           {tab === key && <Check className="h-4 w-4 shrink-0" />}
                         </button>
                       ))}
@@ -858,7 +866,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
             <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-primary" />
-                <span className="font-semibold">设置</span>
+                <span className="font-semibold">{t("title")}</span>
               </div>
               <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
                 <X className="h-4 w-4" />
@@ -871,7 +879,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
             <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-500 shrink-0 flex items-center gap-2">
               <AlertCircle className="h-3 w-3 shrink-0" />
               <span className="flex-1">{error}</span>
-              <button className="underline shrink-0" onClick={() => setError("")}>关闭</button>
+              <button className="underline shrink-0" onClick={() => setError("")}>{t("errorDismiss")}</button>
             </div>
           )}
 
@@ -890,7 +898,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     onClick={() => setTab(key)}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
-                    {label}
+                    {t(label)}
                   </button>
                 ))}
               </div>
@@ -903,10 +911,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
               {tab === "models" && (
                 <div className="p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-muted-foreground">模型池</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground">{t("tab.models")}</h3>
                     {!showProviderCreate && (
                       <Button size="sm" variant="outline" onClick={openProviderCreate}>
-                        <Plus className="h-3.5 w-3.5 mr-1.5" />添加供应商
+                        <Plus className="h-3.5 w-3.5 mr-1.5" />{t("provider.add")}
                       </Button>
                     )}
                   </div>
@@ -914,13 +922,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {/* Inline create form */}
                   {showProviderCreate && (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                      <h4 className="text-sm font-medium mb-3">添加供应商</h4>
+                      <h4 className="text-sm font-medium mb-3">{t("provider.add")}</h4>
                       <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
-                          <Field label="名称">
-                            <Input value={providerCreateForm.name} onChange={e => setProviderCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="如 OpenAI" className="text-sm" autoFocus />
+                          <Field label={t("provider.nameLabel")}>
+                            <Input value={providerCreateForm.name} onChange={e => setProviderCreateForm(f => ({ ...f, name: e.target.value }))} placeholder={t("provider.namePH")} className="text-sm" autoFocus />
                           </Field>
-                          <Field label="API 格式">
+                          <Field label={t("provider.apiFormat")}>
                             <select
                               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
                               value={providerCreateForm.api_format}
@@ -931,20 +939,20 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               ))}
                             </select>
                           </Field>
-                          <Field label="API URL" className="col-span-2">
-                            <Input value={providerCreateForm.api_url} onChange={e => setProviderCreateForm(f => ({ ...f, api_url: e.target.value }))} placeholder="https://api.openai.com" className="text-sm font-mono" />
+                          <Field label={t("provider.apiUrl")} className="col-span-2">
+                            <Input value={providerCreateForm.api_url} onChange={e => setProviderCreateForm(f => ({ ...f, api_url: e.target.value }))} placeholder={t("provider.apiUrlPH")} className="text-sm font-mono" />
                           </Field>
-                          <Field label="API Key" className="col-span-2">
-                            <Input type="password" value={providerCreateForm.api_key} onChange={e => setProviderCreateForm(f => ({ ...f, api_key: e.target.value }))} placeholder="sk-..." className="text-sm" />
+                          <Field label={t("provider.apiKey")} className="col-span-2">
+                            <Input type="password" value={providerCreateForm.api_key} onChange={e => setProviderCreateForm(f => ({ ...f, api_key: e.target.value }))} placeholder={t("provider.apiKeyPH")} className="text-sm" />
                           </Field>
                         </div>
                         {providerError && <p className="text-xs text-red-500">{providerError}</p>}
                         <div className="flex gap-2">
                           <Button size="sm" onClick={saveProviderCreate} disabled={providerSaving}>
-                            {providerSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}创建
+                            {providerSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}{t("provider.create")}
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => { setShowProviderCreate(false); setProviderCreateForm({ name: "", api_url: "", api_key: "", api_format: "openai" }); setProviderError("") }}>
-                            取消
+                            {t("common:cancel")}
                           </Button>
                         </div>
                       </div>
@@ -955,7 +963,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {providersLoading ? (
                     <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
                   ) : providers.length === 0 ? (
-                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">暂无供应商</div>
+                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">{t("provider.none")}</div>
                   ) : (
                     <div className="space-y-3">
                       {providers.map(p => {
@@ -982,13 +990,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 <span
                                   className="text-sm font-medium cursor-pointer hover:text-primary"
                                   onDoubleClick={() => { setEditingProviderName(p.id); setEditingNameValue(p.name) }}
-                                  title="双击编辑名称"
+                                  title={t("provider.editNameTitle")}
                                 >
                                   {p.name}
                                 </span>
                               )}
                               <div className="flex items-center gap-1">
-                                <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProviderTarget(p.id)} title="删除供应商">
+                                <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProviderTarget(p.id)} title={t("provider.deleteTitle")}>
                                   <Trash2 className="h-3.5 w-3.5 text-red-500" />
                                 </Button>
                               </div>
@@ -1007,28 +1015,28 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   ))}
                                 </select>
                               </Field>
-                              <Field label="API URL">
+                              <Field label={t("provider.apiUrl")}>
                                 <Input
                                   value={form.api_url}
                                   onChange={e => setProviderFormField(p.id, "api_url", e.target.value)}
-                                  placeholder="https://api.openai.com"
+                                  placeholder={t("provider.apiUrlPH")}
                                   className="text-sm font-mono"
                                 />
                               </Field>
-                              <Field label="API Key">
+                              <Field label={t("provider.apiKey")}>
                                 <Input
                                   type="password"
                                   value={form.api_key}
                                   onChange={e => setProviderFormField(p.id, "api_key", e.target.value)}
-                                  placeholder="sk-..."
+                                  placeholder={t("provider.apiKeyPH")}
                                   className="text-sm"
                                 />
                               </Field>
-                              <Field label="Model Fetch URL">
+                              <Field label={t("provider.modelFetchUrl")}>
                                 <Input
                                   value={p.api_url ? form.model_fetch_url : ""}
                                   onChange={e => setProviderFormField(p.id, "model_fetch_url", e.target.value)}
-                                  placeholder="https://api.example.com/v1/models"
+                                  placeholder={t("provider.modelFetchUrlPH")}
                                   className="text-sm font-mono"
                                 />
                               </Field>
@@ -1037,14 +1045,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             {/* Save button */}
                             {saveNeeded && (
                               <div>
-                                <Button size="sm" onClick={() => saveProviderOverrides(p.id)}>保存供应商配置</Button>
+                                <Button size="sm" onClick={() => saveProviderOverrides(p.id)}>{t("provider.saveConfig")}</Button>
                               </div>
                             )}
 
                             {/* Model list under provider — always visible */}
                             <div className="border-t border-border pt-3 space-y-1">
                               {providerModels.length === 0 ? (
-                                <p className="text-xs text-muted-foreground py-2">还未导入模型</p>
+                                <p className="text-xs text-muted-foreground py-2">{t("provider.noModelsYet")}</p>
                               ) : (
                                 providerModels.map(m => (
                                   <div
@@ -1056,12 +1064,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                     <button
                                       onClick={() => m.stale ? toggleModelStale(m) : toggleModelEnabled(m)}
                                       className={`shrink-0 transition-colors ${m.stale ? "text-red-500" : "text-yellow-500"}`}
-                                      title={m.stale ? "已过期（不在远端列表中），点击移除" : "点击取消激活，从模型池移除"}
+                                      title={m.stale ? t("provider.staleTitle") : t("provider.activeTitle")}
                                     >
                                       <Star className={`h-4 w-4 ${m.stale ? "" : "fill-current"}`} />
                                     </button>
                                     <span className="flex-1 font-medium truncate">{m.name}</span>
-                                    {m.stale && <span className="text-[10px] text-red-500 shrink-0">已过期</span>}
+                                    {m.stale && <span className="text-[10px] text-red-500 shrink-0">{t("provider.stale")}</span>}
                                   </div>
                                 ))
                               )}
@@ -1071,30 +1079,30 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             <div className="border-t border-border pt-3 flex items-center justify-between">
                               <p className="text-xs text-muted-foreground">
                                 {providerModels.length === 0
-                                  ? "还没有模型，先导入"
-                                  : `已导入 ${providerModels.length} 个模型`}
+                                  ? t("provider.noModelsYetImport")
+                                  : t("provider.importedCount", { n: providerModels.length })}
                               </p>
                               <Button
                                 size="sm"
                                 className="gap-1.5"
                                 onClick={() => openImportForProvider(p.id)}
-                                title="从供应商拉取模型列表并批量导入到模型池"
+                                title={t("provider.fetchModelsTitle")}
                               >
                                 <Download className="h-3.5 w-3.5" />
-                                导入模型
+                                {t("provider.import")}
                               </Button>
                             </div>
 
                             {/* Import models sub-panel */}
                             {importingFromProvider === p.id && (
                               <div className="border-t border-border pt-3 space-y-2">
-                                <h5 className="text-xs font-medium">导入模型 — 勾选要导入的模型</h5>
+                                <h5 className="text-xs font-medium">{t("provider.importHeading")}</h5>
                                 {importModelLoading ? (
                                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <Loader2 className="h-3 w-3 animate-spin" />加载中...
+                                    <Loader2 className="h-3 w-3 animate-spin" />{t("provider.loading")}
                                   </div>
                                 ) : availableModels.length === 0 ? (
-                                  <p className="text-xs text-muted-foreground">未获取到模型或该供应商不支持模型列表 API</p>
+                                  <p className="text-xs text-muted-foreground">{t("provider.noModelsFromApi")}</p>
                                 ) : (
                                   <>
                                     <div className="flex items-center gap-2">
@@ -1109,11 +1117,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                       >
                                         {(() => {
                                           const selectable = availableModels.filter(m => !enabledModelNames.has(m.id))
-                                          return selectable.length > 0 && selectable.every(m => selectedModels.has(m.id)) ? "取消全选" : "全选"
+                                          return selectable.length > 0 && selectable.every(m => selectedModels.has(m.id)) ? t("provider.unselectAll") : t("provider.selectAll")
                                         })()}
                                       </button>
                                       <span className="text-xs text-muted-foreground">
-                                        已选 {selectedModels.size}/{availableModels.filter(m => !enabledModelNames.has(m.id)).length}
+                                        {t("provider.selectedXofY", { selected: selectedModels.size, total: availableModels.filter(m => !enabledModelNames.has(m.id)).length })}
                                       </span>
                                     </div>
                                     <div className="max-h-48 overflow-auto space-y-0.5">
@@ -1125,7 +1133,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                               <Star className="h-3.5 w-3.5 fill-current text-yellow-500 shrink-0" />
                                               <span className="font-mono">{m.id}</span>
                                               {m.name && <span className="text-muted-foreground">— {m.name}</span>}
-                                              <span className="ml-auto text-[10px]">已激活</span>
+                                              <span className="ml-auto text-[10px]">{t("provider.alreadyActive")}</span>
                                             </div>
                                           )
                                         }
@@ -1146,10 +1154,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                     <div className="flex gap-2">
                                       <Button size="sm" onClick={importSelectedModels} disabled={selectedModels.size === 0 || importModelLoading}>
                                         {importModelLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <Download className="h-3 w-3 mr-1.5" />}
-                                        导入选中 ({selectedModels.size})
+                                        {t("provider.importSelected", { n: selectedModels.size })}
                                       </Button>
                                       <Button size="sm" variant="outline" onClick={() => { setImportingFromProvider(null); setAvailableModels([]); setSelectedModels(new Set()) }}>
-                                        取消
+                                        {t("common:cancel")}
                                       </Button>
                                     </div>
                                   </>
@@ -1168,10 +1176,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
               {tab === "profiles" && (
                 <div className="p-5 space-y-4 h-full flex flex-col">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-muted-foreground">参数预设</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground">{t("tab.profiles")}</h3>
                     {!createProfileOpen && (
                       <Button size="sm" variant="outline" onClick={openProfileCreate}>
-                        <Plus className="h-3.5 w-3.5 mr-1.5" />创建预设
+                        <Plus className="h-3.5 w-3.5 mr-1.5" />{t("profile.create")}
                       </Button>
                     )}
                   </div>
@@ -1180,15 +1188,15 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {createProfileOpen && (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 shrink-0">
                       <h4 className="text-sm font-medium mb-3">
-                        {editingProfile?.is_builtin ? "查看内置预设（只读）" : editingProfile ? "编辑预设" : "创建预设"}
+                        {editingProfile?.is_builtin ? t("profile.viewBuiltin") : editingProfile ? t("profile.edit") : t("profile.create")}
                       </h4>
                       <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
-                          <Field label="名称">
-                            <Input value={profileForm.name} onChange={e => setProfileForm(f => ({ ...f, name: e.target.value }))} placeholder="如 默认参数" className="text-sm" disabled={!!editingProfile?.is_builtin} autoFocus />
+                          <Field label={t("profile.nameLabel")}>
+                            <Input value={profileForm.name} onChange={e => setProfileForm(f => ({ ...f, name: e.target.value }))} placeholder={t("profile.namePH")} className="text-sm" disabled={!!editingProfile?.is_builtin} autoFocus />
                           </Field>
-                          <Field label="匹配模式（正则）">
-                            <Input value={profileForm.match_pattern} onChange={e => setProfileForm(f => ({ ...f, match_pattern: e.target.value }))} placeholder="如 gpt-4.*" className="text-sm font-mono" disabled={!!editingProfile?.is_builtin} />
+                          <Field label={t("profile.matchPattern")}>
+                            <Input value={profileForm.match_pattern} onChange={e => setProfileForm(f => ({ ...f, match_pattern: e.target.value }))} placeholder={t("profile.matchPatternPH")} className="text-sm font-mono" disabled={!!editingProfile?.is_builtin} />
                           </Field>
                           <Field label="Temperature">
                             <Input type="number" step="0.1" min="0" max="2" value={profileForm.temperature} onChange={e => setProfileForm(f => ({ ...f, temperature: parseFloat(e.target.value) || 0 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
@@ -1196,7 +1204,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           <Field label="Max Tokens">
                             <Input type="number" step="1" min="1" value={profileForm.max_tokens} onChange={e => setProfileForm(f => ({ ...f, max_tokens: parseInt(e.target.value) || 0 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
-                          <Field label="Max Context (自动压缩阈值为此值的70%)">
+                          <Field label={t("profile.maxContext70")}>
                             <Input type="number" step="1" min="1024" value={profileForm.max_context} onChange={e => setProfileForm(f => ({ ...f, max_context: parseInt(e.target.value) || 1024 }))} className="text-sm" disabled={!!editingProfile?.is_builtin} />
                           </Field>
                           <Field label="Top P">
@@ -1214,11 +1222,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           {!editingProfile?.is_builtin && (
                             <Button size="sm" onClick={saveProfile} disabled={profileFormSaving}>
                               {profileFormSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                              {editingProfile ? "保存" : "创建"}
+                              {editingProfile ? t("profile.save") : t("profile.create")}
                             </Button>
                           )}
                           <Button size="sm" variant="outline" onClick={() => { setCreateProfileOpen(false); setEditingProfile(null); setProfileFormError("") }}>
-                            {editingProfile?.is_builtin ? "关闭" : "取消"}
+                            {editingProfile?.is_builtin ? t("common:close") : t("common:cancel")}
                           </Button>
                         </div>
                       </div>
@@ -1229,7 +1237,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {profilesLoading ? (
                     <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
                   ) : profiles.length === 0 ? (
-                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">暂无预设</div>
+                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">{t("profile.none")}</div>
                   ) : (
                     <div className="space-y-2 overflow-auto flex-1">
                       {/* Built-in profiles */}
@@ -1238,11 +1246,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium">{p.name}</span>
-                              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">内置</span>
+                              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{t("profile.builtIn")}</span>
                             </div>
-                            <div className="text-xs text-muted-foreground">内置预设，不可编辑或删除</div>
+                            <div className="text-xs text-muted-foreground">{t("profile.builtInView")}</div>
                           </div>
-                          <Button variant="ghost" size="icon-xs" onClick={() => openProfileEdit(p)} title="查看">
+                          <Button variant="ghost" size="icon-xs" onClick={() => openProfileEdit(p)} title={t("profile.viewTitle")}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -1267,10 +1275,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             </div>
                           </div>
                           <div className={`flex items-center gap-0.5 shrink-0 transition-opacity ml-2${isMobile ? "" : " opacity-0 group-hover:opacity-100"}`}>
-                            <Button variant="ghost" size="icon-xs" onClick={() => openProfileEdit(p)} title="编辑">
+                            <Button variant="ghost" size="icon-xs" onClick={() => openProfileEdit(p)} title={t("profile.editTitle")}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProfileTarget(p.id)} title="删除">
+                            <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProfileTarget(p.id)} title={t("profile.deleteTitle")}>
                               <Trash2 className="h-3.5 w-3.5 text-red-500" />
                             </Button>
                           </div>
@@ -1285,10 +1293,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
               {tab === "presets" && (
                 <div className="p-5 space-y-4 h-full flex flex-col">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-muted-foreground">导演提示词预设</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground">{t("tab.presets")}</h3>
                     {!createPresetOpen && (
                       <Button size="sm" variant="outline" onClick={openPresetCreate}>
-                        <Plus className="h-3.5 w-3.5 mr-1.5" />创建预设
+                        <Plus className="h-3.5 w-3.5 mr-1.5" />{t("preset.create")}
                       </Button>
                     )}
                   </div>
@@ -1297,16 +1305,16 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {createPresetOpen && (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 shrink-0">
                       <h4 className="text-sm font-medium mb-3">
-                        {editingPreset?.is_builtin ? "查看内置预设（只读）" : editingPreset ? "编辑预设" : "创建预设"}
+                        {editingPreset?.is_builtin ? t("preset.viewBuiltin") : editingPreset ? t("preset.edit") : t("preset.create")}
                       </h4>
                       <div className="space-y-3">
-                        <Field label="名称">
-                          <Input value={presetForm.name} onChange={e => setPresetForm(f => ({ ...f, name: e.target.value }))} placeholder="如 默认导演提示词" className="text-sm" disabled={!!editingPreset?.is_builtin} autoFocus />
+                        <Field label={t("preset.nameLabel")}>
+                          <Input value={presetForm.name} onChange={e => setPresetForm(f => ({ ...f, name: e.target.value }))} placeholder={t("preset.namePH")} className="text-sm" disabled={!!editingPreset?.is_builtin} autoFocus />
                         </Field>
-                        <Field label="Match Pattern (正则)">
-                          <Input value={presetForm.match_pattern} onChange={e => setPresetForm(f => ({ ...f, match_pattern: e.target.value }))} placeholder="deepseek" className="text-sm" disabled={!!editingPreset?.is_builtin} />
+                        <Field label={t("preset.matchPattern")}>
+                          <Input value={presetForm.match_pattern} onChange={e => setPresetForm(f => ({ ...f, match_pattern: e.target.value }))} placeholder={t("preset.matchPatternPH")} className="text-sm" disabled={!!editingPreset?.is_builtin} />
                         </Field>
-                        <Field label="模板 YAML">
+                        <Field label={t("preset.templateYaml")}>
                           <textarea
                             className="w-full border border-input rounded-md bg-background px-3 py-2 text-sm font-mono resize-y"
                             style={{ height: 300 }}
@@ -1324,11 +1332,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           {!editingPreset?.is_builtin && (
                             <Button size="sm" onClick={savePreset} disabled={presetFormSaving}>
                               {presetFormSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                              {editingPreset ? "保存" : "创建"}
+                              {editingPreset ? t("preset.save") : t("preset.create")}
                             </Button>
                           )}
                           <Button size="sm" variant="outline" onClick={() => { setCreatePresetOpen(false); setEditingPreset(null); setPresetFormError("") }}>
-                            {editingPreset?.is_builtin ? "关闭" : "取消"}
+                            {editingPreset?.is_builtin ? t("common:close") : t("common:cancel")}
                           </Button>
                         </div>
                       </div>
@@ -1339,7 +1347,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   {presetsLoading ? (
                     <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
                   ) : presets.length === 0 ? (
-                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">暂无预设</div>
+                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">{t("preset.none")}</div>
                   ) : (
                     <div className="space-y-2 overflow-auto flex-1">
                       {/* Built-in presets first */}
@@ -1348,11 +1356,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium">{p.name}</span>
-                              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">built-in</span>
+                              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{t("preset.builtIn")}</span>
                             </div>
-                            <div className="text-xs text-muted-foreground">内置预设，不可编辑或删除</div>
+                            <div className="text-xs text-muted-foreground">{t("preset.builtInView")}</div>
                           </div>
-                          <Button variant="ghost" size="icon-xs" onClick={() => openPresetEdit(p)} title="查看">
+                          <Button variant="ghost" size="icon-xs" onClick={() => openPresetEdit(p)} title={t("preset.viewTitle")}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -1365,14 +1373,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               <span className="text-sm font-medium">{p.name}</span>
                             </div>
                             <div className="text-xs text-muted-foreground font-mono whitespace-pre-wrap line-clamp-2">
-                              {p.template_yaml ? p.template_yaml.slice(0, 100) + (p.template_yaml.length > 100 ? "..." : "") : "（空模板）"}
+                              {p.template_yaml ? p.template_yaml.slice(0, 100) + (p.template_yaml.length > 100 ? "..." : "") : t("preset.emptyTemplate")}
                             </div>
                           </div>
                           <div className={`flex items-center gap-0.5 shrink-0 transition-opacity ml-2${isMobile ? "" : " opacity-0 group-hover:opacity-100"}`}>
-                            <Button variant="ghost" size="icon-xs" onClick={() => openPresetEdit(p)} title="编辑">
+                            <Button variant="ghost" size="icon-xs" onClick={() => openPresetEdit(p)} title={t("preset.editTitle")}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon-xs" onClick={() => setDeletePresetTarget(p.id)} title="删除">
+                            <Button variant="ghost" size="icon-xs" onClick={() => setDeletePresetTarget(p.id)} title={t("preset.deleteTitle")}>
                               <Trash2 className="h-3.5 w-3.5 text-red-500" />
                             </Button>
                           </div>
@@ -1386,14 +1394,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
               {/* ── Tab 4: Slot Assignment ── */}
               {tab === "slots" && (
                 <div className="p-5 h-full flex flex-col">
-                  <h3 className="text-sm font-medium text-muted-foreground mb-4">槽位指定</h3>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-4">{t("tab.slots")}</h3>
                   {slotsLoading ? (
                     <div className="flex items-center justify-center flex-1"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
                   ) : (
                     <div className="flex flex-col gap-4 flex-1 overflow-y-auto">
                       <SlotCard
                         slotId="director"
-                        label="导演模型"
+                        label={t("slot.director")}
                         binding={slotBindings.director}
                         models={models}
                         profiles={profiles}
@@ -1402,7 +1410,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       />
                       <SlotCard
                         slotId="writer"
-                        label="正文模型"
+                        label={t("slot.writer")}
                         binding={slotBindings.writer}
                         models={models}
                         profiles={profiles}
@@ -1419,9 +1427,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   <div className="rounded-lg border p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-sm font-medium">外观</div>
+                        <div className="text-sm font-medium">{t("general.appearance")}</div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          切换界面明暗主题。
+                          {t("general.appearanceDesc")}
                         </p>
                       </div>
                       <Button
@@ -1431,8 +1439,34 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         className="gap-1.5"
                       >
                         {isDark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                        {isDark ? "切换日间模式" : "切换夜间模式"}
+                        {isDark ? t("general.switchLight") : t("general.switchDark")}
                       </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium flex items-center gap-1.5">
+                          <Languages className="h-3.5 w-3.5" />
+                          {t("general.language")}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {t("general.languageDesc")}
+                        </p>
+                      </div>
+                      <Select value={currentLang} onValueChange={(v) => setLang(v as typeof currentLang)}>
+                        <SelectTrigger className="w-36 h-8">
+                          <SelectValue>{LANG_LABELS[currentLang]}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SUPPORTED_LANGS.map((l) => (
+                            <SelectItem key={l} value={l}>
+                              {LANG_LABELS[l]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
@@ -1445,13 +1479,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       <div className="rounded-lg border p-4 space-y-4">
                         <div>
                           <label className="text-sm font-medium flex items-center justify-between">
-                            <span>LLM 请求最大重试次数</span>
+                            <span>{t("general.maxRetries")}</span>
                             <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
                               {appSettings.max_retries}
                             </span>
                           </label>
                           <p className="text-xs text-muted-foreground mt-1">
-                            网络波动时自动重试 LLM API 请求。不重试业务错误（4xx/5xx）。设为 0 则禁用重试。
+                            {t("general.maxRetriesDesc")}
                           </p>
                           <div className="mt-3 flex items-center gap-3">
                             <input
@@ -1480,13 +1514,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       <div className="rounded-lg border p-4 space-y-4">
                         <div>
                           <label className="text-sm font-medium flex items-center justify-between">
-                            <span>单轮最大调用次数</span>
+                            <span>{t("general.maxToolRounds")}</span>
                             <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
                               {appSettings.max_tool_rounds}
                             </span>
                           </label>
                           <p className="text-xs text-muted-foreground mt-1">
-                            导演工具调用循环的轮数上限，防止单轮陷入过长的工具循环。
+                            {t("general.maxToolRoundsDesc")}
                           </p>
                           <div className="mt-3 flex items-center gap-3">
                             <input
@@ -1520,9 +1554,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         {settingsSaving ? (
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         ) : settingsSaved ? (
-                          <span>已保存</span>
+                          <span>{t("general.saved")}</span>
                         ) : (
-                          "保存设置"
+                          t("general.save")
                         )}
                       </Button>
                     </div>
@@ -1540,7 +1574,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   <div className="p-5 space-y-6">
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
-                        已发现 {plugins.length} 个插件
+                        {t("plugin.foundCount", { n: plugins.length })}
                       </p>
                       <div>
                         <input
@@ -1557,7 +1591,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           disabled={uploading}
                         >
                           {uploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
-                          导入插件
+                          {t("plugin.import")}
                         </Button>
                       </div>
                     </div>
@@ -1580,7 +1614,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 <span className="text-xs text-muted-foreground font-normal truncate max-w-[220px]">{preview.manifest.description}</span>
                               )}
                             </div>
-                            <p className="text-[10px] text-muted-foreground mt-0.5">插件 ID: {preview.manifest.id}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">{t("plugin.pluginId", { id: preview.manifest.id })}</p>
                           </div>
                           <button onClick={() => { setPreview(null); pendingZipRef.current = null }} className="text-muted-foreground hover:text-foreground">
                             <X className="h-4 w-4" />
@@ -1589,32 +1623,32 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                         {preview.conflicts.length > 0 && (
                           <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
-                            <div className="font-medium mb-1">以下工具与内置工具冲突，安装将被拒绝：</div>
+                            <div className="font-medium mb-1">{t("plugin.conflictTitle")}</div>
                             <div className="flex flex-wrap gap-1.5">
                               {preview.conflicts.map((c) => (
                                 <span key={c} className="bg-red-500/10 px-1.5 py-0.5 rounded">{c}</span>
                               ))}
                             </div>
-                            <div className="mt-1.5">该插件无法安装，请插件作者修改工具名后重试。</div>
+                            <div className="mt-1.5">{t("plugin.conflictCantInstall")}</div>
                           </div>
                         )}
 
                         <div className="grid grid-cols-2 gap-3 text-xs">
                           <div>
-                            <div className="text-muted-foreground mb-1">权限</div>
+                            <div className="text-muted-foreground mb-1">{t("plugin.permission")}</div>
                             <div className="flex flex-wrap gap-1.5">
-                              {(preview.manifest.permissions.length > 0 ? preview.manifest.permissions : ["（无）"]).map((perm) => (
+                              {(preview.manifest.permissions.length > 0 ? preview.manifest.permissions : [t("plugin.none")]).map((perm) => (
                                 <span key={perm} className="inline-flex items-center gap-1 bg-muted/50 px-1.5 py-0.5 rounded">
                                   <Shield className="h-2.5 w-2.5" />
-                                  {permLabels[perm] || perm}
+                                  {permLabels[perm] ? t(permLabels[perm]) : perm}
                                 </span>
                               ))}
                             </div>
                           </div>
                           <div>
-                            <div className="text-muted-foreground mb-1">工具</div>
+                            <div className="text-muted-foreground mb-1">{t("plugin.tools")}</div>
                             <div className="flex flex-wrap gap-1.5">
-                              {(preview.manifest.tools.length > 0 ? preview.manifest.tools.map(t => t.name) : ["（无）"]).map((n) => (
+                              {(preview.manifest.tools.length > 0 ? preview.manifest.tools.map(t => t.name) : [t("plugin.none")]).map((n) => (
                                 <span key={n} className="bg-muted/50 px-1.5 py-0.5 rounded">{n}</span>
                               ))}
                             </div>
@@ -1623,7 +1657,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                         {preview.network_allowlist.length > 0 && (
                           <div>
-                            <div className="text-xs text-muted-foreground mb-1">声明的网络访问白名单</div>
+                            <div className="text-xs text-muted-foreground mb-1">{t("plugin.netAllowlist")}</div>
                             <div className="flex flex-wrap gap-1.5">
                               {preview.network_allowlist.map((r, i) => (
                                 <span key={i} className="text-[11px] bg-muted/50 px-1.5 py-0.5 rounded font-mono">
@@ -1640,7 +1674,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             variant="outline"
                             onClick={() => { setPreview(null); pendingZipRef.current = null }}
                           >
-                            取消
+                            {t("common:cancel")}
                           </Button>
                           <Button
                             size="sm"
@@ -1648,7 +1682,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             disabled={installing || preview.conflicts.length > 0}
                           >
                             {installing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-                            确认安装
+                            {t("plugin.confirmInstall")}
                           </Button>
                         </div>
                       </div>
@@ -1657,8 +1691,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     {plugins.length === 0 ? (
                       <div className="text-center text-muted-foreground py-12">
                         <Puzzle className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">暂无可用插件</p>
-                        <p className="text-xs mt-1 opacity-60">将插件放入 {`data/{用户名}/plugins/`} 目录后自动发现，或点击「导入插件」上传 .zip</p>
+                        <p className="text-sm">{t("plugin.noPlugins")}</p>
+                        <p className="text-xs mt-1 opacity-60">{t("plugin.emptyHint", { dir: `data/{用户名}/plugins/` })}</p>
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -1686,14 +1720,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   ) : (
                                     <Power className="h-3 w-3 mr-1" />
                                   )}
-                                  {p.enabled ? "已启用" : "已禁用"}
+                                  {p.enabled ? t("plugin.enabled") : t("plugin.disabled")}
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   className="text-muted-foreground hover:text-red-500"
                                   onClick={() => setDeleteTarget(p)}
-                                  title="卸载插件"
+                                  title={t("plugin.uninstallTitle")}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -1704,11 +1738,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               {p.permissions.map((perm) => (
                                 <span key={perm} className="inline-flex items-center gap-1 text-[10px] bg-muted/50 px-1.5 py-0.5 rounded">
                                   <Shield className="h-2.5 w-2.5" />
-                                  {permLabels[perm] || perm}
+                                  {permLabels[perm] ? t(permLabels[perm]) : perm}
                                 </span>
                               ))}
                               <span className="text-[10px] text-muted-foreground ml-1">
-                                {p.has_backend ? "· 后端" : ""}{p.has_frontend ? "· 配置面板" : ""}
+                                {p.has_backend ? t("plugin.hasBackend") : ""}{p.has_frontend ? t("plugin.hasFrontend") : ""}
                               </span>
                             </div>
 
@@ -1720,14 +1754,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 className="text-xs"
                               >
                                 <Link2 className="h-3 w-3 mr-1" />
-                                {netRulesFor?.id === p.id ? "收起网络白名单" : "展开网络白名单"}
+                                {netRulesFor?.id === p.id ? t("plugin.collapseNet") : t("plugin.expandNet")}
                               </Button>
                             )}
 
                             {netRulesFor?.id === p.id && (
                               <div className="border rounded-md p-3 space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-xs font-medium">网络访问白名单</span>
+                                  <span className="text-xs font-medium">{t("plugin.netPanelTitle")}</span>
                                   {netRulesLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                                 </div>
 
@@ -1739,7 +1773,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 )}
 
                                 {netRules.length === 0 && !netRulesLoading && (
-                                  <p className="text-xs text-muted-foreground">暂无白名单规则，插件无法访问网络。</p>
+                                  <p className="text-xs text-muted-foreground">{t("plugin.noNetRules")}</p>
                                 )}
 
                                 <div className="space-y-2">
@@ -1758,22 +1792,22 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                                 : "bg-muted/50 text-muted-foreground"
                                           }`}
                                         >
-                                          {rule.source === "user" ? "我的" : "声明"}
+                                          {rule.source === "user" ? t("plugin.ruleMine") : t("plugin.ruleDeclared")}
                                         </span>
                                       </div>
                                       <div className="flex items-center gap-1 shrink-0">
                                         <button
                                           onClick={() => handleToggleRule(rule)}
                                           className={`px-1.5 py-0.5 rounded text-[10px] ${rule.enabled ? "text-emerald-600" : "text-muted-foreground"}`}
-                                          title={rule.enabled ? "点击禁用" : "点击启用"}
+                                          title={rule.enabled ? t("plugin.ruleDisableTitle") : t("plugin.ruleEnableTitle")}
                                         >
-                                          {rule.enabled ? "启用" : "禁用"}
+                                          {rule.enabled ? t("plugin.ruleEnabled") : t("plugin.ruleDisabled")}
                                         </button>
                                         {rule.source === "user" && (
                                           <button
                                             onClick={() => handleDeleteRule(rule)}
                                             className="text-red-500 hover:text-red-700 px-1"
-                                            title="删除规则"
+                                            title={t("plugin.deleteRuleTitle")}
                                           >
                                             <Trash2 className="h-3 w-3" />
                                           </button>
@@ -1794,18 +1828,18 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   </select>
                                   <Input
                                     className="h-8 text-xs flex-1"
-                                    placeholder="api.example.com 或 127.0.0.1"
+                                    placeholder={t("plugin.hostPH")}
                                     value={newRule.host}
                                     onChange={(e) => setNewRule({ ...newRule, host: e.target.value })}
                                   />
                                   <Input
                                     className="h-8 text-xs w-16"
-                                    placeholder="端口"
+                                    placeholder={t("plugin.portPH")}
                                     value={newRule.port}
                                     onChange={(e) => setNewRule({ ...newRule, port: e.target.value })}
                                   />
                                   <Button size="sm" variant="outline" className="shrink-0" onClick={handleAddRule}>
-                                    添加
+                                    {t("plugin.add")}
                                   </Button>
                                 </div>
                               </div>
@@ -1819,7 +1853,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 className="text-xs"
                               >
                                 <Puzzle className="h-3 w-3 mr-1" />
-                                {configPlugin?.id === p.id ? "收起配置面板" : "展开配置面板"}
+                                {configPlugin?.id === p.id ? t("plugin.collapseConfig") : t("plugin.expandConfig")}
                               </Button>
                             )}
 
@@ -1828,6 +1862,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 <PluginConfigPanel
                                   pluginId={p.id}
                                   config={p.config || []}
+                                  i18n={p.i18n}
                                   onSaved={() => loadPlugins()}
                                 />
                               </div>
@@ -1850,7 +1885,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   <div className="p-5 space-y-6">
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
-                        你的 skill 库共 {mySkills.length} 个 skill
+                        {t("skill.count", { n: mySkills.length })}
                       </p>
                       <div>
                         <input
@@ -1867,7 +1902,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           disabled={skillUploading}
                         >
                           {skillUploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
-                          导入 skill
+                          {t("skill.import")}
                         </Button>
                       </div>
                     </div>
@@ -1883,9 +1918,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       <div className="border rounded-md p-4 space-y-3 bg-card">
                         <div className="flex items-start justify-between">
                           <div>
-                            <div className="font-medium">导入 skill 「{skillPreview.name}」</div>
+                            <div className="font-medium">{t("skill.importHeading", { name: skillPreview.name })}</div>
                             <p className="text-[11px] text-muted-foreground mt-0.5">
-                              {skillPreview.preview.file_count} 个文件，确认后加入你的 skill 库
+                              {t("skill.fileCount", { n: skillPreview.preview.file_count })}
                             </p>
                           </div>
                           <button onClick={() => setSkillPreview(null)} className="text-muted-foreground hover:text-foreground">
@@ -1893,10 +1928,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           </button>
                         </div>
                         <div className="flex justify-end gap-2 pt-1">
-                          <Button size="sm" variant="outline" onClick={() => setSkillPreview(null)}>取消</Button>
+                          <Button size="sm" variant="outline" onClick={() => setSkillPreview(null)}>{t("common:cancel")}</Button>
                           <Button size="sm" onClick={handleSkillConfirmInstall} disabled={skillInstalling}>
                             {skillInstalling ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-                            确认导入
+                            {t("skill.confirmImport")}
                           </Button>
                         </div>
                       </div>
@@ -1905,9 +1940,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     {mySkills.length === 0 ? (
                       <div className="text-center text-muted-foreground py-12">
                         <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">你的 skill 库还是空的</p>
+                        <p className="text-sm">{t("skill.emptyTitle")}</p>
                         <p className="text-xs mt-1 opacity-60">
-                          在实例内将 skill 导出到库里，或点击「导入 skill」上传 .zip 打包的 skill 文件夹
+                          {t("skill.emptyHint")}
                         </p>
                       </div>
                     ) : (
@@ -1921,14 +1956,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   {s.name}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground mt-1">
-                                  {s.has_skill ? `${s.file_count} 个文件` : "缺少 SKILL.md"}
+                                  {s.has_skill ? t("skill.filesCount", { n: s.file_count }) : t("skill.missingSkillMd")}
                                   {s.size ? ` · ${(s.size / 1024).toFixed(1)} KB` : ""}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <Button size="sm" variant="outline" onClick={() => window.open(skillsApi.downloadUrl(s.name), "_blank")}>
                                   <Download className="h-3 w-3 mr-1" />
-                                  下载
+                                  {t("skill.download")}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -1938,7 +1973,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   disabled={skillDeleting === s.name}
                                 >
                                   <Trash2 className="h-3 w-3 mr-1" />
-                                  删除
+                                  {t("skill.delete")}
                                 </Button>
                               </div>
                             </div>
@@ -1948,7 +1983,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     )}
 
                     <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
-                      提示：skill 库是你的库存，导入或从实例导出后存入。要让它对某个实例生效，请在该实例详情中「添加 skill」复制进去。
+                      {t("skill.hint")}
                     </div>
                   </div>
                 )
@@ -1963,7 +1998,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   <div className="p-5 space-y-6">
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
-                        你的提示词包库共 {myPackages.length} 个包
+                        {t("pkg.count", { n: myPackages.length })}
                       </p>
                       <div>
                         <input
@@ -1980,7 +2015,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           disabled={packageUploading}
                         >
                           {packageUploading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Upload className="h-3 w-3 mr-1" />}
-                          导入提示词包
+                          {t("pkg.import")}
                         </Button>
                       </div>
                     </div>
@@ -1996,9 +2031,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       <div className="border rounded-md p-4 space-y-3 bg-card">
                         <div className="flex items-start justify-between">
                           <div>
-                            <div className="font-medium">导入提示词包「{packagePreview.name}」</div>
+                            <div className="font-medium">{t("pkg.importHeading", { name: packagePreview.name })}</div>
                             <p className="text-[11px] text-muted-foreground mt-0.5">
-                              {packagePreview.preview.file_count} 个文件，确认后加入你的提示词包库
+                              {t("pkg.fileCount", { n: packagePreview.preview.file_count })}
                             </p>
                           </div>
                           <button onClick={() => setPackagePreview(null)} className="text-muted-foreground hover:text-foreground">
@@ -2006,10 +2041,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           </button>
                         </div>
                         <div className="flex justify-end gap-2 pt-1">
-                          <Button size="sm" variant="outline" onClick={() => setPackagePreview(null)}>取消</Button>
+                          <Button size="sm" variant="outline" onClick={() => setPackagePreview(null)}>{t("common:cancel")}</Button>
                           <Button size="sm" onClick={handlePackageConfirmInstall} disabled={packageInstalling}>
                             {packageInstalling ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-                            确认导入
+                            {t("pkg.confirmImport")}
                           </Button>
                         </div>
                       </div>
@@ -2018,9 +2053,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     {myPackages.length === 0 ? (
                       <div className="text-center text-muted-foreground py-12">
                         <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">你的提示词包库还是空的</p>
+                        <p className="text-sm">{t("pkg.emptyTitle")}</p>
                         <p className="text-xs mt-1 opacity-60">
-                          点击「导入提示词包」上传 .zip 打包的包文件夹（内含 README.md + 若干设定/描写词/沙盒资源，编辑引用时以包名作命名空间）
+                          {t("pkg.emptyHint")}
                         </p>
                       </div>
                     ) : (
@@ -2034,15 +2069,15 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   {p.name}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground mt-1">
-                                  {p.file_count} 个文件
-                                  {p.has_readme ? " · 含 README" : " · 无 README"}
+                                  {t("pkg.filesCount", { n: p.file_count })}
+                                  {p.has_readme ? t("pkg.hasReadme") : t("pkg.noReadme")}
                                   {p.size ? ` · ${(p.size / 1024).toFixed(1)} KB` : ""}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <Button size="sm" variant="outline" onClick={() => window.open(packagesApi.downloadUrl(p.name), "_blank")}>
                                   <Download className="h-3 w-3 mr-1" />
-                                  下载
+                                  {t("pkg.download")}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -2052,7 +2087,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   disabled={packageDeleting === p.name}
                                 >
                                   <Trash2 className="h-3 w-3 mr-1" />
-                                  删除
+                                  {t("pkg.delete")}
                                 </Button>
                               </div>
                             </div>
@@ -2062,7 +2097,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     )}
 
                     <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
-                      提示：提示词包库是你的库存。要让它对某实例生效，请在该实例中安装（复制进实例 packages/）；然后在组装器/正文里用 @包名/路径 引用形式（外层花括号）显式引用其内容。包名可含空格与版本号，如 `某人的修仙设定 v1.01`。
+                      {t("pkg.hint")}
                     </div>
                   </div>
                 )
@@ -2082,60 +2117,60 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
       {/* Delete confirmations */}
       <ConfirmDialog
         open={deleteProviderTarget !== null}
-        title="删除供应商"
-        message="删除供应商同时会删除其下所有模型，此操作不可恢复。确认删除？"
+        title={t("del.providerTitle")}
+        message={t("del.providerMessage")}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={deleteProvider}
         onCancel={() => setDeleteProviderTarget(null)}
       />
 
       <ConfirmDialog
         open={deleteProfileTarget !== null}
-        title="删除预设"
-        message="删除后将从模型关联中移除，此操作不可恢复。确认删除？"
+        title={t("del.profileTitle")}
+        message={t("del.profileMessage")}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={deleteProfile}
         onCancel={() => setDeleteProfileTarget(null)}
       />
 
       <ConfirmDialog
         open={deletePresetTarget !== null}
-        title="删除导演提示词预设"
-        message="删除导演提示词预设后无法恢复。确认删除？"
+        title={t("del.presetTitle")}
+        message={t("del.presetMessage")}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={deletePreset}
         onCancel={() => setDeletePresetTarget(null)}
       />
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="卸载插件"
-        message={`确定卸载「${deleteTarget?.name}」吗？此操作将删除该插件的所有文件和数据。`}
+        title={t("del.pluginTitle")}
+        message={t("del.pluginMessage", { name: deleteTarget?.name })}
         variant="destructive"
-        confirmText={deleting ? "卸载中..." : "卸载"}
+        confirmText={deleting ? t("del.uninstalling") : t("common:delete")}
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />
 
       <ConfirmDialog
         open={skillDeleteTarget !== null}
-        title="删除 skill"
-        message={`确定从你的 skill 库删除「${skillDeleteTarget}」吗？只会从你的库存删除，已将其复制进实例的不受影响。`}
+        title={t("del.skillTitle")}
+        message={t("del.skillMessage", { name: skillDeleteTarget })}
         variant="destructive"
-        confirmText={skillDeleting ? "删除中..." : "删除"}
+        confirmText={skillDeleting ? t("del.deleting") : t("common:delete")}
         onConfirm={handleSkillDelete}
         onCancel={() => setSkillDeleteTarget(null)}
       />
 
       <ConfirmDialog
         open={packageDeleteTarget !== null}
-        title="删除提示词包"
-        message={`确定从你的提示词包库删除「${packageDeleteTarget}」吗？只会从你的库存删除，已将其复制进实例的不受影响。`}
+        title={t("del.pkgTitle")}
+        message={t("del.pkgMessage", { name: packageDeleteTarget })}
         variant="destructive"
-        confirmText={packageDeleting ? "删除中..." : "删除"}
+        confirmText={packageDeleting ? t("del.deleting") : t("common:delete")}
         onConfirm={handlePackageDelete}
         onCancel={() => setPackageDeleteTarget(null)}
       />

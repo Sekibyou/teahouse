@@ -1,5 +1,6 @@
 import { Send, Square, Minimize2, Maximize2, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useTranslation } from "react-i18next"
 
 interface CommandDef {
   name: string
@@ -69,6 +70,8 @@ export function ChatInput({
   onReject,
   isCompacting = false,
 }: ChatInputProps) {
+  const { t } = useTranslation("misc")
+  const compactingText = t("chatInput.summarizing")
   return (
     <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
       {filteredCommands.length > 0 && (
@@ -96,7 +99,7 @@ export function ChatInput({
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-purple-500" />
-              确认 Git 提交
+              {t("chatInput.confirmGitCommit")}
             </h4>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -109,7 +112,7 @@ export function ChatInput({
               disabled={approving}
               onClick={onReject}
             >
-              拒绝
+              {t("chatInput.reject")}
             </Button>
             <Button
               variant="default"
@@ -117,7 +120,7 @@ export function ChatInput({
               disabled={approving}
               onClick={onApprove}
             >
-              {approving ? "提交中..." : "确认提交"}
+              {approving ? t("chatInput.committing") : t("chatInput.commit")}
             </Button>
           </div>
         </div>
@@ -128,7 +131,7 @@ export function ChatInput({
             variant="ghost"
             className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
             onClick={onToggleExpand}
-            title={expandedInput ? "收起小输入框" : "展开大输入框（占高度 80%）"}
+            title={expandedInput ? t("chatInput.collapseInput") : t("chatInput.expandInput")}
           >
             {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
           </Button>
@@ -140,11 +143,11 @@ export function ChatInput({
                 : "resize-none min-h-[40px] max-h-[120px]"
             }`}
             rows={1}
-            value={isCompacting ? "正在总结中…" : input}
+            value={isCompacting ? compactingText : input}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={onKeyDown}
             onFocus={onFocus}
-            placeholder={isCompacting ? "正在总结中…" : isStreaming ? "输入消息回车插入（不中断生成）..." : "输入消息... / 查看命令 (Enter 发送)"}
+            placeholder={isCompacting ? compactingText : isStreaming ? t("chatInput.placeholderStreaming") : t("chatInput.placeholderNormal")}
             disabled={isCompacting}
           />
           <Button
@@ -153,7 +156,7 @@ export function ChatInput({
             onClick={isStreaming || isCompacting ? onStop : onSend}
             disabled={!(isStreaming || isCompacting) && !input.trim()}
             variant={isStreaming || isCompacting ? "destructive" : "default"}
-            title={isCompacting ? "停止总结 (Esc)" : isStreaming ? "停止生成 (Esc)" : "发送 (Enter)"}
+            title={isCompacting ? t("chatInput.stopSummarizing") : isStreaming ? t("chatInput.stopGenerating") : t("chatInput.send")}
           >
             {isStreaming || isCompacting ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>

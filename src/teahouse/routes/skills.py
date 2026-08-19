@@ -88,7 +88,7 @@ def _extract_skill_tree(zf, names: list[str], base: str, dest: Path) -> None:
             continue
         target = (dest / rel).resolve()
         if not str(target).startswith(str(dest.resolve())):
-            raise HTTPException(status_code=400, detail=f"skill 包包含非法路径: {name}")
+            raise HTTPException(status_code=400, detail=f"skill package contains an illegal path: {name}")
         if name.endswith("/"):
             target.mkdir(parents=True, exist_ok=True)
         else:
@@ -136,12 +136,12 @@ async def api_preview_skill(
     """Stage + validate a skill zip WITHOUT installing. Returns preview info +
     a short-lived preview_id that import/confirm consumes."""
     if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="只支持 .zip 格式的 skill 包")
+        raise HTTPException(status_code=400, detail="only .zip skill packages are supported")
 
     _preview_cleanup()
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="skill 包过大 (上限 20MB)")
+        raise HTTPException(status_code=413, detail="skill package is too large (20MB limit)")
 
     tmp_path = None
     try:
@@ -158,7 +158,7 @@ async def api_preview_skill(
         if tmp_path:
             try: os.unlink(tmp_path)
             except OSError: pass
-        raise HTTPException(status_code=400, detail=f"skill 包无效: {e}")
+        raise HTTPException(status_code=400, detail=f"invalid skill package: {e}")
 
     preview_id = uuid.uuid4().hex
     _previews[preview_id] = {"path": tmp_path, "created_at": time.time()}
@@ -178,16 +178,16 @@ def _preview_zip(zip_path: Path) -> dict:
         names = zf.namelist()
         base = _zip_skill_base(names)
         if base is None:
-            raise HTTPException(status_code=400, detail="skill 包缺少 SKILL.md")
+            raise HTTPException(status_code=400, detail="skill package is missing SKILL.md")
         # Skill name = the deepest directory component of the base.
         name = base.rstrip("/").rsplit("/", 1)[-1] if base else ""
         if not name:
-            raise HTTPException(status_code=400, detail="skill 包根目录无法确定 skill 名")
+            raise HTTPException(status_code=400, detail="unable to determine the skill name from the package root")
         if not SKILL_NAME_RE.match(name):
-            raise HTTPException(status_code=400, detail="skill 名只能包含字母、数字、连字符、下划线")
+            raise HTTPException(status_code=400, detail="skill names may only contain letters, digits, hyphens, and underscores")
         if not base:
             # Flat zip (SKILL.md at root) — skill name from file name.
-            raise HTTPException(status_code=400, detail="skill 包需以 skill 文件夹形式打包")
+            raise HTTPException(status_code=400, detail="skill package must be packaged as a skill folder")
         file_count = sum(1 for n in names if not n.endswith("/"))
     return {
         "name": name,
@@ -206,7 +206,7 @@ async def api_import_skill_confirm(
     _preview_cleanup()
     entry = _previews.pop(body.preview_id, None)
     if not entry:
-        raise HTTPException(status_code=400, detail="preview 已过期或无效，请重新上传 skill 包")
+        raise HTTPException(status_code=400, detail="preview has expired or is invalid, please re-upload the skill package")
     tmp_path = entry["path"]
 
     safe_name = await _get_safe_name(user.user_id)
@@ -216,20 +216,20 @@ async def api_import_skill_confirm(
             names = zf.namelist()
             base = _zip_skill_base(names)
             if base is None:
-                raise HTTPException(status_code=400, detail="skill 包缺少 SKILL.md")
+                raise HTTPException(status_code=400, detail="skill package is missing SKILL.md")
             name = base.rstrip("/").rsplit("/", 1)[-1] if base else ""
             if not name or not SKILL_NAME_RE.match(name):
-                raise HTTPException(status_code=400, detail="skill 名不合法")
+                raise HTTPException(status_code=400, detail="invalid skill name")
             dest = _user_skills_dir(safe_name) / name
             if dest.exists():
                 shutil.rmtree(dest)
             dest.mkdir(parents=True, exist_ok=True)
             _extract_skill_tree(zf, names, base, dest)
-        return {"status": "ok", "name": name, "message": f"skill '{name}' 已导入"}
+        return {"status": "ok", "name": name, "message": f"skill '{name}' imported"}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导入失败: {e}")
+        raise HTTPException(status_code=500, detail=f"import failed: {e}")
     finally:
         try:
             os.unlink(tmp_path)
@@ -240,24 +240,24 @@ async def api_import_skill_confirm(
 @router.delete("/{skill_name}")
 async def api_delete_my_skill(skill_name: str, user: UserInfo = Depends(require_user)):
     if not SKILL_NAME_RE.match(skill_name):
-        raise HTTPException(status_code=400, detail="skill 名不合法")
+        raise HTTPException(status_code=400, detail="invalid skill name")
     safe_name = await _get_safe_name(user.user_id)
     skill_dir = _user_skills_dir(safe_name) / skill_name
     if not skill_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"skill '{skill_name}' 不在你的 skill 库中")
+        raise HTTPException(status_code=404, detail=f"skill '{skill_name}' not in your skill library")
     shutil.rmtree(skill_dir)
-    return {"status": "ok", "name": skill_name, "message": f"skill '{skill_name}' 已删除"}
+    return {"status": "ok", "name": skill_name, "message": f"skill '{skill_name}' deleted"}
 
 
 @router.get("/{skill_name}/download")
 async def api_download_my_skill(skill_name: str, user: UserInfo = Depends(require_user_for_download)):
     import zipfile, tempfile
     if not SKILL_NAME_RE.match(skill_name):
-        raise HTTPException(status_code=400, detail="skill 名不合法")
+        raise HTTPException(status_code=400, detail="invalid skill name")
     safe_name = await _get_safe_name(user.user_id)
     skill_dir = _user_skills_dir(safe_name) / skill_name
     if not skill_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"skill '{skill_name}' 不在你的 skill 库中")
+        raise HTTPException(status_code=404, detail=f"skill '{skill_name}' not in your skill library")
     zip_path = Path(tempfile.gettempdir()) / f"skill-{skill_name}-{uuid.uuid4().hex[:8]}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fp in skill_dir.rglob("*"):

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
@@ -8,8 +9,9 @@ import {
   PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
-  Eye, Code2, Users,
+  Eye, Code2, Users, Languages,
 } from "lucide-react"
+import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -36,6 +38,9 @@ import type { FileTreeNode } from "@/lib/types"
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
 export function WorkspacePage() {
+  const { t } = useTranslation("workspace")
+  const currentLang = useCurrentLang()
+  const setLang = useLangStore((s) => s.setLang)
   const navigate = useNavigate()
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
@@ -325,7 +330,7 @@ export function WorkspacePage() {
         const instanceOnly = res.data!.filter(s => s.source === "instance" && s.has_skill)
         setInstSkills(instanceOnly)
       } else {
-        setExportSkillError(res.error || "加载 skill 列表失败")
+        setExportSkillError(res.error || t("skillLoadFail"))
       }
       setInstSkillsLoading(false)
     } else if (type === "package") {
@@ -336,7 +341,7 @@ export function WorkspacePage() {
       if (res.ok) {
         setInstPackages(res.data!.packages)
       } else {
-        setExportPackageError(res.error || "加载提示词包列表失败")
+        setExportPackageError(res.error || t("packageLoadFail"))
       }
       setInstPackagesLoading(false)
     }
@@ -364,7 +369,7 @@ export function WorkspacePage() {
       // Same-named target already exists in the library → ask before overwriting.
       setPendingOverwrite({ kind, name })
     } else {
-      setErr(res.error || "导出失败")
+      setErr(res.error || t("exportFail"))
     }
   }
 
@@ -386,7 +391,7 @@ export function WorkspacePage() {
         setExportVersion("1.0.0")
         showSaveToast()
       } else {
-        setExportError(res.error || "导出失败")
+        setExportError(res.error || t("exportFail"))
       }
       setExportLoading(false)
     } else if (exportType === "package") {
@@ -413,7 +418,7 @@ export function WorkspacePage() {
         setShowExportDialog(false)
         setExportSelectedSkill("")
         showSaveToast()
-      } else setE(res.error || "导出失败")
+      } else setE(res.error || t("exportFail"))
     } else {
       setExportPackageLoading(true); setExportPackageError("")
       const res = await packagesApi.exportToLibrary(instId, name, true)
@@ -422,7 +427,7 @@ export function WorkspacePage() {
         setShowExportDialog(false)
         setExportSelectedPackage("")
         showSaveToast()
-      } else setExportPackageError(res.error || "导出失败")
+      } else setExportPackageError(res.error || t("exportFail"))
     }
   }
 
@@ -633,7 +638,7 @@ export function WorkspacePage() {
         <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
         <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[160px]">
           <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm">游玩模式</span>
+            <span className="text-sm">{t("mode.play")}</span>
             <Switch
               checked={mode === "backstage"}
               onCheckedChange={(v) => {
@@ -648,21 +653,21 @@ export function WorkspacePage() {
             onClick={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
           >
             <MessageCircle className="h-4 w-4" />
-            导演
+            {t("director")}
           </button>
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
             onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
           >
             <GitBranch className="h-4 w-4" />
-            版本控制
+            {t("versionControl")}
           </button>
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
             onClick={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
           >
             <FileText className="h-4 w-4" />
-            文件清单
+            {t("fileList")}
           </button>
           {isAdminRole(currentUser?.role) && (
             <button
@@ -670,7 +675,7 @@ export function WorkspacePage() {
               onClick={() => { openSettings("users"); setShowMobileMenu(false) }}
             >
               <Users className="h-4 w-4" />
-              用户管理
+              {t("userManagement")}
             </button>
           )}
           <button
@@ -678,14 +683,37 @@ export function WorkspacePage() {
             onClick={() => { openSettings(); setShowMobileMenu(false) }}
           >
             <Settings className="h-4 w-4" />
-            设置
+            {t("common:settings")}
           </button>
+          <div className="border-t border-border" />
+          <div className="px-3 py-2 space-y-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Languages className="h-4 w-4" />
+              {t("language")}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap pl-6">
+              {SUPPORTED_LANGS.map((l) => (
+                <button
+                  key={l}
+                  className={`px-2 py-1 text-xs rounded border ${
+                    currentLang === l
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border hover:bg-muted"
+                  }`}
+                  onClick={() => setLang(l as Lang)}
+                >
+                  {LANG_LABELS[l]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-border" />
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
             onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
           >
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            主题切换
+            {t("themeToggle")}
           </button>
           <div className="border-t border-border" />
           <button
@@ -696,7 +724,7 @@ export function WorkspacePage() {
             }}
           >
             <ArrowLeft className="h-4 w-4" />
-            退出到主页
+            {t("exitToHome")}
           </button>
         </div>
       </>
@@ -745,31 +773,31 @@ export function WorkspacePage() {
                 <button
                   className="p-1 rounded hover:bg-muted shrink-0"
                   onClick={() => setShowFileTree(true)}
-                  title="文件树"
+                  title={t("fileTreeTitle")}
                 >
                   <FolderTree className="h-5 w-5" />
                 </button>
                 <span className="flex-1 text-sm text-muted-foreground truncate">
-                  {selectedFile ?? "未选择文件"}
+                  {selectedFile ?? t("noFileSelected")}
                 </span>
                 {selectedFile && !isImageOpen && (
                   <div className="flex items-center gap-2 shrink-0">
-                    {isDirty && <span className="text-xs text-orange-500">未保存</span>}
+                    {isDirty && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
                     {isMarkdown && (
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
                         className="gap-1"
-                        title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
+                        title={editorView === "code" ? t("previewMarkdown") : t("backToCodeEdit")}
                       >
                         {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                        {editorView === "code" ? "预览" : "代码"}
+                        {editorView === "code" ? t("preview") : t("code")}
                       </Button>
                     )}
                     <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                       {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                      保存
+                      {t("common:save")}
                     </Button>
                   </div>
                 )}
@@ -778,7 +806,7 @@ export function WorkspacePage() {
                   <button
                     className="px-2 py-1 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
                     onClick={() => setShowMobileMenu(!showMobileMenu)}
-                    title="菜单"
+                    title={t("menuTitle")}
                   >
                     <Wrench className="h-3.5 w-3.5" />
                     <Menu className="h-3.5 w-3.5" />
@@ -807,7 +835,7 @@ export function WorkspacePage() {
                 <div className="flex-1 flex items-center justify-center text-muted-foreground">
                   <div className="text-center">
                     <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                    <p className="text-sm">点击左上角文件按钮选择文件</p>
+                    <p className="text-sm">{t("selectFileMobileHint")}</p>
                   </div>
                 </div>
               )}
@@ -825,7 +853,7 @@ export function WorkspacePage() {
                   {activeInstance.name}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => handleUploadClick("")} title="上传文件到根目录">
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => handleUploadClick("")} title={t("uploadToRoot")}>
                     <Upload className="h-4 w-4" />
                   </button>
                   <button className="p-1.5 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
@@ -881,22 +909,22 @@ export function WorkspacePage() {
         {showCreate && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCreate(null)}>
             <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <h3 className="font-semibold">新建{showCreate.type === "directory" ? "文件夹" : "文件"}</h3>
+              <h3 className="font-semibold">{showCreate.type === "directory" ? t("create.titleFolder") : t("create.titleFile")}</h3>
               <div>
                 {showCreate.parentPath && (
-                  <p className="text-xs text-muted-foreground mb-2">位置：{showCreate.parentPath || "/"}</p>
+                  <p className="text-xs text-muted-foreground mb-2">{t("location", { path: showCreate.parentPath || "/" })}</p>
                 )}
                 <Input
                   value={createName}
                   onChange={e => setCreateName(e.target.value)}
-                  placeholder={showCreate.type === "directory" ? "文件夹名称" : "文件名"}
+                  placeholder={showCreate.type === "directory" ? t("create.folderPh") : t("create.filePh")}
                   autoFocus
                   onKeyDown={e => { if (e.key === "Enter") handleCreateEntry() }}
                 />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>取消</Button>
-                <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>创建</Button>
+                <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>{t("common:cancel")}</Button>
+                <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>{t("create.submit")}</Button>
               </div>
             </div>
           </div>
@@ -906,20 +934,20 @@ export function WorkspacePage() {
         {renameTarget && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
             <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <h3 className="font-semibold">重命名</h3>
+              <h3 className="font-semibold">{t("rename.title")}</h3>
               <div>
-                <p className="text-xs text-muted-foreground mb-2">位置：{renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/"}</p>
+                <p className="text-xs text-muted-foreground mb-2">{t("location", { path: renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/" })}</p>
                 <Input
                   value={renameName}
                   onChange={e => setRenameName(e.target.value)}
-                  placeholder="新名称"
+                  placeholder={t("rename.ph")}
                   autoFocus
                   onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
                 />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>取消</Button>
-                <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>确定</Button>
+                <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>{t("common:cancel")}</Button>
+                <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>{t("common:ok")}</Button>
               </div>
             </div>
           </div>
@@ -928,10 +956,10 @@ export function WorkspacePage() {
         {/* Confirm delete dialog */}
         <ConfirmDialog
           open={deleteTarget !== null}
-          title="确认删除"
-          message={`确定删除 "${deleteTarget}" 吗？此操作不可撤销。`}
+          title={t("deleteConfirm.title")}
+          message={t("deleteConfirm.message", { path: deleteTarget })}
           variant="destructive"
-          confirmText="删除"
+          confirmText={t("common:delete")}
           onConfirm={confirmDelete}
           onCancel={() => setDeleteTarget(null)}
         />
@@ -947,57 +975,55 @@ export function WorkspacePage() {
                   className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => openExportDialog("prototype")}
                 >
-                  导出原型
+                  {t("export.type.prototype")}
                 </button>
                 <button
                   className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => openExportDialog("skill")}
                 >
-                  导出 Skill
+                  {t("export.type.skill")}
                 </button>
                 <button
                   className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   onClick={() => openExportDialog("package")}
                 >
-                  导出提示词包
+                  {t("export.type.package")}
                 </button>
               </div>
 
               {exportType === "prototype" ? (
                 <>
-                  <h3 className="font-semibold">导出为原型</h3>
-                  <p className="text-xs text-muted-foreground">
-                    将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
-                  </p>
+                  <h3 className="font-semibold">{t("export.prototype.title")}</h3>
+                  <p className="text-xs text-muted-foreground">{t("export.prototype.desc")}</p>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">原型名称</label>
+                    <label className="text-sm font-medium">{t("export.prototype.name")}</label>
                     <Input
                       value={exportName}
                       onChange={e => { setExportName(e.target.value); setExportError("") }}
-                      placeholder="为原型起个名字"
+                      placeholder={t("export.prototype.namePh")}
                       autoFocus
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
+                    <label className="text-sm font-medium">{t("export.prototype.descLabel")} <span className="text-muted-foreground font-normal">{t("export.prototype.maxChars")}</span></label>
                     <Input
                       value={exportDescription}
                       onChange={e => setExportDescription(e.target.value)}
-                      placeholder="简要描述，用于原型列表展示"
+                      placeholder={t("export.prototype.descPh")}
                       maxLength={50}
                     />
                   </div>
                   <div className="flex gap-3">
                     <div className="space-y-1 flex-1">
-                      <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                      <label className="text-sm font-medium">{t("export.prototype.author")} <span className="text-muted-foreground font-normal">{t("export.prototype.optional")}</span></label>
                       <Input
                         value={exportAuthor}
                         onChange={e => setExportAuthor(e.target.value)}
-                        placeholder="作者名"
+                        placeholder={t("export.prototype.authorPh")}
                       />
                     </div>
                     <div className="space-y-1 w-24">
-                      <label className="text-sm font-medium">版本</label>
+                      <label className="text-sm font-medium">{t("common:version")}</label>
                       <Input
                         value={exportVersion}
                         onChange={e => setExportVersion(e.target.value)}
@@ -1007,31 +1033,29 @@ export function WorkspacePage() {
                   </div>
                   {exportError && <p className="text-sm text-red-500">{exportError}</p>}
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                     <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
                       {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      导出
+                      {t("export.submit")}
                     </Button>
                   </div>
                 </>
               ) : exportType === "package" ? (
                 <>
-                  <h3 className="font-semibold">导出提示词包到包库</h3>
-                  <p className="text-xs text-muted-foreground">
-                    选取当前实例 packages/ 里的一个提示词包，复制到你的提示词包库（可在设置页「提示词包」中管理，也可到其他实例里启用）。
-                  </p>
+                  <h3 className="font-semibold">{t("export.package.title")}</h3>
+                  <p className="text-xs text-muted-foreground">{t("export.package.desc")}</p>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">选择提示词包</label>
+                    <label className="text-sm font-medium">{t("export.package.select")}</label>
                     {instPackagesLoading ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                        <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
                       </div>
                     ) : instPackages.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">该实例没有可作为提示词包导出的条目。</p>
+                      <p className="text-xs text-muted-foreground">{t("export.package.empty")}</p>
                     ) : (
                       <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
                         <SelectTrigger>
-                          <SelectValue placeholder="选择一个提示词包" />
+                          <SelectValue placeholder={t("export.package.ph")} />
                         </SelectTrigger>
                         <SelectContent>
                           {instPackages.map(p => (
@@ -1043,31 +1067,29 @@ export function WorkspacePage() {
                   </div>
                   {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                     <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
                       {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      导出到库里
+                      {t("export.package.submit")}
                     </Button>
                   </div>
                 </>
               ) : (
                 <>
-                  <h3 className="font-semibold">导出 Skill 到 skill 库</h3>
-                  <p className="text-xs text-muted-foreground">
-                    选取当前实例里的一个 skill，复制到你的 skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。
-                  </p>
+                  <h3 className="font-semibold">{t("export.skill.title")}</h3>
+                  <p className="text-xs text-muted-foreground">{t("export.skill.desc")}</p>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">选择 skill</label>
+                    <label className="text-sm font-medium">{t("export.skill.select")}</label>
                     {instSkillsLoading ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                        <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
                       </div>
                     ) : instSkills.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">该实例没有可作为 skill 导出的条目。</p>
+                      <p className="text-xs text-muted-foreground">{t("export.skill.empty")}</p>
                     ) : (
                       <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
                         <SelectTrigger>
-                          <SelectValue placeholder="选择一个 skill" />
+                          <SelectValue placeholder={t("export.skill.ph")} />
                         </SelectTrigger>
                         <SelectContent>
                           {instSkills.map(s => (
@@ -1079,10 +1101,10 @@ export function WorkspacePage() {
                   </div>
                   {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                     <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
                       {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      导出到库里
+                      {t("export.skill.submit")}
                     </Button>
                   </div>
                 </>
@@ -1120,28 +1142,28 @@ export function WorkspacePage() {
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => openExportDialog("prototype")}
-                  title="导出为原型 / Skill"
+                  title={t("export.titleBar")}
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </button>
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
-                  title="新建文件"
+                  title={t("create.fileTitle")}
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
-                  title="新建文件夹"
+                  title={t("create.folderTitle")}
                 >
                   <Folder className="h-3.5 w-3.5" />
                 </button>
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
                   onClick={() => handleUploadClick("")}
-                  title="上传文件到根目录"
+                  title={t("uploadToRoot")}
                 >
                   <Upload className="h-3.5 w-3.5" />
                 </button>
@@ -1183,27 +1205,27 @@ export function WorkspacePage() {
                   <div className="flex items-center gap-2 shrink-0">
                     {isImageOpen ? (
                       <span className="text-xs text-muted-foreground">
-                        {imageMeta ? `${imageMeta.w} × ${imageMeta.h}` : "图片"}
+                        {imageMeta ? `${imageMeta.w} × ${imageMeta.h}` : t("image")}
                       </span>
                     ) : (
                       <>
-                        {isDirty && !saveToast && <span className="text-xs text-orange-500">未保存</span>}
-                        {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">已保存到磁盘</span>}
+                        {isDirty && !saveToast && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
+                        {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">{t("savedToDisk")}</span>}
                         {isMarkdown && (
                           <Button
                             size="sm"
                             variant="ghost"
                             onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
                             className="gap-1"
-                            title={editorView === "code" ? "预览 Markdown" : "返回代码编辑"}
+                            title={editorView === "code" ? t("previewMarkdown") : t("backToCodeEdit")}
                           >
                             {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                            {editorView === "code" ? "预览" : "代码"}
+                            {editorView === "code" ? t("preview") : t("code")}
                           </Button>
                         )}
                         <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                           {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                          保存
+                          {t("common:save")}
                         </Button>
                       </>
                     )}
@@ -1252,8 +1274,8 @@ export function WorkspacePage() {
               <div className="flex-1 flex items-center justify-center text-muted-foreground">
                 <div className="text-center">
                   <File className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm">从左侧选择文件进行编辑</p>
-                  <p className="text-xs mt-1 opacity-60">Ctrl+S 保存</p>
+                  <p className="text-sm">{t("selectFileDesktopHint")}</p>
+                  <p className="text-xs mt-1 opacity-60">{t("ctrlSHint")}</p>
                 </div>
               </div>
             )}
@@ -1300,7 +1322,7 @@ export function WorkspacePage() {
           <button
             className="p-1 rounded hover:bg-muted text-muted-foreground"
             onClick={() => setChatCollapsed(false)}
-            title="展开导演面板"
+            title={t("expandDirector")}
           >
             <PanelLeftOpen className="h-3.5 w-3.5" />
           </button>
@@ -1311,22 +1333,22 @@ export function WorkspacePage() {
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCreate(null)}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">新建{showCreate.type === "directory" ? "文件夹" : "文件"}</h3>
+            <h3 className="font-semibold">{showCreate.type === "directory" ? t("create.titleFolder") : t("create.titleFile")}</h3>
             <div>
               {showCreate.parentPath && (
-                <p className="text-xs text-muted-foreground mb-2">位置：{showCreate.parentPath || "/"}</p>
+                <p className="text-xs text-muted-foreground mb-2">{t("location", { path: showCreate.parentPath || "/" })}</p>
               )}
               <Input
                 value={createName}
                 onChange={e => setCreateName(e.target.value)}
-                placeholder={showCreate.type === "directory" ? "文件夹名称" : "文件名"}
+                placeholder={showCreate.type === "directory" ? t("create.folderPh") : t("create.filePh")}
                 autoFocus
                 onKeyDown={e => { if (e.key === "Enter") handleCreateEntry() }}
               />
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>取消</Button>
-              <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>创建</Button>
+              <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>{t("common:cancel")}</Button>
+              <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>{t("create.submit")}</Button>
             </div>
           </div>
         </div>
@@ -1336,20 +1358,20 @@ export function WorkspacePage() {
       {renameTarget && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">重命名</h3>
+            <h3 className="font-semibold">{t("rename.title")}</h3>
             <div>
-              <p className="text-xs text-muted-foreground mb-2">位置：{renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/"}</p>
+              <p className="text-xs text-muted-foreground mb-2">{t("location", { path: renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/" })}</p>
               <Input
                 value={renameName}
                 onChange={e => setRenameName(e.target.value)}
-                placeholder="新名称"
+                placeholder={t("rename.ph")}
                 autoFocus
                 onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
               />
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>取消</Button>
-              <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>确定</Button>
+              <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>{t("common:cancel")}</Button>
+              <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>{t("common:ok")}</Button>
             </div>
           </div>
         </div>
@@ -1358,10 +1380,10 @@ export function WorkspacePage() {
       {/* Confirm delete dialog */}
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="确认删除"
-        message={`确定删除 "${deleteTarget}" 吗？此操作不可撤销。`}
+        title={t("deleteConfirm.title")}
+        message={t("deleteConfirm.message", { path: deleteTarget })}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
@@ -1376,57 +1398,55 @@ export function WorkspacePage() {
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => openExportDialog("prototype")}
               >
-                导出原型
+                {t("export.type.prototype")}
               </button>
               <button
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => openExportDialog("skill")}
               >
-                导出 Skill
+                {t("export.type.skill")}
               </button>
               <button
                 className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => openExportDialog("package")}
               >
-                导出提示词包
+                {t("export.type.package")}
               </button>
             </div>
 
             {exportType === "prototype" ? (
               <>
-                <h3 className="font-semibold">导出为原型</h3>
-                <p className="text-xs text-muted-foreground">
-                  将当前实例打包为可复用的原型（排除 <code className="bg-muted px-1 rounded">building/</code> 等内部目录）。请先在实例上清理测试数据（楼层、变量、泛化 teahouse.md），再导出。
-                </p>
+                <h3 className="font-semibold">{t("export.prototype.title")}</h3>
+                <p className="text-xs text-muted-foreground">{t("export.prototype.desc")}</p>
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">原型名称</label>
+                  <label className="text-sm font-medium">{t("export.prototype.name")}</label>
                   <Input
                     value={exportName}
                     onChange={e => { setExportName(e.target.value); setExportError("") }}
-                    placeholder="为原型起个名字"
+                    placeholder={t("export.prototype.namePh")}
                     autoFocus
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">简介 <span className="text-muted-foreground font-normal">(最多50字)</span></label>
+                  <label className="text-sm font-medium">{t("export.prototype.descLabel")} <span className="text-muted-foreground font-normal">{t("export.prototype.maxChars")}</span></label>
                   <Input
                     value={exportDescription}
                     onChange={e => setExportDescription(e.target.value)}
-                    placeholder="简要描述，用于原型列表展示"
+                    placeholder={t("export.prototype.descPh")}
                     maxLength={50}
                   />
                 </div>
                 <div className="flex gap-3">
                   <div className="space-y-1 flex-1">
-                    <label className="text-sm font-medium">作者 <span className="text-muted-foreground font-normal">(可选)</span></label>
+                    <label className="text-sm font-medium">{t("export.prototype.author")} <span className="text-muted-foreground font-normal">{t("export.prototype.optional")}</span></label>
                     <Input
                       value={exportAuthor}
                       onChange={e => setExportAuthor(e.target.value)}
-                      placeholder="作者名"
+                      placeholder={t("export.prototype.authorPh")}
                     />
                   </div>
                   <div className="space-y-1 w-24">
-                    <label className="text-sm font-medium">版本</label>
+                    <label className="text-sm font-medium">{t("common:version")}</label>
                     <Input
                       value={exportVersion}
                       onChange={e => setExportVersion(e.target.value)}
@@ -1436,31 +1456,29 @@ export function WorkspacePage() {
                 </div>
                 {exportError && <p className="text-sm text-red-500">{exportError}</p>}
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                   <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
                     {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    导出
+                    {t("export.submit")}
                   </Button>
                 </div>
               </>
             ) : exportType === "package" ? (
               <>
-                <h3 className="font-semibold">导出提示词包到包库</h3>
-                <p className="text-xs text-muted-foreground">
-                  选取当前实例 packages/ 里的一个提示词包，复制到你的提示词包库（可在设置页「提示词包」中管理，也可到其他实例里启用）。
-                </p>
+                <h3 className="font-semibold">{t("export.package.title")}</h3>
+                <p className="text-xs text-muted-foreground">{t("export.package.desc")}</p>
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">选择提示词包</label>
+                  <label className="text-sm font-medium">{t("export.package.select")}</label>
                   {instPackagesLoading ? (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                      <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
                     </div>
                   ) : instPackages.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">该实例没有可作为提示词包导出的条目。</p>
+                    <p className="text-xs text-muted-foreground">{t("export.package.empty")}</p>
                   ) : (
                     <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择一个提示词包" />
+                        <SelectValue placeholder={t("export.package.ph")} />
                       </SelectTrigger>
                       <SelectContent>
                         {instPackages.map(p => (
@@ -1472,31 +1490,29 @@ export function WorkspacePage() {
                 </div>
                 {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                   <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
                     {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    导出到库里
+                    {t("export.package.submit")}
                   </Button>
                 </div>
               </>
             ) : (
               <>
-                <h3 className="font-semibold">导出 Skill 到 skill 库</h3>
-                <p className="text-xs text-muted-foreground">
-                  选取当前实例里的一个 skill，复制到你的 skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。
-                </p>
+                <h3 className="font-semibold">{t("export.skill.title")}</h3>
+                <p className="text-xs text-muted-foreground">{t("export.skill.desc")}</p>
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">选择 skill</label>
+                  <label className="text-sm font-medium">{t("export.skill.select")}</label>
                   {instSkillsLoading ? (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+                      <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
                     </div>
                   ) : instSkills.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">该实例没有可作为 skill 导出的条目。</p>
+                    <p className="text-xs text-muted-foreground">{t("export.skill.empty")}</p>
                   ) : (
                     <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择一个 skill" />
+                        <SelectValue placeholder={t("export.skill.ph")} />
                       </SelectTrigger>
                       <SelectContent>
                         {instSkills.map(s => (
@@ -1508,10 +1524,10 @@ export function WorkspacePage() {
                 </div>
                 {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>取消</Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
                   <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
                     {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    导出到库里
+                    {t("export.skill.submit")}
                   </Button>
                 </div>
               </>
@@ -1523,10 +1539,13 @@ export function WorkspacePage() {
       {/* Overwrite confirm — same-named package/skill already exists in library */}
       <ConfirmDialog
         open={pendingOverwrite !== null}
-        title={pendingOverwrite?.kind === "package" ? "覆盖提示词包" : "覆盖 skill"}
-        message={`你的${pendingOverwrite?.kind === "package" ? "提示词包库" : "skill 库"}中已有同名「${pendingOverwrite?.name}」。覆盖会删除库里已有的旧版本并用当前实例里的覆盖，已复制进其它实例的副本不受影响。确认覆盖？`}
+        title={pendingOverwrite?.kind === "package" ? t("overwrite.title.package") : t("overwrite.title.skill")}
+        message={t("overwrite.message", {
+          lib: pendingOverwrite?.kind === "package" ? t("overwrite.lib.package") : t("overwrite.lib.skill"),
+          name: pendingOverwrite?.name,
+        })}
         variant="destructive"
-        confirmText="覆盖"
+        confirmText={t("overwrite.confirm")}
         onConfirm={handleConfirmOverwrite}
         onCancel={() => setPendingOverwrite(null)}
       />
@@ -1562,6 +1581,7 @@ function FileTreeView({
   depth?: number
   isMobile?: boolean
 }) {
+  const { t } = useTranslation("workspace")
   const stColor = (st: string | undefined) => {
     if (!st) return "text-muted-foreground"
     const m: Record<string, string> = {
@@ -1624,21 +1644,21 @@ function FileTreeView({
                   <button
                     className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onCreateFile(node.path) }}
-                    title="新建文件"
+                    title={t("create.fileTitle")}
                   >
                     <Plus className="h-3 w-3" />
                   </button>
                   <button
                     className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onCreateFolder(node.path) }}
-                    title="新建文件夹"
+                    title={t("create.folderTitle")}
                   >
                     <Folder className="h-3 w-3" />
                   </button>
                   <button
                     className="p-0.5 rounded hover:bg-muted cursor-pointer"
                     onClick={e => { e.stopPropagation(); onUpload(node.path) }}
-                    title="上传文件到此处"
+                    title={t("uploadToHere")}
                   >
                     <Upload className="h-3 w-3" />
                   </button>
@@ -1647,14 +1667,14 @@ function FileTreeView({
               <button
                 className="p-0.5 rounded hover:bg-muted cursor-pointer"
                 onClick={e => { e.stopPropagation(); onRename(node.path) }}
-                title="重命名"
+                title={t("rename.title")}
               >
                 <Pencil className="h-3 w-3" />
               </button>
               <button
                 className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500 cursor-pointer"
                 onClick={e => { e.stopPropagation(); onDelete(node.path) }}
-                title="删除"
+                title={t("common:delete")}
               >
                 <Trash2 className="h-3 w-3" />
               </button>

@@ -1,9 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from "react"
+import { useTranslation } from "react-i18next"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import {
   Play, Loader2, X, Upload, Download, Trash2, Clock, Hash, Sun, Moon, LogOut,
-  Settings, ArrowLeft, Copy, BookOpen, Plus, Pencil, Package,
+  Settings, ArrowLeft, Copy, BookOpen, Plus, Pencil, Package, Users, Languages,
 } from "lucide-react"
+import { useAuth, isAdminRole } from "@/stores/authStore"
+import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +25,7 @@ import { CoverWithFetch } from "@/components/Cover"
 import type { Prototype, Instance } from "@/lib/types"
 
 export function SessionSelectPage() {
+  const { t } = useTranslation("session")
   const navigate = useNavigate()
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
   const isMobile = useIsMobile()
@@ -129,11 +133,11 @@ export function SessionSelectPage() {
     const res = await instancesApi.create(protoId, name.trim())
     setActionLoading(false)
     if (!res.ok || !res.data) {
-      toast.error(res.error || "创建失败")
+      toast.error(res.error || t("create.fail"))
       return false
     }
     const created = res.data
-    toast.success(`已创建「${created.name}」`)
+    toast.success(t("create.created", { name: created.name }))
     setBookshelfOpen(false)
     // Reload instances, then open the new instance's dialog.
     const fresh = await instancesApi.list()
@@ -162,7 +166,7 @@ export function SessionSelectPage() {
 
   const openCopyDialog = (inst: Instance) => {
     setInstanceToCopy(inst)
-    setCopyName(`${inst.name} 副本`)
+    setCopyName(t("copy.suffix", { name: inst.name }))
     setCopyError("")
   }
 
@@ -172,11 +176,11 @@ export function SessionSelectPage() {
     setCopyError("")
     const res = await instancesApi.copy(instanceToCopy.id, copyName.trim())
     if (res.ok && res.data) {
-      toast.success(`已复制为新实例「${res.data.name}」`)
+      toast.success(t("copy.copied", { name: res.data.name }))
       setInstanceToCopy(null)
       await loadData()
     } else {
-      setCopyError(res.error || "复制失败")
+      setCopyError(res.error || t("copy.fail"))
     }
     setCopying(false)
   }
@@ -190,9 +194,9 @@ export function SessionSelectPage() {
       setDialogInstance(res.data)
       setRenaming(false)
       await reloadInstances()
-      toast.success("已重命名")
+      toast.success(t("rename.renamed"))
     } else {
-      toast.error(res.error || "重命名失败")
+      toast.error(res.error || t("rename.fail"))
     }
   }
 
@@ -213,11 +217,11 @@ export function SessionSelectPage() {
     setImportState("loading")
     const res = await prototypesApi.import(file)
     if (res.ok && res.data) {
-      if (res.data.duplicate) toast.info("此原型已存在，无需重复导入")
-      else toast.success("原型导入成功")
+      if (res.data.duplicate) toast.info(t("import.duplicate"))
+      else toast.success(t("import.success"))
       await loadData()
     } else {
-      toast.error(res.error || "导入失败")
+      toast.error(res.error || t("import.fail"))
     }
     setImportState("idle")
     if (fileInputRef.current) fileInputRef.current.value = ""
@@ -307,10 +311,10 @@ export function SessionSelectPage() {
       {/* Confirm delete prototype */}
       <ConfirmDialog
         open={protoToDelete !== null}
-        title="确认删除原型"
-        message={`确定要删除原型 "${protoToDelete?.name}" 吗？此操作不可撤销。`}
+        title={t("deleteProto.title")}
+        message={t("deleteProto.message", { name: protoToDelete?.name })}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={confirmDeletePrototype}
         onCancel={() => setProtoToDelete(null)}
       />
@@ -318,10 +322,10 @@ export function SessionSelectPage() {
       {/* Confirm delete instance */}
       <ConfirmDialog
         open={instanceToDelete !== null}
-        title="确认删除实例"
-        message={`确定要删除实例 "${instanceToDelete?.name}" 吗？此操作将永久删除该实例的所有数据。`}
+        title={t("deleteInstance.title")}
+        message={t("deleteInstance.message", { name: instanceToDelete?.name })}
         variant="destructive"
-        confirmText="删除"
+        confirmText={t("common:delete")}
         onConfirm={confirmDeleteInstance}
         onCancel={() => setInstanceToDelete(null)}
       />
@@ -330,25 +334,25 @@ export function SessionSelectPage() {
       {instanceToCopy && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">复制实例</h3>
+            <h3 className="font-semibold">{t("copy.title")}</h3>
             <p className="text-xs text-muted-foreground">
-              将「{instanceToCopy.name}」复制为一个完整快照副本（新实例、独立 git）。常用于打包原型前保留试玩数据。
+              {t("copy.desc", { name: instanceToCopy.name })}
             </p>
             <div className="space-y-1">
-              <label className="text-sm font-medium">新实例名称</label>
+              <label className="text-sm font-medium">{t("copy.nameLabel")}</label>
               <Input
                 value={copyName}
                 onChange={(e) => { setCopyName(e.target.value); setCopyError("") }}
-                placeholder="为副本命名"
+                placeholder={t("copy.namePh")}
                 autoFocus
               />
             </div>
             {copyError && <p className="text-xs text-red-500">{copyError}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setInstanceToCopy(null)} disabled={copying}>取消</Button>
+              <Button variant="outline" size="sm" onClick={() => setInstanceToCopy(null)} disabled={copying}>{t("common:cancel")}</Button>
               <Button size="sm" onClick={confirmCopyInstance} disabled={!copyName.trim() || copying}>
                 {copying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                复制
+                {t("copy.submit")}
               </Button>
             </div>
           </div>
@@ -397,19 +401,20 @@ function SetupGateEmpty({ children }: { onNew: () => void; children: React.React
 }
 
 function DesktopEmptyState({ onNew }: { onNew: () => void }) {
+  const { t } = useTranslation("session")
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-4 py-24">
       <div className="text-muted-foreground">
         <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-40" />
-        <p className="text-sm mb-1">还没有实例</p>
-        <p className="text-xs text-muted-foreground/80">从书架挑一个故事，开始你的第一段冒险</p>
+        <p className="text-sm mb-1">{t("empty.title")}</p>
+        <p className="text-xs text-muted-foreground/80">{t("empty.desc")}</p>
       </div>
       <button
         onClick={onNew}
         className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border-2 border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
       >
         <Plus className="h-4 w-4" />
-        新建实例
+        {t("newInstance")}
       </button>
     </div>
   )
@@ -438,20 +443,21 @@ function InstanceWaterfall({
 
 /** Leading card in the waterfall: same content-driven shape as instance cards, with a dashed box + plus. */
 function NewInstanceCard({ onNew }: { onNew: () => void }) {
+  const { t } = useTranslation("session")
   return (
     <button
       onClick={onNew}
       className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card hover:border-primary/50 hover:shadow-md transition-all cursor-pointer w-full"
-      aria-label="新建实例"
-      title="新建实例"
+      aria-label={t("newInstance")}
+      title={t("newInstance")}
     >
       <div className="shrink-0 p-3">
         <div className="aspect-square w-full flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/30 hover:border-primary/60 transition-colors text-center">
           <span className="flex items-center justify-center h-12 w-12 rounded-full bg-muted text-muted-foreground">
             <Plus className="h-6 w-6" />
           </span>
-          <span className="font-medium text-muted-foreground">新建实例</span>
-          <span className="px-6 text-xs text-muted-foreground/70 leading-relaxed">从书架挑一个故事，开始你的第一段冒险</span>
+          <span className="font-medium text-muted-foreground">{t("newInstance")}</span>
+          <span className="px-6 text-xs text-muted-foreground/70 leading-relaxed">{t("empty.desc")}</span>
         </div>
       </div>
     </button>
@@ -459,6 +465,7 @@ function NewInstanceCard({ onNew }: { onNew: () => void }) {
 }
 
 function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Instance; onOpen: (i: Instance) => void; onQuickStart: (i: Instance) => void }) {
+  const { t } = useTranslation("session")
   return (
     <div
       className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
@@ -478,7 +485,7 @@ function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Insta
           <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Hash className="h-3.5 w-3.5" />
-              {instance.floor_count} 楼
+              {t("floorsLabel", { count: instance.floor_count })}
             </span>
             <span className="flex items-center gap-1">
               <Clock className="h-3.5 w-3.5" />
@@ -490,8 +497,8 @@ function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Insta
         <button
           className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
           onClick={(e) => { e.stopPropagation(); onQuickStart(instance) }}
-          title="快速开始"
-          aria-label="快速开始"
+          title={t("quickStart")}
+          aria-label={t("quickStart")}
         >
           <Play className="h-4 w-4" />
         </button>
@@ -532,6 +539,7 @@ function InstanceDialog({
   onManageSkills: () => void
   onManagePackages: () => void
 }) {
+  const { t } = useTranslation("session")
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
   useDialogBackClose(true, onClose)
 
@@ -576,8 +584,8 @@ function InstanceDialog({
             <button
               className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
-              title="返回"
-              aria-label="返回"
+              title={t("common:back")}
+              aria-label={t("common:back")}
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
@@ -606,20 +614,20 @@ function InstanceDialog({
                     />
                     <Button size="sm" onClick={onConfirmRename} disabled={!renameValue.trim()} className="shrink-0">
                       {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      确定
+                      {t("common:ok")}
                     </Button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <h2 className="text-xl font-serif font-bold">{instance.name}</h2>
-                    <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onToggleRename} title="改名">
+                    <button className="p-1.5 rounded hover:bg-muted text-muted-foreground" onClick={onToggleRename} title={t("rename.title")}>
                       <Pencil className="h-4 w-4" />
                     </button>
                   </div>
                 )}
                 <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1.5">
-                  {instance.prototype_name && <span>来源：{instance.prototype_name}</span>}
-                  <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{instance.floor_count} 楼</span>
+                  {instance.prototype_name && <span>{t("source", { name: instance.prototype_name })}</span>}
+                  <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{t("floorsLabel", { count: instance.floor_count })}</span>
                   <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
                 </div>
               </div>
@@ -638,8 +646,8 @@ function InstanceDialog({
                 ) : (
                   <div className="text-sm text-muted-foreground">
                     {instance.prototype_id
-                      ? "该原型没有附带 README 介绍。"
-                      : "此实例没有关联的原型介绍。"}
+                      ? t("noReadmeProto")
+                      : t("noReadmeInstance")}
                   </div>
                 )}
               </div>
@@ -649,18 +657,18 @@ function InstanceDialog({
             <div className="border-t border-border p-4 flex items-center gap-2 shrink-0">
               <Button className="flex-1 gap-2" onClick={onContinue} disabled={actionLoading}>
                 <Play className="h-4 w-4" />
-                开始
+                {t("start")}
               </Button>
-              <Button variant="outline" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill（从你的 skill 库启用）">
+              <Button variant="outline" onClick={onManageSkills} disabled={actionLoading} title={t("manageSkills")}>
                 <BookOpen className="h-4 w-4" />
               </Button>
-              <Button variant="outline" onClick={onManagePackages} disabled={actionLoading} title="管理提示词包（从你的包库启用）">
+              <Button variant="outline" onClick={onManagePackages} disabled={actionLoading} title={t("managePackages")}>
                 <Package className="h-4 w-4" />
               </Button>
-              <Button variant="outline" onClick={onCopy} disabled={actionLoading} title="复制实例">
+              <Button variant="outline" onClick={onCopy} disabled={actionLoading} title={t("copy.title")}>
                 <Copy className="h-4 w-4" />
               </Button>
-              <Button variant="outline" className="text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title="删除">
+              <Button variant="outline" className="text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title={t("common:delete")}>
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -674,8 +682,8 @@ function InstanceDialog({
             <button
               className="absolute top-3 right-10 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
-              title="关闭"
-              aria-label="关闭"
+              title={t("common:close")}
+              aria-label={t("common:close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -708,13 +716,13 @@ function InstanceDialog({
                       />
                       <Button size="sm" onClick={onConfirmRename} disabled={!renameValue.trim()} className="shrink-0">
                         {actionLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                        确定
+                        {t("common:ok")}
                       </Button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <h2 className="text-base font-serif font-bold truncate">{instance.name}</h2>
-                      <button className="p-1 rounded hover:bg-muted text-muted-foreground shrink-0" onClick={onToggleRename} title="改名">
+                      <button className="p-1 rounded hover:bg-muted text-muted-foreground shrink-0" onClick={onToggleRename} title={t("rename.title")}>
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -722,30 +730,30 @@ function InstanceDialog({
 
                   {/* meta */}
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground mt-1">
-                    {instance.prototype_name && <span>来源：{instance.prototype_name}</span>}
-                    <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{instance.floor_count} 楼</span>
+                    {instance.prototype_name && <span>{t("source", { name: instance.prototype_name })}</span>}
+                    <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{t("floorsLabel", { count: instance.floor_count })}</span>
                     <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateShort(instance.updated_at)}</span>
                   </div>
 
                   {/* 开始 */}
                   <Button className="w-full gap-2 mt-3" onClick={onContinue} disabled={actionLoading}>
                     <Play className="h-4 w-4" />
-                    开始
+                    {t("start")}
                   </Button>
 
                   {/* 复制/删除 — 更小 */}
                   <div className="flex items-center gap-2 mt-2">
-                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManageSkills} disabled={actionLoading} title="管理 Skill">
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManageSkills} disabled={actionLoading} title={t("manageSkillsShort")}>
                       <BookOpen className="h-3.5 w-3.5" />Skill
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManagePackages} disabled={actionLoading} title="管理提示词包">
-                      <Package className="h-3.5 w-3.5" />提示词包
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onManagePackages} disabled={actionLoading} title={t("managePackagesShort")}>
+                      <Package className="h-3.5 w-3.5" />{t("packagesShort")}
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onCopy} disabled={actionLoading} title="复制实例">
-                      <Copy className="h-3.5 w-3.5" />复制
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={onCopy} disabled={actionLoading} title={t("copy.title")}>
+                      <Copy className="h-3.5 w-3.5" />{t("copy.submit")}
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title="删除">
-                      <Trash2 className="h-3.5 w-3.5" />删除
+                    <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs text-red-500 hover:text-red-500" onClick={onDelete} disabled={actionLoading} title={t("common:delete")}>
+                      <Trash2 className="h-3.5 w-3.5" />{t("common:delete")}
                     </Button>
                   </div>
                 </div>
@@ -766,8 +774,8 @@ function InstanceDialog({
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       {instance.prototype_id
-                        ? "该原型没有附带 README 介绍。"
-                        : "此实例没有关联的原型介绍。"}
+                        ? t("noReadmeProto")
+                        : t("noReadmeInstance")}
                     </div>
                   )}
                 </div>
@@ -795,34 +803,67 @@ function MobileMain({
   onOpenSettings: () => void
   onLogout: () => void
 }) {
+  const { t } = useTranslation("session")
+  const { user: currentUser } = useAuth()
+  const openSettings = useSettingsDialogStore((s) => s.openSettings)
+  const currentLang = useCurrentLang()
+  const setLang = useLangStore((s) => s.setLang)
   const [showMenu, setShowMenu] = useState(false)
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <header className="h-14 relative border-b border-border flex items-center justify-between px-3 shrink-0">
         <div className="flex-1 min-w-0 flex flex-col justify-center">
           <span className="font-serif font-semibold text-sm leading-tight">LowStar's Teahouse</span>
-          <span className="text-[11px] text-muted-foreground leading-tight truncate">基于 Harness 的交互式小说创作引擎</span>
+          <span className="text-[11px] text-muted-foreground leading-tight truncate">{t("subtitle")}</span>
         </div>
         <button
           className="p-2 rounded hover:bg-muted shrink-0"
           onClick={() => setShowMenu(!showMenu)}
-          aria-label="菜单"
+          aria-label={t("menu")}
         >
           <Settings className="h-5 w-5" />
         </button>
         {showMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-            <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[140px]">
+            <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[200px]">
+              {isAdminRole(currentUser?.role) && (
+                <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted" onClick={() => { openSettings("users"); setShowMenu(false) }}>
+                  <Users className="h-4 w-4" />{t("workspace:userManagement")}
+                </button>
+              )}
               <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted" onClick={() => { onToggleTheme(); setShowMenu(false) }}>
                 {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                主题切换
+                {t("themeToggle")}
               </button>
               <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted" onClick={() => { onOpenSettings(); setShowMenu(false) }}>
-                <Settings className="h-4 w-4" />设置
+                <Settings className="h-4 w-4" />{t("common:settings")}
               </button>
+              <div className="border-t border-border" />
+              <div className="px-3 py-2 space-y-1">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Languages className="h-4 w-4" />
+                  {t("workspace:language")}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pl-6">
+                  {SUPPORTED_LANGS.map((l) => (
+                    <button
+                      key={l}
+                      className={`px-2 py-1 text-xs rounded border ${
+                        currentLang === l
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border hover:bg-muted"
+                      }`}
+                      onClick={() => setLang(l as Lang)}
+                    >
+                      {LANG_LABELS[l]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="border-t border-border" />
               <button className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-red-500" onClick={() => { onLogout(); setShowMenu(false) }}>
-                <LogOut className="h-4 w-4" />退出登录
+                <LogOut className="h-4 w-4" />{t("logout")}
               </button>
             </div>
           </>
@@ -834,12 +875,12 @@ function MobileMain({
           <SetupGateEmpty onNew={onNew}>
             <div className="flex flex-col items-center justify-center text-center gap-4 py-24">
               <BookOpen className="h-10 w-10 text-muted-foreground opacity-40" />
-              <p className="text-sm text-muted-foreground">还没有实例</p>
+              <p className="text-sm text-muted-foreground">{t("empty.title")}</p>
               <button
                 onClick={onNew}
                 className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border-2 border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
               >
-                <Plus className="h-4 w-4" />新建实例
+                <Plus className="h-4 w-4" />{t("newInstance")}
               </button>
             </div>
           </SetupGateEmpty>
@@ -857,6 +898,7 @@ function MobileMain({
 }
 
 function MobileInstanceCard({ instance, onOpen, onQuickStart }: { instance: Instance; onOpen: () => void; onQuickStart: () => void }) {
+  const { t } = useTranslation("session")
   return (
     <div
       className="mb-3 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm cursor-pointer active:scale-[0.98] transition"
@@ -882,8 +924,8 @@ function MobileInstanceCard({ instance, onOpen, onQuickStart }: { instance: Inst
         <button
           className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md bg-primary text-primary-foreground cursor-pointer"
           onClick={(e) => { e.stopPropagation(); onQuickStart() }}
-          title="快速开始"
-          aria-label="快速开始"
+          title={t("quickStart")}
+          aria-label={t("quickStart")}
         >
           <Play className="h-4 w-4" />
         </button>
@@ -907,6 +949,7 @@ function Bookshelf({
   onDownload: (p: Prototype) => void
   onDeleteProto: (p: Prototype) => void
 }) {
+  const { t } = useTranslation("session")
   const [selected, setSelected] = useState<Prototype | null>(null)
   const mobile = useIsMobile()
   useDialogBackClose(true, onClose)
@@ -926,14 +969,14 @@ function Bookshelf({
           <button
             className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
             onClick={onClose}
-            title="关闭书架"
+            title={t("closeShelf")}
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
         ) : null}
         {/* Bookshelf header */}
         <div className={`flex items-center gap-3 mb-2 shrink-0 ${mobile ? "pl-10" : ""}`}>
-          <h2 className="text-lg sm:text-xl font-serif font-bold">书架 · 选择故事</h2>
+          <h2 className="text-lg sm:text-xl font-serif font-bold">{t("shelfTitle")}</h2>
           <div className="flex-1" />
           <input
             ref={fileInputRef}
@@ -957,7 +1000,7 @@ function Bookshelf({
                 ) : (
                   <Upload className="h-3.5 w-3.5" />
                 )}
-                导入原型
+                {t("import.title")}
               </Button>
               <Button
                 variant="outline"
@@ -966,7 +1009,7 @@ function Bookshelf({
                 onClick={onClose}
               >
                 <X className="h-3.5 w-3.5" />
-                关闭
+                {t("common:close")}
               </Button>
             </>
           ) : (
@@ -974,7 +1017,7 @@ function Bookshelf({
               className="p-2 rounded hover:bg-muted text-muted-foreground"
               disabled={importState === "loading"}
               onClick={() => fileInputRef.current?.click()}
-              title="导入原型"
+              title={t("import.title")}
             >
               {importState === "loading" ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -986,7 +1029,7 @@ function Bookshelf({
         </div>
 
         <p className="text-xs text-muted-foreground mb-4 shrink-0">
-          挑一本，开始一段新的故事。点击封面查看介绍，点「创建」开始。
+          {t("shelfHint")}
         </p>
 
         {/* Prototype waterfall — clicking non-card area closes the shelf (landscape) */}
@@ -997,9 +1040,9 @@ function Bookshelf({
           {prototypes.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center gap-3 py-24">
               <BookOpen className="h-12 w-12 text-muted-foreground opacity-40" />
-              <p className="text-sm text-muted-foreground">书架空空如也</p>
+              <p className="text-sm text-muted-foreground">{t("shelfEmpty")}</p>
               <Button variant="outline" className="gap-2" onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-4 w-4" />导入原型
+                <Upload className="h-4 w-4" />{t("import.title")}
               </Button>
             </div>
           ) : (
@@ -1042,6 +1085,7 @@ function PrototypeDetailDialog({
   onDownload: (p: Prototype) => void
   onDeleteProto: (p: Prototype) => void
 }) {
+  const { t } = useTranslation("session")
   const [readmeData, setReadmeData] = useState<{ metadata: Record<string, unknown>; readme: string } | null>(null)
   // Starts loading on mount; reset before fetching a (new) prototype's README.
   const [readmeLoading, setReadmeLoading] = useState(true)
@@ -1097,7 +1141,7 @@ function PrototypeDetailDialog({
     setError("")
     const ok = await onCreate(prototype.id, instanceName)
     setCreating(false)
-    if (!ok) setError("创建失败，请重试")
+    if (!ok) setError(t("create.failRetry"))
   }
 
   // Mobile: fullscreen sheet; desktop: centered modal above the blurred shelf.
@@ -1119,8 +1163,8 @@ function PrototypeDetailDialog({
             <button
               className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
-              title="返回书架"
-              aria-label="返回书架"
+              title={t("backShelf")}
+              aria-label={t("backShelf")}
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
@@ -1132,21 +1176,21 @@ function PrototypeDetailDialog({
               <div className="absolute bottom-0 left-0 right-0 p-3.5 flex items-center gap-2 text-white">
                 <h3 className="font-semibold text-lg truncate">{prototype.name}</h3>
                 {prototype.is_builtin ? (
-                  <span className="text-[10px] text-white/90 bg-white/25 px-1.5 py-0.5 rounded shrink-0">内置</span>
+                  <span className="text-[10px] text-white/90 bg-white/25 px-1.5 py-0.5 rounded shrink-0">{t("builtin")}</span>
                 ) : null}
                 {!prototype.is_builtin && (
                   <div className="flex-1 flex items-center justify-end gap-1.5">
                     <button
                       className="p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
                       onClick={() => onDownload(prototype)}
-                      title="下载"
+                      title={t("download")}
                     >
                       <Download className="h-4 w-4" />
                     </button>
                     <button
                       className="p-2 rounded-full bg-black/30 text-white hover:bg-red-600/80 cursor-pointer"
                       onClick={() => onDeleteProto(prototype)}
-                      title="删除"
+                      title={t("common:delete")}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -1167,25 +1211,25 @@ function PrototypeDetailDialog({
                   dangerouslySetInnerHTML={{ __html: htmlContent }}
                 />
               ) : (
-                <div className="text-sm text-muted-foreground">该原型没有 README 介绍。</div>
+                <div className="text-sm text-muted-foreground">{t("noReadmeProto")}</div>
               )}
             </div>
 
             {/* Bottom create bar */}
             <div className="border-t border-border p-4 flex items-end gap-2 shrink-0">
               <div className="flex-1 min-w-0 flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">给这个新实例起个名字</label>
+                <label className="text-xs text-muted-foreground">{t("instanceNameLabel")}</label>
                 <Input
                   value={instanceName}
                   onChange={(e) => { setInstanceName(e.target.value); setError("") }}
-                  placeholder="实例名称"
+                  placeholder={t("instanceNamePh")}
                   onKeyDown={(e) => { if (e.key === "Enter") doCreate() }}
                 />
                 {error && <p className="text-xs text-red-500">{error}</p>}
               </div>
               <Button onClick={doCreate} disabled={!instanceName.trim() || creating} className="shrink-0 gap-1.5 h-10 px-4">
                 {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                创建
+                {t("create.submitShort")}
               </Button>
             </div>
           </>
@@ -1199,8 +1243,8 @@ function PrototypeDetailDialog({
             <button
               className="absolute top-3 right-10 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
               onClick={onClose}
-              title="关闭"
-              aria-label="关闭"
+              title={t("common:close")}
+              aria-label={t("common:close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -1226,31 +1270,31 @@ function PrototypeDetailDialog({
                   <div className="flex items-center gap-1.5">
                     <h3 className="text-base font-serif font-bold truncate">{prototype.name}</h3>
                     {prototype.is_builtin ? (
-                      <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">内置</span>
+                      <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">{t("builtin")}</span>
                     ) : null}
                   </div>
 
-                  <label className="text-xs text-muted-foreground mt-3">给这个新实例起个名字</label>
+                  <label className="text-xs text-muted-foreground mt-3">{t("instanceNameLabel")}</label>
                   <Input
                     className="mt-1"
                     value={instanceName}
                     onChange={(e) => { setInstanceName(e.target.value); setError("") }}
-                    placeholder="实例名称"
+                    placeholder={t("instanceNamePh")}
                     onKeyDown={(e) => { if (e.key === "Enter") doCreate() }}
                   />
                   {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
                   <Button onClick={doCreate} disabled={!instanceName.trim() || creating} className="w-full mt-2 gap-1.5">
                     {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    创建实例
+                    {t("create.submit")}
                   </Button>
 
                   {!prototype.is_builtin && (
                     <div className="flex items-center gap-2 mt-3">
                       <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs" onClick={() => onDownload(prototype)}>
-                        <Download className="h-3.5 w-3.5" />下载
+                        <Download className="h-3.5 w-3.5" />{t("download")}
                       </Button>
                       <Button variant="outline" size="sm" className="flex-1 gap-1 h-8 text-xs text-red-500 hover:text-red-500" onClick={() => onDeleteProto(prototype)}>
-                        <Trash2 className="h-3.5 w-3.5" />删除
+                        <Trash2 className="h-3.5 w-3.5" />{t("common:delete")}
                       </Button>
                     </div>
                   )}
@@ -1270,7 +1314,7 @@ function PrototypeDetailDialog({
                       dangerouslySetInnerHTML={{ __html: htmlContent }}
                     />
                   ) : (
-                    <div className="text-sm text-muted-foreground">该原型没有 README 介绍。</div>
+                    <div className="text-sm text-muted-foreground">{t("noReadmeProto")}</div>
                   )}
                 </div>
               </div>
@@ -1283,6 +1327,7 @@ function PrototypeDetailDialog({
 }
 
 function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Prototype) => void }) {
+  const { t } = useTranslation("session")
   return (
     <div
       className="mb-6 break-inside-avoid rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
@@ -1293,7 +1338,7 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm truncate flex-1">{proto.name}</span>
           {proto.is_builtin ? (
-            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">内置</span>
+            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">{t("builtin")}</span>
           ) : null}
         </div>
         {proto.description && (
@@ -1308,6 +1353,7 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
 // Lists the user's skill library + which skills this instance has enabled.
 // Enabling copies a library skill into the instance; removing deletes it there.
 function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+  const { t } = useTranslation("session")
   useDialogBackClose(true, onClose)
 
   const [library, setLibrary] = useState<MySkill[]>([])
@@ -1337,7 +1383,7 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
     setError("")
     const res = await skillsApi.enableFromLibrary(instance.id, name)
     setBusy(null)
-    if (!res.ok) setError(res.error || "启用失败")
+    if (!res.ok) setError(res.error || t("skill.enable.fail"))
     else await reload()
   }
 
@@ -1348,7 +1394,7 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
     const res = await skillsApi.removeFromInstance(instance.id, removeTarget)
     setBusy(null)
     setRemoveTarget(null)
-    if (!res.ok) setError(res.error || "移除失败")
+    if (!res.ok) setError(res.error || t("skill.remove.fail"))
     else await reload()
   }
 
@@ -1362,9 +1408,9 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
           <div>
             <div className="font-semibold flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-muted-foreground" />
-              Skill 管理
+              {t("skill.manage")}
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">为「{instance.name}」启用或移除 skill</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{t("skill.enableFor", { name: instance.name })}</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground cursor-pointer">
             <X className="h-4 w-4" />
@@ -1376,13 +1422,13 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
             <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">{error}</div>
           )}
 
-          <div className="text-xs font-medium text-muted-foreground">该实例已启用的 skill</div>
+          <div className="text-xs font-medium text-muted-foreground">{t("skill.enabledTitle")}</div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+              <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
             </div>
           ) : enabled.length === 0 ? (
-            <p className="text-xs text-muted-foreground">尚未启用任何 skill</p>
+            <p className="text-xs text-muted-foreground">{t("skill.noEnabled")}</p>
           ) : (
             <div className="space-y-2">
               {enabled.map(s => (
@@ -1396,7 +1442,7 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
                     disabled={busy === s.name}
                   >
                     {busy === s.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1" />}
-                    移除
+                    {t("remove")}
                   </Button>
                 </div>
               ))}
@@ -1404,14 +1450,14 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
           )}
 
           <div className="text-xs font-medium text-muted-foreground pt-3 border-t border-border">
-            从你的 skill 库添加
+            {t("skill.addFrom")}
           </div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+              <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
             </div>
           ) : library.length === 0 ? (
-            <p className="text-xs text-muted-foreground">你的 skill 库还是空的，可先在设置页「Skill 管理」导入，或在实例里导出。</p>
+            <p className="text-xs text-muted-foreground">{t("skill.libEmpty")}</p>
           ) : (
             <div className="space-y-2">
               {library.map(s => {
@@ -1420,10 +1466,10 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
                   <div key={s.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
                     <div className="min-w-0">
                       <div className="text-sm truncate">{s.name}</div>
-                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">已启用</div>}
+                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">{t("enabled")}</div>}
                     </div>
                     {isEnabled ? (
-                      <span className="text-[11px] text-muted-foreground shrink-0">已在实例中</span>
+                      <span className="text-[11px] text-muted-foreground shrink-0">{t("inInstance")}</span>
                     ) : (
                       <Button
                         size="sm"
@@ -1432,7 +1478,7 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
                         disabled={busy === s.name}
                       >
                         {busy === s.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3 mr-1" />}
-                        启用
+                        {t("enableAdd")}
                       </Button>
                     )}
                   </div>
@@ -1445,10 +1491,10 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
 
       <ConfirmDialog
         open={removeTarget !== null}
-        title="移除 skill"
-        message={`确定移除「${removeTarget}」吗？这只会从该实例删除，你的 skill 库里仍保留。`}
+        title={t("skill.remove.title")}
+        message={t("skill.remove.message", { name: removeTarget })}
         variant="destructive"
-        confirmText="移除"
+        confirmText={t("remove")}
         onConfirm={handleConfirmRemove}
         onCancel={() => setRemoveTarget(null)}
       />
@@ -1457,6 +1503,7 @@ function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClo
 }
 
 function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+  const { t } = useTranslation("session")
   useDialogBackClose(true, onClose)
 
   const [library, setLibrary] = useState<MyPackage[]>([])
@@ -1486,7 +1533,7 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
     setError("")
     const res = await packagesApi.enableInInstance(instance.id, name)
     setBusy(null)
-    if (!res.ok) setError(res.error || "启用失败")
+    if (!res.ok) setError(res.error || t("pkg.enable.fail"))
     else await reload()
   }
 
@@ -1497,7 +1544,7 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
     const res = await packagesApi.removeFromInstance(instance.id, removeTarget)
     setBusy(null)
     setRemoveTarget(null)
-    if (!res.ok) setError(res.error || "移除失败")
+    if (!res.ok) setError(res.error || t("pkg.remove.fail"))
     else await reload()
   }
 
@@ -1511,9 +1558,9 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
           <div>
             <div className="font-semibold flex items-center gap-2">
               <Package className="h-4 w-4 text-muted-foreground" />
-              提示词包管理
+              {t("pkg.manage")}
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">为「{instance.name}」启用或移除提示词包</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{t("pkg.enableFor", { name: instance.name })}</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground cursor-pointer">
             <X className="h-4 w-4" />
@@ -1525,13 +1572,13 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
             <div className="text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">{error}</div>
           )}
 
-          <div className="text-xs font-medium text-muted-foreground">该实例已启用的提示词包</div>
+          <div className="text-xs font-medium text-muted-foreground">{t("pkg.enabledTitle")}</div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+              <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
             </div>
           ) : enabled.length === 0 ? (
-            <p className="text-xs text-muted-foreground">尚未启用任何提示词包</p>
+            <p className="text-xs text-muted-foreground">{t("pkg.noEnabled")}</p>
           ) : (
             <div className="space-y-2">
               {enabled.map(p => (
@@ -1545,7 +1592,7 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
                     disabled={busy === p.name}
                   >
                     {busy === p.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3 mr-1" />}
-                    卸载
+                    {t("pkg.uninstall")}
                   </Button>
                 </div>
               ))}
@@ -1553,14 +1600,14 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
           )}
 
           <div className="text-xs font-medium text-muted-foreground pt-3 border-t border-border">
-            从你的提示词包库添加
+            {t("pkg.addFrom")}
           </div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-              <Loader2 className="h-3 w-3 animate-spin" /> 加载中…
+              <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
             </div>
           ) : library.length === 0 ? (
-            <p className="text-xs text-muted-foreground">你的提示词包库还是空的，可先在设置页「提示词包」导入，或在实例里导出。</p>
+            <p className="text-xs text-muted-foreground">{t("pkg.libEmpty")}</p>
           ) : (
             <div className="space-y-2">
               {library.map(p => {
@@ -1569,10 +1616,10 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
                   <div key={p.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
                     <div className="min-w-0">
                       <div className="text-sm truncate">{p.name}</div>
-                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">已启用</div>}
+                      {isEnabled && <div className="text-[10px] text-emerald-600 dark:text-emerald-400">{t("enabled")}</div>}
                     </div>
                     {isEnabled ? (
-                      <span className="text-[11px] text-muted-foreground shrink-0">已在实例中</span>
+                      <span className="text-[11px] text-muted-foreground shrink-0">{t("inInstance")}</span>
                     ) : (
                       <Button
                         size="sm"
@@ -1581,7 +1628,7 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
                         disabled={busy === p.name}
                       >
                         {busy === p.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3 mr-1" />}
-                        启用
+                        {t("enableAdd")}
                       </Button>
                     )}
                   </div>
@@ -1594,10 +1641,10 @@ function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onC
 
       <ConfirmDialog
         open={removeTarget !== null}
-        title="卸载提示词包"
-        message={`确定卸载「${removeTarget}」吗？这只会从该实例包库删除，你的提示词包库里仍保留。`}
+        title={t("pkg.remove.title")}
+        message={t("pkg.remove.message", { name: removeTarget })}
         variant="destructive"
-        confirmText="卸载"
+        confirmText={t("pkg.uninstall")}
         onConfirm={handleConfirmRemove}
         onCancel={() => setRemoveTarget(null)}
       />

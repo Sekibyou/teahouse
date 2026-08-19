@@ -421,7 +421,7 @@ async def import_prototype(
             return {
                 "duplicate": True,
                 "prototype": existing,
-                "detail": "此原型已存在（内容 hash 一致）",
+                "detail": "This prototype already exists (content hashes match)",
             }
 
     bio.seek(0)
@@ -831,7 +831,7 @@ async def rename_instance_entry(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Not found")
     except FileExistsError as e:
-        raise HTTPException(status_code=409, detail=f"目标已存在：{e}")
+        raise HTTPException(status_code=409, detail=f"target already exists: {e}")
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -880,10 +880,10 @@ async def run_instance_tools(
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     if not body.steps:
-        raise HTTPException(status_code=400, detail="steps 不能为空")
+        raise HTTPException(status_code=400, detail="steps must not be empty")
     if len(body.steps) > _MAX_INLINE_STEPS:
         raise HTTPException(
-            status_code=400, detail=f"单次内联工具调用最多 {_MAX_INLINE_STEPS} 步"
+            status_code=400, detail=f"inline tool call supports at most {_MAX_INLINE_STEPS} steps"
         )
 
     instance_dir = _resolve_instance_dir(inst)
@@ -1147,14 +1147,14 @@ async def enable_skill_from_library(instance_id: str, skill_name: str, user: Use
 
     lib_skill = _user_skills_lib_dir(u) / skill_name
     if not lib_skill.is_dir():
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不在你的 skill 库中")
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not in your skill library")
 
     target = _get_skill_dir(instance_dir, skill_name)
     if target.exists():
-        raise HTTPException(status_code=409, detail=f"该实例已启用 skill '{skill_name}'")
+        raise HTTPException(status_code=409, detail=f"This instance already has skill '{skill_name}' enabled")
 
     shutil.copytree(lib_skill, target)
-    return {"name": skill_name, "status": "enabled", "message": f"skill '{skill_name}' 已启用"}
+    return {"name": skill_name, "status": "enabled", "message": f"skill '{skill_name}' has been enabled"}
 
 
 @router.post("/instances/{instance_id}/skills/{skill_name}/export-to-library")
@@ -1179,7 +1179,7 @@ async def export_skill_to_library(instance_id: str, skill_name: str, body: Optio
 
     source = _resolve_skill_dir(instance_dir, skill_name)
     if not source:
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' 不在该实例中")
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not in this instance")
 
     overwrite = bool(body and body.get("overwrite"))
     lib_dir = _user_skills_lib_dir(u)
@@ -1189,11 +1189,11 @@ async def export_skill_to_library(instance_id: str, skill_name: str, body: Optio
         if not overwrite:
             raise HTTPException(
                 status_code=409,
-                detail=f"skill 库中已存在同名 skill '{skill_name}'，需确认覆盖后重发",
+                detail=f"your skill library already contains a skill named '{skill_name}', resend with confirm to overwrite",
             )
         shutil.rmtree(target)
     shutil.copytree(source, target)
-    return {"name": skill_name, "status": "exported", "message": f"skill '{skill_name}' 已加入你的 skill 库"}
+    return {"name": skill_name, "status": "exported", "message": f"skill '{skill_name}' has been added to your skill library"}
 
 
 # ── 提示词包（instance packages）─────────────────────────────────
@@ -1253,14 +1253,14 @@ async def enable_package_from_library(instance_id: str, package_name: str, user:
 
     lib_pkg = _user_packages_lib_dir(u) / package_name
     if not lib_pkg.is_dir():
-        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在你的包库中")
+        raise HTTPException(status_code=404, detail=f"prompt package '{package_name}' not in your package library")
 
     target = _instance_packages_dir(instance_dir) / package_name
     if target.exists():
-        raise HTTPException(status_code=409, detail=f"该实例已启用包 '{package_name}'")
+        raise HTTPException(status_code=409, detail=f"This instance already has package '{package_name}' enabled")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(lib_pkg, target)
-    return {"name": package_name, "status": "enabled", "message": f"提示词包 '{package_name}' 已启用"}
+    return {"name": package_name, "status": "enabled", "message": f"prompt package '{package_name}' has been enabled"}
 
 
 @router.delete("/instances/{instance_id}/packages/{package_name}")
@@ -1279,9 +1279,9 @@ async def remove_instance_package(instance_id: str, package_name: str, user: Use
     instance_dir = _resolve_instance_dir(inst)
     pkg_dir = _instance_packages_dir(instance_dir) / package_name
     if not pkg_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在该实例中")
+        raise HTTPException(status_code=404, detail=f"prompt package '{package_name}' not in this instance")
     shutil.rmtree(pkg_dir)
-    return {"name": package_name, "status": "removed", "message": f"提示词包 '{package_name}' 已卸载"}
+    return {"name": package_name, "status": "removed", "message": f"prompt package '{package_name}' has been uninstalled"}
 
 
 @router.post("/instances/{instance_id}/packages/{package_name}/export-to-library")
@@ -1305,9 +1305,7 @@ async def export_package_to_library(instance_id: str, package_name: str, body: O
 
     source = _instance_packages_dir(instance_dir) / package_name
     if not source.is_dir():
-        raise HTTPException(status_code=404, detail=f"提示词包 '{package_name}' 不在该实例中")
-
-    overwrite = bool(body and body.get("overwrite"))
+        raise HTTPException(status_code=404, detail=f"prompt package '{package_name}' not in this instance")
     lib_dir = _user_packages_lib_dir(u)
     lib_dir.mkdir(parents=True, exist_ok=True)
     target = lib_dir / package_name
@@ -1315,11 +1313,11 @@ async def export_package_to_library(instance_id: str, package_name: str, body: O
         if not overwrite:
             raise HTTPException(
                 status_code=409,
-                detail=f"包库中已存在同名提示词包 '{package_name}'，需确认覆盖后重发",
+                detail=f"your package library already contains a prompt package named '{package_name}', resend with confirm to overwrite",
             )
         shutil.rmtree(target)
     shutil.copytree(source, target)
-    return {"name": package_name, "status": "exported", "message": f"提示词包 '{package_name}' 已加入你的包库"}
+    return {"name": package_name, "status": "exported", "message": f"prompt package '{package_name}' has been added to your package library"}
 
 
 
@@ -1981,7 +1979,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
     # BEFORE git_commit so the index is captured by `git add -A` in this commit.
     if body.type == "summary":
         if body.start is None or body.end is None:
-            raise HTTPException(status_code=400, detail="summary 类型需要 start 和 end 参数")
+            raise HTTPException(status_code=400, detail="summary type requires start and end parameters")
         update_summary_index(instance_dir, body.start, body.end)
     try:
         result = git_commit(instance_dir, git_message, paths=body.paths)
@@ -1995,7 +1993,7 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
     except Exception as e:
         error_msg = str(e)
         if "nothing to commit" in error_msg.lower() or "nothing added" in error_msg.lower():
-            return {"commit_hash": None, "branch": "", "files_changed": [], "message": "没有需要提交的变更"}
+            return {"commit_hash": None, "branch": "", "files_changed": [], "message": "no changes to commit"}
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -2244,14 +2242,14 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
             _broadcast_floors(instance_dir, instance_id)
-            return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交，分支 {body.branch_name} 已清理"}
+            return {"status": "ok", "branch": branch, "message": f"deleted node {body.target_hash} and its successors; branch {body.branch_name} cleaned up"}
         else:
             # Rename temp to original branch name
             _git_run(["branch", "-m", body.branch_name], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
             _broadcast_floors(instance_dir, instance_id)
-            return {"status": "ok", "branch": branch, "message": f"已删除节点 {body.target_hash} 及其后续提交"}
+            return {"status": "ok", "branch": branch, "message": f"deleted node {body.target_hash} and its successors"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2320,6 +2318,6 @@ async def api_tool_reject(instance_id: str, body: ToolRejectRequest, user: UserI
         raise HTTPException(status_code=404, detail="Instance not found")
 
     from ..app import approval_store
-    reason = body.reason or "用户拒绝了提交请求。"
+    reason = body.reason or "the user declined the commit request"
     approval_store.reject(body.tool_call_id, reason)
     return {"status": "rejected"}

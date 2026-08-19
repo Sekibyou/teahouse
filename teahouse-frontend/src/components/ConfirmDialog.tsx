@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button"
+import { useTranslation } from "react-i18next"
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -15,12 +16,15 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmText = "确定",
-  cancelText = "取消",
+  confirmText,
+  cancelText,
   variant = "default",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation("misc")
+  const confirmLabel = confirmText ?? t("common:ok")
+  const cancelLabel = cancelText ?? t("common:cancel")
   if (!open) return null
 
   return (
@@ -36,14 +40,14 @@ export function ConfirmDialog({
         <p className="text-sm text-muted-foreground">{message}</p>
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
-            {cancelText}
+            {cancelLabel}
           </Button>
           <Button
             variant={variant === "destructive" ? "destructive" : "default"}
             size="sm"
             onClick={onConfirm}
           >
-            {confirmText}
+            {confirmLabel}
           </Button>
         </div>
       </div>

@@ -8,6 +8,8 @@ import { consumeVars } from "@/lib/teahouseVars"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useThemeStore } from "@/stores/themeStore"
+import { useTranslation } from "react-i18next"
+import i18n from "@/i18n/config"
 
 // ============================================================
 // SandboxManager — file-system driven sandbox iframe + TeahouseBridge
@@ -35,6 +37,7 @@ interface SandboxManagerProps {
 }
 
 export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirector }: SandboxManagerProps) {
+  const { t } = useTranslation("misc")
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [textStyleRules, setTextStyleRules] = useState<TextStyleRule[]>([])
   const [srcdoc, setSrcdoc] = useState<string>("")
@@ -306,7 +309,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
             // 统一返回 {ok, data|error}：成功时包装为 {ok:true, data:{session_id, enabled_tools}}，沙盒端用 res.ok 判断。
             result = res.ok ? { ok: true, data: res.data } : { ok: false, error: res.error }
           } else {
-            result = { ok: false, error: "缺少实例上下文，无法创建子会话" }
+            result = { ok: false, error: t("sandbox.sessionCreateError") }
           }
           break
         }
@@ -375,7 +378,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         <div className="text-center">
-          <p className="text-sm">等待 AI 生成内容...</p>
+          <p className="text-sm">{t("sandbox.waiting")}</p>
         </div>
       </div>
     )
@@ -423,9 +426,9 @@ async function runCommitDraft(
     markdown = finalRes.ok ? finalRes.data?.content ?? null : null
   }
   if (markdown === null) {
-    return { ok: false, error: `未找到 ${draftPath} 或 ${finalPath}` }
+    return { ok: false, error: i18n.t("misc:sandbox.notFound", { draft: draftPath, final: finalPath }) }
   }
-  const title = extractTitle(markdown) || `第 ${num} 章`
+  const title = extractTitle(markdown) || i18n.t("misc:sandbox.chapterTitle", { num })
 
   // 2) 当前变量快照（add/append/pop/x 需要现值）
   const varsRes = await sandboxVarsApi.get(instanceId, [])
@@ -450,7 +453,7 @@ async function runCommitDraft(
   // 4) 写变量（一次 setVar，仅成功写入的 updates）
   if (Object.keys(updates).length > 0) {
     const setRes = await sandboxVarsApi.set(instanceId, { updates })
-    if (!setRes.ok) return { ok: false, error: `应用变量失败：${setRes.error}` }
+    if (!setRes.ok) return { ok: false, error: i18n.t("misc:sandbox.applyVarsFailed", { error: setRes.error }) }
   }
 
   // 5) 写回：正文剥离 teahouse-vars 块（纯 prose），变量操作记入 floor-N-meta.json。
@@ -458,7 +461,7 @@ async function runCommitDraft(
     const metaPath = `runtime/floors/floor-${num}-meta.json`
 
     const writeFloorRes = await instancesApi.writeFile(instanceId, isDraft ? draftPath : finalPath, strippedMarkdown)
-    if (!writeFloorRes.ok) return { ok: false, error: `写回正文失败：${writeFloorRes.error}` }
+    if (!writeFloorRes.ok) return { ok: false, error: i18n.t("misc:sandbox.writeFloorFailed", { error: writeFloorRes.error }) }
 
     // 二次补解析（正式稿再出现裸 action）需并入既有 meta；草稿转正无既有 meta。
     let mergedVars = metaActions
@@ -478,7 +481,7 @@ async function runCommitDraft(
     }
     const metaBody = { floor: num, vars: mergedVars }
     const writeMetaRes = await instancesApi.writeFile(instanceId, metaPath, JSON.stringify(metaBody, null, 2))
-    if (!writeMetaRes.ok) return { ok: false, error: `写入 floor-${num}-meta.json 失败：${writeMetaRes.error}` }
+    if (!writeMetaRes.ok) return { ok: false, error: i18n.t("misc:sandbox.writeMetaFailed", { num, error: writeMetaRes.error }) }
   }
 
   // 6) 改名（仅草稿分支）：floor-N-draft.md → floor-N.md
@@ -486,7 +489,7 @@ async function runCommitDraft(
   if (isDraft) {
     const newName = finalPath.split("/").pop() || ""
     const renameRes = await instancesApi.renameEntry(instanceId, draftPath, newName)
-    if (!renameRes.ok) return { ok: false, error: `改名失败：${renameRes.error}` }
+    if (!renameRes.ok) return { ok: false, error: i18n.t("misc:sandbox.renameFailed", { error: renameRes.error }) }
   }
 
   // 7) git 提交（paths 限定，避免卷入导演其它未提交工作）
@@ -505,7 +508,7 @@ async function runCommitDraft(
   const commitRes = await gitApi.commit(instanceId, {
     type: isDraft ? "floor" : "other",
     number: num,
-    message: isDraft ? title : `第 ${num} 章正文变量维护`,
+    message: isDraft ? title : i18n.t("misc:sandbox.maintainVarsCommit", { num }),
     paths: commitPaths,
   })
 

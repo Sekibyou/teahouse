@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
+import { useTranslation } from "react-i18next"
 
 interface SlotCardProps {
   slotId: "director" | "writer"
@@ -42,6 +43,7 @@ function computeMatches(modelName: string | undefined, profiles: ModelProfile[],
 }
 
 export function SlotCard({ slotId, label, binding, models, profiles, presets, onChange }: SlotCardProps) {
+  const { t } = useTranslation("misc")
   const [selectedModelId, setSelectedModelId] = useState<string>(binding.model_id || "")
   const [selectedProfileId, setSelectedProfileId] = useState<string>(binding.profile_id || "")
   const [selectedPresetId, setSelectedPresetId] = useState<string>(binding.prompt_preset_id || "")
@@ -113,7 +115,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     const profileId = selectedProfileId || null
     const presetId = showPresets ? (selectedPresetId || null) : null
     if (!modelId) {
-      toast.error("请先选择一个模型")
+      toast.error(t("slot.selectModelFirst"))
       return
     }
     const result = await llmSlotsApi.setSlot(slotId, {
@@ -123,9 +125,9 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     })
     if (result.ok) {
       onChange({ model_id: modelId, profile_id: profileId, prompt_preset_id: presetId })
-      toast.success(`${label} 槽位已保存`)
+      toast.success(t("slot.slotSaved", { label }))
     } else {
-      toast.error(result.error || "保存失败")
+      toast.error(result.error || t("slot.saveFailed"))
     }
   }
 
@@ -139,7 +141,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
 
       {/* Model select */}
       <div>
-        <label className="text-xs text-muted-foreground mb-1 block">模型</label>
+        <label className="text-xs text-muted-foreground mb-1 block">{t("slot.model")}</label>
         <select
           className="w-full border rounded px-2 py-1 text-sm bg-background"
           value={selectedModelId}
@@ -156,7 +158,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
 
       {/* Profile select */}
       <div>
-        <label className="text-xs text-muted-foreground mb-1 block">参数预设</label>
+        <label className="text-xs text-muted-foreground mb-1 block">{t("slot.profile")}</label>
         <select
           className="w-full border rounded px-2 py-1 text-sm bg-background"
           value={effectiveProfileId}
@@ -177,7 +179,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
       {/* Prompt preset select (director only) */}
       {showPresets && (
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">导演提示词预设</label>
+          <label className="text-xs text-muted-foreground mb-1 block">{t("slot.preset")}</label>
           <select
             className="w-full border rounded px-2 py-1 text-sm bg-background"
             value={effectivePresetId}
@@ -199,7 +201,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
           className="bg-primary text-primary-foreground rounded px-4 py-1.5 text-sm hover:bg-primary/90"
           onClick={handleSave}
         >
-          保存
+          {t("common:save")}
         </button>
       </div>
     </div>

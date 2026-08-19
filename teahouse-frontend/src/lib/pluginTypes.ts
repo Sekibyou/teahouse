@@ -21,6 +21,12 @@ export interface Plugin {
   has_backend: boolean
   has_frontend: boolean
   config: ConfigField[]
+  /**
+   * 插件声明的多语言字典：{ locale: { key: 文案 } }。
+   * config 里 label/help/description/options[].label 若以 `key:` 前缀开头，
+   * 前端按当前 locale 到此处取文案；取不到回退 key 字面量。
+   */
+  i18n?: Record<string, Record<string, string>>
 }
 
 export interface PluginData {

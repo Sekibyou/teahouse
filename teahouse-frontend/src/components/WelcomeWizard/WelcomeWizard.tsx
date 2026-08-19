@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useSetupStatus } from "@/hooks/useSetupStatus"
 import { REQUIRED_STEPS, RECOMMENDED_STEPS, type WizardTab } from "./steps"
+import { useTranslation } from "react-i18next"
 
 function StepRow({
-  done, title, desc, actionTab, actionLabel = "去配置", optional,
+  done, title, desc, actionTab, actionLabel, optional,
 }: {
   done: boolean
   title: string
@@ -14,7 +15,9 @@ function StepRow({
   actionLabel?: string
   optional?: boolean
 }) {
+  const { t } = useTranslation("misc")
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
+  const actionText = actionLabel ?? t("wizard.goConfig")
   return (
     <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 ${done ? "border-border/60 bg-muted/20" : "border-border bg-card"}`}>
       {done ? (
@@ -30,7 +33,7 @@ function StepRow({
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{title}</span>
           {optional && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">推荐</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">{t("wizard.recommended")}</span>
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{desc}</p>
@@ -42,7 +45,7 @@ function StepRow({
           className="shrink-0 gap-1.5"
           onClick={() => openSettings(actionTab)}
         >
-          {actionLabel}
+          {actionText}
         </Button>
       )}
     </div>
@@ -50,6 +53,7 @@ function StepRow({
 }
 
 export function WelcomeWizard() {
+  const { t } = useTranslation("misc")
   const { loading, complete, ...ready } = useSetupStatus()
 
   const requiredDoneCount = REQUIRED_STEPS.filter((s) => ready[s.key]).length
@@ -62,10 +66,10 @@ export function WelcomeWizard() {
           <div className="inline-flex items-center justify-center h-12 w-12 rounded-2xl bg-primary/10 text-primary mb-3">
             <Sparkles className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-serif font-bold">欢迎来到 Teahouse</h2>
+          <h2 className="text-lg font-serif font-bold">{t("wizard.welcomeTitle")}</h2>
           <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed max-w-sm mx-auto">
-            创作前，先把「模型体系」配好。跟着下面几步走完，就能新建你的第一个故事实例。
-            {complete && "已经全部就绪，随时可以新建实例开始冒险！"}
+            {t("wizard.welcomeDesc")}
+            {complete && t("wizard.welcomeComplete")}
           </p>
         </div>
 
@@ -84,7 +88,7 @@ export function WelcomeWizard() {
                 />
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
-                完成 {requiredDoneCount}/{requiredTotal}
+                {t("wizard.doneCount", { done: requiredDoneCount, total: requiredTotal })}
               </span>
             </div>
 
@@ -97,7 +101,7 @@ export function WelcomeWizard() {
                   title={s.title}
                   desc={s.desc}
                   actionTab={s.tab}
-                  actionLabel={s.key === "slotsReady" ? "去指定" : "去配置"}
+                  actionLabel={s.key === "slotsReady" ? t("wizard.goSpecify") : t("wizard.goConfig")}
                 />
               ))}
             </div>
@@ -105,7 +109,7 @@ export function WelcomeWizard() {
             {/* 推荐步骤 */}
             <div className="space-y-1">
               <div className="flex items-center gap-2 px-1 pt-1">
-                <span className="text-xs font-medium text-muted-foreground">推荐（可选）</span>
+                <span className="text-xs font-medium text-muted-foreground">{t("wizard.recommendedOptional")}</span>
                 <div className="flex-1 h-px bg-border" />
               </div>
               <div className="space-y-2 pt-1">

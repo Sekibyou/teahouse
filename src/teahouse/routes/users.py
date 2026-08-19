@@ -94,11 +94,11 @@ async def api_create_user(
     if body.role not in ROLES:
         raise HTTPException(status_code=400, detail=f"invalid role: {body.role}")
     if body.role != ROLE_USER and not _can_set_role(actor):
-        raise _forbid("仅超级管理员可授予管理员权限")
+        raise _forbid("only the super admin can grant admin role")
 
     # Namespace collision: super admin username is reserved
     if body.username == SUPERNAME:
-        raise HTTPException(status_code=409, detail=f"用户名 {SUPERNAME!r} 保留给超级管理员")
+        raise HTTPException(status_code=409, detail=f"username {SUPERNAME!r} is reserved for the super admin")
 
     user = await create_user(body.username, body.password, body.display_name, role=body.role)
     if not user:
@@ -122,15 +122,15 @@ async def api_update_user(
         if body.role not in ROLES:
             raise HTTPException(status_code=400, detail=f"invalid role: {body.role}")
         if not is_super:
-            raise _forbid("仅超级管理员可变更用户角色")
+            raise _forbid("only the super admin can change user roles")
         if target["role"] == ROLE_SUPER:
-            raise _forbid("不能变更超级管理员的角色")
+            raise _forbid("cannot change the super admin's role")
         await update_user(target["id"], role=body.role)
 
     # Non-super admin can only touch regular users; cannot touch fellow admins
     if not is_self and not is_super:
         if actor.role != ROLE_ADMIN or target["role"] != ROLE_USER:
-            raise _forbid("管理员只能管理普通用户")
+            raise _forbid("admins can only manage regular users")
 
     if body.display_name is not None:
         await update_user(target["id"], display_name=body.display_name)
@@ -157,11 +157,11 @@ async def api_delete_user(
 ):
     target = await _get_target(target_id)
     if target["role"] == ROLE_SUPER:
-        raise _forbid("不能删除超级管理员")
+        raise _forbid("cannot delete the super admin")
     if target["id"] == actor.user_id:
-        raise _forbid("不能删除自己")
+        raise _forbid("cannot delete yourself")
     if actor.role == ROLE_ADMIN and target["role"] != ROLE_USER:
-        raise _forbid("管理员只能删除普通用户")
+        raise _forbid("admins can only delete regular users")
 
     # Cascade: workspaces, api keys, llm configs are FK-referenced
     from ..database.connection import execute

@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm"
 import type { RichMessage } from "./types"
 import { formatBlockArgs } from "./utils"
 import { TodoWriteResult } from "./TodoWriteResult"
+import { useTranslation } from "react-i18next"
 
 // ---- Assistant message bubble with thinking block ----
 // memo + 自定义浅比较：消息对象引用不变或 isLatest 不变时跳过重渲染，
@@ -22,6 +23,7 @@ export const AssistantBubble = memo(function AssistantBubble({
   isGlobalGenerating: boolean
   isIdle: boolean
 }) {
+  const { t } = useTranslation("misc")
   const [thinkingOpen, setThinkingOpen] = useState(false)
 
   const { status, reasoning, content, blocks } = message
@@ -38,11 +40,11 @@ export const AssistantBubble = memo(function AssistantBubble({
           >
             {thinkingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             <Brain className="h-3 w-3" />
-            <span>思维链</span>
+            <span>{t("assistant.thinkingChain")}</span>
             {status === "reasoning" && !isIdle && isLatest && (
               <span className="flex items-center gap-1 ml-auto">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                思考中...
+                {t("assistant.thinking")}
               </span>
             )}
           </button>
@@ -84,7 +86,7 @@ export const AssistantBubble = memo(function AssistantBubble({
                     {block.result === "(interrupted)" ? (
                       <div className="flex items-start gap-1.5 text-muted-foreground/50">
                         <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                        <span>已中断</span>
+                        <span>{t("assistant.interrupted")}</span>
                       </div>
                     ) : block.result !== undefined ? (
                       <div className="mt-1">
@@ -107,12 +109,12 @@ export const AssistantBubble = memo(function AssistantBubble({
                         {isIdle || !isLatest ? (
                           <>
                             <XCircle className="h-3 w-3 text-muted-foreground/50" />
-                            <span>已中断</span>
+                            <span>{t("assistant.interrupted")}</span>
                           </>
                         ) : (
                           <>
                             <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>等待中...</span>
+                            <span>{t("assistant.waiting")}</span>
                           </>
                         )}
                       </div>

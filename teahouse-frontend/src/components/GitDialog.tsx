@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import {
   GitBranch as GitBranchIcon, GitCommitHorizontal, Loader2,
   CheckCircle2, AlertCircle, X, GitFork,
@@ -34,9 +35,9 @@ interface GitDialogProps {
 type TabKey = "graph" | "commit"
 
 const COMMIT_PREFIXES = [
-  { value: "floor", label: "楼层" },
-  { value: "summary", label: "总结" },
-  { value: "other", label: "其他" },
+  { value: "floor" },
+  { value: "summary" },
+  { value: "other" },
 ] as const
 
 type CommitType = (typeof COMMIT_PREFIXES)[number]["value"]
@@ -47,12 +48,12 @@ function commitTypeLabel(msg: string): { type: CommitType; display: string } {
   return { type: "other", display: msg }
 }
 
-const STATUS_MAP: Record<string, { label: string; icon: typeof FileText; color: string }> = {
-  M: { label: "修改", icon: FileEdit, color: "text-yellow-500" },
-  A: { label: "新建", icon: FilePlus, color: "text-green-500" },
-  D: { label: "删除", icon: FileMinus, color: "text-red-500" },
-  "?": { label: "未跟踪", icon: FilePlus, color: "text-blue-500" },
-  R: { label: "重命名", icon: FileEdit, color: "text-purple-500" },
+const STATUS_MAP: Record<string, { icon: typeof FileText; color: string }> = {
+  M: { icon: FileEdit, color: "text-yellow-500" },
+  A: { icon: FilePlus, color: "text-green-500" },
+  D: { icon: FileMinus, color: "text-red-500" },
+  "?": { icon: FilePlus, color: "text-blue-500" },
+  R: { icon: FileEdit, color: "text-purple-500" },
 }
 
 function nextTempName(): string {
@@ -60,6 +61,7 @@ function nextTempName(): string {
 }
 
 export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
+  const { t } = useTranslation("git")
   const isMobile = useIsMobile()
   useDialogBackClose(open, onClose)
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
@@ -93,7 +95,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     if (res.ok) {
       setGitStatus(res.data!)
     } else {
-      setError(res.error || "加载 git 状态失败")
+      setError(res.error || t("error.loadStatus"))
     }
     setLoading(false)
   }, [instanceId])
@@ -149,7 +151,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     if (commitAndBranch && commitBranchName.trim()) {
       const brRes = await gitApi.branch(instanceId, "create", commitBranchName.trim())
       if (!brRes.ok) {
-        setError(brRes.error || "创建分支失败")
+        setError(brRes.error || t("error.createBranch"))
         setCommitting(false)
         return
       }
@@ -164,7 +166,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadFileStatuses()
       onRefresh()
     } else {
-      setError(res.error || "提交失败")
+      setError(res.error || t("error.commit"))
     }
     setCommitting(false)
   }
@@ -184,7 +186,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     try {
       if (isOtherLatest) {
         const swRes = await gitApi.branch(instanceId, "switch", branchName)
-        if (!swRes.ok) throw new Error(swRes.error || "切换失败")
+        if (!swRes.ok) throw new Error(swRes.error || t("error.switch"))
       } else {
         await gitApi.branch(instanceId, "create", tempName, hash)
         await gitApi.branch(instanceId, "switch", tempName)
@@ -193,7 +195,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadFileStatuses()
       onRefresh()
     } catch (e: any) {
-      setError(e.message || "操作失败")
+      setError(e.message || t("error.operation"))
     }
   }
 
@@ -208,7 +210,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadStatus()
       onRefresh()
     } else {
-      setError(res.error || "改名失败")
+      setError(res.error || t("error.rename"))
     }
   }
 
@@ -218,7 +220,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     if (!contextNode.isOnCurrentBranch) {
       const swRes = await gitApi.branch(instanceId, "switch", contextNode.branchName!)
       if (!swRes.ok) {
-        setError(swRes.error || "切换分支失败")
+        setError(swRes.error || t("error.switchBranch"))
         return
       }
     }
@@ -230,7 +232,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadFileStatuses()
       onRefresh()
     } else {
-      setError(res.error || "删除失败")
+      setError(res.error || t("error.delete"))
     }
   }
 
@@ -243,7 +245,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadStatus()
       onRefresh()
     } else {
-      setError(res.error || "丢弃失败")
+      setError(res.error || t("error.discard"))
     }
   }
 
@@ -255,7 +257,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       await loadStatus()
       onRefresh()
     } else {
-      setError(res.error || "还原失败")
+      setError(res.error || t("error.restore"))
     }
   }
 
@@ -300,11 +302,11 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
             <button
               className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
               onClick={onClose}
-              aria-label="返回"
+              aria-label={t("aria.back")}
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <span className="font-semibold text-sm">版本控制</span>
+            <span className="font-semibold text-sm">{t("title")}</span>
             <span className="absolute right-2 flex items-center gap-2">
               {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
               {hasUncommitted ? (
@@ -318,20 +320,20 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
           <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
               <GitBranchIcon className="h-4 w-4 text-primary" />
-              <span className="font-semibold">版本控制</span>
+              <span className="font-semibold">{t("title")}</span>
               <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded text-muted-foreground">
                 {currentBranch}
               </span>
               {hasUncommitted && (
                 <span className="flex items-center gap-1 text-[10px] text-yellow-500">
                   <AlertCircle className="h-3 w-3" />
-                  有未提交变更
+                  {t("status.dirty")}
                 </span>
               )}
               {!hasUncommitted && gitStatus && (
                 <span className="flex items-center gap-1 text-[10px] text-green-500">
                   <CheckCircle2 className="h-3 w-3" />
-                  干净
+                  {t("status.clean")}
                 </span>
               )}
             </div>
@@ -349,7 +351,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-500 shrink-0 flex items-center gap-2">
             <AlertCircle className="h-3 w-3 shrink-0" />
             <span className="flex-1">{error}</span>
-            <button className="underline shrink-0" onClick={() => setError("")}>关闭</button>
+            <button className="underline shrink-0" onClick={() => setError("")}>{t("error.close")}</button>
           </div>
         )}
 
@@ -367,7 +369,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                 onClick={() => setTab("graph")}
               >
                 <GitFork className="h-4 w-4 shrink-0" />
-                分支图
+                {t("tab.graph")}
               </button>
               <button
                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm transition-colors ${
@@ -378,7 +380,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                 onClick={() => setTab("commit")}
               >
                 <GitCommitHorizontal className="h-4 w-4 shrink-0" />
-                提交管理
+                {t("tab.commit")}
               </button>
             </div>
           ) : (
@@ -393,7 +395,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                   onClick={() => setTab("graph")}
                 >
                   <GitFork className="h-4 w-4 shrink-0" />
-                  分支图
+                  {t("tab.graph")}
                 </button>
                 <button
                   className={`flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-md transition-colors text-left ${
@@ -404,7 +406,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                   onClick={() => setTab("commit")}
                 >
                   <GitCommitHorizontal className="h-4 w-4 shrink-0" />
-                  提交管理
+                  {t("tab.commit")}
                 </button>
               </div>
             </div>
@@ -418,7 +420,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
               </div>
             ) : !gitStatus ? (
               <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                无法加载 git 信息
+                {t("graph.loadFail")}
               </div>
             ) : (
               <>
@@ -427,7 +429,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                   <div className="h-full flex flex-col">
                     <div className="px-5 py-3 border-b border-border shrink-0 flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
-                        分支图 · 点击节点切换/回退
+                        {t("graph.hint")}
                       </p>
                     </div>
                     <div className="flex-1 p-4 relative">
@@ -443,7 +445,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                         </div>
                       ) : (
                         <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                          暂无提交记录
+                          {t("commit.empty")}
                         </div>
                       )}
 
@@ -455,7 +457,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                             onClick={e => e.stopPropagation()}
                           >
                             <div className="flex items-center justify-between">
-                              <h4 className="text-sm font-medium">节点操作</h4>
+                              <h4 className="text-sm font-medium">{t("node.title")}</h4>
                               <button className="p-0.5 rounded hover:bg-muted" onClick={() => { setContextNode(null); setRenaming(false); setConfirmingDelete(false) }}>
                                 <X className="h-3.5 w-3.5" />
                               </button>
@@ -465,7 +467,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               <p><span className="font-mono">{contextNode.hash}</span></p>
                               <p className="truncate">{contextNode.msg}</p>
                               {contextNode.branchName && (
-                                <p className="text-[10px]">分支：{contextNode.branchName}</p>
+                                <p className="text-[10px]">{t("node.branchLabel", { branch: contextNode.branchName })}</p>
                               )}
                             </div>
 
@@ -482,7 +484,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                     onClick={() => {
                                       setError("")
                                       if (gitStatus?.has_uncommitted) {
-                                        setError("有未提交的变更，请先提交或丢弃")
+                                        setError(t("node.uncommittedWarn"))
                                         return
                                       }
                                       setContextNode(null)
@@ -490,7 +492,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                     }}
                                   >
                                     <GitBranchIcon className="h-4 w-4 mr-2" />
-                                    切换到「{contextNode.branchName}」
+                                    {t("node.switch", { branch: contextNode.branchName })}
                                   </Button>
                                   {!isBranchHead && (
                                     <Button
@@ -500,7 +502,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                       onClick={() => {
                                         setError("")
                                         if (gitStatus?.has_uncommitted) {
-                                          setError("有未提交的变更，请先提交或丢弃")
+                                          setError(t("node.uncommittedWarn"))
                                           return
                                         }
                                         setContextNode(null)
@@ -508,7 +510,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                       }}
                                     >
                                       <CornerDownRight className="h-4 w-4 mr-2" />
-                                      回退到此节点（创建临时分支）
+                                      {t("node.reset")}
                                     </Button>
                                   )}
                                 </>
@@ -527,7 +529,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                   }}
                                 >
                                   <Undo2 className="h-4 w-4 mr-2" />
-                                  丢弃所有未保存修改
+                                  {t("node.discardAll")}
                                 </Button>
                               )}
 
@@ -544,14 +546,14 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                     }}
                                   >
                                     <Pencil className="h-3 w-3" />
-                                    修改分支名
+                                    {t("node.rename")}
                                   </button>
                                 ) : (
                                   <div className="flex-[2] space-y-2">
                                     <Input
                                       value={newBranchName}
                                       onChange={e => setNewBranchName(e.target.value)}
-                                      placeholder="新分支名称"
+                                      placeholder={t("branch.namePlaceholder")}
                                       className="text-sm h-7"
                                       autoFocus
                                       onKeyDown={e => {
@@ -561,10 +563,10 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                     />
                                     <div className="flex gap-2">
                                       <Button size="sm" variant="outline" className="flex-1" onClick={() => { setRenaming(false); setNewBranchName("") }}>
-                                        取消
+                                        {t("common.cancel")}
                                       </Button>
                                       <Button size="sm" className="flex-1" onClick={handleRename} disabled={!newBranchName.trim()}>
-                                        确认
+                                        {t("common.confirm")}
                                       </Button>
                                     </div>
                                   </div>
@@ -589,19 +591,19 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                       }}
                                     >
                                       <Trash2 className="h-3 w-3" />
-                                      {isOnlyCommit ? "无法删除" : "删除节点"}
+                                      {isOnlyCommit ? t("node.cantDelete") : t("node.delete")}
                                     </button>
                                   ) : (
                                     <div className="flex-[2] space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2">
                                       <p className="text-xs text-red-500">
-                                        删除该节点及之后的所有提交，不可恢复。确认？
+                                        {t("node.deleteConfirm")}
                                       </p>
                                       <div className="flex gap-2">
                                         <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
-                                          取消
+                                          {t("common.cancel")}
                                         </Button>
                                         <Button size="sm" variant="destructive" className="flex-1" onClick={handleDeleteNode}>
-                                          确认删除
+                                          {t("node.deleteConfirmBtn")}
                                         </Button>
                                       </div>
                                     </div>
@@ -627,7 +629,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                       <div className="flex-1 overflow-auto p-4">
                         <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
                           <FileText className="h-3.5 w-3.5" />
-                          未提交的文件
+                          {t("commit.uncommittedTitle")}
                         </h4>
                         {filesLoading ? (
                           <div className="flex items-center justify-center py-8">
@@ -635,12 +637,12 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                           </div>
                         ) : fileStatuses.length === 0 ? (
                           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                            工作区干净，没有未提交的文件
+                            {t("commit.clean")}
                           </div>
                         ) : (
                           <div className="space-y-0.5">
                             {fileStatuses.map(f => {
-                              const info = STATUS_MAP[f.status] || { label: f.status, icon: FileText, color: "text-muted-foreground" }
+                              const info = STATUS_MAP[f.status] || { icon: FileText, color: "text-muted-foreground" }
                               const Icon = info.icon
                               return (
                                 <div key={f.path} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-muted/30 group">
@@ -649,7 +651,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                   <span className="flex-1 truncate">{f.path}</span>
                                   <button
                                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0"
-                                    title="还原此文件"
+                                    title={t("commit.restoreTip")}
                                     onClick={() => handleRestoreFile(f.path)}
                                   >
                                     <Undo2 className="h-3 w-3" />
@@ -673,20 +675,20 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                             onChange={e => setCommitPrefix(e.target.value as CommitType)}
                           >
                             {COMMIT_PREFIXES.map(p => (
-                              <option key={p.value} value={p.value}>{p.label}</option>
+                              <option key={p.value} value={p.value}>{t(`commit.type.${p.value}`)}</option>
                             ))}
                           </select>
                           <Input
                             value={commitMessage}
                             onChange={e => setCommitMessage(e.target.value)}
-                            placeholder="提交内容描述"
+                            placeholder={t("commit.msgPlaceholder")}
                             className="flex-1 text-sm"
                             onKeyDown={e => { if (e.key === "Enter" && !committing && fullCommitMsg.length > 2) handleCommit() }}
                           />
                         </div>
                         {commitPrefix === "floor" && (
                           <div className="flex items-center gap-2">
-                            <label className="text-xs text-muted-foreground shrink-0">楼层编号：</label>
+                            <label className="text-xs text-muted-foreground shrink-0">{t("commit.floorNumber")}</label>
                             <Input
                               type="number"
                               value={floorNumber}
@@ -698,7 +700,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                         )}
                         {commitPrefix === "summary" && (
                           <div className="flex items-center gap-2">
-                            <label className="text-xs text-muted-foreground shrink-0">起始楼层：</label>
+                            <label className="text-xs text-muted-foreground shrink-0">{t("commit.startFloor")}</label>
                             <Input
                               type="number"
                               value={summaryStart}
@@ -706,7 +708,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               className="w-24 text-sm"
                               min={1}
                             />
-                            <label className="text-xs text-muted-foreground shrink-0">结束楼层：</label>
+                            <label className="text-xs text-muted-foreground shrink-0">{t("commit.endFloor")}</label>
                             <Input
                               type="number"
                               value={summaryEnd}
@@ -717,7 +719,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                           </div>
                         )}
                         <p className="text-[10px] text-muted-foreground font-mono">
-                          完整消息：{fullCommitMsg || <span className="text-muted-foreground/50">（输入内容后自动拼接）</span>}
+                          {t("commit.fullMsg")}: {fullCommitMsg || <span className="text-muted-foreground/50">{t("commit.autoJoin")}</span>}
                         </p>
 
                         <Button
@@ -730,7 +732,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                           ) : (
                             <Save className="h-4 w-4 mr-1.5" />
                           )}
-                          提交
+                          {t("commit.button")}
                         </Button>
 
                         <div className="space-y-2">
@@ -741,13 +743,13 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               onChange={e => setCommitAndBranch(e.target.checked)}
                               className="rounded border-border"
                             />
-                            <span className="text-xs text-muted-foreground">提交并创建新分支</span>
+                            <span className="text-xs text-muted-foreground">{t("commit.andBranch")}</span>
                           </label>
                           {commitAndBranch && (
                             <Input
                               value={commitBranchName}
                               onChange={e => setCommitBranchName(e.target.value)}
-                              placeholder="新分支名称"
+                              placeholder={t("branch.namePlaceholder")}
                               className="text-sm"
                             />
                           )}
@@ -758,11 +760,11 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                       <div className="flex-1 overflow-auto p-3">
                         <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
                           <History className="h-3.5 w-3.5" />
-                          最近提交
+                          {t("commit.recentTitle")}
                         </h4>
                         {commits.length === 0 ? (
                           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                            暂无提交
+                            {t("commit.empty")}
                           </div>
                         ) : (
                           <div className="space-y-1">
@@ -779,7 +781,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                                     <CommitTypeIcon type={type} />
                                     <span className="font-mono text-[10px] text-muted-foreground">{c.hash}</span>
                                     {idx === 0 && (
-                                      <span className="text-[9px] bg-primary/10 text-primary px-1 rounded ml-auto">最新</span>
+                                      <span className="text-[9px] bg-primary/10 text-primary px-1 rounded ml-auto">{t("commit.latest")}</span>
                                     )}
                                   </div>
                                   <p className="leading-relaxed">{c.message}</p>
@@ -827,6 +829,7 @@ interface GitGraphViewProps {
 }
 
 function GitGraphView({ commits, branches, currentBranch, onNodeClick }: GitGraphViewProps) {
+  const { t } = useTranslation("git")
   const { nodes, edges } = useMemo(() => {
     // Map hash → list of branches pointing to it
     const hashToBranches = new Map<string, string[]>()
@@ -989,7 +992,7 @@ function GitGraphView({ commits, branches, currentBranch, onNodeClick }: GitGrap
   }, [commits, branches, currentBranch, onNodeClick])
 
   if (nodes.length === 0) {
-    return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">暂无提交记录</div>
+    return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">{t("commit.empty")}</div>
   }
 
   return (
@@ -1039,6 +1042,7 @@ interface CommitNodeData {
 }
 
 function CommitNode({ data }: NodeProps<CommitNodeData>) {
+  const { t } = useTranslation("git")
   const isDim = !data.isOnCurrentBranch
 
   return (
@@ -1065,10 +1069,10 @@ function CommitNode({ data }: NodeProps<CommitNodeData>) {
         {/* Line 2: type label + message + HEAD */}
         <div className="flex items-center gap-1 min-h-[18px]">
           {data.commitType === "floor" && (
-            <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 rounded shrink-0">楼层</span>
+            <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-500/10 px-1 rounded shrink-0">{t("commit.type.floor")}</span>
           )}
           {data.commitType === "summary" && (
-            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1 rounded shrink-0">总结</span>
+            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1 rounded shrink-0">{t("commit.type.summary")}</span>
           )}
           <span className="text-[11px] leading-tight truncate">{data.message}</span>
           {data.isCurrentBranchHead && (

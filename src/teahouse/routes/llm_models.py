@@ -232,6 +232,6 @@ async def api_ping_model(model_id: str, user: UserInfo = Depends(require_user)):
                 msg = response.text[:200]
             return {"success": False, "error": msg, "status_code": response.status_code}
     except httpx.TimeoutException:
-        return {"success": False, "error": "连接超时"}
+        return {"success": False, "error": "connection timed out"}
     except Exception as e:
         return {"success": False, "error": str(e)}

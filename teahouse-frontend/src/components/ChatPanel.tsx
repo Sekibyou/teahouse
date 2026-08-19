@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { Loader2, X, CheckCircle2, Flag, ArrowRight } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi } from "@/lib/api"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
@@ -18,6 +19,7 @@ import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
 
 export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () => void; onClosePanel?: () => void }) {
+  const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
   const [messages, setMessages] = useState<RichMessage[]>([])
 
@@ -147,10 +149,10 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       const map = { ...reasoningEffortBySidRef.current, [activeSid]: next }
       reasoningEffortBySidRef.current = map
       setReasoningEffortBySid(map)
-      const label = activeSid === MAIN_SID ? "主会话" : `子会话 ${activeSid}`
-      toast.success(`${label} 思考强度已设为 ${next}`)
+      const label = activeSid === MAIN_SID ? t("mainSession") : t("subSession", { sid: activeSid })
+      toast.success(t("effortSetSuccess", { label, effort: next }))
     } else {
-      toast.error(`设置思考强度失败:${res.error || "未知错误"}`)
+      toast.error(t("effortSetFail", { err: res.error || t("unknownError") }))
     }
   }, [instId, activeSid])
 
@@ -465,7 +467,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          const t = data.type as string
+          const evType = data.type as string
 
           // Update running + stats from backend-authoritative sources.
           if (data.running && typeof data.running === "object") {
@@ -512,16 +514,16 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             }
 
             // ── Compact events ──
-            if (t === "compact_started") {
+            if (evType === "compact_started") {
               patchSessionState(sid, { compacting: true })
               return
             }
-            if (t === "compact_done") {
+            if (evType === "compact_done") {
               patchSessionState(sid, { compacting: false })
               refreshContextUsageRef.current()
               if (data.error) {
                 if (data.error !== "interrupted") {
-                  toast.error(`会话压缩失败: ${data.error}`)
+                  toast.error(t("compactFailMsg", { err: data.error }))
                 }
               } else {
                 // Reload history so the compact summary record appears
@@ -535,7 +537,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return
             }
 
-            if (t === "done") {
+            if (evType === "done") {
               // Final done carries force_close semantics: the backend round is
               // over; close every still-open assistant bubble (drop empty ones).
               refreshContextUsageRef.current()
@@ -557,7 +559,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return
             }
 
-            if (t === "assistant_done") {
+            if (evType === "assistant_done") {
               // This assistant round completed: close its (order,sub) bubbles.
               setMessagesFor(sid, (prev) => {
                 const closer = [...prev]
@@ -577,7 +579,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return
             }
 
-            if (t === "tool_call") {
+            if (evType === "tool_call") {
               setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                 ...m,
                 status: "streaming",
@@ -592,7 +594,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return
             }
 
-            if (t === "tool_result") {
+            if (evType === "tool_result") {
               setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                 ...m,
                 status: "streaming",
@@ -607,7 +609,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               return
             }
 
-            if (t === "approval_required") {
+            if (evType === "approval_required") {
               if (autoApproveCommitRef.current) {
                 const inst = getActiveInstance()
                 if (inst) {
@@ -621,7 +623,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                           id: data.id as string,
                           name: data.name as string,
                           args: (data.args as Record<string, unknown>) || {},
-                          result: "（自动批准）",
+                          result: t("autoApproved"),
                         }],
                       })))
                     }
@@ -638,12 +640,12 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             }
 
             const chunkText = (data.text as string) || ""
-            if (t === "text" || t === "reasoning") {
+            if (evType === "text" || evType === "reasoning") {
               // Defensive: skip tool_args text fragments (OpenAI tool-call arg
               // deltas). The backend also filters these now, but keeping this
               // guard ensures stale backends or edge cases don't flash JSON.
               if (data.tool_args) return
-              if (t === "reasoning") {
+              if (evType === "reasoning") {
                 setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                   ...m,
                   status: "reasoning",
@@ -672,7 +674,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             // events from the same loop will rebuild incomplete messages on
             // an empty slot — and when the user switches back, the stale
             // cached partial list masks the authoritative jsonl history.
-            if (t === "done" || t === "compact_done") {
+            if (evType === "done" || evType === "compact_done") {
               delete messagesBySidRef.current[sid]
             }
           }
@@ -938,12 +940,12 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     if (!instId) return
     instancesApi.createSession(instId).then(res => {
       if (res.ok) {
-        toast.success(`子会话 ${res.data?.session_id} 已创建`)
+        toast.success(t("subSessionCreated", { sid: res.data?.session_id }))
       } else {
-        toast.error("创建子会话失败")
+        toast.error(t("createSubSessionFail"))
       }
     }).catch(() => {
-      toast.error("创建子会话失败")
+      toast.error(t("createSubSessionFail"))
     })
   }, [instId])
 
@@ -1060,18 +1062,18 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   const COMMANDS: CommandDef[] = useMemo(() => {
     const think: CommandDef = {
       name: "/think",
-      description: "设置思考强度",
+      description: t("setThink"),
       params: [
-        { name: "none", description: "关闭思考" },
-        { name: "low", description: "低" },
-        { name: "mid", description: "中" },
-        { name: "high", description: "高" },
-        { name: "max", description: "最高" },
+        { name: "none", description: t("thinkNone") },
+        { name: "low", description: t("thinkLow") },
+        { name: "mid", description: t("thinkMid") },
+        { name: "high", description: t("thinkHigh") },
+        { name: "max", description: t("thinkMax") },
       ],
     }
-    const clear: CommandDef = { name: "/clear", description: "清空当前对话" }
+    const clear: CommandDef = { name: "/clear", description: t("clearConversation") }
     if (activeSid === MAIN_SID) {
-      return [think, { name: "/compact", description: "压缩当前会话上下文" }, clear]
+      return [think, { name: "/compact", description: t("compactContext") }, clear]
     }
     const enabled = new Set(activeEnabled || [])
     return [
@@ -1079,16 +1081,16 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       clear,
       {
         name: "/permission-add",
-        description: "添加子会话工具权限",
+        description: t("permissionAddDesc"),
         dynamicParams: () => availableTools.filter((t) => !enabled.has(t.name)).map((t) => ({ name: t.name, description: t.short })),
       },
       {
         name: "/permission-remove",
-        description: "移除子会话工具权限",
+        description: t("permissionRemoveDesc"),
         dynamicParams: () => availableTools.filter((t) => enabled.has(t.name)).map((t) => ({ name: t.name, description: t.short })),
       },
     ]
-  }, [activeSid, activeEnabled, availableTools])
+  }, [activeSid, activeEnabled, availableTools, t])
 
   // Two-stage autocomplete derived purely from `input` (no extra state).
   // - stage "command": "/xxx" without a space → suggest command names.
@@ -1252,7 +1254,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     if (isCommand) {
       const st = sessionStateRef.current[sid]
       if (st?.running || st?.waiting || st?.compacting) {
-        toast.error("会话忙时无法执行命令，请先停止生成或等待完成")
+        toast.error(t("sessionBusyCommand"))
         return
       }
     }
@@ -1268,8 +1270,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       if (inst) {
         instancesApi.clearSessionMemory(inst.id, sid).catch(() => {})
       }
-      const label = sid === "main" ? "主会话" : `子会话 ${sid}`
-      toast.success(`已清除 ${label} 内容`)
+      const label = sid === "main" ? t("mainSession") : t("subSession", { sid })
+      toast.success(t("clearedContent", { label }))
       scrollToBottom()
       return
     }
@@ -1279,7 +1281,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       setInput("")
       const inst = getActiveInstance()
       if (!inst) {
-        toast.error("未选中实例，无法压缩会话")
+        toast.error(t("noInstanceCompact"))
         return
       }
       setError("")
@@ -1293,7 +1295,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         )
       } catch {
         patchSessionState(sid, { compacting: false, waiting: false })
-        toast.error("压缩请求失败")
+        toast.error(t("compactFail"))
       }
       return
     }
@@ -1305,25 +1307,25 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       const effort = thinkMatch[1].toLowerCase()
       const valid = ["none", "low", "mid", "high", "max"]
       if (!valid.includes(effort)) {
-        toast.error(`无效思考强度：${thinkMatch[1]}。可选 ${valid.join("|")}`)
+        toast.error(t("invalidEffort", { name: thinkMatch[1], valid: valid.join("|") }))
         return
       }
       const activeInst = getActiveInstance()
       if (!activeInst) {
-        toast.error("未选中实例,无法设置思考强度")
+        toast.error(t("noInstanceEffort"))
         return
       }
       const res = await instancesApi.setSessionReasoning(activeInst.id, sid, effort)
       if (res.ok) {
         const scope = res.data?.scope
-        const label = sid === "main" ? "主会话" : `子会话 ${sid}`
+        const label = sid === "main" ? t("mainSession") : t("subSession", { sid })
         toast.success(
           scope === "user"
-            ? `主会话思考强度已设为 ${effort}`
-            : `${label} 思考强度已设为 ${effort}`,
+            ? t("mainEffortSet", { effort })
+            : t("effortSetSuccess", { label, effort }),
         )
       } else {
-        toast.error(`设置思考强度失败:${res.error || "未知错误"}`)
+        toast.error(t("effortSetFail", { err: res.error || t("unknownError") }))
       }
       setInput("")
       scrollToBottom()
@@ -1337,25 +1339,25 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       const action: "add" | "remove" = permMatch[1] === "permission-add" ? "add" : "remove"
       const tools = (permMatch[2] || "").trim().split(/\s+/).filter(Boolean)
       if (sid === MAIN_SID) {
-        toast.error("权限命令仅用于子会话")
+        toast.error(t("permissionMainOnly"))
         return
       }
       if (tools.length === 0) {
-        toast.error(`请指定至少一个工具名，如 /${permMatch[1]} Read Edit`)
+        toast.error(t("permissionNoTools", { cmd: permMatch[1] }))
         return
       }
       const activeInst = getActiveInstance()
       if (!activeInst) {
-        toast.error("未选中实例，无法修改权限")
+        toast.error(t("noInstancePerm"))
         return
       }
       const res = await instancesApi.setSessionPermissions(activeInst.id, sid, action, tools)
       if (res.ok) {
         const joined = res.data?.enabled_tools?.join(", ") || ""
-        toast.success(`子会话 ${sid} 权限已更新：${joined}`)
+        toast.success(t("permissionUpdated", { sid, joined }))
         refreshSessionList()
       } else {
-        toast.error(`权限修改失败：${res.error || "未知错误"}`)
+        toast.error(t("permissionFail", { err: res.error || t("unknownError") }))
       }
       setInput("")
       scrollToBottom()
@@ -1454,7 +1456,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "请求失败")
+      setError(err instanceof Error ? err.message : t("requestFail"))
     }
   }
 
@@ -1588,7 +1590,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       <div ref={scrollRef} onScroll={handleHistoryScroll} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
         {messages.length === 0 && (
           <div className="text-center text-muted-foreground py-8">
-            <p className="text-sm">发送消息开始对话</p>
+            <p className="text-sm">{t("startHint")}</p>
           </div>
         )}
 
@@ -1611,27 +1613,27 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                       {msg.autoKind === "interrupt" ? (
                         <>
                           <X className="h-3 w-3 text-muted-foreground/60" />
-                          <span>用户中断了生成</span>
+                          <span>{t("interruptBubble")}</span>
                         </>
                       ) : msg.autoKind === "endsession" ? (
                         <>
                           <Flag className="h-3 w-3 text-muted-foreground/60" />
-                          <span>会话经 EndSession 结束</span>
+                          <span>{t("endsessionBubble")}</span>
                         </>
                       ) : msg.autoKind === "compact" ? (
                         <>
                           <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/60" />
-                          <span>正在压缩会话上下文…</span>
+                          <span>{t("compactingBubble")}</span>
                         </>
                       ) : msg.autoKind === "auto_continue" ? (
                         <>
                           <ArrowRight className="h-3 w-3 text-muted-foreground/60" />
-                          <span>会话已压缩，自动继续工作</span>
+                          <span>{t("autoContinueBubble")}</span>
                         </>
                       ) : (
                         <>
                           <CheckCircle2 className="h-3 w-3 text-muted-foreground/60" />
-                          <span>子会话已结束：<span className="font-mono">{msg.autoSid || ""}</span></span>
+                          <span>{t("subSessionEnd")}<span className="font-mono">{msg.autoSid || ""}</span></span>
                         </>
                       )}
                     </div>
@@ -1654,10 +1656,10 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-lg px-3 py-2 bg-muted text-sm text-muted-foreground flex items-center gap-2">
               <Loader2 className="h-3 w-3 animate-spin" />
-              <span>{isWaiting ? "等待中..." : "生成中..."}</span>
+              <span>{isWaiting ? t("waitingDots") : t("generatingDots")}</span>
               <span className="text-[10px] text-muted-foreground/60">
                 {elapsed > 0 && `${elapsed}s`}
-                {!isWaiting && tokenCount > 0 && `, ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + "k" : tokenCount} tokens`}
+                {!isWaiting && tokenCount > 0 && `, ${tokenCount >= 1000 ? t("kToken", { n: (tokenCount / 1000).toFixed(1) }) : t("tokensUnit", { n: tokenCount })}`}
               </span>
               {!isWaiting && <span className="inline-block w-2 h-4 bg-foreground/50 animate-pulse" />}
             </div>
@@ -1712,7 +1714,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           const res = await gitApi.approveTool(inst.id, data.id, data.args)
           setApproving(false)
           if (!res.ok) {
-            toast.error("批准提交失败")
+            toast.error(t("approveCommitFail"))
             return
           }
           useGenerationStore.getState().resolveApproval()
@@ -1725,7 +1727,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           const res = await gitApi.rejectTool(inst.id, data.id, "")
           setApproving(false)
           if (!res.ok) {
-            toast.error("拒绝请求失败")
+            toast.error(t("rejectCommitFail"))
             return
           }
           useGenerationStore.getState().resolveApproval()
@@ -1739,21 +1741,21 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             {floorsStats && floorsStats.latest_floor != null && (
               <div className="flex items-center gap-2 min-w-0">
                 <span>
-                  最新楼层: <span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-                  （共 {floorsStats.total_confirmed} 正式层
-                  {floorsStats.total_drafts > 0 && <span> + {floorsStats.total_drafts} 草稿层</span>}
-                  {floorsStats.unsummarized > 0 && <span>，{floorsStats.unsummarized} 层未总结</span>}）
+                  {t("latestFloor")}<span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
+                  {t("ofFloors", { n: floorsStats.total_confirmed })}
+                  {floorsStats.total_drafts > 0 && <span>{t("plusDrafts", { n: floorsStats.total_drafts })}</span>}
+                  {floorsStats.unsummarized > 0 && <span>{t("unsummarized", { n: floorsStats.unsummarized })}</span>}）
                 </span>
                 {floorsStats.last_summary_start != null ? (
                   <span>
-                    | 上次总结: <span className="text-foreground font-mono">
+                    {t("lastSummary")}<span className="text-foreground font-mono">
                       {floorsStats.last_summary_start === floorsStats.last_summary_end
-                        ? `第 ${floorsStats.last_summary_start} 层`
-                        : `第 ${floorsStats.last_summary_start}~${floorsStats.last_summary_end} 层`}
+                        ? t("lastSummarySingle", { n: floorsStats.last_summary_start })
+                        : t("lastSummaryRange", { a: floorsStats.last_summary_start, b: floorsStats.last_summary_end })}
                     </span>
                   </span>
                 ) : (
-                  <span>| 当前尚无总结</span>
+                  <span>{t("noSummaryYet")}</span>
                 )}
               </div>
             )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
 import { instancesApi, prototypesApi } from "@/lib/api"
 import type { CoverResponse } from "@/lib/types"
+import { useTranslation } from "react-i18next"
 
 /**
  * Deterministic warm gradient palettes, keyed by a name hash. Mirrors the
@@ -77,6 +78,7 @@ export function Cover({
   className?: string
   imgClassName?: string
 }) {
+  const { t } = useTranslation("misc")
   const grad = GRADIENTS[hashName(name) % GRADIENTS.length]
   const box = driven === "height" ? "h-full w-auto" : "w-full"
   return (
@@ -93,7 +95,7 @@ export function Cover({
         />
       ) : (
         <span className="absolute inset-0 flex items-center justify-center text-white/90">
-          <span className="text-[3em] font-serif leading-none">{name.trim().charAt(0) || "案"}</span>
+          <span className="text-[3em] font-serif leading-none">{name.trim().charAt(0) || t("cover.placeholderChar")}</span>
         </span>
       )}
     </div>

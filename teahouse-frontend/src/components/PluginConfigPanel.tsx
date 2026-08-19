@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react"
+import { useTranslation } from "react-i18next"
 import { pluginsApi } from "@/lib/api"
 import type { ConfigField, PluginData } from "@/lib/pluginTypes"
+import { useCurrentLang } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -18,6 +20,7 @@ import { Loader2 } from "lucide-react"
 interface PluginConfigPanelProps {
   pluginId: string
   config: ConfigField[]
+  i18n?: Record<string, Record<string, string>>
   onSaved: () => void
 }
 
@@ -30,8 +33,18 @@ interface PluginConfigPanelProps {
  * (not persisted until Save); Save PUTs all fields at once; closing discards.
  *
  * Zero network/action at config time — this panel only collects parameters.
+ *
+ * i18n: plugin authors may ship a per-locale dictionary (`i18n` prop, from the
+ * manifest) and use `key:`-prefixed values in label/help/options — the panel
+ * resolves them against the active locale, falling back to the literal value.
  */
-export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPanelProps) {
+export function PluginConfigPanel({ pluginId, config, i18n, onSaved }: PluginConfigPanelProps) {
+  const { t } = useTranslation("plugin")
+  const lang = useCurrentLang()
+  const resolve = useCallback(
+    (value?: string) => resolvePluginText(value, i18n, lang),
+    [i18n, lang],
+  )
   const [initial, setInitial] = useState<PluginData>({})
   const [draft, setDraft] = useState<PluginData>({})
   const [loading, setLoading] = useState(true)
@@ -100,7 +113,7 @@ export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPan
       setInitial(saved)
       onSaved()
     } else {
-      setError(res.error || "保存失败")
+      setError(res.error || t("saveFailed"))
     }
     setSaving(false)
   }
@@ -108,7 +121,7 @@ export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPan
   if (loading) {
     return (
       <div className="flex items-center justify-center py-6 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin mr-2" /> 加载配置...
+        <Loader2 className="h-4 w-4 animate-spin mr-2" /> {t("loading")}
       </div>
     )
   }
@@ -119,6 +132,7 @@ export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPan
         <ConfigFieldRow
           key={field.key}
           field={field}
+          resolve={resolve}
           value={draft[field.key] ?? ""}
           onChange={(v) => setField(field.key, v)}
         />
@@ -129,9 +143,9 @@ export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPan
       <div className="flex items-center gap-3 pt-1">
         <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
           {saving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-          保存
+          {t("common:save")}
         </Button>
-        {dirty && <span className="text-xs text-amber-600">有未保存修改</span>}
+        {dirty && <span className="text-xs text-amber-600">{t("unsavedChanges")}</span>}
       </div>
     </div>
   )
@@ -139,35 +153,42 @@ export function PluginConfigPanel({ pluginId, config, onSaved }: PluginConfigPan
 
 function ConfigFieldRow({
   field,
+  resolve,
   value,
   onChange,
 }: {
   field: ConfigField
+  resolve: (value?: string) => string
   value: string
   onChange: (v: string) => void
 }) {
+  const labelText = resolve(field.label)
+  const helpText = resolve(field.help)
   const label = (
-    <Label className="text-xs text-muted-foreground">{field.label}</Label>
+    <Label className="text-xs text-muted-foreground">{labelText}</Label>
   )
 
   return (
     <div className="space-y-1.5">
       {label}
-      {field.help && <p className="text-[11px] text-muted-foreground/70">{field.help}</p>}
-      <RenderField field={field} value={value} onChange={onChange} />
+      {helpText && <p className="text-[11px] text-muted-foreground/70">{helpText}</p>}
+      <RenderField field={field} resolve={resolve} value={value} onChange={onChange} />
     </div>
   )
 }
 
 function RenderField({
   field,
+  resolve,
   value,
   onChange,
 }: {
   field: ConfigField
+  resolve: (value?: string) => string
   value: string
   onChange: (v: string) => void
 }) {
+  const { t } = useTranslation("plugin")
   switch (field.type) {
     case "password":
       return (
@@ -210,12 +231,12 @@ function RenderField({
       return (
         <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
           <SelectTrigger className="h-8 text-sm">
-            <SelectValue placeholder="选择..." />
+            <SelectValue placeholder={t("selectPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
             {(field.options || []).map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
+                {resolve(opt.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -233,4 +254,26 @@ function RenderField({
         />
       )
   }
+}
+
+/**
+ * Resolve a plugin-declared UI string against the active locale's i18n dict.
+ *
+ * Plugin authors may write a literal value (displayed as-is, e.g. legacy
+ * Chinese label) or a `key:`-prefixed key looked up in the manifest's `i18n`
+ * dict. Unknown keys / missing locale fall back to the literal value so old
+ * plugins and incomplete dictionaries degrade gracefully.
+ */
+function resolvePluginText(
+  value: string | undefined,
+  dict: Record<string, Record<string, string>> | undefined,
+  lang: string,
+): string {
+  if (!value) return value ?? ""
+  if (value.startsWith("key:") && dict) {
+    const key = value.slice("key:".length)
+    const langDict = dict[lang]
+    if (langDict && key in langDict) return langDict[key]
+  }
+  return value
 }

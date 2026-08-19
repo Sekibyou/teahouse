@@ -2,6 +2,8 @@ import { useEffect, useRef, useMemo, useCallback, useState } from "react"
 import Editor, { type OnMount, loader } from "@monaco-editor/react"
 import * as Monaco from "monaco-editor"
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
+import { useTranslation } from "react-i18next"
+import i18n from "@/i18n/config"
 
 // ---- Local Monaco bundle (no CDN) ----
 // Bundle Monaco locally via Vite and hand the instance to @monaco-editor/react,
@@ -368,7 +370,7 @@ function computeLineDecorations(original: string, modified: string): Monaco.edit
             : type === "added" ? "monaco-diff-glyph-added"
             : "monaco-diff-glyph-modified",
           glyphMarginHoverMessage: {
-            value: type === "deleted" ? "删除行" : type === "added" ? "新增行" : "修改行",
+            value: type === "deleted" ? i18n.t("misc:monaco.deletedLine") : type === "added" ? i18n.t("misc:monaco.addedLine") : i18n.t("misc:monaco.modifiedLine"),
           },
         },
       })
@@ -413,6 +415,7 @@ export function MonacoEditor({
   readOnly = false,
   className,
 }: MonacoEditorProps) {
+  const { t } = useTranslation("misc")
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
@@ -517,7 +520,7 @@ export function MonacoEditor({
         defaultValue={defaultValue}
         loading={
           <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-            正在加载编辑器…
+            {t("monaco.loading")}
           </div>
         }
         onChange={(val) => {
