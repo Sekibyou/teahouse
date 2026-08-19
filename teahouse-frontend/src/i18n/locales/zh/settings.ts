@@ -138,8 +138,6 @@ export const zhSettings = {
     maxRetriesDesc: "网络波动时自动重试 LLM API 请求。不重试业务错误（4xx/5xx）。设为 0 则禁用重试。",
     maxToolRounds: "单轮最大调用次数",
     maxToolRoundsDesc: "导演工具调用循环的轮数上限，防止单轮陷入过长的工具循环。",
-    save: "保存设置",
-    saved: "已保存",
   },
 
   // ─── Plugins tab ───

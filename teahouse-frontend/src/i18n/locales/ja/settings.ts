@@ -138,8 +138,6 @@ export const jaSettings = {
     maxRetriesDesc: "ネットワーク変動時に LLM API リクエストを自動リトライします。ビジネスエラー（4xx/5xx）はリトライしません。0 でリトライを無効化。",
     maxToolRounds: "1 ラウンドあたりの最大呼び出し回数",
     maxToolRoundsDesc: "監督のツール呼び出しループのラウンド上限。1 ラウンドが過度に長いツールループに陥るのを防ぎます。",
-    save: "設定を保存",
-    saved: "保存しました",
   },
 
   // ─── Plugins tab ───

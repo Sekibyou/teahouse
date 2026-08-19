@@ -138,8 +138,6 @@ export const enSettings = {
     maxRetriesDesc: "Automatically retry LLM API requests on network fluctuations. Business errors (4xx/5xx) are not retried. Set to 0 to disable retries.",
     maxToolRounds: "Max calls per round",
     maxToolRoundsDesc: "The round limit for the director's tool-call loop, to prevent a single round from getting stuck in an overly long tool loop.",
-    save: "Save settings",
-    saved: "Saved",
   },
 
   // ─── Plugins tab ───

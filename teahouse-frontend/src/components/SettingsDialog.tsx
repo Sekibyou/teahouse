@@ -42,11 +42,11 @@ const API_FORMAT_OPTIONS = [
 ]
 
 const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string; adminOnly?: boolean }[] = [
+  { key: "general", Icon: SlidersHorizontal, label: "tab.general" },
   { key: "models", Icon: Server, label: "tab.models" },
+  { key: "slots", Icon: Link2, label: "tab.slots" },
   { key: "profiles", Icon: Sliders, label: "tab.profiles" },
   { key: "presets", Icon: FileText, label: "tab.presets" },
-  { key: "slots", Icon: Link2, label: "tab.slots" },
-  { key: "general", Icon: SlidersHorizontal, label: "tab.general" },
   { key: "plugins", Icon: Puzzle, label: "tab.plugins" },
   { key: "skills", Icon: BookOpen, label: "tab.skills" },
   { key: "packages", Icon: Package, label: "tab.packages" },
@@ -81,7 +81,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const open = openProp ?? storeOpen
   const onClose = onCloseProp ?? closeSettings
   const defaultTab = (defaultTabProp ?? storeDefaultTab) as TabKey | undefined
-  const [tab, setTab] = useState<TabKey>("models")
+  const [tab, setTab] = useState<TabKey>("general")
   const { t } = useTranslation("settings")
   const currentLang = useCurrentLang()
   const setLang = useLangStore((s) => s.setLang)
@@ -140,8 +140,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // ─── General settings state ───
   const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15 })
   const [settingsLoading, setSettingsLoading] = useState(false)
-  const [settingsSaving, setSettingsSaving] = useState(false)
-  const [settingsSaved, setSettingsSaved] = useState(false)
 
   // ─── Plugins state ───
   const [plugins, setPlugins] = useState<Plugin[]>([])
@@ -238,7 +236,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   // Set defaultTab when dialog opens
   useEffect(() => {
     if (open) {
-      setTab(defaultTab || "models")
+      setTab(defaultTab || "general")
       loadAll()
     }
   }, [open, defaultTab, loadAll])
@@ -252,6 +250,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const pluginsLoadedRef = useRef(false)
   const skillsLoadedRef = useRef(false)
   const packagesLoadedRef = useRef(false)
+  // 通用设置滑块即时生效的 debounce 计时器
+  const settingSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!open) return
     if (tab === "general" && !settingsLoadedRef.current) {
@@ -494,16 +494,14 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setSettingsLoading(false)
   }
 
-  const handleSaveSettings = async () => {
-    setSettingsSaving(true)
-    setSettingsSaved(false)
-    const res = await appSettingsApi.update({ max_retries: appSettings.max_retries, max_tool_rounds: appSettings.max_tool_rounds })
-    if (res.ok) {
-      setAppSettings(res.data!)
-      setSettingsSaved(true)
-      setTimeout(() => setSettingsSaved(false), 2000)
-    }
-    setSettingsSaving(false)
+  // 滑块即时生效：本地先更新以保持拖拽手感，随后 debounce 推到后端。
+  const setAppSetting = (patch: Partial<AppSettings>) => {
+    setAppSettings((prev) => ({ ...prev, ...patch }))
+    if (settingSaveTimer.current) clearTimeout(settingSaveTimer.current)
+    settingSaveTimer.current = setTimeout(async () => {
+      const res = await appSettingsApi.update(patch)
+      if (res.ok) setAppSettings(res.data!)
+    }, 250)
   }
 
   // ─── Plugins handlers ───
@@ -1494,7 +1492,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               min={0}
                               max={10}
                               value={appSettings.max_retries}
-                              onChange={(e) => setAppSettings({ ...appSettings, max_retries: Number(e.target.value) })}
+                              onChange={(e) => setAppSetting({ max_retries: Number(e.target.value) })}
                               className="flex-1 h-2 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
                             />
                             <input
@@ -1504,7 +1502,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               value={appSettings.max_retries}
                               onChange={(e) => {
                                 const v = Math.max(0, Math.min(10, Number(e.target.value) || 0))
-                                setAppSettings({ ...appSettings, max_retries: v })
+                                setAppSetting({ max_retries: v })
                               }}
                               className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
@@ -1529,7 +1527,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               min={1}
                               max={200}
                               value={appSettings.max_tool_rounds}
-                              onChange={(e) => setAppSettings({ ...appSettings, max_tool_rounds: Number(e.target.value) })}
+                              onChange={(e) => setAppSetting({ max_tool_rounds: Number(e.target.value) })}
                               className="flex-1 h-2 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
                             />
                             <input
@@ -1539,27 +1537,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               value={appSettings.max_tool_rounds}
                               onChange={(e) => {
                                 const v = Math.max(1, Math.min(200, Number(e.target.value) || 1))
-                                setAppSettings({ ...appSettings, max_tool_rounds: v })
+                                setAppSetting({ max_tool_rounds: v })
                               }}
                               className="w-16 h-8 rounded border border-border bg-muted/30 text-center text-sm font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                           </div>
                         </div>
                       </div>
-
-                      <Button
-                        onClick={handleSaveSettings}
-                        disabled={settingsSaving}
-                        className="w-full"
-                      >
-                        {settingsSaving ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : settingsSaved ? (
-                          <span>{t("general.saved")}</span>
-                        ) : (
-                          t("general.save")
-                        )}
-                      </Button>
                     </div>
                   )}
                 </div>
