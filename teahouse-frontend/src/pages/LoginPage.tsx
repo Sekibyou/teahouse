@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,6 +15,21 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [allowRegistration, setAllowRegistration] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    authApi.registrationStatus().then((res) => {
+      if (active) {
+        const open = !!res.data?.allow_registration
+        setAllowRegistration(open)
+        if (!open) setMode("login") // 关闭注册时不允许停留在注册表单
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault()
@@ -137,16 +152,18 @@ export function LoginPage() {
               {isRegister ? "注册" : "登录"}
             </Button>
 
-            <div className="text-center text-sm text-muted-foreground">
-              {isRegister ? "已有账号？" : "没有账号？"}
-              <button
-                type="button"
-                className="text-primary hover:underline ml-1"
-                onClick={() => { setMode(isRegister ? "login" : "register"); setError(null) }}
-              >
-                {isRegister ? "去登录" : "注册新账号"}
-              </button>
-            </div>
+            {allowRegistration && (
+              <div className="text-center text-sm text-muted-foreground">
+                {isRegister ? "已有账号？" : "没有账号？"}
+                <button
+                  type="button"
+                  className="text-primary hover:underline ml-1"
+                  onClick={() => { setMode(isRegister ? "login" : "register"); setError(null) }}
+                >
+                  {isRegister ? "去登录" : "注册新账号"}
+                </button>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>

@@ -110,6 +110,14 @@ class UpdateMeRequest(BaseModel):
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+@router.get("/registration")
+async def api_registration_status():
+    """Public — whether self-service registration is open. Frontend hides the
+    register entry when false, instead of discovering it on a 403 at submit."""
+    cfg = state.config
+    return {"allow_registration": bool(cfg and cfg.auth.allow_registration)}
+
+
 @router.post("/login")
 async def api_login(body: LoginRequest):
     token = await login(body.username, body.password)

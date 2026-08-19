@@ -115,6 +115,10 @@ export const authApi = {
   me: async () => {
     return get<AuthUser>("/api/auth/me")
   },
+
+  registrationStatus: async () => {
+    return get<{ allow_registration: boolean }>("/api/auth/registration")
+  },
 }
 
 // User management API (admin / super admin)
