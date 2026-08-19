@@ -457,20 +457,31 @@ def _resolve_messages_vars(messages: list[dict], instance_dir: Path) -> list[dic
         return _resolve_value(v, mention_source)
 
     resolved = [dict(m) for m in messages]
-    prev_joined = ""
+
+    # —— 阶段一：仅展开文件切片 {{...}}（楼层 glob/path/组装器等）→ 得到稳定正文 ——
+    # 不用 resolve_variables（那会连 @mention 一起处理、并展开其 return 值里的 {{}}，破坏
+    # ${@mention ...: "{{file}}"} 的字面量结构）。这里只 resolve_placeholders，把切片全展开成
+    # 真实正文（楼层历史、设定文件等），作为稍后 @mention 的判定依据。
+    for m in resolved:
+        c = m.get("content")
+        if isinstance(c, str) and "{{" in c:
+            m["content"] = resolve_placeholders(c, instance_dir)
+
+    # —— 阶段二：跨消息快照 + 完整占位符（含 @mention）判定 ——
+    # 快照 = 阶段一展开后全部消息正文剥壳拼接（跨消息全局匹配源）。@mention 用它对全部条目做
+    # 命中判定：命中→注入 return 值（含 {{}}/变量再由 resolve_variables 展开）；未命中→保留。
+    snapshot = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
     for _ in range(MAX_RESOLVE_DEPTH):
-        before = [_msg_content_str(m) for m in resolved]
-        # @mention 匹配源（prev_joined）：剥掉最外层占位符外壳（含 ${@note ...} 注释），
-        # 避免占位符文件名/指令文字/注释污染关键词命中判定（如 {{zzz.md}} 的名字 "zzz" 误命中）
-        joined = "\n".join(strip_placeholder_shells(s) for s in before)
+        prev_snapshot = snapshot
         for m in resolved:
-            if m.get("content") is not None:
-                m["content"] = _resolve_content(m["content"], joined)
-        after = [_msg_content_str(m) for m in resolved]
-        if after == before:
+            c = m.get("content")
+            if c is not None:
+                m["content"] = _resolve_content(c, snapshot)
+        snapshot = "\n".join(strip_placeholder_shells(_msg_content_str(m)) for m in resolved)
+        if snapshot == prev_snapshot:
             break
-        prev_joined = joined
-    # 跨消息所有轮结束：统一销毁仍未命中的 @mention 残留
+
+    # —— 阶段三：最终统一销毁仍未命中的 @mention 残留 ——
     for m in resolved:
         c = m.get("content")
         if isinstance(c, str) and "${" in c:
