@@ -23,6 +23,7 @@ class UserInfo:
     user_id: str
     username: str
     display_name: str
+    role: str = "user"
 
 
 def configure_jwt(secret_key: str) -> None:
@@ -69,6 +70,7 @@ async def validate_token(token: str) -> Optional[UserInfo]:
         user_id=account["id"],
         username=account["username"],
         display_name=account["display_name"],
+        role=account.get("role") or "user",
     )
 
 

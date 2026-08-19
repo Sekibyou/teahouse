@@ -1,6 +1,5 @@
 @echo off
 REM Production/LAN deploy: backend serves built frontend.
-REM Phone hits http://192.168.10.88:8888 (single port, same origin).
 REM Usage:
 REM   run-server.bat         Start with current dist (skip build)
 REM   run-server.bat --build Rebuild frontend first, then start

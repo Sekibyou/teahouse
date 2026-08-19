@@ -48,14 +48,14 @@ teahouse/                主仓库
 
 ## 启动
 
-首次运行会自动生成 `teahouse.yaml`（JWT secret / master key），并创建默认管理员账号 `admin / teahouse2025+.Aa`。
+首次运行会自动生成 `teahouse.yaml`（JWT secret / master key / 超级管理员密码）。超级管理员用户名固定为 `admin`，密码唯一记录在 `teahouse.yaml` 的 `auth.admin_password`（首次随机生成，启动时以 yaml 为准覆盖库中密码），默认不开启注册（`auth.allow_registration`）。
 
 ### 生产模式（单端口，推荐）
 
-后端托管已构建的前端，手机 / 局域网可直接访问：
+后端托管已构建的前端。默认只绑定 `127.0.0.1`（本机访问，更安全）；需要局域网 / 手机访问时，把 `teahouse.yaml` 的 `server.host` 改为 `0.0.0.0`：
 
 ```bash
-run-server.bat          # 用现有 dist 启动（http://192.168.10.88:8888）
+run-server.bat          # 用现有 dist 启动
 run-server.bat --build  # 先构建前端再启动
 ```
 
@@ -70,7 +70,7 @@ dev-frontend.bat        # 前端 Vite dev 服务器，5173 端口
 
 ## 使用流程
 
-1. 用默认账号登录，前往「设置」配置 LLM API key 与模型。
+1. 用 `teahouse.yaml` 中 `auth.admin_password` 的超级管理员密码登录账号 `admin`，前往「设置」配置 LLM API key 与模型。
 2. 在首页导入或创建**原型**，或直接基于原型**实例化**出一个实例。
 3. 进入实例开始**游玩**：导演驱动 LLM 写作，逐楼层推进；左侧「返回大厅」随时退出。
 4. 楼层完成可触发 git 提交，支持分支切换实现剧情分叉存档。

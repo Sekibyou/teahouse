@@ -78,9 +78,12 @@
 
 ## 认证
 
-API 请求需携带 `Bearer <JWT>` token。首次运行自动创建默认管理员账号 `admin / teahouse2025+.Aa`。
-用户可通过 `/api/auth/login` 获取 token，用于后续请求。
-LLM API key 加密存储（Fernet）在数据库中，与用户绑定。`teahouse.yaml` 只存储 JWT signing key 和加密用的 master key。
+API 请求需携带 `Bearer <JWT>` token。用户通过 `/api/auth/login` 获取 token。
+用户分三层角色：**super**（固定用户名 `admin`，唯一兜底，不可删/不可降级）、**admin**（可管理普通用户，但只能给普通用户改名/改密/删，不能任免管理员）、**user**（仅自服务）。
+super admin 密码唯一记录在 `teahouse.yaml` 的 `auth.admin_password`（首次运行随机生成写回,缺失则随机补齐），**启动时以 yaml 为准无条件覆盖库中该账户密码**；`auth.allow_registration`（默认 false）控制 `/api/auth/register` 是否开放。
+`teahouse.yaml` 只存储 JWT signing key、加密用 master key、server 绑定（默认 `127.0.0.1` 本机安全,需局域网访问改 `0.0.0.0`）与 auth 密码。
+LLM API key 加密存储（Fernet）在数据库中，与用户绑定。
+用户管理 API 在 `/api/users`（super/admin 可访问），`UserInfo.role` 由 JWT 每次校验时从 DB 现查，故角色变更即时生效。
 
 ## 核心工作流
 

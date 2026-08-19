@@ -8,7 +8,7 @@ import {
   PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
-  Eye, Code2,
+  Eye, Code2, Users,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -21,6 +21,7 @@ import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import { useAuth, isAdminRole } from "@/stores/authStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
 import { SandboxFileList } from "@/components/SandboxFileList"
@@ -46,6 +47,7 @@ export function WorkspacePage() {
   const isMobile = useIsMobile()
   const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
+  const { user: currentUser } = useAuth()
 
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
@@ -662,6 +664,15 @@ export function WorkspacePage() {
             <FileText className="h-4 w-4" />
             文件清单
           </button>
+          {isAdminRole(currentUser?.role) && (
+            <button
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+              onClick={() => { openSettings("users"); setShowMobileMenu(false) }}
+            >
+              <Users className="h-4 w-4" />
+              用户管理
+            </button>
+          )}
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
             onClick={() => { openSettings(); setShowMobileMenu(false) }}

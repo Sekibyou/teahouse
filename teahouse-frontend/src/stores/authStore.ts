@@ -5,6 +5,11 @@ export interface User {
   user_id: string
   username: string
   display_name: string
+  role: "super" | "admin" | "user"
+}
+
+export function isAdminRole(role?: string): boolean {
+  return role === "super" || role === "admin"
 }
 
 interface AuthState {

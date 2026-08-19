@@ -3,7 +3,7 @@ import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
-  BookOpen, Package,
+  BookOpen, Package, Users,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,8 @@ import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import { useAuth, isAdminRole } from "@/stores/authStore"
+import { UserManagementPanel } from "@/components/UserManagement"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 import type { MySkill, SkillPreview, MyPackage, PackagePreview } from "@/lib/api"
 
@@ -25,7 +27,7 @@ interface SettingsDialogProps {
   defaultTab?: TabKey
 }
 
-type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills" | "packages"
+type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills" | "packages" | "users"
 
 const API_FORMAT_OPTIONS = [
   { value: "openai", label: "openai" },
@@ -33,7 +35,7 @@ const API_FORMAT_OPTIONS = [
   { value: "anthropic", label: "anthropic" },
 ]
 
-const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string }[] = [
+const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string; adminOnly?: boolean }[] = [
   { key: "models", Icon: Server, label: "模型池" },
   { key: "profiles", Icon: Sliders, label: "参数预设" },
   { key: "presets", Icon: FileText, label: "导演提示词预设" },
@@ -42,6 +44,7 @@ const TAB_ITEMS: { key: TabKey; Icon: typeof Server; label: string }[] = [
   { key: "plugins", Icon: Puzzle, label: "插件管理" },
   { key: "skills", Icon: BookOpen, label: "Skill 管理" },
   { key: "packages", Icon: Package, label: "提示词包" },
+  { key: "users", Icon: Users, label: "用户管理", adminOnly: true },
 ]
 
 const permLabels: Record<string, string> = {
@@ -76,6 +79,10 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const isMobile = useIsMobile()
   useDialogBackClose(open, onClose)
   const [tabMenuOpen, setTabMenuOpen] = useState(false)
+
+  // 「用户管理」tab 仅登录用户是管理员/超级管理员时可见
+  const { user: currentUser } = useAuth()
+  const visibleTabs = TAB_ITEMS.filter((t) => !t.adminOnly || isAdminRole(currentUser?.role))
 
   // ─── Provider state ───
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -823,13 +830,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   onClick={() => setTabMenuOpen((v) => !v)}
                   aria-label="切换设置分类"
                 >
-                  {(() => { const cur = TAB_ITEMS.find((t) => t.key === tab); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
+                  {(() => { const cur = visibleTabs.find((t) => t.key === tab); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
                 </button>
                 {tabMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setTabMenuOpen(false)} />
                     <div className="absolute right-1 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[150px]">
-                      {TAB_ITEMS.map(({ key, Icon, label }) => (
+                      {visibleTabs.map(({ key, Icon, label }) => (
                         <button
                           key={key}
                           className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-muted ${
@@ -874,7 +881,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
             {!isMobile && (
             <div className="w-44 shrink-0 border-r border-border flex flex-col bg-muted/10">
               <div className="flex flex-col gap-0.5 p-2">
-                {TAB_ITEMS.map(({ key, Icon, label }) => (
+                {visibleTabs.map(({ key, Icon, label }) => (
                   <button
                     key={key}
                     className={`flex items-center gap-2 px-3 py-2.5 text-xs rounded-md transition-colors text-left whitespace-nowrap ${
@@ -2059,6 +2066,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     </div>
                   </div>
                 )
+              )}
+
+              {/* ── Tab 9: User Management (admin/super only) ── */}
+              {tab === "users" && (
+                <div className="p-5 space-y-4">
+                  <UserManagementPanel />
+                </div>
               )}
             </div>
           </div>

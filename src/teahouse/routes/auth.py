@@ -9,7 +9,26 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..database.auth import configure_jwt, login, validate_token, UserInfo
-from ..database.users import create_user, get_user_by_username, update_user
+from ..database.users import (
+    create_user,
+    get_user_by_id,
+    get_user_by_username,
+    update_user,
+    verify_password,
+    ROLE_USER,
+)
+
+# use the shared in-memory config for the registration toggle
+from ..state import state
+
+
+def _user_payload(u: dict) -> dict:
+    return {
+        "user_id": u["id"],
+        "username": u["username"],
+        "display_name": u["display_name"],
+        "role": u.get("role") or "user",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -23,6 +42,22 @@ async def require_user(request: Request) -> UserInfo:
     user = await validate_token(auth[7:])
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+async def require_super(request: Request) -> UserInfo:
+    """Require the super admin role (fixed username 'admin')."""
+    user = await require_user(request)
+    if user.role != "super":
+        raise HTTPException(status_code=403, detail="Super admin privileges required")
+    return user
+
+
+async def require_admin_or_super(request: Request) -> UserInfo:
+    """Require admin or super role (any user that can manage other users)."""
+    user = await require_user(request)
+    if user.role not in ("super", "admin"):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     return user
 
 
@@ -83,17 +118,16 @@ async def api_login(body: LoginRequest):
     user = await get_user_by_username(body.username)
     return {
         "token": token,
-        "user": {
-            "user_id": user["id"],
-            "username": user["username"],
-            "display_name": user["display_name"],
-        },
+        "user": _user_payload(user),
     }
 
 
 @router.post("/register")
 async def api_register(body: RegisterRequest):
-    user = await create_user(body.username, body.password, body.display_name)
+    cfg = state.config
+    if cfg is None or not cfg.auth.allow_registration:
+        raise HTTPException(status_code=403, detail="注册功能未开放，请联系管理员在 teahouse.yaml 中开启")
+    user = await create_user(body.username, body.password, body.display_name, role=ROLE_USER)
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")
 
@@ -118,11 +152,7 @@ async def api_register(body: RegisterRequest):
     token = await login(body.username, body.password)
     return {
         "token": token,
-        "user": {
-            "user_id": user["id"],
-            "username": user["username"],
-            "display_name": user["display_name"],
-        },
+        "user": _user_payload(user),
     }
 
 
@@ -132,6 +162,7 @@ async def api_get_me(user: UserInfo = Depends(require_user)):
         "user_id": user.user_id,
         "username": user.username,
         "display_name": user.display_name,
+        "role": user.role,
     }
 
 
@@ -141,7 +172,12 @@ async def api_update_me(body: UpdateMeRequest, user: UserInfo = Depends(require_
     if body.display_name is not None:
         await update_user(user.user_id, display_name=body.display_name)
         updated = True
-    if body.old_password and body.new_password:
+    if body.new_password:
+        if not body.old_password:
+            raise HTTPException(status_code=400, detail="Old password required to change password")
+        account = await get_user_by_id(user.user_id)
+        if not account or not verify_password(body.old_password, account["hashed_password"]):
+            raise HTTPException(status_code=400, detail="Old password incorrect")
         ok = await update_user(user.user_id, password=body.new_password)
         if not ok:
             raise HTTPException(status_code=400, detail="Password change failed")

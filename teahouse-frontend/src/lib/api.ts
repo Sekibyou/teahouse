@@ -90,23 +90,55 @@ async function del<T>(endpoint: string): Promise<RequestResult<T>> {
 }
 
 // Auth API
+export interface AuthUser {
+  user_id: string
+  username: string
+  display_name: string
+  role: "super" | "admin" | "user"
+}
+
 export const authApi = {
   login: async (username: string, password: string) => {
-    return post<{ user: { user_id: string; username: string; display_name: string }; token: string }>(
+    return post<{ user: AuthUser; token: string }>(
       "/api/auth/login",
       { username, password }
     )
   },
 
   register: async (username: string, password: string, displayName?: string) => {
-    return post<{ user: { user_id: string; username: string; display_name: string }; token: string }>(
+    return post<{ user: AuthUser; token: string }>(
       "/api/auth/register",
       { username, password, display_name: displayName }
     )
   },
 
   me: async () => {
-    return get<{ user: { user_id: string; username: string; display_name: string } }>("/api/auth/me")
+    return get<AuthUser>("/api/auth/me")
+  },
+}
+
+// User management API (admin / super admin)
+export interface ManagedUser {
+  id: string
+  username: string
+  display_name: string
+  role: "super" | "admin" | "user"
+  is_active: boolean
+  created_at: number
+}
+
+export const usersApi = {
+  list: async () => {
+    return get<ManagedUser[]>("/api/users")
+  },
+  create: async (body: { username: string; password: string; display_name?: string; role?: string }) => {
+    return post<ManagedUser>("/api/users", body)
+  },
+  update: async (id: string, body: { display_name?: string; password?: string; role?: string; old_password?: string }) => {
+    return patch<ManagedUser>(`/api/users/${id}`, body)
+  },
+  delete: async (id: string) => {
+    return del<{ status: string }>(`/api/users/${id}`)
   },
 }
 

@@ -27,7 +27,7 @@ from .director_system import assemble_system_prompt, build_template_variables, r
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
-from .database.users import ensure_default_admin, list_users
+from .database.users import sync_super_admin, list_users
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
 from .database.llm_providers import configure_crypto as configure_provider_crypto
 from .database.llm_slots import get_all_slot_bindings, get_slot_binding, get_slot_binding_resolved
@@ -43,6 +43,7 @@ from .database.workspaces import (
     BUILTIN_PROTOTYPE_REGISTRY,
 )
 from .routes.auth import router as auth_router
+from .routes.users import router as users_router
 from .routes.llm_configs import router as llm_configs_router
 from .routes.llm_providers import router as llm_providers_router
 from .routes.llm_models import router as llm_models_router
@@ -75,8 +76,8 @@ async def lifespan(app: FastAPI):
     set_db_path(cfg.db.path)
     await run_migrations()
 
-    # 3. Ensure default admin exists (after migrations add safe_name column)
-    await ensure_default_admin()
+    # 3. Ensure the super admin account exists with the yaml password applied
+    await sync_super_admin(cfg.auth.admin_password)
 
     # 4. Init crypto / JWT
     configure_jwt(cfg.jwt_secret)
@@ -138,7 +139,7 @@ app = FastAPI(title="Teahouse", version="0.1.0", lifespan=lifespan)
 # CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://localhost:5173", "http://localhost:5174", "http://192.168.10.110:5173", "http://192.168.10.88:5173"],
+    allow_origins=["http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,6 +147,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(llm_configs_router)  # deprecated — kept for backward compat
 app.include_router(llm_providers_router)
 app.include_router(llm_models_router)

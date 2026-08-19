@@ -10,6 +10,17 @@ import bcrypt
 from .connection import generate_uuid, current_timestamp, execute, fetch_one, fetch_all
 
 
+# ===== Roles =====
+
+ROLE_SUPER = "super"
+ROLE_ADMIN = "admin"
+ROLE_USER = "user"
+ROLES = (ROLE_SUPER, ROLE_ADMIN, ROLE_USER)
+
+# A role is an admin if it can manage other users (admin hierarchy >= admin)
+ADMIN_ROLES = (ROLE_SUPER, ROLE_ADMIN)
+
+
 # ===== Safe name utilities =====
 
 def make_safe_name(name: str) -> str:
@@ -54,8 +65,11 @@ async def create_user(
     username: str,
     password: str,
     display_name: str = "",
+    role: str = ROLE_USER,
 ) -> Optional[dict]:
     """Create a new user. Returns None if username already exists."""
+    if role not in ROLES:
+        raise ValueError(f"invalid role: {role}")
     existing = await fetch_one("SELECT id FROM users WHERE username = ?", (username,))
     if existing:
         return None
@@ -66,8 +80,8 @@ async def create_user(
     safe_name = await ensure_unique_safe_name(username)
 
     await execute(
-        "INSERT INTO users (id, username, safe_name, display_name, hashed_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user_id, username, safe_name, display_name, hashed, now, now),
+        "INSERT INTO users (id, username, safe_name, display_name, hashed_password, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, safe_name, display_name, hashed, role, now, now),
     )
 
     # Auto-create default workspace for the new user
@@ -97,6 +111,7 @@ async def update_user(
     display_name: Optional[str] = None,
     password: Optional[str] = None,
     is_active: Optional[bool] = None,
+    role: Optional[str] = None,
 ) -> bool:
     """Update user fields. Only provided fields are changed."""
     fields = []
@@ -111,6 +126,11 @@ async def update_user(
     if is_active is not None:
         fields.append("is_active = ?")
         values.append(1 if is_active else 0)
+    if role is not None:
+        if role not in ROLES:
+            raise ValueError(f"invalid role: {role}")
+        fields.append("role = ?")
+        values.append(role)
 
     if not fields:
         return False
@@ -150,17 +170,48 @@ async def set_preference(user_id: str, key: str, value) -> dict:
 
 
 async def list_users() -> list[dict]:
-    return await fetch_all("SELECT id, username, display_name, is_active, created_at FROM users ORDER BY created_at")
+    return await fetch_all(
+        "SELECT id, username, display_name, role, is_active, created_at FROM users ORDER BY role = 'super' DESC, role = 'admin' DESC, created_at"
+    )
 
 
 async def ensure_default_admin() -> None:
-    """Create default admin account if no users exist."""
-    users = await fetch_all("SELECT COUNT(*) as cnt FROM users")
-    if users and users[0]["cnt"] > 0:
-        return
-    await create_user(
-        username="admin",
-        password="teahouse2025+.Aa",
-        display_name="Admin",
-    )
-    print("[teahouse] default admin account created (admin / teahouse2025+.Aa)")
+    """Legacy no-op kept for import compatibility; replaced by sync_super_admin."""
+    return
+
+
+async def sync_super_admin(password: Optional[str] = None) -> Optional[dict]:
+    """Ensure the sole super admin (username 'admin') exists and is functional.
+
+    The password passed here — sourced from teahouse.yaml — is the authoritative
+    password for the super admin, so it is unconditionally applied to the stored
+    hash on every startup. The account is also forced active so the system can
+    never be left without a working recovery admin.
+
+    Returns the super admin row, or None if it could not be created.
+    """
+    admin = await get_user_by_username("admin")
+
+    if admin is None:
+        if password is None:
+            return None
+        return await create_user(
+            username="admin",
+            password=password,
+            display_name="Admin",
+            role=ROLE_SUPER,
+        )
+
+    # Promote to super in case it was created/left at a lower role
+    if admin["role"] != ROLE_SUPER:
+        await update_user(admin["id"], role=ROLE_SUPER)
+
+    # Always re-apply the yaml password (yaml is the single source of truth)
+    if password is not None:
+        await update_user(admin["id"], password=password)
+
+    # Never leave the recovery account disabled
+    if not admin["is_active"]:
+        await update_user(admin["id"], is_active=True)
+
+    return await get_user_by_id(admin["id"])

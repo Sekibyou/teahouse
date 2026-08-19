@@ -1,8 +1,8 @@
-import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench } from "lucide-react"
+import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, Users } from "lucide-react"
 import { useEffect } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
-import { useAuth, useAuthActions } from "@/stores/authStore"
+import { useAuth, useAuthActions, isAdminRole } from "@/stores/authStore"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -127,6 +127,11 @@ export function MainLayout() {
             <User className="h-4 w-4" />
             <span>{user?.display_name || user?.username}</span>
           </div>
+          {isAdminRole(user?.role) && (
+            <Button variant="ghost" size="icon" onClick={() => openSettings("users")} title="用户管理">
+              <Users className="h-4 w-4" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" onClick={toggleTheme}>
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>

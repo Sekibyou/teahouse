@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { Loader2, Eye, EyeOff, AlertTriangle } from "lucide-react"
+import { Loader2, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -65,7 +65,6 @@ export function LoginPage() {
   }
 
   const isRegister = mode === "register"
-  const isDefaultAdmin = username === "admin" && password === "admin123"
 
   return (
     <div className="h-full flex items-center justify-center bg-muted/30">
@@ -126,13 +125,6 @@ export function LoginPage() {
                 </button>
               </div>
             </div>
-
-            {isDefaultAdmin && (
-              <div className="flex items-start gap-2 text-sm text-yellow-600 bg-yellow-500/10 border border-yellow-500/30 px-3 py-2 rounded-md">
-                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>检测到默认管理员账号，请立即修改密码</span>
-              </div>
-            )}
 
             {error && (
               <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

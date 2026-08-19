@@ -26,7 +26,7 @@ class LLMConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    host: str = Field(default="0.0.0.0")
+    host: str = Field(default="127.0.0.1", description="Bind address; 127.0.0.1 is the safe default (localhost only), set 0.0.0.0 to expose on the LAN")
     port: int = Field(default=8888, ge=1024, le=65535)
 
     @field_validator("port", mode="before")
@@ -48,6 +48,20 @@ class DbConfig(BaseModel):
     workspace_base: str = Field(default="data", description="Workspace data directory path")
 
 
+class AuthConfig(BaseModel):
+    admin_password: str = Field(
+        default="",
+        description="Super admin (username 'admin') password — the ONLY source of truth for it. "
+        "Set in teahouse.yaml; if missing/empty it is auto-generated and written back on startup. "
+        "On every startup this value overrides the password stored in the database.",
+    )
+    allow_registration: bool = Field(
+        default=False,
+        description="Whether self-service registration via POST /api/auth/register is open. "
+        "Closed by default; enable to allow anyone to create a regular user account.",
+    )
+
+
 def _project_root() -> Path:
     """Absolute project root (two levels above this package's directory).
 
@@ -65,6 +79,7 @@ class Config(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     db: DbConfig = Field(default_factory=DbConfig)
     llm: Optional[LLMConfig] = None
+    auth: AuthConfig = Field(default_factory=AuthConfig)
 
     @classmethod
     def default_path(cls) -> Path:
@@ -102,6 +117,13 @@ class Config(BaseModel):
                 data["master_key"] = cfg.master_key
                 changed = True
 
+            # Auto-fill super admin password if missing (yaml is its only source of truth)
+            if not cfg.auth.admin_password:
+                pw = secrets.token_urlsafe(16)
+                cfg.auth.admin_password = pw
+                data.setdefault("auth", {})["admin_password"] = pw
+                changed = True
+
             if changed:
                 with open(path, "w", encoding="utf-8") as f:
                     yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -110,10 +132,12 @@ class Config(BaseModel):
             cfg._anchor_paths()
             return cfg
 
-        # first run: generate jwt secret and master key only (no default LLM config)
+        # first run: generate jwt secret, master key, and a random super admin password
+        admin_password = secrets.token_urlsafe(16)
         cfg = cls(
             jwt_secret=secrets.token_urlsafe(32),
             master_key=generate_master_key(),
+            auth=AuthConfig(admin_password=admin_password),
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -125,6 +149,9 @@ class Config(BaseModel):
                 sort_keys=False,
             )
         print(f"[teahouse] config created at {path}")
+        # Print the super admin password ONLY on first-time config creation, so the
+        # owner can log in once; afterwards it lives solely in teahouse.yaml.
+        print(f"[teahouse] 超级管理员 admin 初始密码: {admin_password} (已写入 {path})")
         cfg._anchor_paths()
         return cfg
 
@@ -142,10 +169,13 @@ def _migrate_config(data: dict) -> bool:
         data.setdefault("db", {})["workspace_base"] = "data"
         changed = True
     if "server" not in data:
-        data["server"] = {"host": "0.0.0.0", "port": 8888}
+        data["server"] = {"host": "127.0.0.1", "port": 8888}
         changed = True
     if "jwt_secret" not in data and "secret_key" in data:
         # Carry over existing secret_key to jwt_secret, drop the old name
         data["jwt_secret"] = data.pop("secret_key")
+        changed = True
+    if "auth" not in data:
+        data["auth"] = {"admin_password": "", "allow_registration": False}
         changed = True
     return changed
