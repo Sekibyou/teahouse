@@ -18,7 +18,7 @@ class AppState:
     @property
     def workspace_base(self) -> str:
         if self.config:
-            return self.config.db.workspace_base
+            return self.config.workspace_base
         return "data"
 
     def broadcast(self, event: str, data: object) -> None:

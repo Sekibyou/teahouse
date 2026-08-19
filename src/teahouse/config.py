@@ -43,11 +43,6 @@ class ServerConfig(BaseModel):
         return v
 
 
-class DbConfig(BaseModel):
-    path: str = Field(default="data/teahouse.db", description="SQLite database file path")
-    workspace_base: str = Field(default="data", description="Workspace data directory path")
-
-
 class AuthConfig(BaseModel):
     admin_password: str = Field(
         default="",
@@ -77,27 +72,35 @@ class Config(BaseModel):
     jwt_secret: str = Field(description="JWT signing key, auto-generated on first run")
     master_key: str = Field(default="", description="Master key for LLM API key encryption; auto-generated if empty")
     server: ServerConfig = Field(default_factory=ServerConfig)
-    db: DbConfig = Field(default_factory=DbConfig)
     llm: Optional[LLMConfig] = None
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    workspace_base: str = Field(
+        default="data",
+        description="User data root directory. Relative paths anchor to the project root; "
+        "absolute paths (e.g. C:\\data) are used as-is. The SQLite DB lives at "
+        "<workspace_base>/teahouse.db.",
+    )
 
     @classmethod
     def default_path(cls) -> Path:
         return _project_root() / "teahouse.yaml"
 
     def _anchor_paths(self) -> None:
-        """Resolve relative db/workspace paths against the project root.
+        """Resolve the workspace_base against the project root.
 
-        Makes the service CWD-independent: db path and workspace_base are
-        anchored to the project root instead of whatever directory the process
-        was launched from (see _project_root for the failure this prevents).
-        Absolute paths configured explicitly are respected as-is.
+        Makes the service CWD-independent: instance data is anchored to the
+        project root instead of whatever directory the process was launched
+        from (see _project_root for the failure this prevents). Absolute paths
+        configured explicitly are respected as-is.
         """
         root = _project_root()
-        if not os.path.isabs(self.db.path):
-            self.db.path = str(root / self.db.path)
-        if not os.path.isabs(self.db.workspace_base):
-            self.db.workspace_base = str(root / self.db.workspace_base)
+        if not os.path.isabs(self.workspace_base):
+            self.workspace_base = str(root / self.workspace_base)
+
+    @property
+    def db_path(self) -> str:
+        """Absolute path to the SQLite database (always inside workspace_base)."""
+        return str(Path(self.workspace_base) / "teahouse.db")
 
     @classmethod
     def load_or_create(cls, path: Optional[Path] = None) -> "Config":
@@ -162,11 +165,8 @@ def _migrate_config(data: dict) -> bool:
     if "master_key" not in data:
         data["master_key"] = ""
         changed = True
-    if "db" not in data:
-        data["db"] = {"path": "data/teahouse.db", "workspace_base": "data"}
-        changed = True
-    if "workspace_base" not in data.get("db", {}):
-        data.setdefault("db", {})["workspace_base"] = "data"
+    if "workspace_base" not in data:
+        data["workspace_base"] = "data"
         changed = True
     if "server" not in data:
         data["server"] = {"host": "127.0.0.1", "port": 8888}

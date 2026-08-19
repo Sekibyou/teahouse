@@ -25,7 +25,7 @@ teahouse/                主仓库
 ├── teahouse-frontend/   前端（Vite + React）
 ├── plugins/             全局插件模板
 ├── docs/                文档
-├── data/                运行期生成的实例数据（gitignore）
+├── data/                用户数据根（实例/DB 等运行期数据，gitignore；位置由 teahouse.yaml 的 workspace_base 指定，支持绝对路径放别处）
 └── *.bat                启动脚本
 ```
 

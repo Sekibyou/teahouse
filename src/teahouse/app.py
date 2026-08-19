@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
     state.config = cfg
 
     # 2. Init database
-    set_db_path(cfg.db.path)
+    set_db_path(cfg.db_path)
     await run_migrations()
 
     # 3. Ensure the super admin account exists with the yaml password applied
