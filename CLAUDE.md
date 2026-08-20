@@ -41,10 +41,12 @@
 
 > **入口（推荐直接调 python 脚本）**：`.venv\Scripts\python.exe build\build_release.py` —— 一条命令从任意状态（干净/半成品）重建出可交付的 `dist\Teahouse\`。
 > **bat 仅是给本人双击方便**：`build\build_release.bat` 只负责定位 venv python、转发参数、结束 `pause` 停留窗口，逻辑极简（bat 内 CRLF 行尾勿改回 LF）。
-> **分步参数**：`build_release.py [--check] [--frontend] [--backend] [--verify]`——带任一参数只跑对应步骤；无参数 = 全跑。
+> **分步参数**：`build_release.py [--check] [--frontend] [--backend] [--verify] [--zip]`——带任一参数只跑对应步骤；无参数 = 全跑。`--zip` 额外产出 `dist\Teahouse-<ver>-with-git.zip`（含 git，新用户）与 `dist\Teahouse-<ver>.zip`（不含 git，更新包），版本号单源 = `pyproject.toml`。
 > **改任何后端 `src/` 或前端 `teahouse-frontend/` 代码后**：重跑该脚本即可（重 build 前端 + 重打包后端），无需手动清理。
 > **产物是干净交付物**：只含 `Teahouse.exe` / `_internal/`（Python+资源）/ `git/`（捆绑 MinGit）/ `dist/`（前端）。**不含** `teahouse.yaml`、`data/`——两者由使用者首次运行自动生成（含随机 super admin 密码），发布包不预置。
 > **构建链路（幂等四步，源码见 build/build_release.py）**：`--check` 校验 venv python/pyinstaller/pnpm/`build\mingit_tmp\cmd\git.exe` → `--frontend` pnpm build → `--backend` pyinstaller --clean（COLLECT 自带清 `dist/Teahouse`，故可重复）→ `--verify` 四要素。MinGit 装配源 = 已解压的 `build\mingit_tmp`（不再要求 tests 下 zip）。
+> **发布流程（用户明确要求"发布"时才执行）**：改代码 → 重 build（含 `--zip` 出双包）→ 手动 `+1` sw.js 版本 → `git add/commit/push` → 打新 tag（如 `v1.0.1`）→ `gh release create <tag> dist\Teahouse-<ver>-with-git.zip dist\Teahouse-<ver>.zip --title ... --notes ...`。更新说明写清"升级用户下裸名包，整目录替换 `_internal/`/`dist/`/exe，保留 teahouse.yaml 与 data/"。
+> **⚠️ 打包/发布须用户明确要求**：**不得在用户未要求时自动跑 build_release / push / 打 tag / 创建 release**——构建与发布是发布判断，一律等用户批准。仅"发布 vX.Y.Z"这类明确指令才执行完整发布链。
 > **打包相关的关键源码钩子**（动 `__file__` 相对路径或资源时必回查）：
 > - `config._project_root()`：冻结态返回 exe 目录（yaml/data 落 exe 旁）；`app._frontend_dist()` 冻结读 exe 旁 `dist/`；`app.main()` 冻结时把 `git/cmd` prepend 进 PATH 让 `git_utils` 命中捆绑 MinGit；入口 `src/teahouse/__main__.py`。
 > - `teahouse.spec`：`collect_data_files("teahouse")` 收 tools.json/director-system/migrations/prototypes；hidden-import `uvicorn` 子模块；后置拷前端到 `dist/`、MinGit 到 `git/`。
