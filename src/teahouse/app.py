@@ -967,7 +967,26 @@ async def status():
 # Dev mode: frontend hot-reloaded by Vite, backend hot-reloaded via --reload.
 DEV_MODE = os.environ.get("TEAHOUSE_DEV") == "1" or "--dev" in sys.argv
 
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "teahouse-frontend" / "dist"
+def _frontend_dist() -> Path:
+    """Resolve the built-frontend directory across source and PyInstaller layouts.
+
+    Source: project-root/teahouse-frontend/dist.
+    PyInstaller (frozen): <exe dir>/dist — the built SPA ships next to Teahouse.exe
+    for a green/portable bundle. Falls back to _MEIPASS/dist if the spec collects
+    it there instead (not our release layout, but harmless).
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+        candidate = base / "dist"
+        if candidate.is_dir():
+            return candidate
+        meipass = Path(getattr(sys, "_MEIPASS", base)) / "dist"
+        if meipass.is_dir():
+            return meipass
+    return Path(__file__).resolve().parents[2] / "teahouse-frontend" / "dist"
+
+
+FRONTEND_DIST = _frontend_dist()
 _API_PREFIXES = ("/api", "/v1", "/events", "/docs", "/redoc", "/openapi.json")
 
 
@@ -1007,6 +1026,19 @@ async def frontend_spa(full_path: str) -> FileResponse:
 
 def main() -> None:
     reload_flag = "--reload" in sys.argv or DEV_MODE
+
+    # Bundled git: in a PyInstaller bundle, prepend <exe dir>/git/cmd to PATH so
+    # subprocess git calls (git_utils) hit the shipped MinGit instead of relying
+    # on the user's environment. No-op in source mode (no exe dir / no git sibling).
+    if getattr(sys, "frozen", False):
+        git_dir = Path(sys.executable).resolve().parent / "git"
+        git_cmd = git_dir / "cmd"
+        if git_cmd.is_dir():
+            os.environ["PATH"] = str(git_cmd) + os.pathsep + os.environ.get("PATH", "")
+            print(f"[teahouse] using bundled git: {git_dir}")
+        else:
+            print("[teahouse] bundled git/ not found — falling back to system git")
+
     cfg = Config.load_or_create()
     import uvicorn
     uvicorn.run(

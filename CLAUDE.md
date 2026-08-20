@@ -37,6 +37,21 @@
 
 可嵌入库（核心逻辑封装为库，同时也提供独立服务模式入口）。
 
+## Release 打包（幂等构建）
+
+> **入口（推荐直接调 python 脚本）**：`.venv\Scripts\python.exe build\build_release.py` —— 一条命令从任意状态（干净/半成品）重建出可交付的 `dist\Teahouse\`。
+> **bat 仅是给本人双击方便**：`build\build_release.bat` 只负责定位 venv python、转发参数、结束 `pause` 停留窗口，逻辑极简（bat 内 CRLF 行尾勿改回 LF）。
+> **分步参数**：`build_release.py [--check] [--frontend] [--backend] [--verify]`——带任一参数只跑对应步骤；无参数 = 全跑。
+> **改任何后端 `src/` 或前端 `teahouse-frontend/` 代码后**：重跑该脚本即可（重 build 前端 + 重打包后端），无需手动清理。
+> **产物是干净交付物**：只含 `Teahouse.exe` / `_internal/`（Python+资源）/ `git/`（捆绑 MinGit）/ `dist/`（前端）。**不含** `teahouse.yaml`、`data/`——两者由使用者首次运行自动生成（含随机 super admin 密码），发布包不预置。
+> **构建链路（幂等四步，源码见 build/build_release.py）**：`--check` 校验 venv python/pyinstaller/pnpm/`build\mingit_tmp\cmd\git.exe` → `--frontend` pnpm build → `--backend` pyinstaller --clean（COLLECT 自带清 `dist/Teahouse`，故可重复）→ `--verify` 四要素。MinGit 装配源 = 已解压的 `build\mingit_tmp`（不再要求 tests 下 zip）。
+> **打包相关的关键源码钩子**（动 `__file__` 相对路径或资源时必回查）：
+> - `config._project_root()`：冻结态返回 exe 目录（yaml/data 落 exe 旁）；`app._frontend_dist()` 冻结读 exe 旁 `dist/`；`app.main()` 冻结时把 `git/cmd` prepend 进 PATH 让 `git_utils` 命中捆绑 MinGit；入口 `src/teahouse/__main__.py`。
+> - `teahouse.spec`：`collect_data_files("teahouse")` 收 tools.json/director-system/migrations/prototypes；hidden-import `uvicorn` 子模块；后置拷前端到 `dist/`、MinGit 到 `git/`。
+> **⚠️ PWA 缓存版本号**：发布前须手动把 `teahouse-frontend/public/sw.js` 的 `CACHE_NAME` `+1`——构建脚本**不自动改它**（这是发布判断，人负责）。
+> **⚠️ 禁止自动启动服务**：构建/验证完 `dist` 即可，不要长期挂起后端；需要验证读 `build\README_BUILD.md` 的受控测试方式。<br><br>
+
+
 ## 核心概念
 
 | 概念 | 说明 |

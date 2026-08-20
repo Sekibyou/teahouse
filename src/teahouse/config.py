@@ -3,6 +3,7 @@ Teahouse — 配置管理
 """
 import os
 import secrets
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -58,13 +59,21 @@ class AuthConfig(BaseModel):
 
 
 def _project_root() -> Path:
-    """Absolute project root (two levels above this package's directory).
+    """Absolute project root — the base for teahouse.yaml and relative workspace_base.
 
     Deterministic anchor so config/db/workspace paths do NOT depend on the
     process CWD — which previously let a service started from a subdirectory
     (e.g. ``src/``) silently create an empty `data/teahouse.db` shell and a
     duplicate config next to it, distinct from the real one at the project root.
+
+    In source mode it is two levels above this package's directory (the project
+    root). In a PyInstaller bundle it is the directory containing the exe, so
+    teahouse.yaml and the default relative data/ live right next to Teahouse.exe
+    (green/portable layout); `_MEIPASS` (the _internal/ tree) is NOT used here
+    because teahouse.yaml must be user-writable, not inside the read-only bundle.
     """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
 
 
