@@ -26,7 +26,7 @@
       label: '与导演对话',
       dot: '#5b8cff',
       btnBg: '#5b8cff',
-      placeholder: '对 Remielle 说点什么…（Enter 发送）'
+      placeholder: '对导演说点什么…（Enter 发送）'
     },
     gen: {
       label: '生成下一章',
@@ -66,7 +66,7 @@
   var activeSessionLabel = '';  // 活跃子会话的类型名
   var statusTimer = null;
 
-  var PLACEHOLDER_BUSY = 'Remielle 正在执笔…';
+  var PLACEHOLDER_BUSY = '导演正在执笔…';
 
   /* ---- 组件级 hover/disabled 样式（固定色按钮无法用内嵌 :hover，注入 <style>） ---- */
   var styleTag = document.createElement('style');
@@ -736,7 +736,7 @@
     if (currentMode === MODE_CHAT) {
       input.value = '';
       input.blur();
-      flashStatus('已送达，Remielle 记下了');
+      flashStatus('已送达，导演记下了');
       window.Teahouse.openDirector();   // 唤起导演栏，让玩家能看到导演回应
       window.Teahouse.send(text);
     } else if (currentMode === MODE_GEN) {
