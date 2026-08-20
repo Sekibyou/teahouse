@@ -197,24 +197,17 @@ class SessionLoop:
                 self._broadcast_user_msg(None, interrupted_msg, order)
                 self._broadcast_done()
 
-            # 2. Drain queue. Messages are NOT yet persisted — enqueue() only
-            #    put them in memory.  We persist them here, AFTER any previous
-            #    tool_loop has finished, so chronological jsonl order is correct.
-            msgs = self._drain_queue()
+            # 2. Drain queue (fallback). Mid-loop rounds already consume pending
+            #    user messages via check_pending_user() (see _tool_use_loop), so
+            #    this only catches messages queued in the short window between
+            #    the last mid-loop check and loop exit. Idempotent — nothing to
+            #    drain is a normal no-op.
+            msgs = self._drain_and_persist()
             if not msgs:
                 _event_log(self.instance_dir, self.session_id, "loop_idle_exit", {})
                 break  # session idle — loop exits
 
             _event_log(self.instance_dir, self.session_id, "loop_drain", {"count": len(msgs), "preview": [m[1][:100] for m in msgs]})
-
-            # Persist each message to jsonl now, then broadcast the upgrade
-            # event so the frontend can turn the grey bubble white. The order
-            # comes from the reservation made at enqueue time (stored in the
-            # queue entry), so the persisted order matches the queued bubble's
-            # position and the upgrade by order succeeds.
-            for queue_id, content, order in msgs:
-                sessions.append_user(self.instance_dir, content, session_id=self.session_id, order=order)
-                self._broadcast_user_msg(queue_id, content, order)
 
             # 3. Resolve LLM client
             client = await self._resolve_client()
@@ -356,6 +349,7 @@ class SessionLoop:
             enabled_tools=enabled_tools,
             order_allocator=self.next_order,
             reasoning_effort=reasoning_effort,
+            pending_check=self.check_pending_user,
         ):
             task_tracker.stats_tick(self.instance_dir.name, self.session_id)
             stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
@@ -406,6 +400,30 @@ class SessionLoop:
             except asyncio.QueueEmpty:
                 break
         return msgs
+
+    def _drain_and_persist(self) -> list[tuple[str, str, int]]:
+        """Drain queued user messages, persist them to jsonl, and broadcast the
+        queued→done upgrade (grey bubble → white).
+
+        Shared by the mid-loop ``check_pending_user`` hook and run()'s step-2
+        fallback, so persistence + broadcast live in exactly one place and the
+        two paths are idempotent (a second call with an empty queue is a no-op).
+        """
+        msgs = self._drain_queue()
+        for queue_id, content, order in msgs:
+            sessions.append_user(self.instance_dir, content, session_id=self.session_id, order=order)
+            self._broadcast_user_msg(queue_id, content, order)
+        return msgs
+
+    def check_pending_user(self) -> list[tuple[str, str, int]] | None:
+        """Cooperative hook consumed by ``_tool_use_loop`` before each API round.
+
+        Drains + persists any user message queued mid-generation, so the message
+        is sent to the LLM on the very next round instead of waiting for the
+        whole tool loop to finish. Returns ``None`` when nothing is pending.
+        """
+        msgs = self._drain_and_persist()
+        return msgs or None
 
     def _broadcast_done(self) -> None:
         stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)

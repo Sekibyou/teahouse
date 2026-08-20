@@ -538,6 +538,7 @@ async def _tool_use_loop(
     enabled_tools: list[str] | None = None,
     order_allocator=None,
     reasoning_effort: str | None = None,
+    pending_check=None,
 ):
     """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
@@ -554,6 +555,15 @@ async def _tool_use_loop(
     ``reasoning_effort`` (optional) is an internal effort value (none|low|mid|
     high|max). When None it is resolved from the session at run time (child
     meta / main user default); when set it wins.
+
+    ``pending_check`` (optional zero-arg callable) drains user messages queued
+    during generation. It is invoked before every round's API send; when it
+    returns a non-empty list of (queue_id, content, order) tuples, each content
+    is appended to the round's context as a trailing user message so the LLM
+    sees it on this round instead of the user waiting for the whole loop to
+    finish. Persistence + queued→done broadcast are the caller's job (see
+    SessionLoop._drain_and_persist); this function only feeds the drained
+    content into ``msg``.
     """
     api_style = client.api_style
 
@@ -674,6 +684,16 @@ async def _tool_use_loop(
             if sub is not None:
                 ev["sub"] = sub
             return ev
+
+        # ── Phase 0.5: Absorb user messages queued mid-generation ──
+        # Before this round's message is sent to the API, drain any user message
+        # the user typed while the director was busy. The caller (SessionLoop)
+        # has already persisted it + broadcast the queued→done upgrade; here we
+        # only append the content into `msg` so this round's API call includes
+        # it — the user doesn't have to wait for the whole tool loop to finish.
+        _pending_msgs = pending_check() if pending_check else None
+        for _qid, _content, _order in (_pending_msgs or []):
+            msg.append({"role": "user", "content": _content})
 
         # ── Phase 1: Streaming LLM call ──
         collected_text = ""
