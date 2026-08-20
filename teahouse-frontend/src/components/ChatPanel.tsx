@@ -390,7 +390,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               }
               setMessagesFor(sid, (prev) => insertBubbleSorted(prev, userMsg))
             }
-            scrollToBottom()
           } else {
             // Not viewing, or no content: invalidate cache so next switchSession
             // re-pulls from backend (which now has the new records).
@@ -427,7 +426,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
               ...(auto ? autoKindFields(auto) : {}),
             }
             setMessagesFor(sid, (prev) => insertBubbleSorted(prev, queuedMsg))
-            scrollToBottom()
           }
         } catch {
           // ignore malformed events
@@ -532,7 +530,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                 historyCursorRef.current = null
                 historyLoadedRef.current = true
                 loadHistory(true, sid)
-                scrollToBottom()
               }
               return
             }
@@ -1160,18 +1157,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     })
   }, [])
 
-  // 用户聚焦输入框开始输入时，自动吸底一次，让用户看到最新对话
-  const handleInputFocus = useCallback(() => {
-    scrollToBottom()
-  }, [scrollToBottom])
-
-  // Auto-scroll when messages change (except during streaming to avoid forced bottom-pinning)
-  useEffect(() => {
-    if (!isStreaming) {
-      scrollToBottom()
-    }
-  }, [messages, isStreaming, scrollToBottom])
-
   // 布局变化时（tab 栏出现、footer 变化等）滚到底部
   useEffect(() => {
     const el = scrollRef.current
@@ -1272,7 +1257,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
       }
       const label = sid === "main" ? t("mainSession") : t("subSession", { sid })
       toast.success(t("clearedContent", { label }))
-      scrollToBottom()
       return
     }
 
@@ -1285,7 +1269,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         return
       }
       setError("")
-      scrollToBottom()
       patchSessionState(sid, { compacting: true, waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
       try {
         await chatApi.sendDirectorMessage(
@@ -1328,7 +1311,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         toast.error(t("effortSetFail", { err: res.error || t("unknownError") }))
       }
       setInput("")
-      scrollToBottom()
       return
     }
 
@@ -1360,7 +1342,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         toast.error(t("permissionFail", { err: res.error || t("unknownError") }))
       }
       setInput("")
-      scrollToBottom()
       return
     }
 
@@ -1707,7 +1688,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         onToggleExpand={() => setExpandedInput(v => !v)}
         onSend={handleSend}
         onStop={handleStop}
-        onFocus={handleInputFocus}
         isCompacting={isCompacting}
         filteredCommands={filteredCommands}
         commandIndex={commandIndex}
