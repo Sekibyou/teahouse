@@ -91,6 +91,7 @@ export const jaMisc = {
     play: "プレイ",
     backstage: "バックステージ",
     userManagement: "ユーザー管理",
+    newVersionAvailable: "新バージョン {{latest}} が利用可能 — クリックで GitHub リリースを開く",
   },
   wizard: {
     welcomeTitle: "Teahouse へようこそ",

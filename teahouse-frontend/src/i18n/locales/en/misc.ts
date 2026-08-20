@@ -91,6 +91,7 @@ export const enMisc = {
     play: "Play",
     backstage: "Backstage",
     userManagement: "Users",
+    newVersionAvailable: "New version {{latest}} available — click to open GitHub releases",
   },
   wizard: {
     welcomeTitle: "Welcome to Teahouse",

@@ -91,6 +91,7 @@ export const zhMisc = {
     play: "游玩",
     backstage: "后台",
     userManagement: "用户管理",
+    newVersionAvailable: "发现新版本 {{latest}}，点击前往 GitHub 下载",
   },
   wizard: {
     welcomeTitle: "欢迎来到 Teahouse",

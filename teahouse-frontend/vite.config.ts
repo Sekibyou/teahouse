@@ -1,13 +1,21 @@
 import path from "path"
+import { readFileSync } from "node:fs"
 import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const BACKEND_TARGET = process.env.VITE_PROXY_TARGET || "http://127.0.0.1:8888"
 
+// 注入应用版本号（单源：package.json）。"新版本检测"用它和 GitHub 最新 release tag 比对。
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "./package.json"), "utf-8"))
+const APP_VERSION: string = pkg.version || "0.0.0"
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   server: {
     host: true, // 暴露到局域网,手机等设备可通过 http://<局域网IP>:5173 访问
     port: 5173,

@@ -1,4 +1,4 @@
-import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, Users } from "lucide-react"
+import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, Users, Download } from "lucide-react"
 import { useEffect } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -12,6 +12,7 @@ import { SettingsDialog } from "@/components/SettingsDialog"
 import { LoginPage } from "@/pages/LoginPage"
 import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
+import { useNewVersion } from "@/hooks/useNewVersion"
 
 export function MainLayout() {
   const { t } = useTranslation("misc")
@@ -26,6 +27,7 @@ export function MainLayout() {
   const isDark = useThemeStore((s) => s.isDark)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
+  const newVersion = useNewVersion()
 
   useEffect(() => {
     if (isLoading) return
@@ -134,6 +136,19 @@ export function MainLayout() {
           {isAdminRole(user?.role) && (
             <Button variant="ghost" size="icon" onClick={() => openSettings("users")} title={t("layout.userManagement")}>
               <Users className="h-4 w-4" />
+            </Button>
+          )}
+          {newVersion.hasUpdate && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="relative border-primary text-primary animate-pulse"
+              onClick={() => window.open(newVersion.url, "_blank", "noopener,noreferrer")}
+              title={t("layout.newVersionAvailable", { latest: newVersion.latestVersion ?? "" })}
+            >
+              {/* 小圆点提示：有新版 */}
+              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
+              <Download className="h-4 w-4" />
             </Button>
           )}
           <LangSwitcher className="h-8 w-8 p-0 justify-center" />
