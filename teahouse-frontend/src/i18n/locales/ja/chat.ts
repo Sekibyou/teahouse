@@ -54,6 +54,7 @@ export const jaChat = {
   subSessionEnd: "サブセッション終了：",
   waitingDots: "待機中...",
   generatingDots: "生成中...",
+  queuedBubble: "送信待ち",
   tokensUnit: "{{n}} tokens",
   kToken: "{{n}}k",
   effortSetSuccess: "{{label}} の思考強度を {{effort}} に設定しました",

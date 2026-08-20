@@ -54,6 +54,7 @@ export const enChat = {
   subSessionEnd: "Sub-session ended: ",
   waitingDots: "Waiting...",
   generatingDots: "Generating...",
+  queuedBubble: "Pending",
   tokensUnit: "{{n}} tokens",
   kToken: "{{n}}k",
   effortSetSuccess: "{{label}} thinking strength set to {{effort}}",

@@ -54,6 +54,7 @@ export const zhChat = {
   subSessionEnd: "子会话已结束：",
   waitingDots: "等待中...",
   generatingDots: "生成中...",
+  queuedBubble: "待发送",
   tokensUnit: "{{n}} tokens",
   kToken: "{{n}}k",
   effortSetSuccess: "{{label}} 思考强度已设为 {{effort}}",

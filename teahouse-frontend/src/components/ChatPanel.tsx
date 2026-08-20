@@ -1597,6 +1597,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         {(() => {
           // 找到当前最新的 assistant 消息（只有它应显示"生成中"指示器）
           const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id
+          // 待发送（灰色）用户消息：单独垫在"生成中"指示器下方
+          const queuedMsgs = messages.filter(m => m.status === "queued")
           return (
             <>
               {messages.map((msg) => (
@@ -1638,10 +1640,9 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                       )}
                     </div>
                   ) : msg.status === "queued" ? (
-                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      {msg.content}
-                    </div>
+                    // Pending (grey) user messages are rendered at the very bottom,
+                    // below the "generating" indicator — see `queuedMsgs` below.
+                    null
                   ) : (
                     <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                       {msg.content}
@@ -1665,6 +1666,25 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
             </div>
           </div>
         )}
+
+        {/* Pending (grey) user messages — truly bottom, below the generating
+            indicator, since they are the newest input awaiting the LLM. A divider
+            line sits above them to separate queued input from already-sent turns. */}
+        {queuedMsgs.length > 0 && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground/60 pt-1">
+            <div className="flex-1 h-px bg-border" />
+            <span>{t("queuedBubble")}</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+        )}
+        {queuedMsgs.map((msg) => (
+          <div key={msg.id} className="flex justify-end">
+            <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {msg.content}
+            </div>
+          </div>
+        ))}
 
         {error && (
           <div className="text-center">
