@@ -35,7 +35,7 @@ class NetworkRule:
 class PluginManifest:
     id: str
     name: str = ""
-    version: str = "0.1.0"
+    version: str = "1.0.0"
     description: str = ""
     permissions: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
@@ -57,7 +57,7 @@ class PluginManifest:
         return cls(
             id=data["id"],
             name=data.get("name", data["id"]),
-            version=data.get("version", "0.1.0"),
+            version=data.get("version", "1.0.0"),
             description=data.get("description", ""),
             permissions=data.get("permissions", []),
             tools=data.get("tools", []),

@@ -1,6 +1,6 @@
 [project]
 name = "teahouse"
-version = "0.1.0"
+version = "1.0.0"
 description = "Harness Engineering based novel / text adventure engine"
 requires-python = ">=3.11"
 dependencies = [

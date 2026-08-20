@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Teahouse", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Teahouse", version="1.0.0", lifespan=lifespan)
 
 # CORS — allow frontend dev server
 app.add_middleware(
@@ -947,7 +947,7 @@ async def chat(body: ChatRequest, request: Request):
 async def status():
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": "1.0.0",
     }
 
 
