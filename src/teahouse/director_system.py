@@ -185,7 +185,68 @@ def _scan_tree(instance_dir: Path) -> str:
     lines.append("(This simplified tree shows only the instance root structure. Use Glob/Read tools to explore directory contents in full detail.)")
     lines.append("(Note: this tree and the floors/ stats are rebuilt fresh on every request — they are not a stale snapshot. Files, drafts, and the archive boundary always reflect current disk state, so re-check them if something seems outdated.)")
 
+    # Big-file warning: surface files so large that a single Read could be
+    # expensive is a Read cost (above BIG_INPUT_CHAR_LIMIT chars ≈ 10.7k tokens),
+    # estimated token size, so the director can budget its reads.
+    big = _scan_big_files(instance_dir)
+    if big:
+        lines.append("")
+        lines.append("⚠️ 大文件预警（单个文件一次 Read 即接近上半场预算，读取前请先规划/分段）：")
+        for rel, chars in big:
+            lines.append(f"  - {rel}：约 {chars // 3:,} token（{chars:,} 字符）")
+        lines.append("（.sessions/、.git 等内部目录不参与预警）")
+
     return "\n".join(lines)
+
+
+def _scan_big_files(instance_dir: Path) -> list[tuple[str, int]]:
+    """Collect (relative_path, char_count) for text files exceeding
+    BIG_INPUT_CHAR_LIMIT chars, walking the instance excluding internal dirs.
+    Binary assets (runtime/assets/ images/fonts/audio, or any non-text extension)
+    are skipped — the director reads those via readAsset, not Read, so a big PNG
+    is no context-cost warning. Returned sorted by size (largest first).
+
+    char_count is the **true character count** (``len`` of the utf-8 decoded
+    text), consistent with the enqueue-spill and execute_read thresholds —
+    byte size would over-count Chinese-heavy files (~3 bytes/char).
+    """
+    from .compact import BIG_INPUT_CHAR_LIMIT
+
+    # Extensions the director reads as text via Read. Anything else (png/jpg/
+    # webp/gif/ttf/woff/mp3/zip/7z etc.) is a binary resource, never a Read cost.
+    TEXT_EXTS = {
+        ".md", ".txt", ".yaml", ".yml", ".json", ".jsonl", ".py", ".js", ".jsx",
+        ".ts", ".tsx", ".css", ".html", ".toml", ".ini", ".cfg", ".csv", ".log",
+    }
+
+    out: list[tuple[str, int]] = []
+    root = instance_dir.resolve()
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            # Only text the director reads via Read is a context cost; binary
+            # assets (png/jpg/webp/ttf/woff/mp3/zip…) never reach the LLM through
+            # a Read, so they are skipped even if huge. Files under runtime/assets/
+            # that ARE text (.md/.json from an unpacked tavern card) still count.
+            if p.suffix.lower() not in TEXT_EXTS:
+                continue
+            if p.name == "event_log.jsonl":
+                continue  # developer diagnostics, not director content
+            rel_lib = p.relative_to(root)
+            parts = rel_lib.parts
+            if any(
+                part in (".sessions", ".git") or part.startswith(".")
+                for part in parts
+            ):
+                continue
+            chars = len(p.read_text(encoding="utf-8"))  # true char count
+            if chars > BIG_INPUT_CHAR_LIMIT:
+                out.append((str(rel_lib), chars))
+        except (OSError, ValueError):
+            continue
+    out.sort(key=lambda x: -x[1])
+    return out
 
 
 def _scan_recursive(dir_path: Path, lines: list[str], indent: str) -> None:

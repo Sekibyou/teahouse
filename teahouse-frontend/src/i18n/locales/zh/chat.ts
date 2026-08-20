@@ -52,6 +52,7 @@ export const zhChat = {
   compactingBubble: "正在压缩会话上下文…",
   autoContinueBubble: "会话已压缩，自动继续工作",
   subSessionEnd: "子会话已结束：",
+  longMsgBubble: "过长消息",
   waitingDots: "等待中...",
   generatingDots: "生成中...",
   queuedBubble: "待发送",

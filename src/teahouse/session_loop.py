@@ -119,14 +119,41 @@ class SessionLoop:
         bubble).  Persistence to jsonl + ``session_user_msg`` upgrade happens
         later, inside ``run()``, after the previous tool_loop has finished.
         This guarantees correct chronological order in the jsonl.
+
+        Oversized messages (above ``BIG_INPUT_CHAR_LIMIT`` chars) are spilled to
+        a ``temp/长消息-<uuid>.md`` file and replaced by a short pointer message,
+        so a giant paste cannot flood the next generation round's context.
         """
         if not content:
             return
+        try:
+            from .compact import BIG_INPUT_CHAR_LIMIT
+            if len(content) > BIG_INPUT_CHAR_LIMIT:
+                content = self._spill_oversized(content)
+        except Exception:
+            # If spilling fails for any reason, fall back to sending as-is.
+            pass
         queue_id = uuid.uuid4().hex[:12]
         order = self.next_order()
         _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": content[:200]})
         self._broadcast_user_queued(queue_id, content, order)
         self._queue.put_nowait((queue_id, content, order))
+
+    def _spill_oversized(self, content: str) -> str:
+        """Write an oversized user message to ``temp/长消息-<uuid>.md`` and return
+        the pointer message that replaces it in the queue. Returns the pointer
+        text; never raises (caller bridges any error back to the raw message).
+        """
+        from .compact import BIG_INPUT_CHAR_LIMIT
+        rel = f"temp/长消息-{uuid.uuid4().hex[:8]}.md"
+        full = self.instance_dir / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+        _event_log(self.instance_dir, self.session_id, "spill_oversized", {"rel": rel, "chars": len(content)})
+        return (
+            f"[auto] 用户发送消息过长（{len(content):,} 字符），已在完整阅读前落盘为 "
+            f"`{rel}`（原始文本）。请用 Read 读取并自行处理。"
+        )
 
     def interrupt(self, reason: str = "user") -> None:
         """Set the interrupt flag and cancel the in-flight tool-loop task.
@@ -294,8 +321,23 @@ class SessionLoop:
         ``interrupt()`` (which cancels ``self._task``) can stop an
         in-flight compact the same way it stops a tool loop.
         """
+        # Persist any user messages queued mid-generation BEFORE compact runs.
+        # They are drained as normal history records (persisted + upgraded),
+        # so `run_compact`'s records_to_context reads them and folds them into
+        # the summary. This keeps them durable (a failed/interrupted compact
+        # never loses them — they are already on disk) and avoids them becoming
+        # stray records carrying a stale pre-compact order after the truncate.
+        # (Use _drain_and_persist, not _drain_queue, so nothing is left in
+        # limbo held only in memory.)
+        self._drain_and_persist()
+
         compact_task = asyncio.create_task(
-            run_compact(client, self.instance_dir, self.session_id, instance_id=self.instance_id)
+            run_compact(
+                client,
+                self.instance_dir,
+                self.session_id,
+                instance_id=self.instance_id,
+            )
         )
         self._task = compact_task
         task_tracker.stats_start(self.instance_dir.name, self.session_id)

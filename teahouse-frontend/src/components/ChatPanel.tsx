@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, X, CheckCircle2, Flag, ArrowRight } from "lucide-react"
+import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi } from "@/lib/api"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
@@ -13,7 +13,7 @@ import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
@@ -1636,7 +1636,7 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           return (
             <>
               {messages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.autoKind ? "justify-center" : (msg.role === "user" ? "justify-end" : "justify-start")}`}>
+                <div key={msg.id} className={`flex ${msg.autoKind && msg.autoKind !== "long_msg" ? "justify-center" : (msg.role === "user" ? "justify-end" : "justify-start")}`}>
                   {msg.role === "assistant" ? (
                     <AssistantBubble
                       message={msg}
@@ -1644,6 +1644,17 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                       isGlobalGenerating={isGlobalGenerating}
                       isIdle={isIdle}
                     />
+                  ) : msg.role === "user" && msg.autoKind === "long_msg" ? (
+                    <div className="max-w-[85%] relative rounded-lg px-3 py-2 text-base bg-primary text-primary-foreground">
+                      <span className="whitespace-pre-wrap break-words">
+                        <FileText className="inline h-3.5 w-3.5 mr-1.5 align-[-1px]" />
+                        <span className="pr-10">已储存为：</span>
+                        <span className="font-mono break-all">{longMsgPath(msg.content) || msg.content}</span>
+                      </span>
+                      <span className="absolute -top-2.5 -right-2 rounded-full bg-destructive text-destructive-foreground text-[10px] px-2 py-0.5 shadow">
+                        {t("longMsgBubble")}
+                      </span>
+                    </div>
                   ) : msg.role === "user" && msg.autoKind ? (
                     <div className="max-w-fit rounded-md px-2.5 py-1 text-[11px] text-muted-foreground/70 bg-muted/40 flex items-center gap-1.5">
                       {msg.autoKind === "interrupt" ? (

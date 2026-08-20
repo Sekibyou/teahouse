@@ -39,6 +39,15 @@ COMPACT_SYSTEM_PROMPT = """\
 用户还要求但尚未完成的事项。如果用户没有明确后续要求，
 请说明"用户未指定后续工作，请询问用户下一步意图"。
 
+## 委派的子会话（重要）
+如果对话中开启过子会话（如 CreateSession / 委派任务），必须逐条记录并保持
+完整，因为总结后这些委派细节会丢失：
+- 指派了什么任务、目标是什么
+- 若要它产出报告，约定好的产出文件路径 / 命名方式（或其编号 sid）
+- 当前是否已完成、结论/报告落在 temp/ 的哪个具体文件
+新会话的导演需要靠这些记录找回"我让它干什么，报告在哪儿"。
+没有开启过子会话就写"无"。
+
 ## 重要约定与偏好
 用户在对话中表达的风格偏好、命名约定、特殊要求等。
 如果没有特别约定，写"无特殊约定"。
@@ -55,6 +64,16 @@ COMPACT_SYSTEM_PROMPT = """\
 # work cycle compacts the session. The frontend usage bar treats this as the
 # "full" mark, so it must stay in sync with session_loop's trigger.
 POST_COMPACT_RATIO = 0.70
+
+# Single-file / single-input defensive cap in CHARACTERS (~32k chars ≈ 10.7k
+# tokens under the chars/3 estimate). Shared by:
+#   - execute_read: an oversized file is truncated to this many chars and the
+#     read reports its true total size.
+#   - _scan_tree: files above this size are listed as a big-file warning with an
+#     estimated token count, so the director knows a Read could be expensive.
+#   - SessionLoop.enqueue: an oversized pending user message is spilled to a
+#     temp/ file and replaced by a pointer message instead of flooding the round.
+BIG_INPUT_CHAR_LIMIT = 32_000
 
 
 def estimate_context_tokens(

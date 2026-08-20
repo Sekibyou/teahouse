@@ -238,6 +238,35 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
     selected = lines[start:end]
 
+    from .compact import BIG_INPUT_CHAR_LIMIT
+
+    # Total character count of the whole file (we already read it above).
+    total_chars = sum(len(l) for l in lines)
+
+    # Defensive cap: never inject more than BIG_INPUT_CHAR_LIMIT chars from one
+    # file in a single Read. When the selected window exceeds the cap, keep only
+    # enough leading lines to stay under it and report how much was dropped (and
+    # the file's true size), so the director can fetch the rest with offset/limit.
+    truncated = False
+    if limit is None and start == 0:
+        # Whole-file read path — count chars over the full selection.
+        budget = BIG_INPUT_CHAR_LIMIT
+        kept_lines: list[str] = []
+        used = 0
+        for line in selected:
+            if used + len(line) > budget and kept_lines:
+                truncated = True
+                break
+            kept_lines.append(line)
+            used += len(line)
+        if used > budget:
+            # A single line alone exceeds the cap — emit its head, still capped.
+            truncated = True
+            line_txt = selected[0]
+            kept_lines = [line_txt[:budget]]
+        selected = kept_lines
+        end = start + len(selected)
+
     # Build output with line numbers like Claude Code:
     #   N  │ content
     #     │
@@ -251,7 +280,13 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
         content = line.rstrip("\n").rstrip("\r")
         result_lines.append(f"{str(line_num).rjust(line_width)}  │ {content}")
     result_lines.append(" " * line_width + "  │")
-    result_lines.append(f"  ({start + 1}–{min(end, total)}/{total} lines, file: {path})")
+    size_note = ""
+    if truncated:
+        size_note = (
+            f"; 已达单次读取上限 {BIG_INPUT_CHAR_LIMIT:,} 字符，"
+            f"文件共 {total_chars:,} 字符，已省略后续部分，可用 limit/offset 分段读取"
+        )
+    result_lines.append(f"  ({start + 1}–{min(end, total)}/{total} lines, file: {path}){size_note}")
 
     return "\n".join(result_lines)
 

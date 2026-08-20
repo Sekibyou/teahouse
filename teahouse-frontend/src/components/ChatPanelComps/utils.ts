@@ -46,11 +46,15 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
  * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
  * 其它消息返回 null（普通 user 气泡）。
  */
-export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | null {
-  // Exact [compact] is the user's manual compact command — hide as a system bubble
-  if (content.trim() === "[compact]") return { kind: "compact" }
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | { kind: "long_msg" } | null {
+  // A [compact] prefix (whether the manual command or the summary marker written
+  // after a finished compact) renders as a system bubble, not a normal user bubble.
+  if (content.trim().startsWith("[compact]")) return { kind: "compact" }
   if (!content.startsWith("[auto] ")) return null
   const trimmed = content.slice("[auto] ".length)
+  // Oversized user message spilled to a temp/ file — render as a user-aligned
+  // bubble carrying the pointer, flagged with a "长消息" corner badge.
+  if (trimmed.startsWith("用户发送消息过长")) return { kind: "long_msg" }
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
   if (trimmed.trim() === "interrupted by EndSession tool") return { kind: "endsession" }
   if (trimmed.startsWith("会话已压缩")) return { kind: "auto_continue" }
@@ -59,8 +63,7 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   return null
 }
 
-/** 把 autoMsgKind 的结果映射为 RichMessage 上的 autoKind / autoSid 字段。 */
-export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>) {
+/** 把 autoMsgKind 的结果映射为 RichMessage 上的 autoKind / autoSid 字段。 */export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>) {
   if (auto.kind === "session_done") {
     return { autoKind: "session_done" as const, autoSid: auto.sid }
   }
@@ -73,7 +76,19 @@ export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>
   if (auto.kind === "auto_continue") {
     return { autoKind: "auto_continue" as const }
   }
+  if (auto.kind === "long_msg") {
+    return { autoKind: "long_msg" as const }
+  }
   return { autoKind: "interrupt" as const }
+}
+
+/**
+ * 从长消息指针消息内容里提取落盘的 temp 文件名（如 ``temp/长消息-xxxx.md``）。
+ * 返回 null 表示没匹配到标准格式。
+ */
+export function longMsgPath(content: string): string | null {
+  const m = content.match(/temp\/长消息-[0-9a-f]{8}\.md/)
+  return m ? m[0] : null
 }
 
 /**
