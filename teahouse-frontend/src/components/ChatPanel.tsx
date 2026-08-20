@@ -505,6 +505,11 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                 blocks: sub === "r" ? [] : undefined,
                 order, sub, subRank,
               }
+              // 新气泡产生且当前靠近底部 → 开开关 + 吸底（规则 2）。
+              // 只在“创建”瞬间判定（流式正文追加不算），避免正文每增一行都重开开关。
+              if (isNearBottom()) {
+                stickRef.current = true
+              }
               let placed = insertBubbleSorted(prev, fresh)
               // Apply the streaming chunk onto the freshly created bubble.
               placed = placed.map(m => (m.id === fresh.id ? action(m) : m))
@@ -865,6 +870,15 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     if (el.scrollTop < 60 && !historyLoadedRef.current && !loadingMoreRef.current) {
       loadHistory(false)
     }
+    // 吸底开关：消费程序化滚动标记；真正由用户向上滚（恢复查看旧内容）时关开关（规则 3）。
+    if (isProgrammaticScrollRef.current) {
+      isProgrammaticScrollRef.current = false
+      return
+    }
+    if (el.scrollTop < lastUserScrollTopRef.current) {
+      stickRef.current = false
+    }
+    lastUserScrollTopRef.current = el.scrollTop
   }, [loadHistory])
 
   // Switch the director panel's active session. The current session's messages
@@ -1005,6 +1019,22 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
+
+  // ── 吸底开关（stick-to-bottom）────
+  // stickRef：true = 流式正文持续贴底 + 新气泡也贴底；false = 跟随用户阅读位置。
+  // 三个来源控制它：
+  //   1. 用户发消息 → 强制吸底一次 + 打开开关
+  //   2. 新气泡产生且当时靠近底部 → 吸底 + 打开开关
+  //   3. 用户主动向上滚动 → 关闭开关
+  // 打开开关后，只要 messages 一变（流式正文、新气泡）就强制贴底。
+  const stickRef = useRef(true)
+  // 距离判定的“近底部”阈值（像素）：规则 2 用它决定要不要开开关。
+  const NEAR_BOTTOM_PX = 80
+  // 程序化滚动标记：scrollToBottom 设置 scrollTop 前置位，onScroll 消费后清除，
+  // 避免程序化滚动被误判成“用户上滑”而关掉开关。
+  const isProgrammaticScrollRef = useRef(false)
+  // 最近一次用户滚动的 scrollTop，用于判断这次是否向上（滚回查看旧内容）。
+  const lastUserScrollTopRef = useRef(0)
 
   // ── Generation state (minimal — backend is authoritative) ──
   // approvalData is the only remaining global generation-level state;
@@ -1149,26 +1179,47 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
     setCommandIndex((i) => Math.min(i, Math.max(filteredCommands.length - 1, 0)))
   }, [filteredCommands.length])
 
+  // 程序化滚到底：置位程序化标记，静默滚动，不触发“用户上滑关开关”。
+  // 标记用 setTimeout(0) 兜底清除：若 scrollTop 本就到底（无 scroll 事件），
+  // 也能清掉，避免标记永远卡在 true、误吞后续真实用户滚动。
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       if (scrollRef.current) {
+        isProgrammaticScrollRef.current = true
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        setTimeout(() => { isProgrammaticScrollRef.current = false }, 0)
       }
     })
   }, [])
 
-  // 布局变化时（tab 栏出现、footer 变化等）滚到底部
+  // 当前滚动容器是否“靠近底部”（within NEAR_BOTTOM_PX）。
+  const isNearBottom = useCallback((): boolean => {
+    const el = scrollRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+  }, [])
+
+  // 布局变化时（tab 栏出现、footer 变化等）：仅当开关还开着才跟随贴底。
+  // 用户已上滑离开底部（开关关），布局变动不应把他拽回。
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const observer = new ResizeObserver(() => {
-      if (!isStreaming) {
-        el.scrollTop = el.scrollHeight
+      if (!isStreaming && stickRef.current) {
+        scrollToBottom()
       }
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [isStreaming])
+  }, [isStreaming, scrollToBottom])
+
+  // 开关打开时：messages 每变一次（流式正文、新气泡）都强制贴底。
+  useEffect(() => {
+    if (stickRef.current) {
+      scrollToBottom()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, activeSid])
 
   const handleStop = useCallback(() => {
     const inst = getActiveInstance()
@@ -1357,6 +1408,8 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
     setInput("")
     setError("")
+    // 用户发消息：开开关 + 强制吸底一次（规则 1）。之后流式正文会一直贴底。
+    stickRef.current = true
     scrollToBottom()
 
     try {
