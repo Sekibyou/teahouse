@@ -495,6 +495,10 @@ class LLMClient:
                             partial = delta.get("partial_json", "")
                             if idx in tool_blocks:
                                 tool_blocks[idx]["input_json"] = (tool_blocks[idx].get("input_json", "") + partial)
+                                # Yield as hidden text for frontend token counting only
+                                # (mirrors OpenAI path), so long tool-arg generation keeps
+                                # both the token counter and the elapsed timer moving.
+                                yield {"type": "text", "text": partial, "tool_args": True}
 
                     elif current_event == "message_stop":
                         break

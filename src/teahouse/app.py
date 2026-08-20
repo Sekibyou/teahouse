@@ -706,18 +706,23 @@ async def _tool_use_loop(
                 if event["type"] == "text":
                     # tool_args-marked events carry OpenAI tool-call argument
                     # fragments for token counting. Do NOT accumulate into
-                    # collected_text and do NOT yield to the frontend (the raw
-                    # JSON fragments would render as garbled text).
+                    # collected_text and do NOT render to the frontend (the raw
+                    # JSON fragments would render as garbled text). Yield a
+                    # lightweight stats_heartbeat instead so the frontend's
+                    # token/elapsed readout keeps moving during long tool-arg
+                    # generation instead of appearing frozen.
                     if not event.get("tool_args"):
                         collected_text += event["text"]
                         _pending["content"] = collected_text
                         # A round has a single leading text block (index 0) when any.
                         yield _tag(event, 0)
                     else:
-                        # tool-call arg fragment → count for stats, skip frontend
-                        task_tracker.stats_add_tokens(
-                            instance_dir.name, sid, len(event["text"])
-                        )
+                        yield _tag({"type": "stats_heartbeat"})
+                    # All text (body + tool args) counts toward the token
+                    # counter; empty heartbeat text is a no-op (if not n: return).
+                    task_tracker.stats_add_tokens(
+                        instance_dir.name, sid, len(event["text"])
+                    )
                 elif event["type"] == "reasoning":
                     chunk = event.get("text", "")
                     _pending["reasoning"] += chunk
@@ -878,8 +883,16 @@ async def _tool_use_loop(
                     _tail_text += event["text"]
                     _pending["content"] = _tail_text
                     yield event
+                else:
+                    # tool-arg fragment: count but don't render raw JSON — yield a
+                    # stats heartbeat so the counter/timer keep moving (see main loop).
+                    yield {"type": "stats_heartbeat"}
+                # Count all text (body + tool args); empty heartbeat is a no-op.
+                task_tracker.stats_add_tokens(instance_dir.name, sid, len(event["text"]))
             elif event["type"] == "reasoning":
-                _pending["reasoning"] += event.get("text", "")
+                chunk = event.get("text", "")
+                _pending["reasoning"] += chunk
+                task_tracker.stats_add_tokens(instance_dir.name, sid, len(chunk))
                 yield event
             elif event["type"] == "tool_calls":
                 # If LLM returns tool calls even at max, execute them inline
