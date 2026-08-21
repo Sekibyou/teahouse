@@ -6,7 +6,7 @@
       Teahouse.exe         双 击入口
       _internal/teahouse/  Python 程序 + 只读资源
         ...                 (collect_data_files 保前缀，Path(__file__) 相对命中)
-      dist/                 前端构建产物 (exe 同目录, app._frontend_dist 读它)
+      dist.hash + dist.zip  前端自愈安装源 (运行时校验解压出 dist/，见 frontend_install.py)
       git/                  捆绑 MinGit (main() 把 git/cmd prepend 进 PATH)
       teahouse.yaml         首次运行生成 (config._project_root 冻结态返回 exe 目录)
       data/                 用户实例库 (workspace_base 相对锚定 exe 目录)
@@ -18,12 +18,12 @@ from PyInstaller.utils.hooks import collect_data_files
 
 # SPECPATH = spec 文件所在目录（本项目根 w:/teahouse）
 PROJECT_ROOT = Path(SPECPATH)
-FRONTEND_DIST = PROJECT_ROOT / "teahouse-frontend" / "dist"
 MINGIT_DIR = PROJECT_ROOT / "build" / "mingit_tmp"
 
 # 1) 包内只读资源：保留 teahouse/... 前缀，落到 _internal/teahouse/...
 #    tools.json / director-system/ / migrations/ / prototypes/ 均按源码相对
 #    位置进包，Path(__file__) 相对解析（tools.py/config.py/app.py 等）继续成立。
+#    注意：frontend_install.py 是本模块，随源码进包，不额外 collect。
 datas = collect_data_files("teahouse")
 
 # uvicorn 经字符串 "teahouse.app:app" 运行时 import，静态不可见；把子模块一并
@@ -71,14 +71,9 @@ coll = COLLECT(
     name="Teahouse",
 )
 
-# 2) 前端产物 → <outdir>/dist（exe 同目录）
+# 2) 捆绑 MinGit → <outdir>/git（前端 dist 不再由 spec 拷贝——改为 release 带
+#    dist.zip+dist.hash，运行时 frontend_install 校验解压出 dist/）
 out = Path(coll.name)  # COLL 产物根：dist/Teahouse/
-if not FRONTEND_DIST.is_dir():
-    raise SystemExit(f"[spec] 前端 dist 未构建: {FRONTEND_DIST}")
-shutil.copytree(FRONTEND_DIST, out / "dist", dirs_exist_ok=True)
-print(f"[spec] copied frontend -> {out / 'dist'}")
-
-# 3) 捆绑 MinGit → <outdir>/git
 if MINGIT_DIR.is_dir():
     shutil.copytree(MINGIT_DIR, out / "git", dirs_exist_ok=True)
     print(f"[spec] copied MinGit -> {out / 'git'}")
