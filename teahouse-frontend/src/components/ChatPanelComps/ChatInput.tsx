@@ -97,12 +97,57 @@ export function ChatInput({
   const [draftContent, setDraftContent] = useState("")
   const editing = pastes.find((p) => p.id === editingPasteId) || null
 
+  const insertAtCursor = (text: string) => {
+    const el = inputRef.current
+    const start = el?.selectionStart ?? input.length
+    const end = el?.selectionEnd ?? input.length
+    const next = input.slice(0, start) + text + input.slice(end)
+    onInputChange(next)
+    requestAnimationFrame(() => {
+      const pos = start + text.length
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const text = e.clipboardData?.getData("text") ?? ""
-    if (text.length > PASTE_BLOCK_THRESHOLD) {
-      e.preventDefault()
-      onAddPaste(text)
+    const dt = e.clipboardData
+    const text = dt?.getData("text") ?? ""
+    if (text) {
+      if (text.length > PASTE_BLOCK_THRESHOLD) {
+        e.preventDefault()
+        onAddPaste(text)
+      }
+      return
     }
+    // Mobile fallback: browsers触发 getData("text") 为空时(输入法/长按菜单粘贴,
+    // 尤其安卓 Chrome),剪贴板文本仍在 items 里,需异步 getAsString 读取。
+    const items = dt?.items
+    if (!items || items.length === 0) return
+    let hasText = false
+    let buf = ""
+    let pending = 0
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (buf.length > PASTE_BLOCK_THRESHOLD) {
+        onAddPaste(buf)
+      } else if (buf.length > 0) {
+        insertAtCursor(buf)
+      }
+    }
+    for (const item of items) {
+      if (item.kind === "string" && item.type === "text/plain") {
+        hasText = true
+        pending++
+        item.getAsString((s) => {
+          buf += s
+          if (--pending === 0) settle()
+        })
+      }
+    }
+    // 只在确定有可用文本时拦默认粘贴,避免影响图片/无文本粘贴。
+    if (hasText) e.preventDefault()
   }
   return (
     <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
