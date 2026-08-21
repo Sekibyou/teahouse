@@ -2,8 +2,13 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
+# build/ 下纳入构建脚本（build_release.py / build_release.bat / README_BUILD.md），
+# 仅排除机器生成的中间件与 Windows 专用大件（__pycache__ 已由上方规则覆盖）：
+!/build/
+/build/teahouse/
+/build/mingit_tmp/
 
 # Virtual environment
 .venv/
