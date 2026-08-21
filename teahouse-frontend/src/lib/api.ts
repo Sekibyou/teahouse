@@ -452,7 +452,7 @@ export const chatApi = {
   /** Send a director message: POSTs to /v1/chat which enqueues the message
    *  into the backend session loop. The backend persists it and streams results
    *  via session_event SSE broadcast. */
-  sendDirectorMessage: async (messages: { role: string; content: string }[], instanceId: string, sessionId?: string) => {
+  sendDirectorMessage: async (messages: { role: string; content: string | { manual: string; pastes: { id: number; content: string }[] } }[], instanceId: string, sessionId?: string) => {
     const token = getAuthToken()
     const response = await fetch(`${getApiBaseUrl()}/v1/chat`, {
       method: "POST",

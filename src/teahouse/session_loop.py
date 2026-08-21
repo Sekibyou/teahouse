@@ -111,45 +111,103 @@ class SessionLoop:
     # Public API
     # ------------------------------------------------------------------
 
-    def enqueue(self, content: str) -> None:
-        """Push a user message into this session's queue.
+    def enqueue(self, content: str, pastes: list[dict] | None = None) -> None:
+        """Push user messages into this session's queue.
 
-        The message is NOT persisted here — it only goes into the in-memory
+        The messages are NOT persisted here — they only go into the in-memory
         queue and the frontend is notified via ``session_user_queued`` (grey
         bubble).  Persistence to jsonl + ``session_user_msg`` upgrade happens
         later, inside ``run()``, after the previous tool_loop has finished.
         This guarantees correct chronological order in the jsonl.
 
-        Oversized messages (above ``BIG_INPUT_CHAR_LIMIT`` chars) are spilled to
-        a ``temp/长消息-<uuid>.md`` file and replaced by a short pointer message,
-        so a giant paste cannot flood the next generation round's context.
+        ``pastes`` is the frontend's "paste blocks" — flat list of ``{id, content}``
+        for oversized pasted chunks, kept separate from what the user typed by
+        hand (``content``). One enqueue may expand to TWO independent user
+        records: the first is the raw hand-typed text, the second is an ``[auto]``
+        notice describing the spilled/inlined pasted content (the frontend renders
+        it as a centred system badge). When the pasted bodies exceed
+        BIG_INPUT_CHAR_LIMIT chars they are spilled together to a single temp/
+        file and the notice points at it, so a giant paste cannot flood the next
+        generation round's context.
+
+        Internal backend messages (sub-session tasks, [auto]/[director] wake-ups)
+        pass ``content`` only (``pastes`` defaults to None) and are left as-is.
         """
-        if not content:
+        if not content and not pastes:
             return
         try:
-            from .compact import BIG_INPUT_CHAR_LIMIT
-            if len(content) > BIG_INPUT_CHAR_LIMIT:
-                content = self._spill_oversized(content)
+            msgs = self._compose_messages(content, pastes)
         except Exception:
-            # If spilling fails for any reason, fall back to sending as-is.
-            pass
-        queue_id = uuid.uuid4().hex[:12]
-        order = self.next_order()
-        _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": content[:200]})
-        self._broadcast_user_queued(queue_id, content, order)
-        self._queue.put_nowait((queue_id, content, order))
+            # If composing/spilling fails for any reason, fall back to as-is.
+            if content:
+                msgs = [content]
+            else:
+                return
+        for msg in msgs:
+            queue_id = uuid.uuid4().hex[:12]
+            order = self.next_order()
+            _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": msg[:200]})
+            self._broadcast_user_queued(queue_id, msg, order)
+            self._queue.put_nowait((queue_id, msg, order))
 
-    def _spill_oversized(self, content: str) -> str:
-        """Write an oversized user message to ``temp/长消息-<uuid>.md`` and return
-        the pointer message that replaces it in the queue. Returns the pointer
-        text; never raises (caller bridges any error back to the raw message).
+    def _compose_messages(self, content: str, pastes: list[dict] | None) -> list[str]:
+        """Build the message(s) for a user enqueue — paste blocks become a
+        separate ``[auto]`` record rather than being merged into the manual text.
+
+        Returns a list in send order:
+        - Without pastes: ``[content]``; if content alone exceeds the cap it is
+          spilled wholesale (defensive backstop) and ``[spill pointer]`` is returned.
+        - With pastes: ``[manual_text]`` (omitted when empty) then an ``[auto]``
+          notice carrying either the inline pasted bodies or — when they exceed
+          ``PASTE_SPILL_CHAR_LIMIT`` — a pointer to the single spill file.
         """
-        from .compact import BIG_INPUT_CHAR_LIMIT
-        rel = f"temp/长消息-{uuid.uuid4().hex[:8]}.md"
+        from .compact import PASTE_SPILL_CHAR_LIMIT, BIG_INPUT_CHAR_LIMIT
+        paste_texts = [p.get("content") for p in (pastes or []) if p.get("content")]
+        if not paste_texts:
+            if len(content) > BIG_INPUT_CHAR_LIMIT:
+                return [self._spill_oversized(content)]
+            return [content]
+
+        out: list[str] = []
+        if content:
+            out.append(content)
+
+        joined = "\n\n".join(paste_texts)
+        intro = "用户在本次输入时粘贴了长文本，内容是："
+        # Spill once the pasted bodies alone exceed the cap (~3000 chars) — the
+        # threshold is about the paste itself, not the notice's total length.
+        if len(joined) <= PASTE_SPILL_CHAR_LIMIT:
+            out.append(f"[auto] {intro}\n\n{joined}")
+        else:
+            rel = self._spill_pastes(joined)
+            out.append(f"[auto] {intro}\n文本过长，已被暂存至 {rel}，请阅读")
+        return out
+
+    def _spill_pastes(self, body: str) -> str:
+        """Write pasted bodies to ``temp/pasted-<uuid>.md`` and return the relative
+        path. Paste-only spill; the manual text stays as its own inline record.
+        Broadcasts ``file_changed`` so the frontend tree / director sees the new
+        file land (mirrors how Read/Report surface writes)."""
+        rel = f"temp/pasted-{uuid.uuid4().hex[:8]}.md"
         full = self.instance_dir / rel
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(content, encoding="utf-8")
-        _event_log(self.instance_dir, self.session_id, "spill_oversized", {"rel": rel, "chars": len(content)})
+        full.write_text(body, encoding="utf-8")
+        state.broadcast("file_changed", {
+            "path": rel,
+            "tool": "PasteSpill",
+            "instance_id": self.instance_id or self.instance_dir.name,
+        })
+        _event_log(self.instance_dir, self.session_id, "spill_pastes", {"rel": rel, "chars": len(body)})
+        return rel
+
+    def _spill_oversized(self, content: str) -> str:
+        """Write an oversized user message body to ``temp/pasted-<uuid>.md`` and
+        return the pointer message that replaces it in the queue. Backstop for
+        pasteless messages that alone exceed the cap; the paste path composes its
+        own spill inside ``_compose_messages``. Returns the pointer text.
+        """
+        from .compact import BIG_INPUT_CHAR_LIMIT
+        rel = self._spill_pastes(content)
         return (
             f"[auto] 用户发送消息过长（{len(content):,} 字符），已在完整阅读前落盘为 "
             f"`{rel}`（原始文本）。请用 Read 读取并自行处理。"

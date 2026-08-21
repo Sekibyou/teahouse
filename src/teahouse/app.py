@@ -938,10 +938,16 @@ async def chat(body: ChatRequest, request: Request):
         sid = (body.session_id or _sessions.MAIN_SESSION_ID)
 
         # Extract user content from frontend messages and enqueue.
-        new_inputs = [m for m in body.messages if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")]
+        # The frontend may send either a plain string content, or — when paste
+        # blocks are present — an object {manual, pastes:[{id, content}]}.
+        new_inputs = [m for m in body.messages if m.get("role") == "user" and m.get("content")]
         if new_inputs:
             loop = SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id)
-            loop.enqueue(new_inputs[-1]["content"])
+            raw = new_inputs[-1]["content"]
+            if isinstance(raw, dict):
+                loop.enqueue(raw.get("manual") or "", raw.get("pastes"))
+            else:
+                loop.enqueue(raw)
             return {"queued": True, "session_id": sid, "count": len(new_inputs)}
         # No user input — return ok (frontend may send empty round to wake an idle session)
         return {"queued": False, "session_id": sid}

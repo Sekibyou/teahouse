@@ -13,7 +13,7 @@ import { toast } from "sonner"
 import { GitDialog } from "@/components/GitDialog"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath, pasteNoticeText } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
@@ -981,6 +981,12 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
+  // Paste blocks (oversized pasted chunks) kept separate from hand-typed text.
+  // Badges render above the input; each block can be edited/deleted via a popover.
+  const [pastes, setPastes] = useState<{ id: number; content: string }[]>([])
+  const pastesRef = useRef(pastes)
+  pastesRef.current = pastes
+  const pasteIdRef = useRef(0)
   // 大输入框模式：点击按钮后独占「历史记录 + 输入框」总高度的 80%，便于长文本输入
   const [expandedInput, setExpandedInput] = useState(false)
   // 普通模式下输入框自动变高的上限（像素）
@@ -1274,14 +1280,20 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
 
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
-    if (!text) return
+    const hasPastes = pastesRef.current.length > 0
+    if (!text && !hasPastes) return
 
     setExpandedInput(false)
-    _doSend(text, useTools)
+    // Capture current pastes, then clear both working states immediately so the
+    // (async) _doSend uses a stable snapshot and the input resets right away.
+    const p = pastesRef.current
+    setPastes([])
+    setInput("")
+    _doSend(text, useTools, undefined, p)
   }
 
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
-  const _doSend = async (text: string, useTools: boolean, targetSid?: string) => {
+  const _doSend = async (text: string, useTools: boolean, targetSid?: string, pastes?: { id: number; content: string }[]) => {
     const sid = targetSid || activeSid
 
     // 命令仅在会话空闲时执行（生成/等待/压缩中禁用）
@@ -1419,18 +1431,30 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         // session_user_msg (upgrades to white). The first session_event will
         // transition waiting→running via applyBackendState.
         patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
+        // Director path: send paste blocks as structured content so the backend
+        // can fold/spill them (see SessionLoop._compose_message). No pastes →
+        // a plain string, matching the previous envelope.
+        const content = pastes && pastes.length > 0
+          ? { manual: text, pastes: pastes.map((p) => ({ id: p.id, content: p.content })) }
+          : text
         await chatApi.sendDirectorMessage(
-          [{ role: "user", content: text }],
+          [{ role: "user", content }],
           activeInst!.id,
           sid,
         )
       } else {
+        // Writer path (non-tools): no backend enqueue — content must stay a
+        // plain string. Any paste blocks are concatenated into the text so no
+        // content is dropped.
+        const writerText = pastes && pastes.length > 0
+          ? `${text}\n\n${pastes.map((p) => p.content).join("\n\n")}`
+          : text
         // Writer path (non-tools): still uses direct SSE streaming. These local
         // bubbles carry negative orders (a private namespace) so they sort after
         // all backend-ordered (>=0) bubbles and never collide with them.
         writerLocalOrderRef.current -= 2
         const localOrder = writerLocalOrderRef.current
-        const userMsg: RichMessage = { id: nextId(), role: "user", content: text, reasoning: "", status: "done", order: localOrder, sub: null, subRank: 0 }
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: writerText, reasoning: "", status: "done", order: localOrder, sub: null, subRank: 0 }
         const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [], order: localOrder + 1, sub: null, subRank: 0 }
         setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
         const mergedMessages = mergeConsecutiveSameRole([...messages, userMsg, pendingAssistant])
@@ -1644,6 +1668,11 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
                       isGlobalGenerating={isGlobalGenerating}
                       isIdle={isIdle}
                     />
+                  ) : msg.role === "user" && msg.autoKind === "paste_notice" ? (
+                    <div className="max-w-fit rounded-md px-2.5 py-1 text-[11px] text-muted-foreground/70 bg-muted/40 flex items-center gap-1.5">
+                      <FileText className="h-3 w-3 text-muted-foreground/60" />
+                      <span>{pasteNoticeText(msg.content)}</span>
+                    </div>
                   ) : msg.role === "user" && msg.autoKind === "long_msg" ? (
                     <div className="max-w-[85%] relative rounded-lg px-3 py-2 text-base bg-primary text-primary-foreground">
                       <span className="whitespace-pre-wrap break-words">
@@ -1753,6 +1782,13 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         onSend={handleSend}
         onStop={handleStop}
         isCompacting={isCompacting}
+        pastes={pastes}
+        onAddPaste={(content) => {
+          const id = ++pasteIdRef.current
+          setPastes((prev) => [...prev, { id, content }])
+        }}
+        onRemovePaste={(id) => setPastes((prev) => prev.filter((p) => p.id !== id))}
+        onUpdatePaste={(id, content) => setPastes((prev) => prev.map((p) => (p.id === id ? { ...p, content } : p)))}
         filteredCommands={filteredCommands}
         commandIndex={commandIndex}
         onCommandHover={setCommandIndex}

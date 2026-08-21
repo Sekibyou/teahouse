@@ -46,7 +46,7 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
  * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
  * 其它消息返回 null（普通 user 气泡）。
  */
-export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | { kind: "long_msg" } | null {
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | { kind: "long_msg" } | { kind: "paste_notice" } | null {
   // A [compact] prefix (whether the manual command or the summary marker written
   // after a finished compact) renders as a system bubble, not a normal user bubble.
   if (content.trim().startsWith("[compact]")) return { kind: "compact" }
@@ -55,12 +55,22 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   // Oversized user message spilled to a temp/ file — render as a user-aligned
   // bubble carrying the pointer, flagged with a "长消息" corner badge.
   if (trimmed.startsWith("用户发送消息过长")) return { kind: "long_msg" }
+  // Paste-block notice (the second record of a paste enqueue) — centred system
+  // badge; the manual text stays as its own preceding user bubble.
+  if (trimmed.startsWith("用户在本次输入时粘贴了长文本")) return { kind: "paste_notice" }
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
   if (trimmed.trim() === "interrupted by EndSession tool") return { kind: "endsession" }
   if (trimmed.startsWith("会话已压缩")) return { kind: "auto_continue" }
   const sidMatch = trimmed.match(/session-([0-9a-fA-F]{4,})/)
   if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
   return null
+}
+
+/** 从 paste_notice 消息内容里解析前端要展示的徽章文案（落盘时含路径）。 */
+export function pasteNoticeText(content: string): string {
+  const m = content.match(/已被暂存至 (temp\/pasted-[0-9a-f]{8}\.md)/)
+  if (m) return `粘贴内容过长，已被暂存至 ${m[1]}`
+  return "粘贴内容已一并发送"
 }
 
 /** 把 autoMsgKind 的结果映射为 RichMessage 上的 autoKind / autoSid 字段。 */export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>) {
@@ -78,6 +88,9 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   }
   if (auto.kind === "long_msg") {
     return { autoKind: "long_msg" as const }
+  }
+  if (auto.kind === "paste_notice") {
+    return { autoKind: "paste_notice" as const }
   }
   return { autoKind: "interrupt" as const }
 }

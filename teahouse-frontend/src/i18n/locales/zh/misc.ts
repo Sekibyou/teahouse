@@ -126,6 +126,11 @@ export const zhMisc = {
     stopSummarizing: "停止总结 (Esc)",
     stopGenerating: "停止生成 (Esc)",
     send: "发送 (Enter)",
+    pasteBadge: "粘贴{{n}}",
+    editPaste: "编辑粘贴内容",
+    deletePaste: "删除",
+    cancelPaste: "取消",
+    savePaste: "保存",
   },
   assistant: {
     thinkingChain: "思维链",

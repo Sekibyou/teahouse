@@ -75,6 +75,14 @@ POST_COMPACT_RATIO = 0.70
 #     temp/ file and replaced by a pointer message instead of flooding the round.
 BIG_INPUT_CHAR_LIMIT = 32_000
 
+# A pasted block longer than this (chars) is spilled to a temp/ file instead of
+# being inlined into the director's context. Deliberately much lower than
+# BIG_INPUT_CHAR_LIMIT: ~3000 chars is already a lot of pasted text (a chapter or
+# a large setting dump), and spilling it lets the director persist/manipulate it
+# via Write/FileOps instead of re-typing it token by token. The file-the warning
+# and read-truncation caps stay on BIG_INPUT_CHAR_LIMIT.
+PASTE_SPILL_CHAR_LIMIT = 3000
+
 
 def estimate_context_tokens(
     messages: list[dict], system_prompt: str = ""

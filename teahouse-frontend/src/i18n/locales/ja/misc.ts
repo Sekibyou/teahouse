@@ -126,6 +126,11 @@ export const jaMisc = {
     stopSummarizing: "要約を停止 (Esc)",
     stopGenerating: "生成を停止 (Esc)",
     send: "送信 (Enter)",
+    pasteBadge: "貼付{{n}}",
+    editPaste: "貼付内容を編集",
+    deletePaste: "削除",
+    cancelPaste: "キャンセル",
+    savePaste: "保存",
   },
   assistant: {
     thinkingChain: "思考チェーン",

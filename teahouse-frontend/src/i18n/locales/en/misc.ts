@@ -126,6 +126,11 @@ export const enMisc = {
     stopSummarizing: "Stop summarizing (Esc)",
     stopGenerating: "Stop generating (Esc)",
     send: "Send (Enter)",
+    pasteBadge: "Paste {{n}}",
+    editPaste: "Edit pasted content",
+    deletePaste: "Delete",
+    cancelPaste: "Cancel",
+    savePaste: "Save",
   },
   assistant: {
     thinkingChain: "Chain of thought",
