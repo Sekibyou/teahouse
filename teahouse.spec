@@ -11,6 +11,7 @@
       teahouse.yaml         首次运行生成 (config._project_root 冻结态返回 exe 目录)
       data/                 用户实例库 (workspace_base 相对锚定 exe 目录)
 """
+import os
 import shutil
 from pathlib import Path
 
@@ -71,11 +72,12 @@ coll = COLLECT(
     name="Teahouse",
 )
 
-# 2) 捆绑 MinGit → <outdir>/git（前端 dist 不再由 spec 拷贝——改为 release 带
-#    dist.zip+dist.hash，运行时 frontend_install 校验解压出 dist/）
+# 2) 捆绑 MinGit → <outdir>/git（仅 Windows；Linux 靠系统 git，见 app.main() 的
+#    回退分支）。前端 dist 不再由 spec 拷贝——改为 release 带 dist.zip+dist.hash，
+#    运行时 frontend_install 校验解压出 dist/）
 out = Path(coll.name)  # COLL 产物根：dist/Teahouse/
-if MINGIT_DIR.is_dir():
+if os.name == "nt" and MINGIT_DIR.is_dir():
     shutil.copytree(MINGIT_DIR, out / "git", dirs_exist_ok=True)
     print(f"[spec] copied MinGit -> {out / 'git'}")
 else:
-    print(f"[spec] WARN MinGit 未解压到 {MINGIT_DIR}，release 将缺 git/")
+    print(f"[spec] {'Linux 不捆绑 MinGit，Linux 包靠系统 git' if os.name != 'nt' else f'WARN MinGit 未解压到 {MINGIT_DIR}，release 将缺 git/'}")
