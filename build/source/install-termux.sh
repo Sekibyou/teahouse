@@ -17,15 +17,16 @@ command -v python >/dev/null 2>&1 || pkg install -y python
 # uv：Termux 官方仓库提供 prebuilt 二进制（零编译），pkg 是唯一可靠方式。
 # 不用 pip install uv——Termux 无 uv 的 prebuilt wheel，会触发 Rust 源码编译而
 # 报 "failed to build uv"。install.sh 仅作非 Termux 环境的通用兜底。
-if ! command -v uv >/dev/null 2>&1; then
-    echo "==> 安装 uv（pkg install uv）..."
-    pkg install -y uv || {
-        echo "!! 'pkg install uv' 失败，回退官方脚本安装…"
-        curl -LsSf https://astral.sh/uv/install.sh | sh || {
-            echo "!! uv 安装仍失败。请手动执行：pkg install uv"
-            exit 1
-        }
-    }
+command -v uv >/dev/null 2>&1 || pkg install -y uv
+# Termux 上 uv 0.9.15 有 android bug（python 3.13 → sys.platform='android'，
+# uv 报 "Unknown operating system: android"，uv#18285，PR#18301 后修复）。
+# 若版本过旧（< 0.10.0），强制升级到仓库最新以免卡死。
+if command -v uv >/dev/null 2>&1; then
+    UV_VER="$(uv --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+    if [ -z "${UV_VER}" ] || [ "$(printf '%s\n%s\n' '0.10.0' "${UV_VER}" | sort -V | head -1)" != '0.10.0' ]; then
+        echo "!! uv ${UV_VER}（过旧），强制升级 pkg install uv 到最新…"
+        pkg install -y uv
+    fi
 fi
 # 脚本内 PATH 补全 uv（install.sh 装到 ~/.local/bin）
 export PATH="${HOME}/.local/bin:${PATH}"

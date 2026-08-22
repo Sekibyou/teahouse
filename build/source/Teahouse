@@ -168,9 +168,19 @@ def _update_src_from_release() -> None:
 def ensure_env() -> None:
     SRC.mkdir(parents=True, exist_ok=True)
     py3 = shutil.which("python3")
+    vb = VENV / "bin" / "python"
+    if not vb.exists():
+        if _is_termux():
+            # uv 0.9.15 在 Termux（python 3.13 → sys.platform='android'）上建 venv 会报
+            # "Unknown operating system: android"（uv#18285，PR#18301 2026-03 后修复）。
+            # Termux 用原生 python -m venv 建环境（android 自身认得），不碰 uv 的
+            # android inspect；依赖安装仍走 uv pip。若 uv 也太旧装包失败，会转升级指引。
+            _log("用 Termux 原生 python 创建虚拟环境…")
+            _run([py3, "-m", "venv", str(VENV)])
+        else:
+            _run(["uv", "venv", str(VENV)])
     # 每次 ran——既有 venv 也重装，代码可能随 --update 更新过，保持对齐（幂等、增量）
-    _run(["uv", "venv", str(VENV)])
-    _run(["uv", "pip", "install", "-e", str(SRC), "--python", str(VENV / "bin" / "python"), "--no-cache"])
+    _run(["uv", "pip", "install", "-e", str(SRC), "--python", str(vb), "--no-cache"])
 
 
 def seed_dist() -> None:
