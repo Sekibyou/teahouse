@@ -184,6 +184,15 @@ def ensure_env() -> None:
             _run([py3, "-m", "venv", str(VENV)])
 
     pip = VENV / "bin" / "pip"
+    if termux:
+        # Termux：cryptography/cffi 必须用系统预编译版（Termux 为当前 python 3.14 编的，
+        # 如 46.x），而不能用 pip 源码编译进 venv 的 cryptography 50——后者是 abi3 .so，
+        # dlopen 报 "cannot locate symbol PyBaseObject_Type"（Python 3.14 limited API）。
+        # uninstall venv 内版，让 --system-site-packages 复用系统版；装不存在则 uninstall
+        # 报错无害（返回码非0），忽略。
+        _log("Termux：回退 cryptography/cffi 到系统预编译版…")
+        subprocess.run([str(pip), "uninstall", "-y", "cryptography", "cffi"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # 每次 ran——既有 venv 也重装，代码可能随 --update 更新过，保持对齐（幂等、增量）
     # Termux 上编译型依赖（pydantic-core 等）首次经 Rust 编译，之后 venv 复用不重编。
     _run([str(pip), "install", "-e", str(SRC), "--no-cache-dir"])
