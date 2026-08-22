@@ -34,9 +34,6 @@ take_out/
 node_modules/
 dist/
 
-# Teahouse — source-mode frontend dist state (downloaded dist.zip + dist.hash)
-.teahouse-dist/
-
 # Test
 tests/
 

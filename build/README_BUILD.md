@@ -127,8 +127,6 @@ build/
   README_BUILD.md      本文档
   mingit_tmp/          MinGit 解压目录（仅 Windows 装配源；删了需重新解压）
   teahouse/            PyInstaller 中间产物（可删，--clean 会重建）
-  source/              （保留/归档用) 曾用于源码一键分发的引导脚本与安装脚本，
-                        当前发布不再使用（回归 PyInstaller 分架构包），可忽略。
 ```
 
 `build/`、`dist/`、`tests/` 均被 `.gitignore` 忽略，不入库。
