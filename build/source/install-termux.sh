@@ -11,16 +11,20 @@ REPO_NAME="teahouse"
 RELEASE_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases"
 DEST_DIR="${HOME}/teahouse"
 
-echo "==> 检查/安装依赖（git / python / rust / 编译库）..."
+echo "==> 检查/安装依赖（git / python / 编译工具链）..."
 command -v git >/dev/null 2>&1 || pkg install -y git
 command -v python >/dev/null 2>&1 || pkg install -y python
 # Termux 现实：Python = aarch64+android(bionic)，PyPI 上无 android wheel——
 # manylinux_aarch64 是 glibc，Termux 用不了，故编译型依赖无法靠 pip 抓 wheel。
 # 对策：
 #   - cryptography / bcrypt：用 Termux pkg 预编译的 bionic 版（python-cryptography / python-bcrypt），
-#     装进系统 python 的 site-packages，vev 用 --system-site-packages 复用，pip 不再重装。
+#     装进系统 python 的 site-packages，venv 用 --system-site-packages 复用，pip 不再重装。
+#     python-cryptography 的依赖 cffi 无预编译 pkg，post-install 会 pip 源码编译 cffi，
+#     故必须先备好 C 编译工具链（clang + libffi + binutils），否则 cffi 编译失败。
 #   - pydantic-core / uvloop / httptools / pyyaml：无 pkg 且无 android wheel → 源码编译，须装 Rust
 #     （cargo/maturin）工具链。首次编译较慢（分钟级），此后 venv 不再重装。
+# C 编译工具链（cffi 等 C 扩展源码编译必需）+ Rust（pydantic-core/maturin）
+pkg install -y clang binutils libffi 2>/dev/null || true
 command -v rustc >/dev/null 2>&1 || command -v cargo >/dev/null 2>&1 || pkg install -y rust
 pkg install -y python-cryptography python-bcrypt 2>/dev/null || echo "!! python-cryptography/python-bcrypt 安装warning(可忽略，pip 会尝试编译)"
 

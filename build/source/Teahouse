@@ -170,6 +170,8 @@ def ensure_env() -> None:
                 cargo = "cargo"
     if termux and shutil.which("cargo") is None:
         _fail("Termux 需要 Rust 工具链编译 pydantic-core。请先执行：pkg install rust")
+    if termux and shutil.which("cc") is None and shutil.which("clang") is None:
+        _fail("Termux 需要 C 编译器（编译 cffi/cryptography）。请先执行：pkg install clang binutils libffi")
 
     if not vb.exists():
         if termux:
