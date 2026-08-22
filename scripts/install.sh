@@ -11,9 +11,9 @@ set -euo pipefail
 
 REPO="Sekibyou/teahouse"
 RAW="https://raw.githubusercontent.com/$REPO/main/scripts/install.sh"
-# 默认装在「当前目录下新建的 Teahouse 文件夹」——用户先 cd 到自己想要的目录再跑命令即可。
-# 例子：cd ~/apps 后执行 → 装到 ~/apps/Teahouse；用 TEAHOUSE_DIR 可完全自定义路径。
-INSTALL_DIR="${TEAHOUSE_DIR:-./Teahouse}"
+# 默认直接解压到「当前目录」——用户先 cd 到自己想放的地方再跑命令即可，不额外套一层
+# Teahouse/ 子文件夹（避免嵌套）。想装进别的目录用 TEAHOUSE_DIR=/opt/teahouse bash ...。
+INSTALL_DIR="${TEAHOUSE_DIR:-.}"
 
 step()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die()   { printf '\033[1;31m[错误] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -60,13 +60,20 @@ main() {
   else
     wget -O "$INSTALL_DIR/$PKG" "$URL"
   fi
-  tar -xzf "$INSTALL_DIR/$PKG" --strip-components=1 -C "$INSTALL_DIR"
-  rm -f "$INSTALL_DIR/$PKG"
+  # 解压到临时目录，再把包顶层 `Teahouse/` 的内容平移到目标——确保结构恒为
+  # `目标/Teahouse`(可执行)+`_internal/`+`dist.zip`+`dist.hash`，不依赖 tar 是否支持
+  # --strip-components，也避免预建同名目录造成三重嵌套。
+  local TMPD; TMPD="$(mktemp -d)"
+  tar -xzf "$INSTALL_DIR/$PKG" -C "$TMPD"
   local BIN="$INSTALL_DIR/Teahouse"
-  # 校验是可执行文件而非同名目录（tar 顶层 `Teahouse/` 已被 --strip-components 剥掉）
-  [ -f "$BIN" ] || die "解压后未找到可执行文件: $BIN"
+  [ -f "$TMPD/Teahouse/Teahouse" ] || { rm -rf "$TMPD"; die "解压包结构异常，未找到 Teahouse/Teahouse"; }
+  # 平移到目标（先备份旧 Teahouse 目录以防同名冲突）
+  if [ -e "$BIN" ]; then mv -f "$BIN" "$INSTALL_DIR/.Teahouse.old" 2>/dev/null || rm -rf "$BIN"; fi
+  rm -rf "$INSTALL_DIR/.Teahouse.old"
+  shopt -s dotglob && mv "$TMPD/Teahouse"/* "$INSTALL_DIR/" && shopt -u dotglob
+  rm -rf "$TMPD"
+  rm -f "$INSTALL_DIR/$PKG"
   chmod +x "$BIN"
-  echo "解压完成 → $BIN"
 
   step "5/5 启动"
   echo "已就绪，启动 Teahouse ...（浏览器会自动打开；Ctrl+C 停止）"

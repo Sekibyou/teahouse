@@ -54,7 +54,7 @@ teahouse/                主仓库
 curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install.sh | bash
 ```
 
-> 没 curl 先 `apt install -y curl`。脚本默认在当前目录下新建 `Teahouse/` 并装进去——先 `cd` 到自己想放的目录（如 `cd ~/apps`）再跑命令即可；想完全自定义路径用 `TEAHOUSE_DIR=/opt/teahouse bash ...`；想指定版本 `TEAHOUSE_VER=1.01 bash ...`。装完自动 `exec ./Teahouse`，Ctrl+C 停止；想后台跑：`nohup ./Teahouse > server.log 2>&1 &`。
+> 没 curl 先 `apt install -y curl`。脚本默认直接解压到**当前目录**（不额外套一层 Teahouse/ 子文件夹）——先 `cd` 到自己想放的地方（建议 `mkdir -p ~/apps && cd ~/apps`）再跑命令；想装进别的目录用 `TEAHOUSE_DIR=/opt/teahouse bash ...`；想指定版本 `TEAHOUSE_VER=1.01 bash ...`。装完自动 `exec ./Teahouse`，Ctrl+C 停止；想后台跑：`nohup ./Teahouse > server.log 2>&1 &`。
 
 **手动方式**（不引脚本时，Linux 全架构通用）：
 
