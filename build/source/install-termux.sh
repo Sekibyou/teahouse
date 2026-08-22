@@ -14,11 +14,17 @@ DEST_DIR="${HOME}/teahouse"
 echo "==> 检查/安装依赖（git / python / uv）..."
 command -v git >/dev/null 2>&1 || pkg install -y git
 command -v python >/dev/null 2>&1 || pkg install -y python
+# uv：Termux 官方仓库提供 prebuilt 二进制（零编译），pkg 是唯一可靠方式。
+# 不用 pip install uv——Termux 无 uv 的 prebuilt wheel，会触发 Rust 源码编译而
+# 报 "failed to build uv"。install.sh 仅作非 Termux 环境的通用兜底。
 if ! command -v uv >/dev/null 2>&1; then
-    echo "==> 安装 uv ..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh || {
-        echo "!! uv 安装失败，尝试 pip 安装…"
-        python -m pip install uv
+    echo "==> 安装 uv（pkg install uv）..."
+    pkg install -y uv || {
+        echo "!! 'pkg install uv' 失败，回退官方脚本安装…"
+        curl -LsSf https://astral.sh/uv/install.sh | sh || {
+            echo "!! uv 安装仍失败。请手动执行：pkg install uv"
+            exit 1
+        }
     }
 fi
 # 脚本内 PATH 补全 uv（install.sh 装到 ~/.local/bin）

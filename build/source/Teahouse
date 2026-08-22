@@ -103,11 +103,26 @@ def src_tag(version: str) -> str:
     return version if version.startswith("v") else f"v{version}"
 
 
+def _is_termux() -> bool:
+    return Path("/data/data/com.termux/files").exists()
+
+
 def ensure_tools() -> None:
     _which("git", "python3")
-    if shutil.which("uv") is None:
-        _log("未找到 uv，尝试用 pip 安装…")
-        _run([shutil.which("python3"), "-m", "pip", "install", "--user", "uv"])
+    if shutil.which("uv") is not None:
+        return
+    if _is_termux():
+        # Termux 用 pkg（prebuilt 二进制，零编译）。pip install uv 在 Termux 会触发
+        # Rust 源码构建而失败（无 uv prebuilt wheel）。
+        _log("未找到 uv，用 pkg install uv…")
+        _run(["pkg", "install", "-y", "uv"])
+    else:
+        _log("未找到 uv，用官方脚本 ~/.local/bin 安装…")
+        subprocess.run(["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"], check=True)
+        # 官方脚本装到 ~/.local/bin，PATH 补上
+        local = Path.home() / ".local" / "bin"
+        if local.exists() and str(local) not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = str(local) + os.pathsep + os.environ.get("PATH", "")
     _which("uv")
 
 
