@@ -60,11 +60,13 @@ main() {
   else
     wget -O "$INSTALL_DIR/$PKG" "$URL"
   fi
-  tar -xzf "$INSTALL_DIR/$PKG" -C "$INSTALL_DIR"
+  tar -xzf "$INSTALL_DIR/$PKG" --strip-components=1 -C "$INSTALL_DIR"
   rm -f "$INSTALL_DIR/$PKG"
   local BIN="$INSTALL_DIR/Teahouse"
-  [ -x "$BIN" ] || die "解压后未找到可执行文件: $BIN"
-  echo "解压完成 → $INSTALL_DIR/Teahouse"
+  # 校验是可执行文件而非同名目录（tar 顶层 `Teahouse/` 已被 --strip-components 剥掉）
+  [ -f "$BIN" ] || die "解压后未找到可执行文件: $BIN"
+  chmod +x "$BIN"
+  echo "解压完成 → $BIN"
 
   step "5/5 启动"
   echo "已就绪，启动 Teahouse ...（浏览器会自动打开；Ctrl+C 停止）"
