@@ -70,7 +70,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> None:
 def _which(*names: str) -> None:
     for n in names:
         if shutil.which(n) is None:
-            _fail(f"未找到 {n}。请先安装：Termux 用 `pkg install git python`。")
+            _fail(f"未找到 {n}。请先安装：Termux 用 `pkg install git python`，Debian/Ubuntu 用 `apt install git python3`。")
 
 
 def _read_json(url: str) -> dict:
