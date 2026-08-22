@@ -197,6 +197,14 @@ def ensure_env() -> None:
     # Termux 上编译型依赖（pydantic-core 等）首次经 Rust 编译，之后 venv 复用不重编。
     _run([str(pip), "install", "-e", str(SRC), "--no-cache-dir"])
 
+    # 兜底：FastAPI 的 File/Form 端点(routes/workspaces.py)强制需要 python-multipart。
+    # 旧源码的 pyproject 可能漏声明该依赖，这里显式探测，缺则补装（纯 Python，幂等快）。
+    probe = subprocess.run([str(vb), "-c", "import multipart"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if probe.returncode != 0:
+        _log("补装 python-multipart（FastAPI 表单端点必需）…")
+        _run([str(pip), "install", "python-multipart", "--no-cache-dir"])
+
 
 def seed_dist() -> None:
     """把一键包预置的 dist.zip+dist.hash 种入工作区状态区。

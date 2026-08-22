@@ -10,6 +10,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "fastapi>=0.111",
     "pydantic>=2.0",
+    "python-multipart>=0.0.9",
     "aiosqlite>=0.20",
     "bcrypt>=4.0",
     "pyjwt>=2.8",
