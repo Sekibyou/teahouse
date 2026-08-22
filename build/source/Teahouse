@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Teahouse 源码一键包引导脚本（跨架构，aarch64/Termux 原生运行）。
+
+不经 PyInstaller、不 build 前端、前端产物不进 git。纯文本 Python 脚本，
+shebang 启动，跨 CPU 架构可用——它在目标机上指挥：
+
+    1. 取源码（git clone 到 <ver> tag；--update 则下载最新 release Source code zip，不走 git pull）
+    2. 装 Python 环境（uv venv + uv pip install -e .，抓 aarch64 预编译 wheel）
+    3. 前端 dist 自愈（复用一键包预置的 dist.zip + dist.hash 进工作区 .teahouse-dist/，
+       frontend_install.ensure_frontend 按 hash 校验/复用/解压，无需联网重下、无需 build）
+    4. 启动（python -m teahouse —— 它会再触发一次 ensure_frontend + app.main）
+
+用法：
+    ./Teahouse            首次安装并运行（装本一键包对应版本）
+    ./Teahouse --update   升级到最新 release（源码 + 前端 dist + 依赖一起更新）
+
+依赖目标机：git、python3、uv（Termux: pkg install git python; 装 uv 见 README）。
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
+
+REPO_OWNER = "Sekibyou"
+REPO_NAME = "teahouse"
+REPO = f"https://github.com/{REPO_OWNER}/{REPO_NAME}.git"
+RELEASE_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
+SOURCE_URL = (
+    f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/tags/{{ver}}.zip"
+)
+
+# 本脚本所在目录 = 一键包解压目录（含 Teahouse / dist.zip / dist.hash / VERSION）
+PP = Path(__file__).resolve().parent
+# 工作区：源码、venv、数据、前端状态区都收敛在这一个子目录，一键包目录保持干净
+WORK = PP / ".teahouse-work"
+SRC = WORK / "teahouse"
+VENV = WORK / ".venv"
+DIST_STATE = WORK / ".teahouse-dist"
+# 一键包预置的前端（离线首次安装，ensure_frontend 检测匹配即复用，不联网）
+BUNDLED_DIST_ZIP = PP / "dist.zip"
+BUNDLED_DIST_HASH = PP / "dist.hash"
+VERSION_FILE = PP / "VERSION"
+
+
+def _log(msg: str) -> None:
+    print(f"[teahouse] {msg}")
+
+
+def _fail(msg: str) -> None:
+    print(f"[teahouse] 错误：{msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _run(cmd: list[str], cwd: Path | None = None) -> None:
+    _log("  $ " + " ".join(cmd))
+    proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None)
+    if proc.returncode != 0:
+        _fail(f"命令失败 ({proc.returncode})：{' '.join(cmd)}")
+
+
+def _which(*names: str) -> None:
+    for n in names:
+        if shutil.which(n) is None:
+            _fail(f"未找到 {n}。请先安装：Termux 用 `pkg install git python` 再装 uv。")
+
+
+def _read_json(url: str) -> dict:
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        _fail(f"请求 {url} 失败：{e}")
+
+
+def latest_release_tag() -> str:
+    releases = _read_json(RELEASE_API)
+    if isinstance(releases, list):
+        for r in releases:
+            tag = r.get("tag_name")
+            if tag:
+                return tag
+    _fail("未能解析最新 release tag")
+
+
+def read_version() -> str:
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        _fail("缺少 VERSION 文件（一键包损坏）")
+
+
+def src_tag(version: str) -> str:
+    """VERSION 存的是去 v 的版本号（与 pyproject 一致），git 分支 tag 带 v 前缀
+    （release 流程 tag = v + version）。"""
+    return version if version.startswith("v") else f"v{version}"
+
+
+def ensure_tools() -> None:
+    _which("git", "python3")
+    if shutil.which("uv") is None:
+        _log("未找到 uv，尝试用 pip 安装…")
+        _run([shutil.which("python3"), "-m", "pip", "install", "--user", "uv"])
+    _which("uv")
+
+
+def ensure_src(update: bool) -> None:
+    if update:
+        _update_src_from_release()
+        return
+    if SRC.is_dir():
+        _log("工作区源码已存在，复用")
+        return
+    ver = read_version()
+    _log(f"克隆源码（{src_tag(ver)} tag，首次安装）…")
+    SRC.parent.mkdir(parents=True, exist_ok=True)
+    _run(["git", "clone", "--branch", src_tag(ver), "--depth", "1", REPO, str(SRC)])
+
+
+def _update_src_from_release() -> None:
+    tag = latest_release_tag()  # 原始 tag，如 v1.01；archive URL 必须用原始值
+    _log(f"下载最新 release（{tag}）Source code…")
+    url = SOURCE_URL.format(ver=tag)
+    import urllib.request
+
+    td = Path(tempfile.mkdtemp(prefix="teahouse-update-"))
+    arc = td / "src.zip"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp, open(arc, "wb") as f:
+            while chunk := resp.read(1 << 20):
+                f.write(chunk)
+    except Exception as e:
+        _fail(f"下载 Source code 失败：{e}")
+    # archive zip 内含一层 <name>-<ver>/，定位那层
+    with zipfile.ZipFile(arc) as zf:
+        zf.extractall(td)
+    inner = next(p for p in td.iterdir() if p.is_dir())
+    # 原子替换工作区源码
+    if SRC.exists():
+        shutil.rmtree(str(SRC))
+    shutil.move(str(inner), str(SRC))
+    shutil.rmtree(td, ignore_errors=True)
+    _log(f"源码已更新到 {tag}")
+
+
+def ensure_env() -> None:
+    SRC.mkdir(parents=True, exist_ok=True)
+    py3 = shutil.which("python3")
+    # 每次 ran——既有 venv 也重装，代码可能随 --update 更新过，保持对齐（幂等、增量）
+    _run(["uv", "venv", str(VENV)])
+    _run(["uv", "pip", "install", "-e", str(SRC), "--python", str(VENV / "bin" / "python"), "--no-cache"])
+
+
+def seed_dist() -> None:
+    """把一键包预置的 dist.zip+dist.hash 种入工作区状态区。
+
+    不存在才种（多次运行不复位）。ensure_frontend 检测到与源码 pyproject 版本
+    对应的 hash 一致即直接复用；只有缺件/版本不符才去 release 拉，实现"离线
+    首次安装、联网兜底"。
+    """
+    if BUNDLED_DIST_HASH.exists() and BUNDLED_DIST_ZIP.exists():
+        DIST_STATE.mkdir(parents=True, exist_ok=True)
+        if not (DIST_STATE / "dist.hash").exists():
+            shutil.copy2(BUNDLED_DIST_HASH, DIST_STATE / "dist.hash")
+        if not (DIST_STATE / "dist.zip").exists():
+            shutil.copy2(BUNDLED_DIST_ZIP, DIST_STATE / "dist.zip")
+
+
+def run_server() -> None:
+    _log("启动 Teahouse 服务…")
+    os.chdir(str(SRC))
+    _run([str(VENV / "bin" / "python"), "-m", "teahouse"])
+
+
+def main() -> int:
+    update = "--update" in sys.argv[1:]
+    ensure_tools()
+    ensure_src(update)
+    ensure_env()
+    seed_dist()
+    run_server()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -42,10 +42,12 @@ build\build_release.bat --frontend --backend --assets  组合
 
 ## 双 zip 产物
 
-`--zip` 在 `dist\` 生成两个包（版本号单源 = `pyproject.toml`，排除 yaml/data）：
+`--zip` 在 `dist\` 生成两个包（版本号单源 = `pyproject.toml`，排除 yaml/data），并额外产出**跨架构源码一键包**与独立前端 asset：
 
 - `dist\Teahouse-<ver>-with-git.zip` —— **内置 git**，新用户全量安装用
 - `dist\Teahouse-<ver>.zip` —— **不含 git**，老用户更新用（体积小，MinGit 不重复下）
+- `dist\teahouse-<ver>-source.zip` —— **源码一键包（不经 PyInstaller，跨架构）**：`Teahouse` 引导脚本 + `dist.zip` + `dist.hash` + `VERSION`。给 aarch64/Termux/任一 Linux 原生用（PyInstaller 产物绑定宿主架构，x86 打包在 ARM 跑不了）
+- `dist\frontend-dist-<ver>.zip` + `dist\dist.hash` —— 独立前端 asset，源码一键包/Termux 缺前端时从 release 拉取（`--assets` 产出）
 
 ## 前置要求（仅构建机）
 
@@ -68,7 +70,9 @@ build\build_release.bat --frontend --backend --assets  组合
 3. **backend**：`pyinstaller --clean --noconfirm teahouse.spec`。`--clean` 清中间产物，COLLECT 自带清 `dist/Teahouse`，故可重复执行。
 4. **assets**：把前端自愈安装源写进发布目录——对 `teahouse-frontend\dist` 算 dir hash → 压成 `dist.zip`（顶层 `dist/`）→ 写 `dist.hash`（内含 zip + dir 两枚 sha256）。顺序严格"先算 hash、再打 zip、后写 hash"确保同源，并对 zip 内部解压复核一次防错位。
 5. **verify**：检查 `dist\Teahouse` 下 exe/_internal/git/dist.zip 齐备，并复核 `dist.hash` 里的 zip hash 与当前 `dist.zip` 自洽。
-6. **zip**：打两个发布 zip。
+6. **zip**：打两个发布 zip，并组装源码一键包 `teahouse-<ver>-source.zip`（`build/source/Teahouse` + `OUT/dist.zip` + `OUT/dist.hash` + `VERSION`）。
+
+> **源码一键包（`build/source/Teahouse`）**：跨架构引导脚本（shebang Python，非 PyInstaller）。运行它 = `git clone --branch v<ver>` 源码 → `uv venv` + `uv pip install -e .`（抓 aarch64 预编译 wheel）→ 把包内 dist.zip/dist.hash 种进 `.teahouse-dist/` 自愈 → `python -m teahouse`。`--update` 下载最新 release Source code（不走 git pull）+ 依赖。需要目标机有 git/python3/uv。脚本与 `frontend_install.py` 源码态分支（B1 默认自愈）配套，前端副作用（`.teahouse-dist/`、`teahouse-frontend/dist`）均已 gitignore。
 
 任一步失败即打印原因并**停留窗口**（bat 层 `pause`），不会闪退；成功同样停留。
 
@@ -108,11 +112,14 @@ dist/Teahouse/
 
 ```
 build/
-  build_release.py     幂等构建逻辑（步骤选择、subprocess、校验）
+  build_release.py     幂等构建逻辑（步骤选择、subprocess、校验、一键包组装）
   build_release.bat    薄触发器（定位 venv python、转发参数、pause 停留）
   README_BUILD.md      本文档
   mingit_tmp/          MinGit 解压目录（保留，脚本直接装配它；删了需重新解压）
   teahouse/            PyInstaller 中间产物（可删，--clean 会重建）
+  source/
+    Teahouse           源码一键包引导脚本（跨架构，Tag 打包/一键包必用）
+    install-termux.sh  Termux 一键安装（装依赖 → 拉最新一键包 → ./Teahouse）
 ```
 
 `build/`、`dist/`、`tests/` 均被 `.gitignore` 忽略，不入库。
@@ -145,8 +152,8 @@ git add <src...> teahouse-frontend/... CLAUDE.md
 git commit -m "..."
 git push origin main
 
-REM 4) 打 tag + 创建 release，上传两个 zip
-gh release create v<VER> "dist\Teahouse-<VER>-with-git.zip" "dist\Teahouse-<VER>.zip" --title "..." --notes "<...>"
+REM 4) 打 tag + 创建 release，上传两个 zip + 源码一键包 + 独立前端 asset
+gh release create v<VER> "dist\Teahouse-<VER>-with-git.zip" "dist\Teahouse-<VER>.zip" "dist\teahouse-<VER>-source.zip" "dist\frontend-dist-<VER>.zip" "dist\dist.hash" --title "..." --notes "<...>"
 ```
 
 release 说明要点（给玩家）：

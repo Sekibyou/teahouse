@@ -14,7 +14,7 @@ Platform behavior:
                Teahouse-<ver>-Windows-with-git.zip (new users) /
                Teahouse-<ver>-Windows.zip (update).
     Linux    — produces a no-suffix Teahouse executable + no bundled git
-               (app falls back to system git), ships Teahouse-<ver>-Linux.tar.gz.
+               (app falls back to system git), ships Teahouse-<ver>-Linux-x86-64.tar.gz.
     The bundled frontend dist.zip + dist.hash are identical across platforms.
 
 Idempotent: safe to run repeatedly from any state (clean or partial).
@@ -31,7 +31,7 @@ Steps (with no args, every step is run):
       --zip        package the deliverable (per-platform):
                      Windows: Teahouse-<ver>-Windows-with-git.zip
                               Teahouse-<ver>-Windows.zip
-                     Linux:   Teahouse-<ver>-Linux.tar.gz
+                     Linux:   Teahouse-<ver>-Linux-x86-64.tar.gz
 
 Exit code 0 on success, non-zero on failure. The .bat wrapper pauses so the
 console window stays open to read the result.
@@ -245,6 +245,20 @@ def step_assets() -> bool:
     hash_path = OUT / DIST_HASH_NAME
     hash_path.write_text(json.dumps(payload), encoding="utf-8")
     _log(f"  wrote {DIST_HASH_NAME}: zip={zip_hash[:12]}.. dir={dir_hash[:12]}..")
+
+    # 独立 frontend asset：源码一键包 / Termux 直接拉这一份（跨架构同源，前端纯静态
+    # 与架构无关，一份即可）。命名与 frontend_install._fetch_dist_asset 的 URL 精确
+    # 对应：frontend-dist-<ver>.zip + dist.hash（后端从 release 下载同一路径）。
+    release_dir = DIST_DIR
+    release_dir.mkdir(parents=True, exist_ok=True)
+    frontend_asset = release_dir / f"frontend-dist-{_read_version()}.zip"
+    frontend_asset.unlink(missing_ok=True)
+    shutil.copy2(zip_path, frontend_asset)
+    # dist.hash 允许源码态逐 tag 拉取，直接落在 release 目录根下（HTTP 下载兜底
+    # 只带文件名，不带 <ver> 前缀），与 backend 的 dist.hash 同源备份一份。
+    (release_dir / DIST_HASH_NAME).write_text(json.dumps(payload), encoding="utf-8")
+    size_mb = frontend_asset.stat().st_size / 1024 / 1024
+    _log(f"  wrote {frontend_asset.name} ({size_mb:.1f} MB) + {DIST_HASH_NAME} (frontend asset)")
     return True
 
 
@@ -320,6 +334,31 @@ def _tar_gz_one(target: Path) -> bool:
     return True
 
 
+def _zip_source_bundle(ver: str) -> bool:
+    """组装跨架构源码一键包 teahouse-<ver>-source.zip。
+
+    内容：Teahouse（引导脚本）+ dist.zip + dist.hash + VERSION。
+    dist 来自 --assets 已产出的 OUT/（前端跨架构同源），Teahouse 来自 build/source/。
+    后端跑在目标机的 uv venv（非 PyInstaller），故不打包 _internal。
+    """
+    script = ROOT / "build" / "source" / "Teahouse"
+    if not script.is_file():
+        _log("  ERROR: 缺少 build/source/Teahouse 引导脚本")
+        return False
+    OUT.mkdir(parents=True, exist_ok=True)
+    pkg = DIST_DIR / f"teahouse-{ver}-source.zip"
+    pkg.unlink(missing_ok=True)
+    _log(f"  packing {pkg.name} ...")
+    with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        zf.write(script, "Teahouse")
+        zf.write(OUT / "dist.zip", "dist.zip")
+        zf.write(OUT / "dist.hash", "dist.hash")
+        zf.writestr("VERSION", f"{ver}\n")
+    size_mb = pkg.stat().st_size / 1024 / 1024
+    _log(f"  wrote {pkg.name} ({size_mb:.1f} MB)")
+    return True
+
+
 def step_zip() -> bool:
     ver = _read_version()
     _log(f"[zip] Packing deliverable (version {ver})...")
@@ -340,11 +379,14 @@ def step_zip() -> bool:
         if not _zip_one(lite, exclude=no_git):
             return False
     else:
-        # Linux：单包 tar.gz，无捆绑 git（靠系统 git），仅一个交付形态
-        pkg = DIST_DIR / f"Teahouse-{ver}-Linux.tar.gz"
+        # Linux：单包 tar.gz，无捆绑 git（靠系统 git），仅一个交付形态（x86-64）
+        pkg = DIST_DIR / f"Teahouse-{ver}-Linux-x86-64.tar.gz"
         pkg.unlink(missing_ok=True)
         if not _tar_gz_one(pkg):
             return False
+    # 跨架构源码一键包：两侧都产（与平台无关，aarch64/Termux 原生存取）
+    if not _zip_source_bundle(ver):
+        return False
     return True
 
 
@@ -383,7 +425,7 @@ def main() -> int:
         _log(" zips: dist/Teahouse-<ver>-Windows-with-git.zip  (new users, incl. bundled git)")
         _log("       dist/Teahouse-<ver>-Windows.zip           (update package, no git/)")
     else:
-        _log(" pkg : dist/Teahouse-<ver>-Linux.tar.gz  (no bundled git; uses system git)")
+        _log(" pkg : dist/Teahouse-<ver>-Linux-x86-64.tar.gz  (no bundled git; uses system git)")
     _log(" The release no longer ships the unpacked dist/ directory — it ships")
     _log(" dist.zip + dist.hash; the runtime unpacks/self-heals dist/ on launch.")
     _log(" teahouse.yaml and data/ are auto-generated on first run.")

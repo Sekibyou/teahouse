@@ -17,14 +17,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
 import sys
 import tempfile
+import urllib.request
 import webbrowser
 import zipfile
 from pathlib import Path
 
 _RELEASE_URL = "https://github.com/Sekibyou/teahouse/releases"
+# 独立挂载的前端 asset 命名（build_release.py 发布时上传）：frontend-dist-<ver>.zip
+# 与 release 版本号对齐（Termux 跑 release 源码包，源码版本 == release tag）。
+_FRONTEND_ASSET_TEMPLATE = "{version}/frontend-dist-{version}.zip"
 
 
 def _exe_dir() -> Path:
@@ -40,6 +46,39 @@ def _hash_file(path: Path, chunk: int = 1 << 20) -> str:
                 break
             h.update(blk)
     return h.hexdigest()
+
+
+def _source_root() -> Path:
+    """源码运行时（非 frozen）的项目根 = <repo>。frontend_install 位于
+    src/teahouse/frontend_install.py，故 parents[2] 为仓库根（与 app.py 的
+    _frontend_dist 定位一致）。"""
+    return Path(__file__).resolve().parents[2]
+
+
+def _read_version() -> str | None:
+    """版本单源 = pyproject.toml 的 version。源码态用它拼 release asset 名。"""
+    try:
+        text = Path(_source_root() / "pyproject.toml").read_text(encoding="utf-8")
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        if m:
+            return m.group(1).strip()
+    except OSError:
+        return None
+    return None
+
+
+def _download(url: str, dest: Path) -> bool:
+    """下载 url 到 dest，返回是否成功。带 10s 超时，失败绝不抛异常。"""
+    if dest.exists():
+        dest.unlink()
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, open(dest, "wb") as f:
+            while chunk := resp.read(1 << 20):
+                f.write(chunk)
+        return True
+    except Exception as e:
+        print(f"[teahouse] 下载失败: {url} ({e})")
+        return False
 
 
 def _hash_dir(root: Path) -> str | None:
@@ -137,30 +176,43 @@ def _unpack_safely(zip_path: Path, zone: Path, expected_dir_hash: str) -> bool:
         shutil.rmtree(str(tmp), ignore_errors=True)
 
 
-def ensure_frontend() -> bool:
-    """冻结态启动前的前端自愈。返回 True 才应继续启动。
+def _layout() -> tuple[Path, Path, Path, bool]:
+    """返回 (hash_path, zip_path, dist_dir, allow_download)。
 
-    规则：
-      1. 非 frozen（源码/开发态）→ 不干预，返回 True（前端走 teahouse-frontend/dist）
-      2. 读 exe 旁 dist.hash，缺 → 引导（视为缺件/损坏）
-      3. 算磁盘 dist.zip 的 hash，≠ 记录 zipHash → 引导（dist.zip 过时/换过，不信任）
-      4. zip 相符 ↓
+    frozen   ：dist 状态区与解压目标同在 exe 旁，zip/hash 由发布包预置，不下载
+    source   ：状态区在 <repo>/.teahouse-dist/（不进 git），解压到
+               <repo>/teahouse-frontend/dist（匹配 app._frontend_dist() 源码态）；
+               缺件时默认去 release 下载当前版本 asset（B1：源码态默认自愈）
+    """
+    if getattr(sys, "frozen", False):
+        exe = _exe_dir()
+        return exe / "dist.hash", exe / "dist.zip", exe / "dist", False
+    root = _source_root()
+    state = root / ".teahouse-dist"
+    return state / "dist.hash", state / "dist.zip", root / "teahouse-frontend" / "dist", True
+
+
+def ensure_frontend() -> bool:
+    """启动前的前端自愈。返回 True 才应继续启动。
+
+    frozen / source 共用一套核心：读 dist.hash → 校验 dist.zip → 复用或安全解压。
+    差异仅在"状态区/解压目标在哪"与"缺件时是否允许去 release 下载"：
+      1. 缺有效 dist.hash → 若允许下载则尝试拉当前版本 asset，成功重建；否则引导
+      2. 算磁盘 dist.zip 的 hash，≠ 记录 zipHash → 引导（dist.zip 过时/换过，不信任）
+      3. zip 相符 ↓
            - 现存 dist/ dir hash == 记录 dirHash → 直接 True（前端没问题，零成本复用）
            - 否则 → dist.zip 可信，安全替换 → 返回成败
     """
-    if not getattr(sys, "frozen", False):
-        return True
-
-    exe = _exe_dir()
-    hash_path = exe / "dist.hash"
-    zip_path = exe / "dist.zip"
-    dist_dir = exe / "dist"
+    hash_path, zip_path, dist_dir, allow_download = _layout()
 
     req = _load_hash(hash_path)
     if req is None or not req["zip"] or not req["dir"]:
-        print("[teahouse] 前端更新：缺少有效 dist.hash，转入更新引导")
-        _guide("缺少有效的 dist.hash（首次部署缺件或文件损坏）")
-        return False
+        if allow_download and _fetch_dist_asset(hash_path, zip_path):
+            req = _load_hash(hash_path)
+        if req is None or not req["zip"] or not req["dir"]:
+            print("[teahouse] 前端更新：缺少有效 dist.hash，转入更新引导")
+            _guide("缺少有效的 dist.hash（首次部署缺件或文件损坏）")
+            return False
     if not zip_path.is_file():
         print("[teahouse] 前端更新：缺少 dist.zip，转入更新引导")
         _guide("缺少 dist.zip")
@@ -185,3 +237,27 @@ def ensure_frontend() -> bool:
     else:
         print("[teahouse] 前端更新：解压重建失败，转入更新引导")
     return ok
+
+
+def _fetch_dist_asset(hash_path: Path, zip_path: Path) -> bool:
+    """源码态缺件时，从当前版本 release 拉取 frontend-dist-<ver>.zip + dist.hash。
+
+    版本从本地 pyproject.toml 读（源码包版本 == release tag），不查 release API。
+    首个 asset 下载失败/无版本号 → 返回 False 交调用方转引导。不抛异常。
+    """
+    ver = _read_version()
+    if not ver:
+        return False
+    tag = ver if ver.startswith("v") else f"v{ver}"  # release tag 带 v 前缀
+    base = f"{_RELEASE_URL}/download/{tag}"
+    zip_url = f"{base}/frontend-dist-{ver}.zip"
+    hash_url = f"{base}/dist.hash"
+    hash_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[teahouse] 前端更新：未找到本地 dist，从 release 拉取 v{ver} 前端资产…")
+    ok_zip = _download(zip_url, zip_path)
+    ok_hash = _download(hash_url, hash_path)
+    if not (ok_zip and ok_hash):
+        zip_path.unlink(missing_ok=True)
+        hash_path.unlink(missing_ok=True)
+        return False
+    return True
