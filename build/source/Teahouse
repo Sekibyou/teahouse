@@ -5,7 +5,7 @@
 shebang 启动，跨 CPU 架构可用——它在目标机上指挥：
 
     1. 取源码（git clone 到 <ver> tag；--update 则下载最新 release Source code zip，不走 git pull）
-    2. 装 Python 环境（uv venv + uv pip install -e .，抓 aarch64 预编译 wheel）
+    2. 装 Python 环境（python3 -m venv + pip install -e .，pip --prefer-binary 抓 aarch64 预编译 wheel）
     3. 前端 dist 自愈（复用一键包预置的 dist.zip + dist.hash 进工作区 .teahouse-dist/，
        frontend_install.ensure_frontend 按 hash 校验/复用/解压，无需联网重下、无需 build）
     4. 启动（python -m teahouse —— 它会再触发一次 ensure_frontend + app.main）
@@ -14,7 +14,7 @@ shebang 启动，跨 CPU 架构可用——它在目标机上指挥：
     ./Teahouse            首次安装并运行（装本一键包对应版本）
     ./Teahouse --update   升级到最新 release（源码 + 前端 dist + 依赖一起更新）
 
-依赖目标机：git、python3、uv（Termux: pkg install git python; 装 uv 见 README）。
+依赖目标机：git、python3（Termux: pkg install git python）。不依赖 uv——pip 装依赖即可。
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> None:
 def _which(*names: str) -> None:
     for n in names:
         if shutil.which(n) is None:
-            _fail(f"未找到 {n}。请先安装：Termux 用 `pkg install git python` 再装 uv。")
+            _fail(f"未找到 {n}。请先安装：Termux 用 `pkg install git python`。")
 
 
 def _read_json(url: str) -> dict:
@@ -103,27 +103,11 @@ def src_tag(version: str) -> str:
     return version if version.startswith("v") else f"v{version}"
 
 
-def _is_termux() -> bool:
-    return Path("/data/data/com.termux/files").exists()
-
-
 def ensure_tools() -> None:
+    # 环境统一用系统 python3 -m venv + pip 创建/装依赖（见 ensure_env）。不依赖 uv——
+    # uv 在 Termux 有 android bug 且 pkg 仓库停旧版升不动；Termux pip 同样认
+    # aarch64 预编译 wheel，抓取能力等同。
     _which("git", "python3")
-    if shutil.which("uv") is not None:
-        return
-    if _is_termux():
-        # Termux 用 pkg（prebuilt 二进制，零编译）。pip install uv 在 Termux 会触发
-        # Rust 源码构建而失败（无 uv prebuilt wheel）。
-        _log("未找到 uv，用 pkg install uv…")
-        _run(["pkg", "install", "-y", "uv"])
-    else:
-        _log("未找到 uv，用官方脚本 ~/.local/bin 安装…")
-        subprocess.run(["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"], check=True)
-        # 官方脚本装到 ~/.local/bin，PATH 补上
-        local = Path.home() / ".local" / "bin"
-        if local.exists() and str(local) not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = str(local) + os.pathsep + os.environ.get("PATH", "")
-    _which("uv")
 
 
 def ensure_src(update: bool) -> None:
@@ -170,17 +154,16 @@ def ensure_env() -> None:
     py3 = shutil.which("python3")
     vb = VENV / "bin" / "python"
     if not vb.exists():
-        if _is_termux():
-            # uv 0.9.15 在 Termux（python 3.13 → sys.platform='android'）上建 venv 会报
-            # "Unknown operating system: android"（uv#18285，PR#18301 2026-03 后修复）。
-            # Termux 用原生 python -m venv 建环境（android 自身认得），不碰 uv 的
-            # android inspect；依赖安装仍走 uv pip。若 uv 也太旧装包失败，会转升级指引。
-            _log("用 Termux 原生 python 创建虚拟环境…")
-            _run([py3, "-m", "venv", str(VENV)])
-        else:
-            _run(["uv", "venv", str(VENV)])
+        # 各平台统一用 python3 -m venv 建环境，避免 uv——Termux 上 uv 0.9.15 有
+        # android bug（报 "Unknown operating system: android"），且 pkg 仓库停旧版
+        # 升不动。Termux 的 pip 认 aarch64 预编译 wheel，与 uv 抓取等同，无需 uv。
+        _log(f"用 {py3} 创建虚拟环境…")
+        _run([py3, "-m", "venv", str(VENV)])
+    pip = VENV / "bin" / "pip"
     # 每次 ran——既有 venv 也重装，代码可能随 --update 更新过，保持对齐（幂等、增量）
-    _run(["uv", "pip", "install", "-e", str(SRC), "--python", str(vb), "--no-cache"])
+    # --prefer-binary：优先抓预编译 wheel（Termux 上 pydantic-core/cryptography 等
+    # aarch64 wheel 齐全），避免误触发源码编译。
+    _run([str(pip), "install", "--prefer-binary", "-e", str(SRC), "--no-cache-dir"])
 
 
 def seed_dist() -> None:
