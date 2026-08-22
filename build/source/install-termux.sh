@@ -44,8 +44,14 @@ mkdir -p "${DEST_DIR}"
 cd "${DEST_DIR}"
 if [ ! -f "${VERSION_FILE}" ] || [ ! -f "Teahouse" ]; then
     echo "==> 下载 ${PKG} 到 ${DEST_DIR} …"
-    TMP_ZIP="$(mktemp /tmp/teahouse-XXXX.zip)"
-    curl -fL -o "${TMP_ZIP}" "${PKG_URL}" || { echo "!! 下载失败"; rm -f "${TMP_ZIP}"; exit 1; }
+    # 临时 zip 放下工作区（Termux 的 /tmp 常不可写，mktemp /tmp 会 Permission denied），
+    # 下载后立即解压、删除，工作区保持只有一键包内容，不残留临时文件。
+    TMP_ZIP="${DEST_DIR}/.teahouse-download.zip"
+    curl -fL -o "${TMP_ZIP}" "${PKG_URL}" || {
+        rm -f "${TMP_ZIP}"
+        echo "!! 下载失败：${PKG_URL}"
+        exit 1
+    }
     unzip -o "${TMP_ZIP}" -d "${DEST_DIR}"
     rm -f "${TMP_ZIP}"
 fi
