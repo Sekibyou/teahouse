@@ -56,6 +56,10 @@ def _fail(msg: str) -> None:
     sys.exit(1)
 
 
+def _is_termux() -> bool:
+    return Path("/data/data/com.termux/files").exists()
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
     _log("  $ " + " ".join(cmd))
     proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None)
@@ -153,17 +157,34 @@ def ensure_env() -> None:
     SRC.mkdir(parents=True, exist_ok=True)
     py3 = shutil.which("python3")
     vb = VENV / "bin" / "python"
+
+    termux = _is_termux()
+    cargo = shutil.which("cargo")
+    if termux and cargo is None:
+        # Termux 无 android wheel，pydantic-core/uvloop 等必须源码编译（Rust）。
+        # install-termux.sh 已装 rust；这里补 PATH（若 rust 刚装未进 shell PATH）。
+        rx = Path("/data/data/com.termux/files/usr/bin")
+        if (rx / "cargo").exists():
+            if str(rx) not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = str(rx) + os.pathsep + os.environ.get("PATH", "")
+                cargo = "cargo"
+    if termux and shutil.which("cargo") is None:
+        _fail("Termux 需要 Rust 工具链编译 pydantic-core。请先执行：pkg install rust")
+
     if not vb.exists():
-        # 各平台统一用 python3 -m venv 建环境，避免 uv——Termux 上 uv 0.9.15 有
-        # android bug（报 "Unknown operating system: android"），且 pkg 仓库停旧版
-        # 升不动。Termux 的 pip 认 aarch64 预编译 wheel，与 uv 抓取等同，无需 uv。
-        _log(f"用 {py3} 创建虚拟环境…")
-        _run([py3, "-m", "venv", str(VENV)])
+        if termux:
+            # Termux：用 --system-site-packages，让 venv 复用 pkg 装的
+            # python-cryptography / python-bcrypt（bionic 预编译），pip 不再重拉/重编。
+            _log("创建虚拟环境（--system-site-packages，复用 Termux 系统编译库）…")
+            _run([py3, "-m", "venv", "--system-site-packages", str(VENV)])
+        else:
+            _log("创建虚拟环境…")
+            _run([py3, "-m", "venv", str(VENV)])
+
     pip = VENV / "bin" / "pip"
     # 每次 ran——既有 venv 也重装，代码可能随 --update 更新过，保持对齐（幂等、增量）
-    # --prefer-binary：优先抓预编译 wheel（Termux 上 pydantic-core/cryptography 等
-    # aarch64 wheel 齐全），避免误触发源码编译。
-    _run([str(pip), "install", "--prefer-binary", "-e", str(SRC), "--no-cache-dir"])
+    # Termux 上编译型依赖（pydantic-core 等）首次经 Rust 编译，之后 venv 复用不重编。
+    _run([str(pip), "install", "-e", str(SRC), "--no-cache-dir"])
 
 
 def seed_dist() -> None:

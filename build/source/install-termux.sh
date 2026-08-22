@@ -11,12 +11,18 @@ REPO_NAME="teahouse"
 RELEASE_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases"
 DEST_DIR="${HOME}/teahouse"
 
-echo "==> 检查/安装依赖（git / python）..."
+echo "==> 检查/安装依赖（git / python / rust / 编译库）..."
 command -v git >/dev/null 2>&1 || pkg install -y git
 command -v python >/dev/null 2>&1 || pkg install -y python
-# 环境用 Termux 原生 python3 -m venv + pip 创建/装依赖（见 Teahouse 脚本）。
-# 不依赖 uv——uv 在 Termux 有 android bug 且 pkg 仓库停旧版升不动；Termux 的
-# pip 认 aarch64 预编译 wheel（pydantic-core/cryptography 等），抓取能力等同。
+# Termux 现实：Python = aarch64+android(bionic)，PyPI 上无 android wheel——
+# manylinux_aarch64 是 glibc，Termux 用不了，故编译型依赖无法靠 pip 抓 wheel。
+# 对策：
+#   - cryptography / bcrypt：用 Termux pkg 预编译的 bionic 版（python-cryptography / python-bcrypt），
+#     装进系统 python 的 site-packages，vev 用 --system-site-packages 复用，pip 不再重装。
+#   - pydantic-core / uvloop / httptools / pyyaml：无 pkg 且无 android wheel → 源码编译，须装 Rust
+#     （cargo/maturin）工具链。首次编译较慢（分钟级），此后 venv 不再重装。
+command -v rustc >/dev/null 2>&1 || command -v cargo >/dev/null 2>&1 || pkg install -y rust
+pkg install -y python-cryptography python-bcrypt 2>/dev/null || echo "!! python-cryptography/python-bcrypt 安装warning(可忽略，pip 会尝试编译)"
 
 echo "==> 获取最新 release 版本…"
 LATEST_TAG="$(curl -s "${RELEASE_API}" | python -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["tag_name"] if d else "")')"
