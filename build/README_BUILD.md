@@ -1,6 +1,7 @@
 # Teahouse — Release Build
 
 幂等构建：一条命令，从任意状态（干净/半成品）重建出可交付的 `dist/Teahouse/`。
+**三架构（Windows / Linux-x86-64 / Linux-aarch64）各产出独立 PyInstaller 包**，版本号单源 = `pyproject.toml`。
 
 ## 快速开始（推荐直接调 python 脚本）
 
@@ -29,35 +30,45 @@ build\build_release.bat --frontend --backend --assets  组合
 
 | 参数 | 作用 |
 |---|---|
-| `--check` | 校验 venv python / pyinstaller / pnpm / `build\mingit_tmp` 齐备 |
+| `--check` | 校验 venv python / pyinstaller / pnpm / `build\mingit_tmp`（仅 Windows） / 系统 git（仅 Linux）齐备 |
 | `--frontend` | `teahouse-frontend\pnpm build` |
 | `--backend` | `pyinstaller --clean --noconfirm teahouse.spec` |
 | `--assets` | 前端→自愈安装源：算 dir hash → 压 `dist.zip`（顶层 `dist/`）→ 写 `dist.hash`（zip+dir 双 hash）|
 | `--verify` | 检查 exe/_internal/git/dist.zip 齐备 + dist.hash 与 dist.zip 自洽 |
-| `--zip` | 打两个发布 zip（见下「双 zip 产物」） |
+| `--zip` | 打发布包（见下「产物」） |
 
 无参数 = 全跑（含 `--zip`）；带一个或多个 `--xxx` = 只跑指定步骤。
 
-> ⚠️ **`--zip` 不重编代码**：它只是"用当前 `dist\Teahouse` 直接打包"。改过前端/后端代码后必须先 `--frontend`/`--backend`（或直接无参数全跑），再 `--zip`；否则产出的 zip 是旧代码。发布请直接无参数全跑。
+> ⚠️ **`--zip` 不重编代码**：它只是"用当前 `dist\Teahouse` 直接打包"。改过前端/后端代码后必须先 `--frontend`/`--backend`（或直接无参数全跑），再 `--zip`；否则产出的包是旧代码。发布请直接无参数全跑。
 
-## 双 zip 产物
+## 产物（分架构包）
 
-`--zip` 在 `dist\` 生成两个包（版本号单源 = `pyproject.toml`，排除 yaml/data），并额外产出**跨架构源码一键包**与独立前端 asset：
+`build_release.py` 按**运行平台**产出对应后缀包（版本号单源 = `pyproject.toml`，排除 yaml/data）：
 
-- `dist\Teahouse-<ver>-with-git.zip` —— **内置 git**，新用户全量安装用
-- `dist\Teahouse-<ver>.zip` —— **不含 git**，老用户更新用（体积小，MinGit 不重复下）
-- `dist\teahouse-<ver>-source.zip` —— **源码一键包（不经 PyInstaller，跨架构）**：`Teahouse` 引导脚本 + `dist.zip` + `dist.hash` + `VERSION`。给 aarch64/Termux/任一 Linux 原生用（PyInstaller 产物绑定宿主架构，x86 打包在 ARM 跑不了）
-- `dist\frontend-dist-<ver>.zip` + `dist\dist.hash` —— 独立前端 asset，源码一键包/Termux 缺前端时从 release 拉取（`--assets` 产出）
+| 构建平台 | 产物 |
+|---|---|
+| Windows | `Teahouse-<ver>-Windows-with-git.zip`（内置 git，新用户）+ `Teahouse-<ver>-Windows.zip`（无 git，更新包） |
+| Linux x86-64 | `Teahouse-<ver>-Linux-x86-64.tar.gz` |
+| Linux aarch64 | `Teahouse-<ver>-Linux-aarch64.tar.gz` |
 
-## 前置要求（仅构建机）
+- 架构名由 `platform.machine()` 自动派生（`LINUX_ARCH`：x86_64/amd64/i686→`x86-64`，aarch64/arm64→`aarch64`）——同一脚本在 Windows、Linux x86、ARM 各自产出对应后缀。
+- **前端 `dist.zip` + `dist.hash` 跨架构同源**，每个架构包内自带同一份自愈源（`--assets` 产出，随后进 zip）。各架构不用重复 build 前端，兼容旧版已解压的 dist。
+- Linux 不捆绑 git（靠系统 git）；Windows 捆绑 MinGit。
+- 不含 `teahouse.yaml` / `data/`——首启自动生成（含随机 super admin 密码）。
+
+> 发布产品是**每架构各跑一次 `build_release.py`**。不要试图把 Windows 打的包给 ARM 用——PyInstaller 产物绑定宿主架构。
+
+## 前置要求（构建机）
 
 | 依赖 | 说明 |
 |---|---|
-| Python 3.11+ venv | `.venv\Scripts\python.exe`，含 `pyinstaller`（`pip install pyinstaller`） |
-| pnpm + Node | 前端构建 |
-| 解压好的 MinGit | `build\mingit_tmp\cmd\git.exe`（先手动解压一次 MinGit release zip 到 `build\mingit_tmp`） |
+| Python 3.11+ venv | `.venv\Scripts\python.exe`（Windows）/ `.venv/bin/python`（Linux），含 `pyinstaller`（`pip install pyinstaller`） |
+| pnpm + Node | 前端构建（Node 需为新版以支持 Vite 8 +，见下） |
+| 系统共享库（仅 Linux） | **`libpython3.<x>-dev`**：PyInstaller 需要 `libpython3.x.so`，Debian/Ubuntu 未装会报 `Python shared library ... was not found`。`apt install libpython3.<x>-dev` |
+| 解压好的 MinGit（仅 Windows） | `build\mingit_tmp\cmd\git.exe`（先手动解压一次 MinGit release zip 到 `build\mingit_tmp`） |
+| 系统 git（仅 Linux） | Linux 包不捆绑 git，构建机需 `git` 在 PATH |
 
-> 不再要求 `tests\` 下有 MinGit zip——`build\mingit_tmp` 里已解压的版本就是装配源。首次准备：把 `MinGit-<ver>-64-bit.zip` 解压到 `build\mingit_tmp`，之后脚本直接用它，不用再动。
+> **Node 版本坑**：项目前端 Vite 8 需要 **Node 20+**（建议 LTS 22+）。Linux 发行版自带可能过旧（如 Debian stable 的 18），会导致 `pnpm build` 失败——用 nvm 或 nodesource 装新版 node。`step_check` 会在 `pnpm build` 前报错提示，可按提示升级。
 
 ## 脚本结构（两步）
 
@@ -65,14 +76,12 @@ build\build_release.bat --frontend --backend --assets  组合
 - **`build_release.py`**：承载全部构建逻辑（幂等、分步）。用 argparse 解析 `--xxx` 参数，跨平台 `subprocess` 调用（自动用 `cmd /c` 跑 pnpm 这类 `.cmd` shim）。
 
 逻辑详情：
-1. **check**：校验 venv python / pyinstaller / pnpm / `build\mingit_tmp\cmd\git.exe`，缺失即停并提示。
+1. **check**：校验 venv python / pyinstaller / pnpm /（Windows）`build\mingit_tmp\cmd\git.exe` /（Linux）系统 git，缺失即停并提示。
 2. **frontend**：`teahouse-frontend\pnpm build` → `teahouse-frontend\dist`。
 3. **backend**：`pyinstaller --clean --noconfirm teahouse.spec`。`--clean` 清中间产物，COLLECT 自带清 `dist/Teahouse`，故可重复执行。
 4. **assets**：把前端自愈安装源写进发布目录——对 `teahouse-frontend\dist` 算 dir hash → 压成 `dist.zip`（顶层 `dist/`）→ 写 `dist.hash`（内含 zip + dir 两枚 sha256）。顺序严格"先算 hash、再打 zip、后写 hash"确保同源，并对 zip 内部解压复核一次防错位。
-5. **verify**：检查 `dist\Teahouse` 下 exe/_internal/git/dist.zip 齐备，并复核 `dist.hash` 里的 zip hash 与当前 `dist.zip` 自洽。
-6. **zip**：打两个发布 zip，并组装源码一键包 `teahouse-<ver>-source.zip`（`build/source/Teahouse` + `OUT/dist.zip` + `OUT/dist.hash` + `VERSION`）。
-
-> **源码一键包（`build/source/Teahouse`）**：跨架构引导脚本（shebang Python，非 PyInstaller）。运行它 = `git clone --branch v<ver>` 源码 → `uv venv` + `uv pip install -e .`（抓 aarch64 预编译 wheel）→ 把包内 dist.zip/dist.hash 种进 `.teahouse-dist/` 自愈 → `python -m teahouse`。`--update` 下载最新 release Source code（不走 git pull）+ 依赖。需要目标机有 git/python3/uv。脚本与 `frontend_install.py` 源码态分支（B1 默认自愈）配套，前端副作用（`.teahouse-dist/`、`teahouse-frontend/dist`）均已 gitignore。
+5. **verify**：检查 `dist\Teahouse` 下 exe/_internal/(Windows)git/dist.zip 齐备，并复核 `dist.hash` 里的 zip hash 与当前 `dist.zip` 自洽。
+6. **zip**：按平台打出对应架构包（Windows 双 zip / Linux 单 tar.gz，命名带 `LINUX_ARCH`）。
 
 任一步失败即打印原因并**停留窗口**（bat 层 `pause`），不会闪退；成功同样停留。
 
@@ -94,9 +103,9 @@ build\build_release.bat
 
 ```
 dist/Teahouse/
-  Teahouse.exe   双击入口（启动时先做前端自愈，再起后端服务）
+  Teahouse.exe (Linux: Teahouse)  双击入口（启动时先做前端自愈，再起后端服务）
   _internal/     Python 运行时 + 打包资源
-  git/           捆绑 MinGit（用户无需安装 git）
+  git/           捆绑 MinGit（仅 Windows；Linux 靠系统 git）
   dist.zip       前端压缩包（覆盖式）
   dist.hash      前端自愈状态（zip+dir 双 sha256，覆盖式）
   (dist/         运行时解压生成：按 dist.hash 校验后从 dist.zip 解压/复用）
@@ -104,6 +113,7 @@ dist/Teahouse/
 ```
 
 - **`dist/` 不再直接发布**：release 只带 `dist.zip` + `dist.hash`，`dist/` 是目标机器启动时由 `frontend_install.py` 自愈的运行时产物。这样 v1.00→v1.01 前端文件不用逐名比对——未变则复用、变了才重解压，覆盖更新绝不叠两份。
+- **前端跨架构同源**：`dist.zip`/`dist.hash` 与架构无关，各架构包复用同一份；后端产物（exe / `_internal`）才分架构。
 - **不含** `teahouse.yaml` / `data/` —— 首启自动生成（含随机 super admin 密码），每个使用者拿到独立的一份。
 - **不含** PyInstaller 中间目录 `build/teahouse`、前端 node_modules、测试文件 —— 全被 `.gitignore` 忽略。
 - **可重复**：同一份源码跑 N 次，产出结构一致（exe 哈希除外，bootloader 每次重建）。
@@ -112,14 +122,13 @@ dist/Teahouse/
 
 ```
 build/
-  build_release.py     幂等构建逻辑（步骤选择、subprocess、校验、一键包组装）
+  build_release.py     幂等构建逻辑（步骤选择、subprocess、校验、分架构命名）
   build_release.bat    薄触发器（定位 venv python、转发参数、pause 停留）
   README_BUILD.md      本文档
-  mingit_tmp/          MinGit 解压目录（保留，脚本直接装配它；删了需重新解压）
+  mingit_tmp/          MinGit 解压目录（仅 Windows 装配源；删了需重新解压）
   teahouse/            PyInstaller 中间产物（可删，--clean 会重建）
-  source/
-    Teahouse           源码一键包引导脚本（跨架构，Tag 打包/一键包必用）
-    install-termux.sh  Termux 一键安装（装依赖 → 拉最新一键包 → ./Teahouse）
+  source/              （保留/归档用) 曾用于源码一键分发的引导脚本与安装脚本，
+                        当前发布不再使用（回归 PyInstaller 分架构包），可忽略。
 ```
 
 `build/`、`dist/`、`tests/` 均被 `.gitignore` 忽略，不入库。
@@ -137,29 +146,38 @@ cd w:\teahouse
 
 > ⚠️ **发布是受控操作**：只有在项目主明确说「打包/发布 vX.Y.Z」时才执行下述链路。不得自动跑 build、push、打 tag、创建 release。
 
-完整发布链：
+完整发布链（**每个平台各自跑自己那台的打包**，再一并上传）：
 
 ```bat
-REM 1) 先手动 +1 前端 PWA 缓存版本（teahouse-frontend/public/sw.js 的 CACHE_NAME；发布判断，人负责）
-REM    必须在 build 前改，否则改完不重编、进不了包。
+REM 0) 各平台准备构建机（Windows 一台 / Linux x86 一台 / ARM 一台）
+REM    Linux 需先 `apt install libpython3.<x>-dev`（补共享库）+ 新版 node/pnpm
 
-REM 2) 重 build 并出双 zip（含最新代码）——必须【无参数全跑】，会重编前端+后端再打包
+REM 1) 先手动 +1 前端 PWA 缓存版本（teahouse-frontend/public/sw.js 的 CACHE_NAME；发布判断，人负责）
+REM    必须在 build 前改，否则改完不重编、进不了包。（前端跨架构同源，任一平台改即可）
+
+REM 2) 各平台【无参数全跑】build_release.py（会重编前端+后端再打包，产出本架构包）
 REM    ⚠️ 不要只传 --zip：那只是用当前 dist/Teahouse 直接打包，不重编代码，会打出旧代码
-.venv\Scripts\python.exe build\build_release.py
+.venv\Scripts\python.exe (或 .venv/bin/python) build\build_release.py
 
 REM 3) 提交源码改动（build/ 与 dist/ 不入库）
 git add <src...> teahouse-frontend/... CLAUDE.md
 git commit -m "..."
 git push origin main
 
-REM 4) 打 tag + 创建 release，上传两个 zip + 源码一键包 + 独立前端 asset
-gh release create v<VER> "dist\Teahouse-<VER>-with-git.zip" "dist\Teahouse-<VER>.zip" "dist\teahouse-<VER>-source.zip" "dist\frontend-dist-<VER>.zip" "dist\dist.hash" --title "..." --notes "<...>"
+REM 4) 打 tag + 创建 release，上传各平台产出的包（示例 v1.01）
+REM    首次建 release 时把已就绪的平台包一并传；其余平台随后补传：
+gh release create v1.01 "dist\Teahouse-1.01-Windows-with-git.zip" "dist\Teahouse-1.01-Windows.zip" "dist\Teahouse-1.01-Linux-x86-64.tar.gz" "dist\Teahouse-1.01-Linux-aarch64.tar.gz" --title "Teahouse 1.01" --notes "<...>"
+# 若 release 已建、某平台才出包，用追加上传（--clobber 覆盖同名校验产物）：
+gh release upload v1.01 "dist\Teahouse-1.01-Linux-aarch64.tar.gz" --repo Sekibyou/teahouse
 ```
 
+> 四件齐全后检查：`gh release view v1.01 --json assets --jq '.assets[].name'` 应见
+> Windows-with-git / Windows / Linux-x86-64 / Linux-aarch64 四个包。
+
 release 说明要点（给玩家）：
-- **新用户**下 `-with-git.zip`；**老用户升级**下裸名包。
-- 升级步骤：解压新版 → 覆盖 `Teahouse.exe` / `_internal/` / `dist.zip` / `dist.hash`（都是同名覆盖式更新，绝不叠文件）→ **保留 `teahouse.yaml` 和 `data/`**（配置与存档）→ 重新双击。
+- **Windows**：新用户下 `-with-git.zip`；老用户升级下裸名包。
+- **Linux-x86-64 / Linux-aarch64**：下对应架构 tar.gz（不捆绑 git，靠系统 git），解压运行 `./Teahouse`。
+- 升级步骤：解压新版 → 覆盖 `Teahouse.exe` / `_internal/` / `dist.zip` / `dist.hash`（都是同名覆盖式更新，绝不叠文件）→ **保留 `teahouse.yaml` 和 `data/`**（配置与存档）→ 重新启动。
 - **前端自动对齐**：旧 `dist/` 不用手动管——启动时程序会对照 `dist.hash` 判断：前端没变就直接复用旧 `dist/`（零成本），前端有更新则自动解压新版。
 
 > `gh` 需已登录：`gh auth login`（网页授权一次）。
-
