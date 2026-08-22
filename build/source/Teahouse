@@ -36,11 +36,14 @@ SOURCE_URL = (
 
 # 本脚本所在目录 = 一键包解压目录（含 Teahouse / dist.zip / dist.hash / VERSION）
 PP = Path(__file__).resolve().parent
-# 工作区：源码、venv、数据、前端状态区都收敛在这一个子目录，一键包目录保持干净
+# 工作区：源码、venv、数据都收敛在这一个子目录，一键包目录保持干净
 WORK = PP / ".teahouse-work"
 SRC = WORK / "teahouse"
 VENV = WORK / ".venv"
-DIST_STATE = WORK / ".teahouse-dist"
+# 前端状态区必须落在“项目根”即 <repo>/.teahouse-dist —— frontend_install.ensure_frontend
+# 源码态按 _source_root()(parents[2]=repo 根) 读这里的 dist.hash/dist.zip。放 WORK/
+# 会读不到，导致前端不解压、显示“未 built”。
+DIST_STATE = SRC / ".teahouse-dist"
 # 一键包预置的前端（离线首次安装，ensure_frontend 检测匹配即复用，不联网）
 BUNDLED_DIST_ZIP = PP / "dist.zip"
 BUNDLED_DIST_HASH = PP / "dist.hash"
