@@ -106,15 +106,27 @@ def _log(msg: str) -> None:
 
 
 def _read_version() -> str:
-    """版本单一来源：pyproject.toml 的 version（后端也是它）。"""
+    """版本单一来源：pyproject.toml 的 version（后端也是它）。
+
+    发布命名约定：版本号本身/**包名**/**release 标题**一律「不准带 v」前缀
+    （如 ``1.02`` → ``Teahouse-1.02-Windows.zip`` / 标题 ``Teahouse 1.02``）。
+    只有 Git tag 带 ``v``（``v1.02``）。此处强制剥离误写的 ``v``/``V`` 前缀并
+    校验格式，任何 ``v1.02`` 式写法都会被归一到 ``1.02``，保证产物命名干净。
+    """
+    ver = "0.0.0"
     try:
         text = PYPROJECT.read_text(encoding="utf-8")
         m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
         if m:
-            return m.group(1).strip()
+            ver = m.group(1).strip().lstrip("vV")
     except OSError:
         pass
-    return "0.0.0"
+    if not re.fullmatch(r"[0-9][0-9A-Za-z.\-_]*", ver):
+        raise SystemExit(
+            f"ERROR: 非法版本号 `{ver}`（来自 pyproject.toml）。"
+            "版本号须以数字开头、不含空格；且发布命名不准带 v 前缀（写成 v1.02 也会被剥掉）。"
+        )
+    return ver
 
 
 def _run(cmd: list[str], cwd: Path) -> int:
