@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
-  AlertCircle, Download, Star, FileText, Link2,
+  AlertCircle, Download, Star, FileText, Link2, ExternalLink,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
   BookOpen, Package, Users, Languages,
 } from "lucide-react"
@@ -23,6 +23,7 @@ import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { useAuth, isAdminRole } from "@/stores/authStore"
+import { useNewVersion } from "@/hooks/useNewVersion"
 import { UserManagementPanel } from "@/components/UserManagement"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 import type { MySkill, SkillPreview, MyPackage, PackagePreview } from "@/lib/api"
@@ -87,6 +88,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const setLang = useLangStore((s) => s.setLang)
   const isMobile = useIsMobile()
   useDialogBackClose(open, onClose)
+  const newVersion = useNewVersion()
   const [tabMenuOpen, setTabMenuOpen] = useState(false)
 
   // 「用户管理」tab 仅登录用户是管理员/超级管理员时可见
@@ -1466,6 +1468,32 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium flex items-center gap-1.5">
+                          <Download className="h-3.5 w-3.5" />
+                          {t("general.aboutVersion")}
+                          <span className="font-mono text-muted-foreground">{newVersion.version ?? t("general.versionUnknown")}</span>
+                          {newVersion.hasUpdate && newVersion.latestVersion && (
+                            <span className="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
+                              {t("general.newVersionAvailable", { latest: newVersion.latestVersion })}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        variant={newVersion.hasUpdate ? "default" : "outline"}
+                        size="sm"
+                        className="gap-1.5 shrink-0"
+                        onClick={() => window.open(newVersion.url, "_blank", "noopener,noreferrer")}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        {t("general.goToRelease")}
+                      </Button>
                     </div>
                   </div>
 

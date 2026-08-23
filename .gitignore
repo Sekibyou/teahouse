@@ -26,6 +26,9 @@ Thumbs.db
 teahouse.yaml
 teahouse.db
 
+# Teahouse — build-time generated version inject (written by build_release.py)
+src/teahouse/_version_inject.py
+
 # Teahouse — instance data (generated at runtime)
 data/
 take_out/

@@ -700,6 +700,11 @@ export const appSettingsApi = {
   update: (data: Partial<AppSettings>) => put<AppSettings>("/api/settings", data),
 }
 
+// Version / status API（后端 pyproject.toml 权威版本，开放端点）
+export const versionApi = {
+  get: () => get<{ status: string; version: string }>("/v1/status"),
+}
+
 // Plugins API
 export const pluginsApi = {
   list: () => get<{ plugins: Plugin[] }>("/api/plugins"),

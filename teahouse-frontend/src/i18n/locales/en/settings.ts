@@ -140,6 +140,10 @@ export const enSettings = {
     maxToolRoundsDesc: "The round limit for the director's tool-call loop, to prevent a single round from getting stuck in an overly long tool loop.",
     maxParseDepth: "Max placeholder parse depth",
     maxParseDepthDesc: "Upper bound for multi-round ${} and {{path}} resolution, especially cross-message @mention matching. Set 0 to disable placeholder resolution (all kept literal). Default 10.",
+    aboutVersion: "Current version",
+    versionUnknown: "unknown",
+    newVersionAvailable: "New version {{latest}} available",
+    goToRelease: "Go to GitHub Releases",
   },
 
   // ─── Plugins tab ───

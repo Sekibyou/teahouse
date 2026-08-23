@@ -77,6 +77,7 @@ FRONTEND = ROOT / "teahouse-frontend"
 FRONTEND_DIST = FRONTEND / "dist"
 SPEC = ROOT / "teahouse.spec"
 PYPROJECT = ROOT / "pyproject.toml"
+VERSION_INJECT_PY = ROOT / "src" / "teahouse" / "_version_inject.py"
 OUT = ROOT / "dist" / "Teahouse"
 DIST_DIR = ROOT / "dist"
 
@@ -126,6 +127,30 @@ def _read_version() -> str:
             f"ERROR: 非法版本号 `{ver}`（来自 pyproject.toml）。"
             "版本号须以数字开头、不含空格；且发布命名不准带 v 前缀（写成 v1.02 也会被剥掉）。"
         )
+    return ver
+
+
+def _write_version_source() -> str:
+    """把 pyproject.toml 的版本号编译注入 src/teahouse/_version_inject.py。
+
+    源码态 __version__ 实时读 pyproject.toml（改即生效，见 _version.py），故注入
+    模块只需在冻结态被 _version.py 读取。PyInstaller 由 __init__.py → _version.py
+    的 import 静态追踪 _version_inject.py，故在 step_backend（pyinstaller）前把
+    当前版本写进该模块，冻结包即可读到与 pyproject 一致的版本。
+    返回写进文件的版本号。
+    """
+    ver = _read_version()
+
+    # 在 Python 语义上安全的标识符校验——版本号仍须「以数字开头、仅段字符」，
+    # 这里是防御性检查（若未来要在这里做字符串转义，得一起改）。
+    if not re.fullmatch(r"[0-9][0-9A-Za-z.\-_]*", ver):
+        raise SystemExit(f"ERROR: 非法版本号 `{ver}`，无法写入 _version_inject.py。")
+
+    VERSION_INJECT_PY.write_text(
+        f'# 冻结态版本注入——由 build_release 全量覆盖，勿手改\n__version__ = "{ver}"\n',
+        encoding="utf-8",
+    )
+    _log(f"  wrote {VERSION_INJECT_PY.relative_to(ROOT)} -> __version__ = {ver!r}")
     return ver
 
 
@@ -273,10 +298,11 @@ def step_assets() -> bool:
 
 
 def step_backend() -> bool:
-    _log("[backend] Running PyInstaller (backend + resources)...")
+    _log("[backend] Injecting version, then running PyInstaller (backend + resources)...")
     if not SPEC.exists():
         _log(f"  ERROR: spec not found at {SPEC}")
         return False
+    _write_version_source()
     rc = _run([str(PYINSTALLER), "--clean", "--noconfirm", str(SPEC)], cwd=ROOT)
     if rc != 0:
         _log("  ERROR: PyInstaller build failed")

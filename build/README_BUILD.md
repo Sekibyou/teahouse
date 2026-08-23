@@ -1,7 +1,22 @@
 # Teahouse — Release Build
 
 幂等构建：一条命令，从任意状态（干净/半成品）重建出可交付的 `dist/Teahouse/`。
-**三架构（Windows / Linux-x86-64 / Linux-aarch64）各产出独立 PyInstaller 包**，版本号单源 = `pyproject.toml`。
+**三架构（Windows / Linux-x86-64 / Linux-aarch64）各产出独立 PyInstaller 包**，版本号唯一权威 = `pyproject.toml`（见下文「版本号管理」）。
+
+## 版本号管理（唯一权威 = `pyproject.toml`）
+
+版本号**唯一权威**是 `pyproject.toml` 的 `version` 字段，改版本号**只需改这一处**。前端「当前版本」显示、GitHub 更新比对、后端 `/v1/status` 全部以它为最终来源。分两态解析（`src/teahouse/_version.py`）：
+
+- **源码态（开发运行）**：`_version.py` 实时读 `pyproject.toml` 的 `version`，**改 pyproject 立即生效**，无需手动同步任何常量。
+- **冻结态（PyInstaller 打包）**：发布包不含 pyproject.toml，故 `build_release.py` 在 `--backend` 步骤（pyinstaller）前，把当前版本写入 `src/teahouse/_version_inject.py`（**gitignore，不入库**）；冻结态 `_version.py` 读取该注入模块。该文件由构建脚本全量覆盖，**勿手动编辑**。
+
+关键点：
+
+- 前端**不再**用 `__APP_VERSION__`（vite 从 `package.json` 注入）做版本比对基准——那已被证明会与 pyproject 分叉。改为前端经 `GET /v1/status` 拉后端权威版本（`src/teahouse/__init__.py` 的 `__version__`）用于显示与 GitHub tag 比对。
+- 前端 `package.json` 的 `version` 字段**不再是版本权威**，无需随 pyproject 同步（保留仅作 npm 元数据）。
+- 发布命名（包名/标题）用 `_read_version()` 从 pyproject 派生并剥离 `v` 前缀，与运行版本一致给玩家。
+
+全链路：`pyproject.toml` → `_version.py`（源码读 / 冻结读注入）→ `__init__.__version__` → `FastAPI version` + `GET /v1/status` → 前端 `versionApi.get()` → 显示与比对。
 
 ## 快速开始（推荐直接调 python 脚本）
 
@@ -43,7 +58,7 @@ build\build_release.bat --frontend --backend --assets  组合
 
 ## 产物（分架构包）
 
-`build_release.py` 按**运行平台**产出对应后缀包（版本号单源 = `pyproject.toml`，排除 yaml/data）：
+`build_release.py` 按**运行平台**产出对应后缀包（版本号唯一权威 = `pyproject.toml`，排除 yaml/data）：
 
 | 构建平台 | 产物 |
 |---|---|
@@ -152,6 +167,15 @@ REM    Linux 需先 `apt install libpython3.<x>-dev`（补共享库）+ 新版 n
 
 REM 1) 先手动 +1 前端 PWA 缓存版本（teahouse-frontend/public/sw.js 的 CACHE_NAME；发布判断，人负责）
 REM    必须在 build 前改，否则改完不重编、进不了包。（前端跨架构同源，任一平台改即可）
+
+REM 1.5) 新版号只改 pyproject.toml 的 version 一处即可：
+REM      源码运行读它、打包时 build_release 自动注入 _version_inject.py、前端 /v1/status 读它。
+REM      别手动改 src/teahouse/_version.py（它只读 pyproject）或 _version_inject.py（构建生成、勿编辑）。
+
+REM 1.6) 全局搜索上一个版本号（如 `1.02` 与 `1.0.2` 两种写法），把遗留旧版本号统一到新版：
+REM      重点是 README.md 的安装示例（v1.01 / VER=1.01）、package.json、文档叙述。
+REM      注意 src/teahouse/plugins.py、routes/workspaces.py、WorkspacePage 的 "1.0.0" 是
+REM      对象/原型包默认版本，与 App 版本无关，不要动。
 
 REM 2) 各平台【无参数全跑】build_release.py（会重编前端+后端再打包，产出本架构包）
 REM    ⚠️ 不要只传 --zip：那只是用当前 dist/Teahouse 直接打包，不重编代码，会打出旧代码

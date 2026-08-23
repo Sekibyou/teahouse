@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from . import __version__
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
@@ -134,7 +135,7 @@ async def lifespan(app: FastAPI):
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Teahouse", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Teahouse", version=__version__, lifespan=lifespan)
 
 # CORS — allow frontend dev server
 app.add_middleware(
@@ -986,7 +987,7 @@ async def chat(body: ChatRequest, request: Request):
 async def status():
     return {
         "status": "ok",
-        "version": "1.0.0",
+        "version": __version__,
     }
 
 

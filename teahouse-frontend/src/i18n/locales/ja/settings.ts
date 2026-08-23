@@ -140,6 +140,10 @@ export const jaSettings = {
     maxToolRoundsDesc: "監督のツール呼び出しループのラウンド上限。1 ラウンドが過度に長いツールループに陥るのを防ぎます。",
     maxParseDepth: "プレースホルダー最大解析深度",
     maxParseDepthDesc: "${} と {{path}} の多段解析の上限、特にメッセージ横断 @mention の照合に影響します。0 でプレースホルダー解析を無効化（全てリテラルとして保持）。デフォルト 10。",
+    aboutVersion: "現在のバージョン",
+    versionUnknown: "不明",
+    newVersionAvailable: "新しいバージョン {{latest}} があります",
+    goToRelease: "GitHub Releases へ",
   },
 
   // ─── Plugins tab ───
