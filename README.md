@@ -48,13 +48,15 @@ teahouse/                主仓库
 
 ### Linux（含 ARM 服务器 / 树莓派等）
 
-**一键安装**（自动探测架构 + 取最新版本 + 装依赖 + 下载解压 + 启动）：
+**一键安装**（自动探测架构 + 取最新版本 + 下载解压 + 启动；精简版，不装运行依赖——PyInstaller 包已捆绑完整运行时，绝大多数环境开箱即跑）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install-lite.sh | bash
 ```
 
 > 没 curl 先 `apt install -y curl`。脚本默认直接解压到**当前目录**（不额外套一层 Teahouse/ 子文件夹）——先 `cd` 到自己想放的地方（建议 `mkdir -p ~/apps && cd ~/apps`）再跑命令；想装进别的目录用 `TEAHOUSE_DIR=/opt/teahouse bash ...`；想指定版本 `TEAHOUSE_VER=1.01 bash ...`。装完自动 `exec ./Teahouse`，Ctrl+C 停止；想后台跑：`nohup ./Teahouse > server.log 2>&1 &`。
+>
+> 若启动报缺库（罕见，多见于精简 ARM 环境），改用完整版脚本会额外安装 glibc 运行库：`curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install.sh | bash`。
 
 **手动方式**（不引脚本时，Linux 全架构通用）：
 
@@ -73,7 +75,7 @@ chmod +x Teahouse
 
 ### 手机（Termux + proot Debian，推荐方案）
 
-无 root 也能跑。**手机端先准备 proot 环境（一次性），真正安装进 Debian 后用上面的 Linux 一键脚本**，两者复用同一条 `install.sh`。
+无 root 也能跑。**手机端先准备 proot 环境（一次性），真正安装进 Debian 后用上面的 Linux 一键脚本**，两者复用同一条 `install-lite.sh`。
 
 Step 0 — 前置：手机已装 [Termux](https://termux.com)，并能联网。
 
@@ -91,7 +93,7 @@ Step 2 — Debian 层，一键安装（与桌面 Linux 完全同一命令）：
 
 ```bash
 apt update && apt install -y curl
-curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Sekibyou/teahouse/main/scripts/install-lite.sh | bash
 ```
 
 装完自动启动。浏览器访问入口 / 局域网共享见下。
