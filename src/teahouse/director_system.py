@@ -1,12 +1,12 @@
 """
 Director system prompt assembler.
 
-Assembles the Director's system prompt from:
-1. behavior.md — system-level behavior rules
-2. Tools usage guide from tools.json (loaded separately, passed in)
-3. The instance's teahouse.md — role, config, skill routing
-4. A flat directory listing of the instance (floors/ has special stats)
-5. A skills catalogue (name + description from each SKILL.md frontmatter)
+The director's system prompt is assembled from a user-configured prompt preset. A
+built-in preset is auto-created and auto-bound to the director slot, so there is no
+code-level fallback assembler. The preset template pulls in:
+1. teahouse.md — file slice `{{teahouse.md}}`
+2. behavior.md / tools usage / file tree / skills — via `teahouse.*` system values,
+   spliced in after placeholder resolution as literal plain text
 
 All template content lives in markdown files, not in Python code.
 """
@@ -33,7 +33,6 @@ TEMPLATE_FILES = [
 
 INSTANCE_TEAHOUSE = "teahouse.md"
 INSTANCE_SKILLS_DIR = "skills"
-INSTANCE_PACKAGES_DIR = "packages"
 
 # Directories excluded entirely from tree display
 TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions", "building"}
@@ -333,117 +332,6 @@ def _scan_skills(instance_dir: Path) -> str:
     return "可用 Skill：\n" + "\n".join(entries)
 
 
-def _scan_packages(instance_dir: Path) -> str:
-    """Scan installed prompt packages (packages/) and summarize each for the Director.
-
-    A package is 约束力较弱的"提示词包"——本质是被复制进实例 packages/<名>/ 的一组
-    文件（设定/描写词/UI/组装器），作者在组装器/正文里写 {{@包名/路径}} 显式引用才生效。
-    这里只为导演提供"有哪些包可用 + 各自怎么用"的清单，具体引用粒度由导演自行决定。
-    每包读 README.md 前 N 行作描述（若有），并列出顶层目录名。
-    """
-    packages_dir = instance_dir / INSTANCE_PACKAGES_DIR
-    if not packages_dir.is_dir():
-        return "（没有安装任何提示词包）"
-
-    pkg_dirs = sorted(
-        (e for e in packages_dir.iterdir() if e.is_dir()),
-        key=lambda p: p.name,
-    )
-    if not pkg_dirs:
-        return "（没有安装任何提示词包）"
-
-    entries = []
-    for pkg in pkg_dirs:
-        name = pkg.name
-        readme = pkg / "README.md"
-        if readme.is_file():
-            lines = [ln.strip() for ln in readme.read_text(encoding="utf-8").splitlines() if ln.strip()]
-            summary = " ".join(lines[:3])[:300]
-        else:
-            summary = "（无 README.md，请读包内文件了解用途）"
-        # 顶层目录名（去掉隐藏/内部目录）
-        tops = sorted(
-            e.name for e in pkg.iterdir()
-            if e.is_dir() and e.name not in TREE_EXCLUDE
-        )
-        top_txt = f"结构：{', '.join(tops)}" if tops else "结构：无子目录"
-        entries.append(f"- **{name}**：{summary}\n  {top_txt}")
-
-    return "已安装提示词包（写 \\{{@包名/路径}} 引用生效）：\n" + "\n".join(entries)
-
-
-def assemble_system_prompt(instance_dir: Path, tools_usage_text: str = "", max_depth: int = MAX_RESOLVE_DEPTH) -> str:
-    """Assemble the full system prompt for the Director.
-
-    teahouse.md comes first — it defines the director's role, configuration,
-    and skill routing. It is the author's primary customization point.
-
-    Then behavior.md, tools usage guide, instance directory listing,
-    and skills catalogue.
-
-    The whole result is then resolved (via resolve_variables): `${name}` sandbox
-    variable snapshots and `{{path}}` file slices are inlined — this is the no-cache
-    injection that lets the director see current state without a Read round-trip.
-    """
-    parts: list[str] = []
-
-    # 1. Instance teahouse.md — role, config, skill routing (THE customisation point)
-    teahouse_path = instance_dir / INSTANCE_TEAHOUSE
-    if teahouse_path.exists():
-        parts.append(f"————根目录下 teahouse.md 内容开始————\n\n{teahouse_path.read_text(encoding='utf-8').strip()}\n\n————根目录下 teahouse.md 内容结束————")
-
-    # 2. Behavior rules
-    for filename in TEMPLATE_FILES:
-        filepath = TEMPLATE_DIR / filename
-        if filepath.exists():
-            name = filepath.stem
-            parts.append(f"————{name} 开始————\n\n{filepath.read_text(encoding='utf-8').strip()}\n\n————{name} 结束————")
-
-    # 3. Tools usage guide (from tools.json, loaded by caller)
-    if tools_usage_text:
-        parts.append(f"————工具使用指南开始————\n\n{tools_usage_text.strip()}\n\n————工具使用指南结束————")
-
-    # 4. Instance directory tree
-    tree = _scan_tree(instance_dir)
-    parts.append(f"————当前文件结构树开始————\n\n{tree}\n\n————当前文件结构树结束————")
-
-    # 5. Skills catalogue (name + description from SKILL.md)
-    skills = _scan_skills(instance_dir)
-    parts.append(f"————可用 Skill 列表开始————\n\n{skills}\n\n————可用 Skill 列表结束————")
-
-    # 6. Prompt packages catalogue (packages/ README summaries)
-    packages = _scan_packages(instance_dir)
-    parts.append(f"————已安装提示词包列表开始————\n\n{packages}\n\n————已安装提示词包列表结束————")
-
-    text = "\n\n".join(parts)
-
-    # Resolve sandbox variables + file slices across the whole prompt (no-cache).
-    var_map = _build_var_map(instance_dir)
-    if "{{" in text or "${" in text:
-        text = resolve_variables(text, var_map, instance_dir, max_depth=max_depth, type_map=_build_type_map(instance_dir))
-
-    return text
-
-
-# ---------------------------------------------------------------------------
-# Template-based prompt preset resolution
-# ---------------------------------------------------------------------------
-
-
-def _build_var_map(instance_dir: Path) -> dict:
-    """Flat name→value map: sandbox variables + a fresh ${...} snapshot.
-
-    Also merges none of the internal `teahouse.*` keys here — those are supplied by
-    the caller (build_template_variables for presets) where they truly exist. For the
-    plain assemble path there may be no preset binding, so we only expose sandbox vars.
-    """
-    try:
-        items = _read_sandbox_vars(instance_dir, None)
-    except Exception:
-        return {}
-    return {item["name"]: item["value"] for item in items}
-
-
 def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> dict[str, str]:
     """Compute the variable values available for prompt preset templates.
 
@@ -493,34 +381,57 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
     `variables` is the var_map from build_template_variables (teahouse.* internal +
     sandbox vars). system: and fake-message contents are resolved via resolve_variables
     (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
+
+    System-internal `teahouse.*` values are NOT fed into the placeholder resolver.
+    They are pulled out of the var_map up front, so `${teahouse.behavior}` etc.
+    survive resolve_variables verbatim (missing key → literal). After resolution
+    (and its escape/sentinel passes) has fully converged, a single regex substitution
+    splices each `teahouse.*` value in as plain text. Their content therefore stays
+    literal — `{{}}` / `${}` inside (e.g. behavior.md / tool-usage teaching examples)
+    are never re-expanded, and the source files need no `\\` escapes.
     """
     data = yaml.safe_load(yaml_text) or {}
     type_map = _build_type_map(instance_dir)
 
+    teahouse_keys = [k for k in variables if k.startswith("teahouse.")]
+    teahouse_values = {k: variables[k] for k in teahouse_keys}
+    plain_var_map = {k: v for k, v in variables.items() if not k.startswith("teahouse.")}
+    if teahouse_values:
+        splice_re = re.compile(r"\$\{(" + "|".join(re.escape(k) for k in teahouse_values) + r")\}")
+    else:
+        splice_re = re.compile(r"(?!)")  # never matches
+
+    def _splice(text: str) -> str:
+        return splice_re.sub(lambda m: teahouse_values[m.group(1)], text)
+
     # Resolve system template with ${variable} + {{path}} substitution
     system_template = data.get("system", "") or ""
-    system_prompt = resolve_variables(system_template, variables, instance_dir, max_depth=max_depth, type_map=type_map)
+    system_prompt = _splice(
+        resolve_variables(system_template, plain_var_map, instance_dir, max_depth=max_depth, type_map=type_map)
+    )
 
     # Collect fake messages: explicit `messages` key takes priority,
     # then fall back to top-level `user`/`assistant` shorthand
     fake_messages_raw = data.get("messages")
 
+    def _resolve_msg(content: str) -> str:
+        return _splice(resolve_variables(str(content), plain_var_map, instance_dir, max_depth=max_depth, type_map=type_map))
+
     if isinstance(fake_messages_raw, list):
         fake_messages = []
         for msg in fake_messages_raw:
             if isinstance(msg, dict) and "role" in msg:
-                content = msg.get("content", "") or ""
                 fake_messages.append({
                     "role": msg["role"],
-                    "content": resolve_variables(str(content), variables, instance_dir, max_depth=max_depth, type_map=type_map),
+                    "content": _resolve_msg(msg.get("content", "") or ""),
                 })
     else:
         fake_messages = []
         user_text = data.get("user")
         assistant_text = data.get("assistant")
         if user_text:
-            fake_messages.append({"role": "user", "content": resolve_variables(str(user_text).strip(), variables, instance_dir, max_depth=max_depth, type_map=type_map)})
+            fake_messages.append({"role": "user", "content": _resolve_msg(user_text).strip()})
         if assistant_text:
-            fake_messages.append({"role": "assistant", "content": resolve_variables(str(assistant_text).strip(), variables, instance_dir, max_depth=max_depth, type_map=type_map)})
+            fake_messages.append({"role": "assistant", "content": _resolve_msg(assistant_text).strip()})
 
     return system_prompt, fake_messages

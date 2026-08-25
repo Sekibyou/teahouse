@@ -16,7 +16,9 @@ BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
 #   ${teahouse.xxx}        系统内部值：${teahouse.behavior} ${teahouse.tools_usage}
 #                          ${teahouse.file_tree} ${teahouse.available_skills}
 #   ${name}                实例沙盒变量引用（如 ${金币}，组装时为 no-cache 快照）
-# 注意：teahouse. 前缀的系统内部值仅在此模板组装时注入，其余场景保持字面量（防内部泄露）。
+# 注意：teahouse. 前缀的系统内部值在整套占位符解析结束之后作为字面量正则替换植入，
+# 其内容（behavior.md、tools usage 等）内的 {{}}/${} 不会被二次展开，源文件裸写无需转义；
+# 其余场景保持字面量（防内部泄露）。
 #
 # 预设对话历史（可选），两种写法：
 #
@@ -149,6 +151,45 @@ async def delete_preset(preset_id: str) -> bool:
     )
     cur = await execute("DELETE FROM director_prompt_presets WHERE id = ?", (preset_id,))
     return cur.rowcount > 0
+
+
+async def ensure_director_preset_binding(user_id: str) -> dict:
+    """Ensure the built-in director preset exists AND is bound to the director slot.
+
+    The builtin preset is auto-created and auto-bound so that every user has an
+    effective director prompt preset (there is no longer a code-level fallback
+    assembler). If the user has already picked a different preset for the director
+    slot, that explicit choice is preserved; only an empty/lacking preset binding is
+    linked to the builtin. Other slot fields (model/profile) are never touched.
+
+    Returns the effective preset dict. Raises if the resolved preset has no
+    template_yaml (a linked-then-deleted preset) — the caller must treat this as an
+    error, not silently fall back.
+    """
+    builtin = await ensure_builtin_preset(user_id)
+    row = await fetch_one(
+        "SELECT prompt_preset_id FROM llm_slot_bindings WHERE user_id = ? AND slot_id = 'director'",
+        (user_id,),
+    )
+    if row and row.get("prompt_preset_id"):
+        pid = row["prompt_preset_id"]
+    else:
+        pid = builtin["id"]
+        now = current_timestamp()
+        if row:
+            await execute(
+                "UPDATE llm_slot_bindings SET prompt_preset_id = ?, updated_at = ? WHERE user_id = ? AND slot_id = 'director'",
+                (pid, now, user_id),
+            )
+        else:
+            await execute(
+                "INSERT INTO llm_slot_bindings (user_id, slot_id, prompt_preset_id, updated_at) VALUES (?, 'director', ?, ?)",
+                (user_id, pid, now),
+            )
+    preset = await get_preset(pid)
+    if not preset or not preset.get("template_yaml"):
+        raise RuntimeError("director slot preset missing or empty template_yaml; cannot assemble system prompt")
+    return preset
 
 
 async def get_builtin_preset(user_id: str) -> Optional[dict]:

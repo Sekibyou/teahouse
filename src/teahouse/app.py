@@ -24,14 +24,15 @@ from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
 from .tools import execute_tool, load_tools, load_tools_usage
 from .script import load_batch, BatchError
-from .director_system import assemble_system_prompt, build_template_variables, resolve_preset_template
+from .director_system import build_template_variables, resolve_preset_template
+from .database.director_prompt_presets import ensure_director_preset_binding
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
 from .database.auth import configure_jwt
 from .database.users import sync_super_admin, list_users
 from .database.llm_configs import configure_crypto, get_default_llm_config, get_llm_config
 from .database.llm_providers import configure_crypto as configure_provider_crypto
-from .database.llm_slots import get_all_slot_bindings, get_slot_binding, get_slot_binding_resolved
+from .database.llm_slots import get_slot_binding
 from .database.llm_models import get_model as get_llm_model
 from .database.llm_providers import get_provider as get_llm_provider
 from .database.model_profiles import get_profile as get_model_profile
@@ -611,21 +612,21 @@ async def _tool_use_loop(
     tools = load_tools(user_id=user_id)
     tools_usage = await load_tools_usage(user_id=user_id)
 
-    # Resolve prompt preset from director slot binding
+    # Resolve the director system prompt from the user's prompt preset. Every user
+    # has a built-in preset auto-created and auto-bound to the director slot, so this
+    # is the single, mandatory assembly path — there is no code-level fallback. A
+    # missing/empty preset is an error, never a silent fallback.
     from .routes.settings import _user_max_parse_depth
     parse_depth = await _user_max_parse_depth(user_id)
-    tool_system = None
-    if user_id:
-        binding_full = await get_slot_binding_resolved(user_id, "director")
-        if binding_full and binding_full.get("preset_template_yaml"):
-            variables = build_template_variables(instance_dir, tools_usage)
-            tool_system, fake_msgs = resolve_preset_template(
-                binding_full["preset_template_yaml"], variables, instance_dir, max_depth=parse_depth
-            )
-            if fake_msgs:
-                msg = fake_msgs + msg
-    if tool_system is None:
-        tool_system = assemble_system_prompt(instance_dir, tools_usage, max_depth=parse_depth)
+    if not user_id:
+        raise HTTPException(status_code=500, detail="Director system prompt requires a user")
+    preset = await ensure_director_preset_binding(user_id)
+    variables = build_template_variables(instance_dir, tools_usage)
+    tool_system, fake_msgs = resolve_preset_template(
+        preset["template_yaml"], variables, instance_dir, max_depth=parse_depth
+    )
+    if fake_msgs:
+        msg = fake_msgs + msg
 
     # Scoped session framing: when the session has restricted tool access (enabled_tools
     # is not None), tell the director it is a scoped one-shot task.

@@ -14,9 +14,8 @@ All `${}` placeholders route through a single registered framework (see the
 `${@...}` section): `${@var name}` / `${@type name}` / `${@python return ...}` /
 `${@condition ...}` / `${@note ...}` / `${@max|@min|@len|@random}`. Bare `$ {...}`
 forms (plain `${name}` variables, and `${ if ...: return ... }` code blocks) are
-auto-degraded by a heuristic. Old `${!-- ...--}` comments and `${type:name}` are
-deprecated and render literally after the no-guardrail migration; use `${@note name}`
-and `${@type name}` instead.
+auto-degraded by a heuristic. Use `${@note name}` and `${@type name}` for comments
+and type introspection respectively.
 
 Two surfaces only AI consumes auto-resolve BOTH `${}` and `{{}}`:
   - Generate yaml (sent to the writer LLM)

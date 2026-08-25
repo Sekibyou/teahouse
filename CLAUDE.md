@@ -84,7 +84,7 @@
 | `${name}` | **普通变量引用**（沙盒变量），如 `${金币}`、`${user_name}` | 导演系统提示词组装 + Generate 发送给正文 AI 前（酒馆式展开为值）；沙盒内手动 `Teahouse.replacePlaceholders()` 替换 |
 | `${@type name}` | **取变量类型**（非值，展开为类型字符串），如 `${@type 金币}` → `number`。`@` 是指令保留前缀，故变量名禁 `@`、禁冒号无歧义 | 同 `${name}` 的所有解析表面；未知变量名原样保留不外泄 |
 | `${ if...: return... }` | **条件切片**（代码块），按变量值就地选一段返回，如 `${ if dice == 6: return "{{room1}}" else: return "{{room2}}" }` | 所有 AI 表面（导演系统提示词组装 + Generate），解析阶段就地选分支；块内可用白名单函数 `roll("1d6")` / `random(lo, hi)`；坏块回退字面量不报错 |
-| `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词预设模板组装时临时注入；其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
+| `${teahouse.xxx}` | **系统内部值**，如 `${teahouse.behavior}`、`${teahouse.tools_usage}`、`${teahouse.file_tree}`、`${teahouse.available_skills}` | 仅导演系统提示词（prompt preset）组装时，在整套 `${}`/`{{}}` 占位符解析**结束之后**做一次**简单正则替换植入为字面量**；其内容（behavior.md、tools usage 等）中的 `{{...}}`/`${...}` **不会被二次展开**，源文件**无需转义**、裸写即可。其余场景因不在变量文件里，走"不存在→原样"天然不泄露 |
 
 规则：
 - `${}` 严格匹配 `\${...}`；裸 `$` 不处理。**变量不存在 → 原样显示**（不报错、不删）。
@@ -93,7 +93,8 @@
 - **变量名禁止空白**（空格/tab/换行）：代码块用 `if dice == 6` 引用变量需作合法 Python 标识符，写含空白变量名会被 SetRuntimeVar / 沙盒 setVar 拒绝。
 - **变量名禁止冒号 `:`**：`${@type name}` 用空格分隔指令与变量名，冒号会让裸 `${}` 被判定层误判为 condition（`${a:b}` → 取 `a/b` 两个符号作为条件）。
 - **变量名禁止 `@`**：它是 `${@name}` 显式指令（如 `${@type name}`）的保留前缀，带 `@` 的变量名会被误认成指令。以上二者与空白同由 `validate_var_name`/沙盒 `validateName` 拒绝。
-- **转义语法**：在开括号前加反斜杠 `\`，强制该占位符保持**字面量**、不解析：`\{{path}}` → `{{path}}`、`\${name}` → `${name}`、`\$ { if...: }` → 不执行的条件块；`\\` → `\`。在解析全部结束后才被去掉反斜杠还原，故多轮交替展开期间也不会被吞。**必须给"教学示例/要展示的字面 `{{}}`、`${}`"加转义**——否则若该占位符恰好匹配到实例真实文件（如 `{{glob:...}}`），会被当成真实引用执行、把文件内容注进系统提示词（曾因此泄漏楼层正文）。tools.json 的 usage 说明即属此类，均已转义。
+- **转义语法**：在开括号前加反斜杠 `\`，强制该占位符保持**字面量**、不解析：`\{{path}}` → `{{path}}`、`\${name}` → `${name}`、`\$ { if...: }` → 不执行的条件块；`\\` → `\`。在解析全部结束后才被去掉反斜杠还原，故多轮交替展开期间也不会被吞。**必须给"教学示例/要展示的字面 `{{}}`、`${}`"加转义**——否则若该占位符恰好匹配到实例真实文件（如 `{{glob:...}}`），会被当成真实引用执行、把文件内容注进系统提示词（曾因此泄漏楼层正文）。
+- **⚠️ `teahouse.*` 系统值源码无需转义**：`behavior.md`、tools.json 的 usage 等经 `teahouse.*` 注入导演提示词时是**解析后的字面量**，其中的 `{{...}}`/`${...}` 教学示例**不会被执行**，源码里**裸写即可、不要加 `\`**（加了会残留反斜杠给导演）。这一豁免**仅针对 `teahouse.*` 系统值**；在仍会解析的地方（generate.yaml / assemble.md / teahouse.md 等实例文件、以及 Write/Edit 显式 `resolve_placeholders=true`），教学字面量依旧需要 `\` 转义。
 
 
 
@@ -251,17 +252,17 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 
 ## 提示词组装
 
-导演（Director）的系统提示词由 `director_system.py` 的 `assemble_system_prompt()` 动态组装，包含以下组件：
+导演（Director）的系统提示词由用户配置的 **prompt preset** 动态组装：内置默认 preset 在首次运行时自动创建并自动绑定到导演槽位（`ensure_director_preset_binding` → `resolve_preset_template()`，`director_system.py`），无代码级兜底组装器。内置模板引用以下组件：
 
 ```
-1. 实例 teahouse.md               — 直接注入（角色定义、配置、Skill 路由）
-2. director-system/behavior.md   — 行为准则
-3. tools.json usage 文本          — 由调用方从 tools.json 生成后传入
-4. 实例目录树                      — 动态扫描，所有目录只显示一行（不展开），runtime/floors/ 有特殊统计信息，runtime/settings/skills 完整展开
-5. Skill 列表                      — 扫描系统 skills + 实例 skills，解析每个 SKILL.md 的 name + description；实例 skills 可覆盖同名系统 skill
+1. 实例 teahouse.md              — 文件切片 {{teahouse.md}}（角色定义、配置、Skill 路由），参与占位符解析
+2. director-system/behavior.md   — 行为准则，经 ${teahouse.behavior} 注入
+3. tools.json usage 文本          — 经 ${teahouse.tools_usage} 注入
+4. 实例目录树                      — 动态扫描，经 ${teahouse.file_tree} 注入（所有目录只显示一行，runtime/floors/ 有特殊统计，runtime/settings/skills 完整展开）
+5. Skill 列表                      — 扫描系统 skills + 实例 skills，经 ${teahouse.available_skills} 注入（解析每个 SKILL.md 的 name + description；实例可覆盖同名系统 skill）
 ```
 
-**注意**：顺序是固定的——teahouse.md 在最前面，是创作者的主要定制入口。
+**注意**：`teahouse.*` 系统值（2/3/4/5）在整套占位符解析**之后**作为**字面量**正则替换植入——其内容内的 `{{...}}`/`${...}` 不会被二次展开，源文件裸写无需转义。`teahouse.md`（1）仍参与解析，是创作者的主要定制入口。
 
 ### tools.json — 工具定义的唯一数据源
 
@@ -270,7 +271,7 @@ ChatPanel 的拖拽调整已从 `mousemove`/`mouseup` 改为 `pointermove`/`poin
 | 输出 | 函数 | 用途 |
 |---|---|---|
 | OpenAI function calling schema | `load_tools()` (tools.py) | 传给 LLM API 作为可调用工具列表 |
-| 自然语言使用指南 | `load_tools_usage()` (tools.py) | 生成文本后传入 `assemble_system_prompt()`，注入导演系统提示词 |
+| 自然语言使用指南 | `load_tools_usage()` (tools.py) | 生成文本后作为 `teahouse.tools_usage` 系统值，注入导演系统提示词 |
 
 每个 tool 条目包含：
 - `name` / `description` / `parameters` — 标准 function calling schema
