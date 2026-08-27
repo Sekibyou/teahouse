@@ -98,8 +98,8 @@ export function WelcomeWizard() {
                 <StepRow
                   key={s.key}
                   done={ready[s.key]}
-                  title={s.title}
-                  desc={s.desc}
+                  title={t(s.titleKey)}
+                  desc={t(s.descKey)}
                   actionTab={s.tab}
                   actionLabel={s.key === "slotsReady" ? t("wizard.goSpecify") : t("wizard.goConfig")}
                 />
@@ -117,8 +117,8 @@ export function WelcomeWizard() {
                   <StepRow
                     key={s.key}
                     done={ready[s.key]}
-                    title={s.title}
-                    desc={s.desc}
+                    title={t(s.titleKey)}
+                    desc={t(s.descKey)}
                     actionTab={s.tab}
                     optional
                   />

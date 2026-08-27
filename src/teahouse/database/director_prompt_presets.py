@@ -8,50 +8,33 @@ from typing import Optional
 from ..database.connection import generate_uuid, current_timestamp, execute, fetch_one, fetch_all
 
 
-BUILTIN_DEFAULT_YAML = """# 导演提示词预设模板
-# 第一行注释（以 # 开头的行为 YAML 注释，不会被解析）
+# Built-in director prompt preset.
 #
-# system: 导演系统提示词模板，支持两种占位符：
-#   {{path|切片}}          文件切片（teahouse.md 可写作 {{teahouse.md}}）
-#   ${teahouse.xxx}        系统内部值：${teahouse.behavior} ${teahouse.tools_usage}
-#                          ${teahouse.file_tree} ${teahouse.available_skills}
-#   ${name}                实例沙盒变量引用（如 ${金币}，组装时为 no-cache 快照）
-# 注意：teahouse. 前缀的系统内部值在整套占位符解析结束之后作为字面量正则替换植入，
-# 其内容（behavior.md、tools usage 等）内的 {{}}/${} 不会被二次展开，源文件裸写无需转义；
-# 其余场景保持字面量（防内部泄露）。
-#
-# 预设对话历史（可选），两种写法：
-#
-# 写法 1 — messages 列表，与 Generate 配置文件格式相同：
-#   messages:
-#     - role: user
-#       content: x+y=99
-#     - role: assistant
-#       content: 好的，收到。
-#
-# 写法 2 — user/assistant 简写，用于单轮对话：
-#   user: |
-#     x+y=99
-#   assistant: |
-#     好的，收到。
-
-system: |
-  ————根目录下 teahouse.md 内容开始————
+# Deliberately language-neutral: XML-style section tags instead of prose delimiters,
+# and no tutorial comments. The "how to write a preset" documentation lives in the
+# frontend settings UI (Presets tab → format help panel) so it can be shown in all
+# supported UI languages instead of being frozen as Chinese inside the payload.
+# Director-facing *instructions* belong in director-system/behavior.md, not here.
+BUILTIN_DEFAULT_YAML = """system: |
+  <teahouse.md>
   {{teahouse.md}}
-  ————根目录下 teahouse.md 内容结束————
-  *注意：如需修改 teahouse.md，你需调用 Read tool 来阅读原文。因为虽然它是实时注入的，但其变量、注释和切片占位符会被解析，你看到的是解析后的结果
-  ————behavior 开始————
+  </teahouse.md>
+
+  <behavior>
   ${teahouse.behavior}
-  ————behavior 结束————
-  ————工具使用指南开始————
+  </behavior>
+
+  <tools_usage>
   ${teahouse.tools_usage}
-  ————工具使用指南结束————
-  ————当前文件结构树开始————
+  </tools_usage>
+
+  <file_tree>
   ${teahouse.file_tree}
-  ————当前文件结构树结束————
-  ————可用 Skill 列表开始————
+  </file_tree>
+
+  <available_skills>
   ${teahouse.available_skills}
-  ————可用 Skill 列表结束————
+  </available_skills>
 """
 
 

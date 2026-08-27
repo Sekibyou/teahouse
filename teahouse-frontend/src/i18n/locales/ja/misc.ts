@@ -101,6 +101,28 @@ export const jaMisc = {
     goSpecify: "指定へ",
     recommended: "推奨",
     recommendedOptional: "推奨（任意）",
+    steps: {
+      providerReady: {
+        title: "プロバイダーを追加",
+        desc: "モデルの供給元となる API プロバイダー（エンドポイント・キー・形式）を設定します。",
+      },
+      modelReady: {
+        title: "モデルをインポート",
+        desc: "「モデルプール」からプロバイダーのモデル一覧を取得してインポートし、1 つ以上を有効化します。",
+      },
+      slotsReady: {
+        title: "正文（本文）モデルを指定",
+        desc: "「監督＋正文」の 2 つのスロットにそれぞれ有効なモデルを割り当てると、小説の創作を開始できます。",
+      },
+      profileReady: {
+        title: "パラメータプリセットを設定",
+        desc: "temperature やコンテキスト長などを設定すると、本文がより好みの作風に近づきます。",
+      },
+      presetReady: {
+        title: "監督プロンプトプリセットを選択",
+        desc: "監督が創作フローをどう進めるかを定義します。組み込みプリセットをそのまま使えます。",
+      },
+    },
   },
   errorBoundary: {
     unknownError: "不明なエラー",

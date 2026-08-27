@@ -4,7 +4,7 @@ import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2, ExternalLink, Sparkles,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
-  BookOpen, Package, Users, Languages, ArrowUp,
+  BookOpen, Package, Users, Languages, ArrowUp, ChevronDown, ChevronRight, HelpCircle,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS } from "@/i18n/config"
 import { resolvePluginText } from "@/lib/pluginI18n"
+import { profileDisplayName, presetDisplayName } from "@/lib/builtinNames"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi, packagesApi } from "@/lib/api"
@@ -160,6 +161,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [presetFormError, setPresetFormError] = useState("")
   const [presetFormSaving, setPresetFormSaving] = useState(false)
   const [deletePresetTarget, setDeletePresetTarget] = useState<string | null>(null)
+  // 预设 YAML 的写法说明。原先是内置模板顶部的一大段中文 YAML 注释，
+  // 挪到这里以便随界面语言切换（模板本身保持语言中立）。
+  const [presetDocOpen, setPresetDocOpen] = useState(false)
 
   // ─── Slot state ───
   const [slotBindings, setSlotBindings] = useState<SlotBindings>({ director: { model_id: null, profile_id: null, prompt_preset_id: null }, writer: { model_id: null, profile_id: null, prompt_preset_id: null } })
@@ -423,7 +427,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const openProfileEdit = (p: ModelProfile) => {
     setProfileFormError("")
     setProfileForm({
-      name: p.name,
+      // 内置预设只读，表单里也显示 i18n 名而非库里硬编码的中文名
+      name: profileDisplayName(p, t),
       match_pattern: p.match_pattern || "",
       temperature: p.temperature,
       max_tokens: p.max_tokens,
@@ -485,7 +490,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const openPresetEdit = (p: DirectorPromptPreset) => {
     setPresetFormError("")
-    setPresetForm({ name: p.name, template_yaml: p.template_yaml || "", match_pattern: p.match_pattern || "" })
+    setPresetForm({ name: presetDisplayName(p, t), template_yaml: p.template_yaml || "", match_pattern: p.match_pattern || "" })
     setEditingPreset(p)
     setCreatePresetOpen(true)
   }
@@ -1371,7 +1376,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         <div key={p.id} className="rounded-lg border border-border bg-muted/20 p-4 flex items-start justify-between opacity-70">
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{p.name}</span>
+                              <span className="text-sm font-medium">{profileDisplayName(p, t)}</span>
                               <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{t("profile.builtIn")}</span>
                             </div>
                             <div className="text-xs text-muted-foreground">{t("profile.builtInView")}</div>
@@ -1440,6 +1445,53 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         <Field label={t("preset.matchPattern")}>
                           <Input value={presetForm.match_pattern} onChange={e => setPresetForm(f => ({ ...f, match_pattern: e.target.value }))} placeholder={t("preset.matchPatternPH")} className="text-sm" disabled={!!editingPreset?.is_builtin} />
                         </Field>
+                        {/* 格式说明——三语，取代旧内置模板里的中文 YAML 注释 */}
+                        <div className="rounded-md border border-border bg-muted/30">
+                          <button
+                            type="button"
+                            onClick={() => setPresetDocOpen(o => !o)}
+                            className="w-full flex items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {presetDocOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                            <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+                            <span>{t("preset.docTitle")}</span>
+                          </button>
+                          {presetDocOpen && (
+                            <div className="px-3 pb-3 space-y-2">
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                                {t("preset.docBody")}
+                              </p>
+                              <div className="space-y-2">
+                                <p className="text-xs text-muted-foreground">{t("preset.docExampleLabel")}</p>
+                                <p className="text-[11px] text-muted-foreground">{t("preset.docFormMessages")}</p>
+                                <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 overflow-x-auto text-muted-foreground">{`system: |
+  <teahouse.md>
+  {{teahouse.md}}
+  </teahouse.md>
+
+  <behavior>
+  \${teahouse.behavior}
+  </behavior>
+
+messages:
+  - role: user
+    content: x+y=99
+  - role: assistant
+    content: OK.`}</pre>
+                                <p className="text-[11px] text-muted-foreground">{t("preset.docFormShorthand")}</p>
+                                <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 overflow-x-auto text-muted-foreground">{`system: |
+  <behavior>
+  \${teahouse.behavior}
+  </behavior>
+
+user: |
+  x+y=99
+assistant: |
+  OK.`}</pre>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         <Field label={t("preset.templateYaml")}>
                           <textarea
                             className="w-full border border-input rounded-md bg-background px-3 py-2 text-sm font-mono resize-y"
@@ -1481,7 +1533,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         <div key={p.id} className="rounded-lg border border-border bg-muted/20 p-4 flex items-start justify-between opacity-70">
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{p.name}</span>
+                              <span className="text-sm font-medium">{presetDisplayName(p, t)}</span>
                               <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{t("preset.builtIn")}</span>
                             </div>
                             <div className="text-xs text-muted-foreground">{t("preset.builtInView")}</div>

@@ -101,6 +101,28 @@ export const enMisc = {
     goSpecify: "Go specify",
     recommended: "Recommended",
     recommendedOptional: "Recommended (optional)",
+    steps: {
+      providerReady: {
+        title: "Add a provider",
+        desc: "Configure an API provider (endpoint, key, format) as the source of your models.",
+      },
+      modelReady: {
+        title: "Import models",
+        desc: "Open \"Model pool\", fetch models from the provider and import them, then enable at least one.",
+      },
+      slotsReady: {
+        title: "Assign the writer model",
+        desc: "Bind an enabled model to each of the two slots (director + writer) before you can start writing.",
+      },
+      profileReady: {
+        title: "Set up a parameter profile",
+        desc: "Set temperature, context length and other parameters so the prose better matches your style.",
+      },
+      presetReady: {
+        title: "Pick a director prompt preset",
+        desc: "Defines how the director drives the creative flow; the built-in preset works out of the box.",
+      },
+    },
   },
   errorBoundary: {
     unknownError: "Unknown error",

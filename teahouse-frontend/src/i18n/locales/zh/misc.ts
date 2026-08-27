@@ -101,6 +101,28 @@ export const zhMisc = {
     goSpecify: "去指定",
     recommended: "推荐",
     recommendedOptional: "推荐（可选）",
+    steps: {
+      providerReady: {
+        title: "添加供应商",
+        desc: "配置一个 API 供应商（地址、Key、格式），作为模型的来源。",
+      },
+      modelReady: {
+        title: "导入模型",
+        desc: "进入「模型池」从供应商拉取并导入模型，启用至少一个。",
+      },
+      slotsReady: {
+        title: "指定正文模型",
+        desc: "为「导演+正文」两个槽位各绑定一个已启用的模型，才能开始小说创作。",
+      },
+      profileReady: {
+        title: "配置参数预设",
+        desc: "为模型设定 temperature、上下文长度等参数，正文更贴合你的风格。",
+      },
+      presetReady: {
+        title: "选用导演提示词预设",
+        desc: "定义导演如何驱动创作流程；内置预设可直接选用。",
+      },
+    },
   },
   errorBoundary: {
     unknownError: "未知错误",

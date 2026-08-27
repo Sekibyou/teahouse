@@ -99,6 +99,7 @@ export const zhSettings = {
     needName: "请填写名称",
     none: "暂无预设",
     builtIn: "内置",
+    builtinName: "默认",
     builtInView: "内置预设，不可编辑或删除",
     editTitle: "编辑",
     deleteTitle: "删除",
@@ -119,8 +120,28 @@ export const zhSettings = {
     needNameTemplate: "请填写名称和模板 YAML",
     none: "暂无预设",
     builtIn: "built-in",
+    builtinName: "内置默认",
     builtInView: "内置预设，不可编辑或删除",
     emptyTemplate: "（空模板）",
+    docTitle: "格式说明",
+    docExampleLabel: "示例：",
+    docFormMessages: "写法 A —— messages 列表（可写任意多轮）",
+    docFormShorthand: "写法 B —— user / assistant 简写（单轮）",
+    docBody: `导演提示词预设 = 发给导演模型的提示词结构，用 YAML 编写。
+
+system —— 导演的系统提示词模板，可用三类占位符：
+
+• {{路径|切片}}：文件切片，取实例内文件内容；实例配置写作 {{teahouse.md}}。
+• \${teahouse.xxx}：系统内部值，固定为下列四个。名称不可更改，但顺序可任意调整，也可只用其中几个：
+    \${teahouse.behavior} —— 行为准则
+    \${teahouse.tools_usage} —— 工具使用指南
+    \${teahouse.file_tree} —— 实例目录树
+    \${teahouse.available_skills} —— 可用 Skill 列表
+• \${变量名}：实例变量引用（如 \${金币}），组装时取实时快照。
+
+注意：\${teahouse.xxx} 的内容在所有占位符解析结束后才作为字面量植入，其内部的 {{}} 与 \${} 不会被二次展开。
+
+除 system 外，还可预置其他 role 的对话历史，两种写法二选一：messages 列表（与正文生成配置同格式，可写任意多轮），或 user / assistant 简写（单轮）。两者同时写时以 messages 为准，简写会被静默忽略。`,
     editTitle: "编辑",
     deleteTitle: "删除",
     viewTitle: "查看",

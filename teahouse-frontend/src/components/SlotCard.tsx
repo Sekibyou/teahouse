@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { AlertCircle } from "lucide-react"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
+import { profileDisplayName, presetDisplayName } from "@/lib/builtinNames"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -200,14 +201,14 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
           <SelectTrigger className="w-full">
             <SelectValue>
               <span className={matchedProfileIds.has(effectiveProfileId) ? matchedClass : undefined}>
-                {profiles.find(p => p.id === effectiveProfileId)?.name}
+                {(() => { const p = profiles.find(p => p.id === effectiveProfileId); return p ? profileDisplayName(p, t) : null })()}
               </span>
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {profiles.map(p => (
               <SelectItem key={p.id} value={p.id}>
-                <span className={matchedProfileIds.has(p.id) ? matchedClass : undefined}>{p.name}</span>
+                <span className={matchedProfileIds.has(p.id) ? matchedClass : undefined}>{profileDisplayName(p, t)}</span>
               </SelectItem>
             ))}
           </SelectContent>
@@ -222,14 +223,14 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
             <SelectTrigger className="w-full">
               <SelectValue>
                 <span className={matchedPresetIds.has(effectivePresetId) ? matchedClass : undefined}>
-                  {presets!.find(p => p.id === effectivePresetId)?.name}
+                  {(() => { const p = presets!.find(p => p.id === effectivePresetId); return p ? presetDisplayName(p, t) : null })()}
                 </span>
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {presets!.map(p => (
                 <SelectItem key={p.id} value={p.id}>
-                  <span className={matchedPresetIds.has(p.id) ? matchedClass : undefined}>{p.name}</span>
+                  <span className={matchedPresetIds.has(p.id) ? matchedClass : undefined}>{presetDisplayName(p, t)}</span>
                 </SelectItem>
               ))}
             </SelectContent>

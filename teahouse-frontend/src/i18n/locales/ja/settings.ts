@@ -99,6 +99,7 @@ export const jaSettings = {
     needName: "名前を入力してください",
     none: "プリセットがありません",
     builtIn: "内蔵",
+    builtinName: "デフォルト",
     builtInView: "内蔵プリセットのため編集・削除できません",
     editTitle: "編集",
     deleteTitle: "削除",
@@ -119,8 +120,28 @@ export const jaSettings = {
     needNameTemplate: "名前とテンプレート YAML を入力してください",
     none: "プリセットがありません",
     builtIn: "built-in",
+    builtinName: "内蔵デフォルト",
     builtInView: "内蔵プリセットのため編集・削除できません",
     emptyTemplate: "（空テンプレート）",
+    docTitle: "書式ガイド",
+    docExampleLabel: "例:",
+    docFormMessages: "書式 A —— messages リスト（ターン数は自由）",
+    docFormShorthand: "書式 B —— user / assistant 省略記法（単一ターン）",
+    docBody: `監督プロンプトプリセットとは、監督モデルに送るプロンプトの構造を YAML で記述したものです。
+
+system —— 監督のシステムプロンプトのテンプレート。3 種類のプレースホルダーが使えます:
+
+• {{パス|スライス}}: インスタンス内のファイル内容を取り込むファイルスライス。インスタンス設定は {{teahouse.md}} と書きます。
+• \${teahouse.xxx}: システム内部値。以下の 4 つで固定です。名前は変更できませんが、順序は自由に入れ替えられ、一部だけを使うこともできます:
+    \${teahouse.behavior} —— 行動規範
+    \${teahouse.tools_usage} —— ツール使用ガイド
+    \${teahouse.file_tree} —— インスタンスのディレクトリツリー
+    \${teahouse.available_skills} —— 利用可能な Skill 一覧
+• \${変数名}: インスタンス変数の参照（例: \${金币}）。組み立て時に最新のスナップショットを取得します。
+
+注意: \${teahouse.xxx} の内容は、すべてのプレースホルダー解決が終わったあとにリテラルとして挿入されるため、その中の {{}} や \${} が再展開されることはありません。
+
+system 以外に、他の role の会話履歴をあらかじめ設定できます。次の 2 つの書式のいずれか一方を使います: messages リスト（本文生成設定と同じ形式、ターン数は自由）、または user / assistant の省略記法（単一ターン）。両方を書いた場合は messages が優先され、省略記法は黙って無視されます。`,
     editTitle: "編集",
     deleteTitle: "削除",
     viewTitle: "表示",

@@ -6,28 +6,29 @@ export type WizardTab = "models" | "profiles" | "presets" | "slots"
 export interface RequiredStep {
   key: keyof SetupReadyFlags
   tab: WizardTab
-  title: string
-  desc: string
+  /** i18n key（misc 命名空间），文案见 wizard.steps.<key> */
+  titleKey: string
+  descKey: string
 }
 
 export const REQUIRED_STEPS: RequiredStep[] = [
   {
     key: "providerReady",
     tab: "models",
-    title: "添加供应商",
-    desc: "配置一个 API 供应商（地址、Key、格式），作为模型的来源。",
+    titleKey: "wizard.steps.providerReady.title",
+    descKey: "wizard.steps.providerReady.desc",
   },
   {
     key: "modelReady",
     tab: "models",
-    title: "导入模型",
-    desc: "进入「模型池」从供应商拉取并导入模型，启用至少一个。",
+    titleKey: "wizard.steps.modelReady.title",
+    descKey: "wizard.steps.modelReady.desc",
   },
   {
     key: "slotsReady",
     tab: "slots",
-    title: "指定正文模型",
-    desc: "为「导演+正文」两个槽位各绑定一个已启用的模型，才能开始小说创作。",
+    titleKey: "wizard.steps.slotsReady.title",
+    descKey: "wizard.steps.slotsReady.desc",
   },
 ]
 
@@ -35,21 +36,21 @@ export const REQUIRED_STEPS: RequiredStep[] = [
 export interface RecommendedStep {
   key: keyof SetupReadyFlags
   tab: WizardTab
-  title: string
-  desc: string
+  titleKey: string
+  descKey: string
 }
 
 export const RECOMMENDED_STEPS: RecommendedStep[] = [
   {
     key: "profileReady",
     tab: "profiles",
-    title: "配置参数预设",
-    desc: "为模型设定 temperature、上下文长度等参数，正文更贴合你的风格。",
+    titleKey: "wizard.steps.profileReady.title",
+    descKey: "wizard.steps.profileReady.desc",
   },
   {
     key: "presetReady",
     tab: "presets",
-    title: "选用导演提示词预设",
-    desc: "定义导演如何驱动创作流程；内置预设可直接选用。",
+    titleKey: "wizard.steps.presetReady.title",
+    descKey: "wizard.steps.presetReady.desc",
   },
 ]

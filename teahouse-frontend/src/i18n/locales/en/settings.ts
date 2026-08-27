@@ -99,6 +99,7 @@ export const enSettings = {
     needName: "Please enter a name",
     none: "No presets yet",
     builtIn: "Built-in",
+    builtinName: "Default",
     builtInView: "Built-in preset, cannot be edited or deleted",
     editTitle: "Edit",
     deleteTitle: "Delete",
@@ -119,8 +120,28 @@ export const enSettings = {
     needNameTemplate: "Please enter a name and a template YAML",
     none: "No presets yet",
     builtIn: "built-in",
+    builtinName: "Built-in default",
     builtInView: "Built-in preset, cannot be edited or deleted",
     emptyTemplate: "(empty template)",
+    docTitle: "Format guide",
+    docExampleLabel: "Example:",
+    docFormMessages: "Form A — messages list (any number of turns)",
+    docFormShorthand: "Form B — user / assistant shorthand (single turn)",
+    docBody: `A director prompt preset is the prompt structure sent to the director model, written in YAML.
+
+system — the director's system prompt template. Three kinds of placeholders are available:
+
+• {{path|slice}}: a file slice pulling content from inside the instance; the instance config is written as {{teahouse.md}}.
+• \${teahouse.xxx}: built-in system values. These four are fixed — the names cannot be changed, but you may reorder them freely or use only some of them:
+    \${teahouse.behavior} — director behaviour rules
+    \${teahouse.tools_usage} — tool usage guide
+    \${teahouse.file_tree} — instance file tree
+    \${teahouse.available_skills} — available skill list
+• \${varName}: an instance variable reference (e.g. \${gold}), resolved to a live snapshot at assembly time.
+
+Note: \${teahouse.xxx} content is inserted literally only after all placeholder resolution has finished, so any {{}} or \${} inside it is never expanded a second time.
+
+Besides system, you can seed conversation history for other roles. Pick one of two forms: a messages list (same format as the text-generation config, any number of turns), or the user / assistant shorthand (a single turn). If you write both, messages wins and the shorthand is silently ignored.`,
     editTitle: "Edit",
     deleteTitle: "Delete",
     viewTitle: "View",
