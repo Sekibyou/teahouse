@@ -21,6 +21,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { useSetupStatus } from "@/hooks/useSetupStatus"
 import { WelcomeWizard } from "@/components/WelcomeWizard/WelcomeWizard"
+import { AuroraBackground } from "@/components/AuroraBackground"
 import { CoverWithFetch } from "@/components/Cover"
 import type { Prototype, Instance } from "@/lib/types"
 
@@ -241,7 +242,10 @@ export function SessionSelectPage() {
   // Shared: bookshelf overlay (rendered on top of either desktop or mobile page)
   // ============================================================================
   return (
-    <div className="h-full flex flex-col overflow-hidden relative">
+    // isolate：给背景一个自己的层叠上下文，-z-10 只沉到本页内容之下、
+    // 不会穿到 MainLayout 的 bg-background 后面去（那样就完全看不见了）
+    <div className="h-full flex flex-col overflow-hidden relative isolate">
+      <AuroraBackground />
       {isMobile ? (
         <MobileMain
           instances={sortedByRecent}
