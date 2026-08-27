@@ -4,6 +4,7 @@ LLM Provider API routes.
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 import httpx
@@ -51,6 +52,11 @@ class ImportModelsRequest(BaseModel):
 VALID_FORMATS = {"openai", "openai_strict", "anthropic"}
 
 
+# 匹配已带 API 版本路径的 base URL：`/v1`、`/v4`、`/v3`、`/v2`、`/v1beta/` 等。
+# 这类 base 直接追加端点即可，不应再补 `/v1`（否则智谱 `/v4`、火山 `/v3`、千帆 `/v2` 会被拼错）。
+_VERSIONED_BASE = re.compile(r"/v\d+(?:/|$)|/v1beta/")
+
+
 def normalize_api_url(url: str, api_format: str) -> str:
     url = url.strip().rstrip("/")
     if api_format == "anthropic":
@@ -59,12 +65,15 @@ def normalize_api_url(url: str, api_format: str) -> str:
         if url.endswith("/v1"):
             return url + "/messages"
         return url + "/v1/messages"
-    else:
-        if "/chat/completions" in url:
-            return url
-        if url.endswith("/v1"):
-            return url + "/chat/completions"
-        return url + "/v1/chat/completions"
+
+    # openai / openai_strict
+    if "/chat/completions" in url:
+        return url
+    # 已带版本路径（/vN 或 /v1beta/）→ 直接追加 chat 端点
+    if _VERSIONED_BASE.search(url):
+        return url + "/chat/completions"
+    # 裸 host（如 https://api.deepseek.com）→ 默认走 OpenAI 标准的 /v1
+    return url + "/v1/chat/completions"
 
 
 # ===== Helper =====

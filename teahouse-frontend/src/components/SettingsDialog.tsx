@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
-  AlertCircle, Download, Star, FileText, Link2, ExternalLink,
+  AlertCircle, Download, Star, FileText, Link2, ExternalLink, Sparkles,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
   BookOpen, Package, Users, Languages, ArrowUp,
 } from "lucide-react"
@@ -27,6 +27,8 @@ import { useNewVersion } from "@/hooks/useNewVersion"
 import { UserManagementPanel } from "@/components/UserManagement"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 import type { MySkill, SkillPreview, MyPackage, PackagePreview } from "@/lib/api"
+import { PROVIDER_GROUPS } from "@/lib/providerPresets"
+import type { ProviderPreset } from "@/lib/providerPresets"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -105,6 +107,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [providerError, setProviderError] = useState("")
   const [providerSaving, setProviderSaving] = useState(false)
   const [deleteProviderTarget, setDeleteProviderTarget] = useState<string | null>(null)
+  // 预设选择后触发 api_key 输入框重挂载 + autofocus，方便直接粘贴
+  const [providerApiKeyFocus, setProviderApiKeyFocus] = useState(0)
 
   // ─── Provider model fetch / import state ───
   const [importingFromProvider, setImportingFromProvider] = useState<string | null>(null)
@@ -288,6 +292,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setProviderError("")
     setProviderCreateForm({ name: "", api_url: "", api_key: "", api_format: "openai" })
     setShowProviderCreate(true)
+  }
+
+  // 点击预设徽章：填充 name / api_url / api_format，清空 api_key，聚焦让用户直接粘贴
+  const applyProviderPreset = (p: ProviderPreset) => {
+    setProviderCreateForm({ name: p.label, api_url: p.api_url, api_key: "", api_format: p.api_format })
+    setProviderError("")
+    setProviderApiKeyFocus(n => n + 1)
   }
 
   const saveProviderCreate = async () => {
@@ -944,8 +955,42 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                             <Input value={providerCreateForm.api_url} onChange={e => setProviderCreateForm(f => ({ ...f, api_url: e.target.value }))} placeholder={t("provider.apiUrlPH")} className="text-sm font-mono" />
                           </Field>
                           <Field label={t("provider.apiKey")} className="col-span-2">
-                            <Input type="password" value={providerCreateForm.api_key} onChange={e => setProviderCreateForm(f => ({ ...f, api_key: e.target.value }))} placeholder={t("provider.apiKeyPH")} className="text-sm" />
+                            <Input key={providerApiKeyFocus} autoFocus={providerApiKeyFocus > 0} type="password" value={providerCreateForm.api_key} onChange={e => setProviderCreateForm(f => ({ ...f, api_key: e.target.value }))} placeholder={t("provider.apiKeyPH")} className="text-sm" />
                           </Field>
+                        </div>
+
+                        {/* 一键预设：点击徽章自动填充 name/api_url/api_format，只需贴 api_key */}
+                        <div className="border-t border-border pt-3 mt-1">
+                          <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1.5">
+                            <Sparkles className="h-3 w-3" />
+                            {t("provider.quickAdd")}
+                          </div>
+                          <div className="space-y-2.5">
+                            {PROVIDER_GROUPS.map(group => (
+                              <div key={group.key}>
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">{t(group.name)}</div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {group.items.map(p => (
+                                    <button
+                                      key={p.id}
+                                      type="button"
+                                      onClick={() => applyProviderPreset(p)}
+                                      className="group/badge flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                                      title={p.label}
+                                    >
+                                      <span
+                                        className="h-6 w-6 rounded-md flex items-center justify-center text-[11px] font-semibold shrink-0"
+                                        style={{ background: p.color, color: p.fg || "#FFFFFF" }}
+                                      >
+                                        {p.short}
+                                      </span>
+                                      <span className="text-xs text-muted-foreground group-hover/badge:text-foreground whitespace-nowrap">{p.label}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                         {providerError && <p className="text-xs text-red-500">{providerError}</p>}
                         <div className="flex gap-2">
