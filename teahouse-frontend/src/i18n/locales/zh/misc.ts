@@ -99,8 +99,10 @@ export const zhMisc = {
     doneCount: "完成 {{done}}/{{total}}",
     goConfig: "去配置",
     goSpecify: "去指定",
+    goCreate: "去创建",
+    skip: "跳过",
     recommended: "推荐",
-    recommendedOptional: "推荐（可选）",
+    skipped: "已跳过",
     steps: {
       providerReady: {
         title: "添加供应商",
@@ -115,12 +117,12 @@ export const zhMisc = {
         desc: "为「导演+正文」两个槽位各绑定一个已启用的模型，才能开始小说创作。",
       },
       profileReady: {
-        title: "配置参数预设",
-        desc: "为模型设定 temperature、上下文长度等参数，正文更贴合你的风格。",
+        title: "创建自己的参数预设",
+        desc: "已有内置预设兜底，但建议自建一份：temperature、上下文长度等按你的口味调，正文更贴合风格。不想折腾可跳过。",
       },
       presetReady: {
-        title: "选用导演提示词预设",
-        desc: "定义导演如何驱动创作流程；内置预设可直接选用。",
+        title: "创建自己的导演提示词预设",
+        desc: "已有内置预设兜底，但建议自建一份：定义导演如何驱动创作流程，可完全按你的玩法改写。不想折腾可跳过。",
       },
     },
   },

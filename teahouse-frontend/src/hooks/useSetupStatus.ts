@@ -7,6 +7,7 @@ import {
   directorPromptPresetsApi,
 } from "@/lib/api"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
+import { useWizardSkipStore } from "@/stores/wizardSkipStore"
 import type { LLMProvider, LLMModel, SlotBindings, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 
 export interface SetupStatus {
@@ -17,11 +18,15 @@ export interface SetupStatus {
   modelReady: boolean
   /** 导演 + 正文两个槽位都绑定了启用模型 */
   slotsReady: boolean
-  /** 推荐项：有可用参数预设（内置或自建） */
+  /** 推荐项：有**自建**参数预设（内置的不算——内置只是兜底，建议按自己口味建一份） */
   profileReady: boolean
-  /** 推荐项：有可用导演提示词预设（内置或自建） */
+  /** 推荐项：有**自建**导演提示词预设（同上，内置的不算） */
   presetReady: boolean
-  /** 硬门槛全绿 = 供应商 + 模型 + 槽位 */
+  /** 用户点过「跳过」的推荐步骤（跳过即按完成计入进度，但不代表真配了） */
+  skipped: Record<string, boolean>
+  /** 跳过某个推荐步骤 */
+  skipStep: (key: keyof SetupReadyFlags) => void
+  /** 清单全绿 = 硬门槛（供应商 + 模型 + 槽位）+ 两个推荐项（做了或跳过） */
   complete: boolean
   refresh: () => Promise<void>
 }
@@ -82,10 +87,31 @@ export function useSetupStatus(): SetupStatus {
     slotBoundToEnabled(slots.director?.model_id) &&
     slotBoundToEnabled(slots.writer?.model_id)
 
-  const profileReady = profiles.length > 0
-  const presetReady = presets.length > 0
+  // 内置预设人人都有，用它判「就绪」等于永远绿灯；这里只认自建的，
+  // 向导才有意义（引导用户按自己的口味建一份），不想建就点跳过。
+  const profileReady = profiles.some((p) => !p.is_builtin)
+  const presetReady = presets.some((p) => !p.is_builtin)
 
-  const complete = providerReady && modelReady && slotsReady
+  const skipped = useWizardSkipStore((s) => s.skipped)
+  const skipStep = useWizardSkipStore((s) => s.skipStep)
 
-  return { loading, providerReady, modelReady, slotsReady, profileReady, presetReady, complete, refresh }
+  const complete =
+    providerReady &&
+    modelReady &&
+    slotsReady &&
+    (profileReady || !!skipped.profileReady) &&
+    (presetReady || !!skipped.presetReady)
+
+  return {
+    loading,
+    providerReady,
+    modelReady,
+    slotsReady,
+    profileReady,
+    presetReady,
+    skipped,
+    skipStep,
+    complete,
+    refresh,
+  }
 }

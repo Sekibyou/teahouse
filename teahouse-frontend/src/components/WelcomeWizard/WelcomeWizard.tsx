@@ -1,28 +1,32 @@
-import { Loader2, Check, Circle, Sparkles } from "lucide-react"
+import { Loader2, Check, Circle, Sparkles, SkipForward } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useSetupStatus } from "@/hooks/useSetupStatus"
-import { REQUIRED_STEPS, RECOMMENDED_STEPS, type WizardTab } from "./steps"
+import { WIZARD_STEPS, type WizardTab } from "./steps"
 import { useTranslation } from "react-i18next"
 
 function StepRow({
-  done, title, desc, actionTab, actionLabel, optional,
+  done, skipped, title, desc, actionTab, actionLabel, recommended, onSkip,
 }: {
   done: boolean
+  /** 没真做，但用户点了「跳过」——按完成计入进度，标记上仍如实标注 */
+  skipped?: boolean
   title: string
   desc: string
   actionTab: WizardTab
   actionLabel?: string
-  optional?: boolean
+  recommended?: boolean
+  onSkip?: () => void
 }) {
   const { t } = useTranslation("misc")
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
   const actionText = actionLabel ?? t("wizard.goConfig")
+  const settled = done || skipped
   return (
-    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 ${done ? "border-border/60 bg-muted/20" : "border-border bg-card"}`}>
-      {done ? (
-        <span className="mt-0.5 shrink-0 flex items-center justify-center h-6 w-6 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-          <Check className="h-4 w-4" />
+    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 ${settled ? "border-border/60 bg-muted/20" : "border-border bg-card"}`}>
+      {settled ? (
+        <span className={`mt-0.5 shrink-0 flex items-center justify-center h-6 w-6 rounded-full ${done ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+          {done ? <Check className="h-4 w-4" /> : <SkipForward className="h-3.5 w-3.5" />}
         </span>
       ) : (
         <span className="mt-0.5 shrink-0 flex items-center justify-center h-6 w-6 rounded-full bg-muted text-muted-foreground">
@@ -32,21 +36,31 @@ function StepRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{title}</span>
-          {optional && (
+          {recommended && !settled && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">{t("wizard.recommended")}</span>
+          )}
+          {!done && skipped && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">{t("wizard.skipped")}</span>
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{desc}</p>
       </div>
-      {!done && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0 gap-1.5"
-          onClick={() => openSettings(actionTab)}
-        >
-          {actionText}
-        </Button>
+      {!settled && (
+        <div className="shrink-0 flex items-center gap-1.5">
+          {onSkip && (
+            <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={onSkip}>
+              {t("wizard.skip")}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => openSettings(actionTab)}
+          >
+            {actionText}
+          </Button>
+        </div>
       )}
     </div>
   )
@@ -54,10 +68,11 @@ function StepRow({
 
 export function WelcomeWizard() {
   const { t } = useTranslation("misc")
-  const { loading, complete, ...ready } = useSetupStatus()
+  const { loading, complete, skipped, skipStep, ...ready } = useSetupStatus()
 
-  const requiredDoneCount = REQUIRED_STEPS.filter((s) => ready[s.key]).length
-  const requiredTotal = REQUIRED_STEPS.length
+  // 跳过的推荐项也算一格：进度分母恒为全部步骤数（x/5）
+  const doneCount = WIZARD_STEPS.filter((s) => ready[s.key] || skipped[s.key]).length
+  const total = WIZARD_STEPS.length
 
   return (
     <div className="h-full overflow-y-auto flex items-center justify-center px-4 py-10">
@@ -84,46 +99,29 @@ export function WelcomeWizard() {
               <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full bg-primary transition-all duration-500"
-                  style={{ width: `${(requiredDoneCount / requiredTotal) * 100}%` }}
+                  style={{ width: `${(doneCount / total) * 100}%` }}
                 />
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {t("wizard.doneCount", { done: requiredDoneCount, total: requiredTotal })}
+                {t("wizard.doneCount", { done: doneCount, total })}
               </span>
             </div>
 
-            {/* 必需步骤 */}
+            {/* 清单：硬门槛 + 推荐项（推荐项可跳过，跳过也前进一格） */}
             <div className="space-y-2">
-              {REQUIRED_STEPS.map((s) => (
+              {WIZARD_STEPS.map((s) => (
                 <StepRow
                   key={s.key}
                   done={ready[s.key]}
+                  skipped={!!skipped[s.key]}
                   title={t(s.titleKey)}
                   desc={t(s.descKey)}
                   actionTab={s.tab}
-                  actionLabel={s.key === "slotsReady" ? t("wizard.goSpecify") : t("wizard.goConfig")}
+                  actionLabel={s.actionLabelKey ? t(s.actionLabelKey) : undefined}
+                  recommended={s.skippable}
+                  onSkip={s.skippable ? () => skipStep(s.key) : undefined}
                 />
               ))}
-            </div>
-
-            {/* 推荐步骤 */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 px-1 pt-1">
-                <span className="text-xs font-medium text-muted-foreground">{t("wizard.recommendedOptional")}</span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
-              <div className="space-y-2 pt-1">
-                {RECOMMENDED_STEPS.map((s) => (
-                  <StepRow
-                    key={s.key}
-                    done={ready[s.key]}
-                    title={t(s.titleKey)}
-                    desc={t(s.descKey)}
-                    actionTab={s.tab}
-                    optional
-                  />
-                ))}
-              </div>
             </div>
           </>
         )}

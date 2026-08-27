@@ -99,8 +99,10 @@ export const enMisc = {
     doneCount: "{{done}}/{{total}} done",
     goConfig: "Go configure",
     goSpecify: "Go specify",
+    goCreate: "Create one",
+    skip: "Skip",
     recommended: "Recommended",
-    recommendedOptional: "Recommended (optional)",
+    skipped: "Skipped",
     steps: {
       providerReady: {
         title: "Add a provider",
@@ -115,12 +117,12 @@ export const enMisc = {
         desc: "Bind an enabled model to each of the two slots (director + writer) before you can start writing.",
       },
       profileReady: {
-        title: "Set up a parameter profile",
-        desc: "Set temperature, context length and other parameters so the prose better matches your style.",
+        title: "Create your own parameter profile",
+        desc: "A built-in profile already covers you, but creating your own is recommended: tune temperature, context length and more so the prose matches your style. Skip it if you'd rather not.",
       },
       presetReady: {
-        title: "Pick a director prompt preset",
-        desc: "Defines how the director drives the creative flow; the built-in preset works out of the box.",
+        title: "Create your own director prompt preset",
+        desc: "A built-in preset already covers you, but creating your own is recommended: it defines how the director drives the creative flow, and you can rewrite it for your own way of playing. Skip it if you'd rather not.",
       },
     },
   },

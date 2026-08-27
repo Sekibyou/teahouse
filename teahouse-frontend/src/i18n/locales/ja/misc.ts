@@ -99,8 +99,10 @@ export const jaMisc = {
     doneCount: "{{done}}/{{total}} 完了",
     goConfig: "設定へ",
     goSpecify: "指定へ",
+    goCreate: "作成する",
+    skip: "スキップ",
     recommended: "推奨",
-    recommendedOptional: "推奨（任意）",
+    skipped: "スキップ済み",
     steps: {
       providerReady: {
         title: "プロバイダーを追加",
@@ -115,12 +117,12 @@ export const jaMisc = {
         desc: "「監督＋正文」の 2 つのスロットにそれぞれ有効なモデルを割り当てると、小説の創作を開始できます。",
       },
       profileReady: {
-        title: "パラメータプリセットを設定",
-        desc: "temperature やコンテキスト長などを設定すると、本文がより好みの作風に近づきます。",
+        title: "自分のパラメータプリセットを作成",
+        desc: "組み込みプリセットでも動きますが、自作を推奨します：temperature やコンテキスト長を好みに合わせると、本文がより自分の作風に近づきます。不要ならスキップ可。",
       },
       presetReady: {
-        title: "監督プロンプトプリセットを選択",
-        desc: "監督が創作フローをどう進めるかを定義します。組み込みプリセットをそのまま使えます。",
+        title: "自分の監督プロンプトプリセットを作成",
+        desc: "組み込みプリセットでも動きますが、自作を推奨します：監督が創作フローをどう進めるかを自分の遊び方に合わせて書き換えられます。不要ならスキップ可。",
       },
     },
   },
