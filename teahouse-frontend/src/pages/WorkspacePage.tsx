@@ -10,7 +10,7 @@ import {
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
   Eye, Code2, Users, Languages,
-  ClipboardCopy, ClipboardPaste, Scissors, EllipsisVertical,
+  ClipboardCopy, ClipboardPaste, Scissors,
 } from "lucide-react"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
@@ -1050,13 +1050,23 @@ export function WorkspacePage() {
         className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto max-h-[calc(100vh-16px)]"
         style={
           (() => {
-            const right = Math.max(8, window.innerWidth - treeMenu.x)
-            // Below the anchor is usually ~360px of menu; if there isn't room on
-            // screen, open upward instead of overflowing off the bottom edge.
-            const spaceBelow = window.innerHeight - treeMenu.y
-            return spaceBelow >= 380
-              ? { top: treeMenu.y, right }
-              : { bottom: Math.max(8, window.innerHeight - treeMenu.y), right }
+            // Edge-avoidance for the fixed menu. Estimates the menu size, flips
+            // to the far side of the finger when the near side would overflow,
+            // and relies on the CSS max-h (below) to scroll any excess height.
+            const M = 8 // screen edge margin
+            const M_W = 224 // ≈ max-w-56
+            const M_H = 360 // ≈ menu height
+            const x = treeMenu.x
+            const y = treeMenu.y
+            // Horizontal: prefer right of the finger, else flip left.
+            const left = x + M_W + M <= window.innerWidth
+              ? x
+              : Math.max(M, x - M_W - M)
+            // Vertical: prefer below, else flip above.
+            const top = y + M_H + M <= window.innerHeight
+              ? y
+              : Math.max(M, y - M_H - M)
+            return { top, left }
           })()
         }
         onContextMenu={(e) => e.preventDefault()}
@@ -1069,6 +1079,15 @@ export function WorkspacePage() {
           const disabledCls = "pointer-events-none opacity-50"
           return (
             <>
+              <div className="pointer-events-none flex items-center gap-1.5 px-1.5 py-2 text-xs font-medium text-muted-foreground select-none">
+                {node.type === "directory" ? (
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate" title={node.path}>{node.name}</span>
+              </div>
+              <div className="-mx-1 mb-1 h-px bg-border" />
               <button className={itemCls} onClick={() => { setShowCreate({ parentPath: opTarget, type: "file" }); setCreateName(""); setTreeMenu(null) }}>
                 <Plus className="h-4 w-4 shrink-0" />
                 {t("create.fileTitle")}
@@ -1412,6 +1431,7 @@ export function WorkspacePage() {
                     onPaste={pasteEntry}
                     dragWasActiveRef={dragWasActiveRef}
                     onOpenTreeMenu={(node, x, y) => setTreeMenu({ node, x, y })}
+                    menuNodePath={treeMenu?.node.path}
                   />
                 )}
               </div>
@@ -2187,7 +2207,7 @@ function FileTreeView({
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
   isDragging = false, dropTargetPath = null, dragSource = null,
   clipboard = null, cutSource = null, onCopyPath, onCopy, onCut, onPaste,
-  dragWasActiveRef, onOpenTreeMenu,
+  dragWasActiveRef, onOpenTreeMenu, menuNodePath,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -2213,6 +2233,7 @@ function FileTreeView({
   onPaste?: (targetParent: string) => void
   dragWasActiveRef?: React.MutableRefObject<boolean>
   onOpenTreeMenu?: (node: { path: string; type: "file" | "directory"; name: string }, x: number, y: number) => void
+  menuNodePath?: string | null
 }) {
   const { t } = useTranslation("workspace")
   // Parent directory of a frontend path ("" = root).
@@ -2232,6 +2253,40 @@ function FileTreeView({
     return m[st] || "text-muted-foreground"
   }
 
+  // ---- Mobile long-press on a row opens the per-node menu (no ⋯ button).
+  // Managed per component instance: a level's rows share one pointer sequence,
+  // so the timer/flag live here rather than bubbling to the parent.
+  const mobilePressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mobilePressConsumedRef = useRef(false)
+  const mobilePressPosRef = useRef<{ x: number; y: number } | null>(null)
+  const mobilePressNodeRef = useRef<{ path: string; type: "file" | "directory"; name: string } | null>(null)
+  const cancelMobilePress = () => {
+    if (mobilePressTimerRef.current) { clearTimeout(mobilePressTimerRef.current); mobilePressTimerRef.current = null }
+    mobilePressPosRef.current = null
+    mobilePressNodeRef.current = null
+  }
+  // Long-press only applies on mobile; desktop rows go through the ContextMenu.
+  // `node` is bound per row at render time (this level renders many rows).
+  const onMobileRowPointerDown = isMobile
+    ? (e: React.PointerEvent<HTMLDivElement>, onNode: { path: string; type: "file" | "directory"; name: string }) => {
+        // Let the user scroll/tap normally without fighting the app for the gesture.
+        mobilePressConsumedRef.current = false
+        mobilePressPosRef.current = { x: e.clientX, y: e.clientY }
+        mobilePressNodeRef.current = onNode
+        if (mobilePressTimerRef.current) clearTimeout(mobilePressTimerRef.current)
+        mobilePressTimerRef.current = setTimeout(() => {
+          mobilePressTimerRef.current = null
+          const pos = mobilePressPosRef.current
+          const held = mobilePressNodeRef.current
+          if (!pos || !held) return
+          // A long-press is complete → open the menu and swallow the click the
+          // browser will synthesize on release, so the row doesn't also toggle/select.
+          mobilePressConsumedRef.current = true
+          onOpenTreeMenu?.(held, pos.x, pos.y)
+        }, 450)
+      }
+    : undefined
+
   return (
     <>
       {nodes
@@ -2246,13 +2301,12 @@ function FileTreeView({
           }
         >
           {isMobile ? (
-            /* 移动端：常驻 ⋯ 菜单按钮（点击弹 treeMenu）替代无效的 hover 按钮。
-               长按 = 拖拽移动（onFileTreePointerDown）。 */
+            /* 移动端：无 ⋯ 按钮，长按 item 弹 treeMenu（onMobileRowPointerDown）。 */
             <div
               data-path={node.path}
               data-type={node.type}
               className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-3 ${
-                selectedFile === node.path ? "bg-accent" : ""
+                menuNodePath === node.path ? "bg-accent" : selectedFile === node.path ? "bg-accent" : ""
               } ${
                 isDragging ? "" : ""
               } ${
@@ -2261,11 +2315,19 @@ function FileTreeView({
                 cutSource === node.path ? "opacity-40" : ""
               }`}
               style={{ paddingLeft: `${8 + depth * 16}px` }}
+              onPointerDown={(e) => onMobileRowPointerDown?.(e, { path: node.path, type: node.type, name: node.name })}
+              onPointerUp={cancelMobilePress}
+              onPointerLeave={cancelMobilePress}
+              onPointerCancel={cancelMobilePress}
+              onContextMenu={(e) => e.preventDefault()}
               onClick={() => {
-                // Consume the once-set flag so a drag release can't accidentally
+                // Consume a completed drag's once-set flag so its release can't
                 // toggle/select the node under the release point.  (Cleared by the
                 // click that follows a completed drag; clearDrag is the fallback.)
                 if (dragWasActiveRef?.current) { dragWasActiveRef.current = false; return }
+                // Swallow the click a long-press synthesizes on release — the
+                // menu is already open, don't also toggle/select the row.
+                if (mobilePressConsumedRef.current) { mobilePressConsumedRef.current = false; return }
                 if (node.type === "directory") {
                   onToggle(node.path)
                 } else {
@@ -2294,20 +2356,6 @@ function FileTreeView({
                 </>
               )}
               <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
-
-              {/* ⋯ menu button — always visible on touch (no hover). ≥44px target. */}
-              <button
-                className="shrink-0 flex items-center justify-center w-11 h-11 -mr-2 rounded-md hover:bg-muted active:bg-muted cursor-pointer text-muted-foreground"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                  onOpenTreeMenu?.({ path: node.path, type: node.type, name: node.name }, r.right - 8, r.bottom)
-                }}
-                title={t("fileTreeTitle")}
-                aria-haspopup="menu"
-              >
-                <EllipsisVertical className="h-4 w-4" />
-              </button>
             </div>
           ) : (
             /* 桌面端：右键菜单替代 hover 按钮。ContextMenuTrigger 经 render 注入
@@ -2432,6 +2480,7 @@ function FileTreeView({
               onPaste={onPaste}
               dragWasActiveRef={dragWasActiveRef}
               onOpenTreeMenu={onOpenTreeMenu}
+              menuNodePath={menuNodePath}
             />
             )}
           </div>
