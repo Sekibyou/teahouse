@@ -1040,6 +1040,20 @@ export function WorkspacePage() {
     </div>
   )
 
+  // Real, post-layout menu height (measured once it opens). The menu content is
+  // fixed per node, so the height is stable — the estimate M_H below used to be a
+  // hardcoded 360 that badly undershot (~600px actual), so near the bottom of a
+  // tall tree the up-flip placed the menu's top almost at the finger and clipped
+  // the action buttons. Measuring the real box lets us pick the side that shows
+  // the most buttons and cap the box to exactly the viewport.
+  const [treeMenuH, setTreeMenuH] = useState(0)
+  const treeMenuRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (!treeMenu) return
+    setTreeMenuH(treeMenuRef.current?.getBoundingClientRect().height ?? 0)
+    // Menu is fixed-position; the tree keeps scrolling underneath while it's open.
+  }, [treeMenu])
+
   // Mobile per-node "⋯" menu — fixed-position (treeMenu-style), anchored at the
   // clicked icon. Items mirror the desktop ContextMenu on the same node.
   // Shared by desktop + mobile return trees.
@@ -1047,26 +1061,36 @@ export function WorkspacePage() {
     <>
       <div className="fixed inset-0 z-[70]" onClick={() => setTreeMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTreeMenu(null) }} />
       <div
-        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto max-h-[calc(100vh-16px)]"
+        ref={treeMenuRef}
+        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto"
         style={
           (() => {
-            // Edge-avoidance for the fixed menu. Estimates the menu size, flips
-            // to the far side of the finger when the near side would overflow,
-            // and relies on the CSS max-h (below) to scroll any excess height.
+            // Edge-avoidance for the fixed menu. The menu is taller than the
+            // viewport can show on small screens, so this measures the *real*
+            // box (treeMenuH, set in a layout effect above) and both flips and
+            // clamps to the side that exposes the most action items.
             const M = 8 // screen edge margin
             const M_W = 224 // ≈ max-w-56
-            const M_H = 360 // ≈ menu height
             const x = treeMenu.x
             const y = treeMenu.y
             // Horizontal: prefer right of the finger, else flip left.
             const left = x + M_W + M <= window.innerWidth
               ? x
               : Math.max(M, x - M_W - M)
-            // Vertical: prefer below, else flip above.
-            const top = y + M_H + M <= window.innerHeight
-              ? y
-              : Math.max(M, y - M_H - M)
-            return { top, left }
+            // How tall the menu can actually be within the viewport.
+            const maxH = Math.max(120, window.innerHeight - 2 * M)
+            const H = Math.min(treeMenuH || 0, maxH)
+            // Vertical — pick the flip that keeps the most menu visible, with
+            // below-follow (menu top ~finger) preferred because action buttons
+            // sit below the header title.
+            const belowTop = y
+            const belowVisible = Math.max(0, window.innerHeight - M - belowTop)
+            const aboveTop = Math.max(M, y - H - M)
+            const aboveVisible = Math.max(0, aboveTop + H - M)
+            const useBelow = belowTop + H <= window.innerHeight - M
+              || belowVisible > aboveVisible
+            const top = useBelow ? belowTop : aboveTop
+            return { top, left, maxHeight: maxH }
           })()
         }
         onContextMenu={(e) => e.preventDefault()}
