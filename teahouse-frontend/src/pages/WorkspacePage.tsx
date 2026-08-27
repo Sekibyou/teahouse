@@ -118,6 +118,9 @@ export function WorkspacePage() {
   const [clipboard, setClipboard] = useState<{ path: string; cut: boolean; type: "file" | "directory"; name: string } | null>(null)
   // Blank-area right-click menu (root operations). Positioned at the cursor.
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
+  // System-file drag-in (from OS file manager) in progress. target = dir it
+  // will land in (a directory path, or ROOT for the empty area). Only desktop.
+  const [externalDrop, setExternalDrop] = useState<{ target: string } | null>(null)
   const clearDrag = useCallback(() => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
     dragArmedRef.current = false
@@ -261,6 +264,7 @@ export function WorkspacePage() {
     setEditorView("code")
     setRootMenu(null)
     setClipboard(null)
+    setExternalDrop(null)
   }, [instId])
 
   // Esc closes the blank-area root context menu.
@@ -370,6 +374,22 @@ export function WorkspacePage() {
     const res = await instancesApi.uploadFile(instId, fullPath, file)
     if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
     await refresh()
+  }
+
+  // OS file-manager drop → upload each file into `dir` ("" = root).
+  const handleFileDrop = async (files: File[], dir: string) => {
+    if (!instId) return
+    let okCount = 0
+    const failNames: string[] = []
+    for (const f of files) {
+      const fullPath = dir ? `${dir}/${f.name}` : f.name
+      const res = await instancesApi.uploadFile(instId, fullPath, f)
+      if (res.ok) okCount++
+      else failNames.push(f.name)
+    }
+    await refresh()
+    if (okCount > 0) toast.success(t("dropUpload.done", { count: okCount }))
+    if (failNames.length) toast.error(t("dropUpload.fail", { names: failNames.join(", ") }))
   }
 
   const openExportDialog = async (type: "prototype" | "skill" | "package") => {
@@ -1501,17 +1521,41 @@ export function WorkspacePage() {
             <div
               ref={dragContainerRef}
               className={`flex-1 overflow-auto py-1 select-none relative ${
-                dragInfo && dropTargetPath === ROOT ? "ring-2 ring-inset ring-accent" : ""
+                ((externalDrop !== null) || dragInfo !== null) && (externalDrop ? externalDrop.target : dropTargetPath) === ROOT
+                  ? "ring-2 ring-inset ring-accent" : ""
               }`}
               onPointerDown={onFileTreePointerDown}
               onContextMenu={(e) => { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }) }}
+              onDragEnter={(e) => { if (isMobile) return; e.preventDefault() }}
+              onDragOver={(e) => {
+                if (isMobile) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = "copy"
+                let t = resolveDropTarget(e.clientX, e.clientY)
+                if (!t) t = snapDropTarget(e.clientX, e.clientY)
+                if (t == null && dragContainerRef.current?.contains(e.target as Node)) t = ROOT
+                setExternalDrop(prev => (prev?.target === t ? prev : { target: t ?? ROOT }))
+              }}
+              onDragLeave={(e) => {
+                if (isMobile) return
+                if (!dragContainerRef.current?.contains(e.relatedTarget as Node)) setExternalDrop(null)
+              }}
+              onDrop={(e) => {
+                if (isMobile) return
+                e.preventDefault()
+                const t0 = externalDrop?.target ?? ROOT
+                const files = Array.from(e.dataTransfer?.files ?? [])
+                setExternalDrop(null)
+                if (!files.length || !instId) return
+                handleFileDrop(files, t0 === ROOT ? "" : t0)
+              }}
             >
               {/* Drop-to-root indicator: a border box around the whole tree, with
                   a floating caption pinned to the bottom (does not affect layout). */}
-              {dragInfo && dropTargetPath === ROOT && (
+              {((externalDrop !== null) || dragInfo !== null) && (externalDrop ? externalDrop.target : dropTargetPath) === ROOT && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-2 py-1.5 text-xs font-semibold text-accent-foreground">
                   <Archive className="h-3.5 w-3.5 shrink-0" />
-                  {t("moveToRoot")}
+                  {externalDrop !== null ? t("uploadToRoot") : t("moveToRoot")}
                 </div>
               )}
               {isLoading ? (
@@ -1533,8 +1577,8 @@ export function WorkspacePage() {
                   onRename={handleRenameEntry}
                   onUpload={handleUploadClick}
                   fileStatuses={fileStatusesRoot}
-                  isDragging={dragInfo !== null}
-                  dropTargetPath={dropTargetPath}
+                  isDragging={dragInfo !== null || externalDrop !== null}
+                  dropTargetPath={externalDrop ? externalDrop.target : dropTargetPath}
                   dragSource={dragInfo?.srcPath ?? null}
                   clipboard={clipboard}
                   cutSource={clipboard?.cut ? clipboard.path : null}

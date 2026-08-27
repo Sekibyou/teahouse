@@ -62,6 +62,11 @@ export const jaWorkspace = {
     copySuffix: "_コピー",
     cutActive: "「{{name}}」を切り取りました。貼り付け先を右クリックしてください",
   },
+  // ドラッグ&ドロップアップロード状態
+  dropUpload: {
+    done: "{{count}} 個のファイルをアップロードしました",
+    fail: "アップロード失敗：{{names}}",
+  },
 
   // 导出类型切换
   export: {

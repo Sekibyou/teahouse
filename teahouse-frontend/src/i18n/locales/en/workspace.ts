@@ -62,6 +62,11 @@ export const enWorkspace = {
     copySuffix: " (copy)",
     cutActive: "Cut \"{{name}}\" — right-click a target to paste",
   },
+  // Drag-and-drop upload status
+  dropUpload: {
+    done: "Uploaded {{count}} file(s)",
+    fail: "Failed to upload: {{names}}",
+  },
 
   // 导出类型切换
   export: {

@@ -62,6 +62,11 @@ export const zhWorkspace = {
     copySuffix: " (copy)",
     cutActive: "已剪切「{{name}}」，右键目标位置粘贴",
   },
+  // 拖放上传状态
+  dropUpload: {
+    done: "已上传 {{count}} 个文件",
+    fail: "上传失败：{{names}}",
+  },
 
   // 导出类型切换
   export: {
