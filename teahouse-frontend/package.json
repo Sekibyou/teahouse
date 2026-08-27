@@ -1,7 +1,7 @@
 {
   "name": "teahouse-frontend",
   "private": true,
-  "version": "1.02",
+  "version": "1.03",
   "type": "module",
   "scripts": {
     "dev": "vite",
