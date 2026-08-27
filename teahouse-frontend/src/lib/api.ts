@@ -518,7 +518,8 @@ export const gitApi = {
   },
 
   commit: async (instanceId: string, params: { type: string; number?: number; start?: number; end?: number; message: string; paths?: string[] }) => {
-    return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, params)
+    const body = { ...params, paths: params.paths?.map(toBackendPath) }
+    return post<GitCommitResult>(`/api/instances/${instanceId}/git/commit`, body)
   },
 
   branch: async (instanceId: string, action: string, name?: string, startPoint?: string) => {
@@ -559,13 +560,13 @@ export const gitApi = {
 
   discard: async (instanceId: string, path?: string) => {
     return post<{ status: string; message: string }>(
-      `/api/instances/${instanceId}/git/discard`, { path }
+      `/api/instances/${instanceId}/git/discard`, { path: path ? toBackendPath(path) : undefined }
     )
   },
 
   showFile: async (instanceId: string, filePath: string) => {
     return get<{ content: string | null }>(
-      `/api/instances/${instanceId}/git/show-file?path=${encodeURIComponent(filePath)}`
+      `/api/instances/${instanceId}/git/show-file?path=${encodeURIComponent(toBackendPath(filePath))}`
     )
   },
 
