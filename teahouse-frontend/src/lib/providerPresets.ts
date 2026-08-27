@@ -71,3 +71,38 @@ export const PROVIDER_GROUPS: ProviderGroup[] = [
     ],
   },
 ]
+
+/**
+ * 复刻后端 normalize_api_url 的派生逻辑，把预设的基础 URL 派生为聊天端点。
+ * 后端存的是派生后的端点（如 https://api.deepseek.com/v1/chat/completions），
+ * 预设里存的是基础 URL，二者需统一成同一形态后才能比对。
+ */
+function deriveChatEndpoint(baseUrl: string, apiFormat: ProviderApiFormat): string {
+  const url = baseUrl.trim().replace(/\/+$/, "")
+  if (apiFormat === "anthropic") {
+    if (url.includes("/messages")) return url
+    if (url.endsWith("/v1")) return url + "/messages"
+    return url + "/v1/messages"
+  }
+  // openai / openai_strict
+  if (url.includes("/chat/completions")) return url
+  if (/(\/v\d+(?:\/|$)|\/v1beta\/)/.test(url)) return url + "/chat/completions"
+  return url + "/v1/chat/completions"
+}
+
+/**
+ * 根据供应商已存的 api_url（后端派生后的聊天端点）反查其对应的预设。
+ * 匹配不中（自定义 URL）返回 undefined，调用方据此标记为「自定义」。
+ */
+export function matchProviderPreset(apiUrl: string): ProviderPreset | undefined {
+  const target = apiUrl.trim().replace(/\/+$/, "")
+  if (!target) return undefined
+  for (const group of PROVIDER_GROUPS) {
+    for (const preset of group.items) {
+      if (deriveChatEndpoint(preset.api_url, preset.api_format) === target) {
+        return preset
+      }
+    }
+  }
+  return undefined
+}

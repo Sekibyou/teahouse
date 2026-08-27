@@ -78,6 +78,30 @@ def normalize_api_url(url: str, api_format: str) -> str:
 
 # ===== Helper =====
 
+def _mask_api_key(key: str) -> str:
+    """脱敏 API key：保留前 3 位 + 后 4 位，中间用 • 打码。如 sk-123456789abcd → sk-•••••••••abcd。"""
+    if not key:
+        return key
+    n = len(key)
+    if n <= 4:
+        return "•" * n
+    head = key[:3]
+    tail = key[-4:]
+    mask_len = n - 7
+    if mask_len <= 0:
+        # 短 key：保留后 4 位，前面整体打码
+        return "•" * (n - 4) + tail
+    return head + "•" * mask_len + tail
+
+
+def _mask_provider(p: dict) -> dict:
+    """返回给前端前脱敏 api_key（内部调用需明文，故仅对返回副本打码）。"""
+    p = dict(p)
+    if p.get("api_key"):
+        p["api_key"] = _mask_api_key(p["api_key"])
+    return p
+
+
 def _provider_ownership_check(provider, user_id):
     if not provider or provider["user_id"] != user_id:
         raise HTTPException(status_code=404, detail="Provider not found")
@@ -88,7 +112,7 @@ def _provider_ownership_check(provider, user_id):
 @router.get("/")
 async def api_list_providers(user: UserInfo = Depends(require_user)):
     providers = await list_providers(user.user_id)
-    return {"providers": providers}
+    return {"providers": [_mask_provider(p) for p in providers]}
 
 
 @router.post("/")
@@ -104,14 +128,14 @@ async def api_create_provider(body: CreateProviderRequest, user: UserInfo = Depe
         api_format=body.api_format,
         model_fetch_url=body.model_fetch_url,
     )
-    return {"provider": provider}
+    return {"provider": _mask_provider(provider)}
 
 
 @router.get("/{provider_id}")
 async def api_get_provider(provider_id: str, user: UserInfo = Depends(require_user)):
     provider = await get_provider(provider_id)
     _provider_ownership_check(provider, user.user_id)
-    return {"provider": provider}
+    return {"provider": _mask_provider(provider)}
 
 
 @router.put("/{provider_id}")
@@ -120,6 +144,10 @@ async def api_update_provider(provider_id: str, body: UpdateProviderRequest, use
     _provider_ownership_check(provider, user.user_id)
 
     kwargs = body.model_dump(exclude_none=True)
+
+    # 兜底：前端回传的 api_key 若已是脱敏占位（含 •），视为未修改，不覆盖真实 key
+    if kwargs.get("api_key") and "•" in kwargs["api_key"]:
+        kwargs.pop("api_key")
 
     # Normalize URL if api_format or api_url changed
     new_format = kwargs.get("api_format", provider["api_format"])
@@ -131,7 +159,7 @@ async def api_update_provider(provider_id: str, body: UpdateProviderRequest, use
     ok = await update_provider(provider_id, **kwargs)
     if not ok:
         raise HTTPException(status_code=400, detail="No fields to update")
-    return {"provider": await get_provider(provider_id)}
+    return {"provider": _mask_provider(await get_provider(provider_id))}
 
 
 @router.delete("/{provider_id}")

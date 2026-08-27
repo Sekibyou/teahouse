@@ -27,7 +27,7 @@ import { useNewVersion } from "@/stores/versionStore"
 import { UserManagementPanel } from "@/components/UserManagement"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
 import type { MySkill, SkillPreview, MyPackage, PackagePreview } from "@/lib/api"
-import { PROVIDER_GROUPS } from "@/lib/providerPresets"
+import { PROVIDER_GROUPS, matchProviderPreset } from "@/lib/providerPresets"
 import type { ProviderPreset } from "@/lib/providerPresets"
 
 interface SettingsDialogProps {
@@ -103,6 +103,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const [showProviderCreate, setShowProviderCreate] = useState(false)
   const [providerCreateForm, setProviderCreateForm] = useState({ name: "", api_url: "", api_key: "", api_format: "openai" })
   const [editingProviderName, setEditingProviderName] = useState<string | null>(null)
+  // 展开编辑态的供应商 id（折叠态只显示 icon+名字+模型列表+导入，展开才显示内联编辑表单）
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [editingNameValue, setEditingNameValue] = useState("")
   const [providerError, setProviderError] = useState("")
   const [providerSaving, setProviderSaving] = useState(false)
@@ -319,7 +321,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (!editingNameValue.trim()) { setEditingProviderName(null); return }
     const p = providers.find(pp => pp.id === providerId)
     if (!p) return
-    await llmProvidersApi.update(providerId, { name: editingNameValue.trim(), api_url: p.api_url, api_key: p.api_key, api_format: p.api_format })
+    await llmProvidersApi.update(providerId, { name: editingNameValue.trim() })
     setEditingProviderName(null)
     await loadAll()
   }
@@ -800,10 +802,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     const payload: Record<string, unknown> = {
       name: p.name,
       api_url: override.api_url !== undefined ? override.api_url : p.api_url,
-      api_key: override.api_key !== undefined ? override.api_key : p.api_key,
       api_format: override.api_format !== undefined ? override.api_format : p.api_format,
       model_fetch_url: override.model_fetch_url !== undefined ? override.model_fetch_url : (p.model_fetch_url || ""),
     }
+    // api_key 已由后端脱敏，仅当用户显式输入新值时才回传，避免用模糊占位覆盖真实 key
+    if (override.api_key !== undefined) payload.api_key = override.api_key
     const res = await llmProvidersApi.update(providerId, payload)
     if (res.ok) {
       setProviderFormOverrides(prev => { const n = { ...prev }; delete n[providerId]; return n })
@@ -951,7 +954,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               ))}
                             </select>
                           </Field>
-                          <Field label={t("provider.apiUrl")} className="col-span-2">
+                          <Field label={t("provider.baseUrl")} className="col-span-2">
                             <Input value={providerCreateForm.api_url} onChange={e => setProviderCreateForm(f => ({ ...f, api_url: e.target.value }))} placeholder={t("provider.apiUrlPH")} className="text-sm font-mono" />
                           </Field>
                           <Field label={t("provider.apiKey")} className="col-span-2">
@@ -1011,46 +1014,71 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   ) : providers.length === 0 ? (
                     <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">{t("provider.none")}</div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className={isMobile ? "space-y-3" : "columns-2 gap-5"}>
                       {providers.map(p => {
                         const form = getProviderFormFor(p)
                         const saveNeeded = isProviderSaveNeeded(p)
                         const providerModels = getProviderModels(p.id)
+                        const preset = matchProviderPreset(p.api_url)
+                        const expanded = expandedProviderId === p.id
                         // 该供应商已激活模型，用于导入面板去重（已激活即以灰色点亮显示、不可再选）
                         const enabledModelNames = new Set(providerModels.filter(mm => mm.is_enabled).map(mm => mm.model_name))
 
                         return (
-                          <div key={p.id} className={`rounded-lg border p-4 space-y-3 ${p.is_enabled ? "border-border" : "border-muted opacity-60"}`}>
-                            {/* Title row */}
-                            <div className="flex items-center justify-between">
-                              {editingProviderName === p.id ? (
-                                <Input
-                                  className="text-sm font-medium w-48"
-                                  value={editingNameValue}
-                                  onChange={e => setEditingNameValue(e.target.value)}
-                                  onBlur={() => saveProviderName(p.id)}
-                                  onKeyDown={e => { if (e.key === "Enter") saveProviderName(p.id); if (e.key === "Escape") setEditingProviderName(null) }}
-                                  autoFocus
-                                />
-                              ) : (
-                                <span
-                                  className="text-sm font-medium cursor-pointer hover:text-primary"
-                                  onDoubleClick={() => { setEditingProviderName(p.id); setEditingNameValue(p.name) }}
-                                  title={t("provider.editNameTitle")}
+                          <div key={p.id} className={`rounded-lg border p-4 space-y-3 mb-5 break-inside-avoid ${p.is_enabled ? "border-border" : "border-muted opacity-60"}`}>
+                            {/* Title row：icon/自定义 + 名字 + 编辑/删除 */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {preset ? (
+                                  <span
+                                    className="h-6 w-6 rounded-md flex items-center justify-center text-[11px] font-semibold shrink-0"
+                                    style={{ background: preset.color, color: preset.fg || "#FFFFFF" }}
+                                    title={preset.label}
+                                  >
+                                    {preset.short}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">{t("provider.custom")}</span>
+                                )}
+                                {editingProviderName === p.id ? (
+                                  <Input
+                                    className="text-sm font-medium w-48"
+                                    value={editingNameValue}
+                                    onChange={e => setEditingNameValue(e.target.value)}
+                                    onBlur={() => saveProviderName(p.id)}
+                                    onKeyDown={e => { if (e.key === "Enter") saveProviderName(p.id); if (e.key === "Escape") setEditingProviderName(null) }}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <span
+                                    className="text-sm font-medium cursor-pointer hover:text-primary truncate"
+                                    onDoubleClick={() => { setEditingProviderName(p.id); setEditingNameValue(p.name) }}
+                                    title={t("provider.editNameTitle")}
+                                  >
+                                    {p.name}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => setExpandedProviderId(expanded ? null : p.id)}
+                                  title={t("provider.edit")}
+                                  className={expanded ? "text-primary" : ""}
                                 >
-                                  {p.name}
-                                </span>
-                              )}
-                              <div className="flex items-center gap-1">
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
                                 <Button variant="ghost" size="icon-xs" onClick={() => setDeleteProviderTarget(p.id)} title={t("provider.deleteTitle")}>
                                   <Trash2 className="h-3.5 w-3.5 text-red-500" />
                                 </Button>
                               </div>
                             </div>
 
-                            {/* Provider form fields */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <Field label="API Format">
+                            {/* Provider form fields — 仅展开态显示 */}
+                            {expanded && (<>
+                            <div className="grid grid-cols-3 gap-3">
+                              <Field label={t("provider.apiFormat")}>
                                 <select
                                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
                                   value={form.api_format}
@@ -1061,7 +1089,16 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   ))}
                                 </select>
                               </Field>
-                              <Field label={t("provider.apiUrl")}>
+                              <Field label={t("provider.apiKey")} className="col-span-2">
+                                <Input
+                                  type="text"
+                                  value={form.api_key}
+                                  onChange={e => setProviderFormField(p.id, "api_key", e.target.value)}
+                                  placeholder={t("provider.apiKeyPH")}
+                                  className="text-sm"
+                                />
+                              </Field>
+                              <Field label={t("provider.apiUrl")} className="col-span-3">
                                 <Input
                                   value={form.api_url}
                                   onChange={e => setProviderFormField(p.id, "api_url", e.target.value)}
@@ -1069,16 +1106,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                   className="text-sm font-mono"
                                 />
                               </Field>
-                              <Field label={t("provider.apiKey")}>
-                                <Input
-                                  type="password"
-                                  value={form.api_key}
-                                  onChange={e => setProviderFormField(p.id, "api_key", e.target.value)}
-                                  placeholder={t("provider.apiKeyPH")}
-                                  className="text-sm"
-                                />
-                              </Field>
-                              <Field label={t("provider.modelFetchUrl")}>
+                              <Field label={t("provider.modelFetchUrl")} className="col-span-3">
                                 <Input
                                   value={p.api_url ? form.model_fetch_url : ""}
                                   onChange={e => setProviderFormField(p.id, "model_fetch_url", e.target.value)}
@@ -1094,6 +1122,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                                 <Button size="sm" onClick={() => saveProviderOverrides(p.id)}>{t("provider.saveConfig")}</Button>
                               </div>
                             )}
+                            </>)}
 
                             {/* Model list under provider — always visible */}
                             <div className="border-t border-border pt-3 space-y-1">
@@ -1557,11 +1586,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     <>
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium flex items-center justify-between">
-                            <span>{t("general.maxRetries")}</span>
-                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                              {appSettings.max_retries}
-                            </span>
+                          <label className="text-sm font-medium">
+                            {t("general.maxRetries")}
                           </label>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxRetriesDesc")}
@@ -1592,11 +1618,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium flex items-center justify-between">
-                            <span>{t("general.maxToolRounds")}</span>
-                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                              {appSettings.max_tool_rounds}
-                            </span>
+                          <label className="text-sm font-medium">
+                            {t("general.maxToolRounds")}
                           </label>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxToolRoundsDesc")}
@@ -1627,11 +1650,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium flex items-center justify-between">
-                            <span>{t("general.maxParseDepth")}</span>
-                            <span className="text-muted-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
-                              {appSettings.max_parse_depth}
-                            </span>
+                          <label className="text-sm font-medium">
+                            {t("general.maxParseDepth")}
                           </label>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxParseDepthDesc")}
