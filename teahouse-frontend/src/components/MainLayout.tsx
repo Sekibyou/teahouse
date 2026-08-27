@@ -12,7 +12,7 @@ import { SettingsDialog } from "@/components/SettingsDialog"
 import { LoginPage } from "@/pages/LoginPage"
 import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
-import { useNewVersion } from "@/hooks/useNewVersion"
+import { useNewVersion } from "@/stores/versionStore"
 
 export function MainLayout() {
   const { t } = useTranslation("misc")

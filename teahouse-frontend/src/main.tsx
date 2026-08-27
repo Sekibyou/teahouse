@@ -5,6 +5,7 @@ import { Toaster } from 'sonner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useIsMobile } from './hooks/useMediaQuery'
 import { initI18n } from './i18n/config'
+import { initVersionCheck } from './stores/versionStore'
 
 function AppToaster() {
   const isMobile = useIsMobile()
@@ -21,6 +22,10 @@ function AppToaster() {
 
 async function bootstrap() {
   await initI18n()
+
+  // 版本检测：整个 App 生命周期只在这里发起一次（组件只订阅 versionStore，不自己查）。
+  // 不 await——结果异步写进 store，不该拖慢首屏。
+  initVersionCheck()
 
   createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
