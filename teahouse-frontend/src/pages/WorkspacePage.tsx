@@ -42,6 +42,39 @@ import type { FileTreeNode } from "@/lib/types"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
+// 上传菜单项：label → 内联原生 input。安卓在 fixed 浮层里对共享 input 的 .click() 转跳
+// 会被系统静默拦截，而 label 原生关联让 input 直接参与用户手势、不经 .click()，最稳。
+// input 用 opacity-0 而非 hidden。
+function UploadMenuItem({
+  parentPath,
+  className,
+  children,
+  onUpload,
+}: {
+  parentPath: string
+  className?: string
+  children: React.ReactNode
+  onUpload: (parentPath: string, file: File) => void
+}) {
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = "" // 允许重复选同一文件
+    if (f) onUpload(parentPath, f)
+  }
+  return (
+    <label className={className}>
+      {children}
+      <input
+        type="file"
+        aria-label="上传文件"
+        className="fixed left-0 top-0 h-px w-px opacity-0 pointer-events-none"
+        tabIndex={-1}
+        onChange={onChange}
+      />
+    </label>
+  )
+}
+
 export function WorkspacePage() {
   const { t } = useTranslation("workspace")
   const currentLang = useCurrentLang()
@@ -376,20 +409,38 @@ export function WorkspacePage() {
     await refresh()
   }
 
+  // 共享顶层 input 的上传路径（FileTreeView 内部点位仍走这里）：记下目标目录并 .click()。
+  // 此路径的 input 在文档流顶层、点击时不移除 trigger，安卓可正常弹 picker。
   const handleUploadClick = (parentPath: string) => {
     uploadPathRef.current = parentPath
     fileInputRef.current?.click()
   }
 
-  const handleUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = "" // 允许重复选择同一文件
-    if (!instId || !file) return
-    const dir = uploadPathRef.current
+  // 真正发文件。被共享顶层 input（走 uploadPathRef）与各菜单点位的原生 input 调用。
+  const doUpload = async (dir: string, file: File) => {
+    if (!instId) return
     const fullPath = dir ? `${dir}/${file.name}` : file.name
     const res = await instancesApi.uploadFile(instId, fullPath, file)
     if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
     await refresh()
+  }
+
+  // 菜单点位的上传（label→原生 input，直接参与用户手势，不经 .click() 转跳：
+  // 安卓在 fixed 浮层里 .click() 会被系统静默拦截，label 原生关联可正常弹 picker）。
+  const handleMenuUpload = (parentPath: string, file: File) => {
+    setTreeMenu(null)
+    setRootMenu(null)
+    doUpload(parentPath, file)
+  }
+
+  const handleUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = "" // 允许重复选择同一文件
+    // 选完文件（无论是否上传成功）才关浮层菜单 —— 点击时不能卸载，否则安卓中断 picker
+    setTreeMenu(null)
+    setRootMenu(null)
+    if (!instId || !file) return
+    doUpload(uploadPathRef.current, file)
   }
 
   // OS file-manager drop → upload each file into `dir` ("" = root).
@@ -1026,10 +1077,10 @@ export function WorkspacePage() {
                 <Folder className="h-4 w-4 shrink-0" />
                 {t("create.folderTitle")}
               </button>
-              <button className={itemCls} onClick={() => { handleUploadClick(opTarget); setTreeMenu(null) }}>
+              <UploadMenuItem parentPath={opTarget} className={itemCls} onUpload={handleMenuUpload}>
                 <Upload className="h-4 w-4 shrink-0" />
                 {t("uploadToHere")}
-              </button>
+              </UploadMenuItem>
               <div className="-mx-1 my-1 h-px bg-border" />
               <button className={itemCls} onClick={() => { copyPathEntry(node.path); setTreeMenu(null) }}>
                 <ClipboardCopy className="h-4 w-4 shrink-0" />
@@ -1614,10 +1665,14 @@ export function WorkspacePage() {
   // ============================================================================
   return (
     <div ref={containerRef} className="h-full flex overflow-hidden">
+      {/* 顶层 file input：display:none 形式在安卓已验证可弹（供 FileTreeView 点位经
+          handleUploadClick 触发）；浮层菜单点位不走这里，改用 label→原生 input。 */}
       <input
+        id="instance-file-upload"
         ref={fileInputRef}
         type="file"
         className="hidden"
+        tabIndex={-1}
         onChange={handleUploadChange}
       />
       {dragBadgeEl}
@@ -1872,12 +1927,13 @@ export function WorkspacePage() {
             >
               {t("create.folderTitle")}
             </button>
-            <button
+            <UploadMenuItem
+              parentPath=""
               className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
-              onClick={() => { handleUploadClick(""); setRootMenu(null) }}
+              onUpload={handleMenuUpload}
             >
               {t("uploadToRoot")}
-            </button>
+            </UploadMenuItem>
             <div className="-mx-1 my-1 h-px bg-border" />
             <button
               className={`relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none ${!clipboard ? "pointer-events-none opacity-50" : ""}`}
