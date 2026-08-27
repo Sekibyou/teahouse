@@ -20,13 +20,18 @@ _INDEX_LOCK_RETRIES = 10
 _INDEX_LOCK_INITIAL_DELAY = 0.05
 
 
-def _git_run(args: list[str], cwd: Path) -> str:
+def _git_run(args: list[str], cwd: Path, strip: bool = True) -> str:
     """Run a git command and return stdout. Raises GitError on failure.
 
     Writes that touch the index (git add/commit/status) can transiently fail
     with an index.lock conflict when another git process (e.g. a background
     summary sub-session) holds the lock. We back off and retry briefly so
     concurrent floor + summary commits don't race each other.
+
+    ``strip=True`` (default) trims surrounding whitespace from the captured
+    stdout — right for short query outputs. Pass ``strip=False`` only when the
+    returned *content* is meaningful (git show of a file blob), because the trim
+    would otherwise eat a genuine leading/trailing empty line in the content.
     """
     try:
         import os
@@ -59,7 +64,7 @@ def _git_run(args: list[str], cwd: Path) -> str:
                 timeout=30,
             )
             if result.returncode == 0:
-                return result.stdout.strip()
+                return result.stdout.strip() if strip else result.stdout
             if b"index.lock" not in (result.stderr or "").encode("utf-8", "replace"):
                 break
             # index.lock contention — back off and retry
@@ -354,9 +359,14 @@ def git_log(instance_dir: Path, limit: int = 10, all_branches: bool = False) -> 
 
 
 def git_show_file(instance_dir: Path, file_path: str) -> str | None:
-    """Return the content of a file at HEAD, or None if the file doesn't exist in HEAD."""
+    """Return the content of a file at HEAD, or None if the file doesn't exist in HEAD.
+
+    The blob content is returned verbatim (no trailing-whitespace trim): a file
+    whose last line is empty legitimately ends with ``\\n``, and strip=False keeps
+    it so the editor's diff against the working file lines up.
+    """
     try:
-        return _git_run(["show", f"HEAD:{file_path}"], instance_dir)
+        return _git_run(["show", f"HEAD:{file_path}"], instance_dir, strip=False)
     except GitError:
         return None
 
