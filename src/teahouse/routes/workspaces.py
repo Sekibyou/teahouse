@@ -703,6 +703,11 @@ async def upload_instance_file(
         write_asset(instance_dir, path, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 上传新文件 → 文件树/git 状态都需刷新；广播 file_changed 让前端 SSE 自动拉 git
+    state.broadcast(
+        "file_changed",
+        {"path": path, "tool": "UploadFile", "instance_id": instance_id},
+    )
     return {"path": path, "size": len(data), "status": "uploaded"}
 
 
@@ -787,11 +792,16 @@ async def create_instance_entry(
     instance_dir = _resolve_instance_dir(inst)
     try:
         create_file_or_dir(instance_dir, body.path, body.type)
-        return {"path": body.path, "status": "created"}
     except FileExistsError:
         raise HTTPException(status_code=409, detail="Already exists")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 新建文件/目录 → 文件树/git 状态都需刷新
+    state.broadcast(
+        "file_changed",
+        {"path": body.path, "tool": "CreateFile", "instance_id": instance_id},
+    )
+    return {"path": body.path, "status": "created"}
 
 
 @router.delete("/instances/{instance_id}/files")
@@ -808,13 +818,18 @@ async def delete_instance_entry(
     instance_dir = _resolve_instance_dir(inst)
     try:
         delete_file_or_dir(instance_dir, path)
-        return {"path": path, "status": "deleted"}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Not found")
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 删除文件/目录 → 文件树/git 状态都需刷新
+    state.broadcast(
+        "file_changed",
+        {"path": path, "tool": "DeleteFile", "instance_id": instance_id},
+    )
+    return {"path": path, "status": "deleted"}
 
 
 @router.patch("/instances/{instance_id}/files/rename")
