@@ -52,6 +52,17 @@ export const zhWorkspace = {
     message: "确定删除 \"{{path}}\" 吗？此操作不可撤销。",
   },
 
+  // 右键菜单 · 剪贴板
+  clipboard: {
+    copyPath: "复制路径",
+    copy: "复制",
+    cut: "剪切",
+    paste: "粘贴",
+    copiedPath: "已复制实例内路径",
+    copySuffix: " (copy)",
+    cutActive: "已剪切「{{name}}」，右键目标位置粘贴",
+  },
+
   // 导出类型切换
   export: {
     titleBar: "导出为原型 / Skill",

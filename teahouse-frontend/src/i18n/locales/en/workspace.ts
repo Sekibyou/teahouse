@@ -52,6 +52,17 @@ export const enWorkspace = {
     message: "Delete \"{{path}}\"? This action cannot be undone.",
   },
 
+  // Right-click menu · clipboard
+  clipboard: {
+    copyPath: "Copy path",
+    copy: "Copy",
+    cut: "Cut",
+    paste: "Paste",
+    copiedPath: "Instance path copied",
+    copySuffix: " (copy)",
+    cutActive: "Cut \"{{name}}\" — right-click a target to paste",
+  },
+
   // 导出类型切换
   export: {
     titleBar: "Export as Prototype / Skill",

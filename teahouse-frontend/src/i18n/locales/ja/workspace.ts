@@ -52,6 +52,17 @@ export const jaWorkspace = {
     message: "\"{{path}}\" を削除しますか？この操作は取り消せません。",
   },
 
+  // 右クリックメニュー · クリップボード
+  clipboard: {
+    copyPath: "パスをコピー",
+    copy: "コピー",
+    cut: "切り取り",
+    paste: "貼り付け",
+    copiedPath: "インスタンス内パスをコピーしました",
+    copySuffix: "_コピー",
+    cutActive: "「{{name}}」を切り取りました。貼り付け先を右クリックしてください",
+  },
+
   // 导出类型切换
   export: {
     titleBar: "プロトタイプ / Skill としてエクスポート",

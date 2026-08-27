@@ -10,6 +10,7 @@ import {
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
   Eye, Code2, Users, Languages,
+  ClipboardCopy, ClipboardPaste, Scissors,
 } from "lucide-react"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
@@ -18,7 +19,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, toFrontendPath, ROOT, type InstanceSkill, type InstancePackage } from "@/lib/api"
+import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, toFrontendPath, toBackendPath, ROOT, type InstanceSkill, type InstancePackage } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -29,6 +30,10 @@ import { OutputPanel } from "@/components/OutputPanel"
 import { SandboxFileList } from "@/components/SandboxFileList"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { GitDialog } from "@/components/GitDialog"
+import { toast } from "sonner"
+import {
+  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
+} from "@/components/ui/context-menu"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -106,6 +111,13 @@ export function WorkspacePage() {
   const dropTargetRef = useRef<string | null>(null)
   const moveInFlightRef = useRef(false)
   const dragContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // ---- Clipboard for copy / cut / paste (ContextMenu on the file tree) ----
+  // Stores the copied/cut entry. `path` is the frontend root/... form; the
+  // backend-relative path is derived via toBackendPath() at use time.
+  const [clipboard, setClipboard] = useState<{ path: string; cut: boolean; type: "file" | "directory"; name: string } | null>(null)
+  // Blank-area right-click menu (root operations). Positioned at the cursor.
+  const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
   const clearDrag = useCallback(() => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
     dragArmedRef.current = false
@@ -247,7 +259,18 @@ export function WorkspacePage() {
     setGitHeadContent("")
     setIsDirty(false)
     setEditorView("code")
+    setRootMenu(null)
+    setClipboard(null)
   }, [instId])
+
+  // Esc closes the blank-area root context menu.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && rootMenu) setRootMenu(null)
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [rootMenu])
 
   // Ctrl+S to save
   useEffect(() => {
@@ -592,6 +615,120 @@ export function WorkspacePage() {
       moveInFlightRef.current = false
     }
   }, [instId, selectedFile, refresh])
+
+  // ---- Clipboard operations: copy path / copy / cut / paste ----
+  const copyPathEntry = useCallback(async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(toBackendPath(path))
+      toast.success(t("clipboard.copiedPath"))
+    } catch {
+      toast.error(t("common:failed"))
+    }
+  }, [t])
+
+  const copyEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
+    setClipboard({ path, cut: false, type, name })
+  }, [])
+
+  const cutEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
+    setClipboard({ path, cut: true, type, name })
+    toast.success(t("clipboard.cutActive", { name }))
+  }, [t])
+
+  // Find a node in the tree by its frontend path, returning its children.
+  const findNodeChildren = useCallback((nodes: FileTreeNode[], path: string): FileTreeNode[] | null => {
+    for (const n of nodes) {
+      if (n.path === path) return n.children ?? []
+      if (n.children) {
+        const r = findNodeChildren(n.children, path)
+        if (r) return r
+      }
+    }
+    return null
+  }, [])
+
+  // Check whether a frontend path already exists anywhere in the tree.
+  const pathExists = useCallback((nodes: FileTreeNode[], path: string): boolean => {
+    for (const n of nodes) {
+      if (n.path === path) return true
+      if (n.children && pathExists(n.children, path)) return true
+    }
+    return false
+  }, [])
+
+  // Return a unique path under `targetParent` for a wanted `name`, appending
+  // " (copy)", " (copy 2)" … on collision, so pasting never overwrites.
+  const uniquePath = useCallback((targetParent: string, name: string): string => {
+    const raw = targetParent ? `${targetParent}/${name}` : name
+    if (!pathExists(fileTree, raw)) return raw
+    const suffix = t("clipboard.copySuffix")
+    let i = 1
+    for (;;) {
+      const base = name.replace(/(\.[^.]+)$/, "")
+      const ext = name.match(/(\.[^.]+)$/)?.[1] ?? ""
+      const tryName = i === 1 ? `${base}${suffix}${ext}` : `${base}${suffix} ${i}${ext}`
+      const tryPath = targetParent ? `${targetParent}/${tryName}` : tryName
+      if (!pathExists(fileTree, tryPath)) return tryPath
+      i++
+    }
+  }, [fileTree, pathExists, t])
+
+  // Recursively copy a file/dir entry (frontend paths). Used by the non-cut paste.
+  const duplicateEntry = useCallback(async (srcPath: string, destPath: string, type: "file" | "directory"): Promise<boolean> => {
+    if (!instId) return false
+    if (type === "file") {
+      const contentRes = await instancesApi.readText(instId, srcPath)
+      if (!contentRes.ok) return false
+      await instancesApi.createEntry(instId, destPath, "file")
+      await instancesApi.writeFile(instId, destPath, contentRes.data!.content)
+      return true
+    }
+    // directory
+    await instancesApi.createEntry(instId, destPath, "directory")
+    const kids = findNodeChildren(fileTree, srcPath) ?? []
+    for (const child of kids) {
+      const ok = await duplicateEntry(
+        child.path,
+        `${destPath}/${child.path.split("/").pop()}`,
+        child.type,
+      )
+      if (!ok) return false
+    }
+    return true
+  }, [instId, findNodeChildren, fileTree])
+
+  // Paste the clipboard item into `targetParent` ("" = root). For a file paste
+  // target it lands in the file's parent dir; a directory paste goes inside.
+  const pasteEntry = useCallback(async (targetParent: string) => {
+    if (!clipboard || !instId) return
+    const clip = clipboard
+    const target = targetParent
+
+    if (clip.cut) {
+      if (parentOf(clip.path) === target) return // already there
+      // Refuse to move a folder into its own subtree (same rule as drag & drop).
+      if (target === clip.path || target.startsWith(clip.path + "/")) {
+        toast.error(t("common:failed"))
+        return
+      }
+      const res = await instancesApi.moveEntry(instId, clip.path, target)
+      if (!res.ok) { toast.error(res.error || t("common:failed")); return }
+      // Remap the open file if it is the moved entry or lives under it.
+      if (selectedFile === clip.path || selectedFile?.startsWith(clip.path + "/")) {
+        const base = clip.path.split("/").pop() ?? clip.path
+        setSelectedFile(target ? `${target}/${base}` : base)
+      }
+      setClipboard(null)
+      await refresh()
+      return
+    }
+
+    // copy (non-destructive) — dedupe the destination name
+    const destPath = uniquePath(target, clip.name)
+    const ok = await duplicateEntry(clip.path, destPath, clip.type)
+    if (ok) await refresh()
+    else toast.error(t("common:failed"))
+  }, [clipboard, instId, parentOf, selectedFile, uniquePath, duplicateEntry, refresh, t])
 
   // Given a screen point, resolve the drop target directory ("" = root).
   // A file acts as a proxy for its parent directory (landing beside it).
@@ -1358,27 +1495,6 @@ export function WorkspacePage() {
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName("") }}
-                  title={t("create.fileTitle")}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName("") }}
-                  title={t("create.folderTitle")}
-                >
-                  <Folder className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={() => handleUploadClick("")}
-                  title={t("uploadToRoot")}
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                </button>
               </div>
             </div>
 
@@ -1388,6 +1504,7 @@ export function WorkspacePage() {
                 dragInfo && dropTargetPath === ROOT ? "ring-2 ring-inset ring-accent" : ""
               }`}
               onPointerDown={onFileTreePointerDown}
+              onContextMenu={(e) => { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }) }}
             >
               {/* Drop-to-root indicator: a border box around the whole tree, with
                   a floating caption pinned to the bottom (does not affect layout). */}
@@ -1419,6 +1536,12 @@ export function WorkspacePage() {
                   isDragging={dragInfo !== null}
                   dropTargetPath={dropTargetPath}
                   dragSource={dragInfo?.srcPath ?? null}
+                  clipboard={clipboard}
+                  cutSource={clipboard?.cut ? clipboard.path : null}
+                  onCopyPath={copyPathEntry}
+                  onCopy={copyEntry}
+                  onCut={cutEntry}
+                  onPaste={pasteEntry}
                 />
               )}
             </div>
@@ -1556,6 +1679,45 @@ export function WorkspacePage() {
             <PanelLeftOpen className="h-3.5 w-3.5" />
           </button>
         </div>
+      )}
+
+      {/* Blank-area (root) context menu — right-click on tree background */}
+      {rootMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setRootMenu(null)} onContextMenu={(e) => { e.preventDefault(); setRootMenu(null) }} />
+          <div
+            className="fixed z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+            style={{ left: rootMenu.x, top: rootMenu.y }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
+              onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName(""); setRootMenu(null) }}
+            >
+              {t("create.fileTitle")}
+            </button>
+            <button
+              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
+              onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName(""); setRootMenu(null) }}
+            >
+              {t("create.folderTitle")}
+            </button>
+            <button
+              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
+              onClick={() => { handleUploadClick(""); setRootMenu(null) }}
+            >
+              {t("uploadToRoot")}
+            </button>
+            <div className="-mx-1 my-1 h-px bg-border" />
+            <button
+              className={`relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none ${!clipboard ? "pointer-events-none opacity-50" : ""}`}
+              disabled={!clipboard}
+              onClick={() => { pasteEntry(""); setRootMenu(null) }}
+            >
+              {t("clipboard.paste")}
+            </button>
+          </div>
+        </>
       )}
 
       {/* Create Dialog */}
@@ -1796,6 +1958,7 @@ function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
   isDragging = false, dropTargetPath = null, dragSource = null,
+  clipboard = null, cutSource = null, onCopyPath, onCopy, onCut, onPaste,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -1813,8 +1976,19 @@ function FileTreeView({
   isDragging?: boolean
   dropTargetPath?: string | null
   dragSource?: string | null
+  clipboard?: { path: string; cut: boolean; type: "file" | "directory"; name: string } | null
+  cutSource?: string | null
+  onCopyPath?: (path: string) => void
+  onCopy?: (path: string, type: "file" | "directory", name: string) => void
+  onCut?: (path: string, type: "file" | "directory", name: string) => void
+  onPaste?: (targetParent: string) => void
 }) {
   const { t } = useTranslation("workspace")
+  // Parent directory of a frontend path ("" = root).
+  const dirOf = (p: string) => {
+    const i = p.lastIndexOf("/")
+    return i >= 0 ? p.slice(0, i) : ""
+  }
   const stColor = (st: string | undefined) => {
     if (!st) return "text-muted-foreground"
     const m: Record<string, string> = {
@@ -1840,92 +2014,187 @@ function FileTreeView({
               : ""
           }
         >
-          <div
-            data-path={node.path}
-            data-type={node.type}
-            className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none ${
-              isMobile ? "py-3" : "py-1"
-            } ${
-              selectedFile === node.path ? "bg-accent" : ""
-            } ${
-              isDragging ? "" : "hover:bg-muted/50"
-            } ${
-              isDragging && dragSource === node.path ? "opacity-40" : ""
-            }`}
-            style={{ paddingLeft: `${8 + depth * 16}px` }}
-            onClick={() => {
-              if (node.type === "directory") {
-                onToggle(node.path)
-              } else {
-                onSelect(node.path)
-              }
-            }}
-          >
-            {node.type === "directory" ? (
-              <>
-                <span className="shrink-0">
-                  {expanded.has(node.path) ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
-                  )}
-                </span>
-                {(() => {
-                  const Icon = expanded.has(node.path) ? FolderOpen : Folder
-                  return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
-                })()}
-              </>
-            ) : (
-              <>
-                <span className="w-3 shrink-0" />
-                <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
-              </>
-            )}
-            <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
-
-            {/* Action buttons — visible on hover (hidden while dragging) */}
-            <div className={`${isDragging ? "hidden" : "hidden group-hover:flex"} items-center gap-0.5 shrink-0`}>
-              {node.type === "directory" && (
+          {isMobile ? (
+            /* 移动端：保留原 hover 按钮 */
+            <div
+              data-path={node.path}
+              data-type={node.type}
+              className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-3 ${
+                selectedFile === node.path ? "bg-accent" : ""
+              } ${
+                isDragging ? "" : "hover:bg-muted/50"
+              } ${
+                isDragging && dragSource === node.path ? "opacity-40" : ""
+              }`}
+              style={{ paddingLeft: `${8 + depth * 16}px` }}
+              onClick={() => {
+                if (node.type === "directory") {
+                  onToggle(node.path)
+                } else {
+                  onSelect(node.path)
+                }
+              }}
+            >
+              {node.type === "directory" ? (
                 <>
-                  <button
-                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                    onClick={e => { e.stopPropagation(); onCreateFile(node.path) }}
-                    title={t("create.fileTitle")}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                  <button
-                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                    onClick={e => { e.stopPropagation(); onCreateFolder(node.path) }}
-                    title={t("create.folderTitle")}
-                  >
-                    <Folder className="h-3 w-3" />
-                  </button>
-                  <button
-                    className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                    onClick={e => { e.stopPropagation(); onUpload(node.path) }}
-                    title={t("uploadToHere")}
-                  >
-                    <Upload className="h-3 w-3" />
-                  </button>
+                  <span className="shrink-0">
+                    {expanded.has(node.path) ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                  </span>
+                  {(() => {
+                    const Icon = expanded.has(node.path) ? FolderOpen : Folder
+                    return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                  })()}
+                </>
+              ) : (
+                <>
+                  <span className="w-3 shrink-0" />
+                  <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
                 </>
               )}
-              <button
-                className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                onClick={e => { e.stopPropagation(); onRename(node.path) }}
-                title={t("rename.title")}
-              >
-                <Pencil className="h-3 w-3" />
-              </button>
-              <button
-                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500 cursor-pointer"
-                onClick={e => { e.stopPropagation(); onDelete(node.path) }}
-                title={t("common:delete")}
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
+              <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
+
+              {/* Action buttons — visible on hover (hidden while dragging) */}
+              <div className={`${isDragging ? "hidden" : "hidden group-hover:flex"} items-center gap-0.5 shrink-0`}>
+                {node.type === "directory" && (
+                  <>
+                    <button
+                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
+                      onClick={e => { e.stopPropagation(); onCreateFile(node.path) }}
+                      title={t("create.fileTitle")}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                    <button
+                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
+                      onClick={e => { e.stopPropagation(); onCreateFolder(node.path) }}
+                      title={t("create.folderTitle")}
+                    >
+                      <Folder className="h-3 w-3" />
+                    </button>
+                    <button
+                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
+                      onClick={e => { e.stopPropagation(); onUpload(node.path) }}
+                      title={t("uploadToHere")}
+                    >
+                      <Upload className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
+                <button
+                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
+                  onClick={e => { e.stopPropagation(); onRename(node.path) }}
+                  title={t("rename.title")}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500 cursor-pointer"
+                  onClick={e => { e.stopPropagation(); onDelete(node.path) }}
+                  title={t("common:delete")}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* 桌面端：右键菜单替代 hover 按钮。ContextMenuTrigger 经 render 注入
+               data-path/data-type（桌面拖拽依赖），行 click 选中/折叠不变。 */
+            <ContextMenu disabled={isDragging}>
+              <ContextMenuTrigger
+                render={
+                  <div
+                    data-path={node.path}
+                    data-type={node.type}
+                    className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-1 ${
+                      selectedFile === node.path ? "bg-accent" : ""
+                    } ${
+                      isDragging ? "" : "hover:bg-muted/50"
+                    } ${
+                      isDragging && dragSource === node.path ? "opacity-40" : ""
+                    } ${
+                      cutSource === node.path ? "opacity-40" : ""
+                    }`}
+                    style={{ paddingLeft: `${8 + depth * 16}px` }}
+                    onClick={() => {
+                      if (node.type === "directory") {
+                        onToggle(node.path)
+                      } else {
+                        onSelect(node.path)
+                      }
+                    }}
+                  />
+                }
+              >
+                {node.type === "directory" ? (
+                  <>
+                    <span className="shrink-0">
+                      {expanded.has(node.path) ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                    </span>
+                    {(() => {
+                      const Icon = expanded.has(node.path) ? FolderOpen : Folder
+                      return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                    })()}
+                  </>
+                ) : (
+                  <>
+                    <span className="w-3 shrink-0" />
+                    <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                  </>
+                )}
+                <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
+              </ContextMenuTrigger>
+
+              <ContextMenuContent side="right" align="start" alignOffset={4}>
+                {/* 新建/上传作用于：目录→目录内，文件→同级目录 */}
+                {(() => {
+                  const opTarget = node.type === "directory" ? node.path : dirOf(node.path)
+                  return <>
+                    <ContextMenuItem onClick={() => onCreateFile(opTarget)}>
+                      {t("create.fileTitle")}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onCreateFolder(opTarget)}>
+                      {t("create.folderTitle")}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onUpload(opTarget)}>
+                      {t("uploadToHere")}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onCopyPath?.(node.path)}>
+                      <ClipboardCopy className="h-3.5 w-3.5" />
+                      {t("clipboard.copyPath")}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onCopy?.(node.path, node.type, node.name)}>
+                      <ClipboardCopy className="h-3.5 w-3.5" />
+                      {t("clipboard.copy")}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onCut?.(node.path, node.type, node.name)}>
+                      <Scissors className="h-3.5 w-3.5" />
+                      {t("clipboard.cut")}
+                    </ContextMenuItem>
+                    <ContextMenuItem disabled={!clipboard} onClick={() => onPaste?.(opTarget)}>
+                      <ClipboardPaste className="h-3.5 w-3.5" />
+                      {t("clipboard.paste")}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onRename(node.path)}>
+                      {t("rename.title")}
+                    </ContextMenuItem>
+                    <ContextMenuItem variant="destructive" onClick={() => onDelete(node.path)}>
+                      {t("common:delete")}
+                    </ContextMenuItem>
+                  </>
+                })()}
+              </ContextMenuContent>
+            </ContextMenu>
+          )}
 
           {/* Children */}
           {node.type === "directory" && expanded.has(node.path) && node.children && (
@@ -1946,6 +2215,12 @@ function FileTreeView({
               isDragging={isDragging}
               dropTargetPath={dropTargetPath}
               dragSource={dragSource}
+              clipboard={clipboard}
+              cutSource={cutSource}
+              onCopyPath={onCopyPath}
+              onCopy={onCopy}
+              onCut={onCut}
+              onPaste={onPaste}
             />
             )}
           </div>
