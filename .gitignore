@@ -40,6 +40,9 @@ dist/
 # Test
 tests/
 
+# Dev-only local scripts (dev.bat / run-server-dev.sh / dev services)
+ignored/
+
 # Plugins — user-installed plugins (keep the directory and docs)
 plugins/*
 !plugins/.gitkeep
