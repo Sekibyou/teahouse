@@ -44,6 +44,7 @@ from ..database.workspaces import (
     delete_file_or_dir,
     create_file_or_dir,
     rename_file_or_dir,
+    move_file_or_dir,
     update_floor_count,
     update_instance_name,
     update_summary_index,
@@ -123,6 +124,10 @@ class FileWriteRequest(BaseModel):
 
 class FileRenameRequest(BaseModel):
     new_name: str
+
+
+class FileMoveRequest(BaseModel):
+    dest_parent: str = ""  # 目标父目录路径，空串 = 实例根
 
 
 # ---------------------------------------------------------------------------
@@ -842,6 +847,38 @@ async def rename_instance_entry(
         {"path": new_path, "tool": "RenameFile", "instance_id": instance_id},
     )
     return {"path": new_path, "status": "renamed"}
+
+
+@router.patch("/instances/{instance_id}/files/move")
+async def move_instance_entry(
+    instance_id: str,
+    body: FileMoveRequest,
+    path: str = Query(..., description="Path relative to instance root"),
+    user: UserInfo = Depends(require_user),
+):
+    """Move a file or directory into a target parent directory (basename kept)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        new_path = move_file_or_dir(instance_dir, path, body.dest_parent)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not found")
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=f"target already exists: {e}")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state.broadcast(
+        "file_changed",
+        {"path": new_path, "tool": "MoveFile", "instance_id": instance_id},
+    )
+    return {"path": new_path, "status": "moved"}
 
 
 class ToolsRunStep(BaseModel):

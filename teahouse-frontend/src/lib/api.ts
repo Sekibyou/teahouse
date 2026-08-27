@@ -5,6 +5,26 @@ import type { Plugin, PluginData, NetworkRule, PluginPreview } from "./pluginTyp
 
 const REQUEST_TIMEOUT = 15000
 
+/**
+ * The frontend represents the instance root as "root". Every file path it
+ * exposes to the UI is "root/<rel>" (e.g. "root/teahouse.md"). The backend
+ * uses bare instance-relative paths, so this module is the single boundary:
+ * it strips the prefix on the way out (toBackendPath) and adds it on the way
+ * in from listFiles (see instancesApi.listFiles).
+ */
+export const ROOT = "root"
+export const toBackendPath = (p: string): string =>
+  p === ROOT ? "" : p.startsWith(ROOT + "/") ? p.slice(ROOT.length + 1) : p
+export const toFrontendPath = (p: string): string =>
+  p === "" ? ROOT : p.startsWith(ROOT + "/") ? p : `${ROOT}/${p}`
+const addRootToTree = <T extends FileTreeNode>(nodes: T[]): T[] =>
+  nodes.map((n) => ({
+    ...n,
+    path: toFrontendPath(n.path),
+    children: n.children ? addRootToTree(n.children) : n.children,
+  }))
+
+
 interface RequestResult<T> {
   ok: boolean
   data?: T
@@ -238,17 +258,20 @@ export const instancesApi = {
     return patch<Instance>(`/api/instances/${id}`, { name })
   },
 
-  // File operations
+  // File operations — every path is "root/..." on the frontend; converted to
+  // the backend's bare relative path at this boundary (and back for listFiles).
   listFiles: async (instanceId: string) => {
-    return get<FileTreeNode[]>(`/api/instances/${instanceId}/files`)
+    const res = await get<FileTreeNode[]>(`/api/instances/${instanceId}/files`)
+    if (res.ok && res.data) res.data = addRootToTree(res.data)
+    return res
   },
 
   readText: async (instanceId: string, path: string) => {
-    return get<{ path: string; content: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(path)}`)
+    return get<{ path: string; content: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(toBackendPath(path))}`)
   },
 
   readAsset: async (instanceId: string, path: string) => {
-    return get<{ path: string; mime: string; data: string; size: readonly [number, number] | null }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(path)}`)
+    return get<{ path: string; mime: string; data: string; size: readonly [number, number] | null }>(`/api/instances/${instanceId}/files/asset?path=${encodeURIComponent(toBackendPath(path))}`)
   },
 
   getCover: async (instanceId: string) => {
@@ -256,7 +279,7 @@ export const instancesApi = {
   },
 
   writeFile: async (instanceId: string, path: string, content: string) => {
-    return put<{ path: string; status: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(path)}`, { content })
+    return put<{ path: string; status: string }>(`/api/instances/${instanceId}/files/content?path=${encodeURIComponent(toBackendPath(path))}`, { content })
   },
 
   uploadFile: async (instanceId: string, path: string, file: File) => {
@@ -265,7 +288,7 @@ export const instancesApi = {
     form.append("file", file)
     const headers: Record<string, string> = {}
     if (token) headers["Authorization"] = `Bearer ${token}`
-    const res = await fetch(`${getApiBaseUrl()}/api/instances/${instanceId}/files/upload?path=${encodeURIComponent(path)}`, {
+    const res = await fetch(`${getApiBaseUrl()}/api/instances/${instanceId}/files/upload?path=${encodeURIComponent(toBackendPath(path))}`, {
       method: "POST",
       headers,
       body: form,
@@ -282,17 +305,24 @@ export const instancesApi = {
   },
 
   createEntry: async (instanceId: string, path: string, type: "file" | "directory") => {
-    return post<{ path: string; status: string }>(`/api/instances/${instanceId}/files`, { path, type })
+    return post<{ path: string; status: string }>(`/api/instances/${instanceId}/files`, { path: toBackendPath(path), type })
   },
 
   deleteEntry: async (instanceId: string, path: string) => {
-    return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(path)}`)
+    return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(toBackendPath(path))}`)
   },
 
   renameEntry: async (instanceId: string, path: string, newName: string) => {
     return patch<{ path: string; status: string }>(
-      `/api/instances/${instanceId}/files/rename?path=${encodeURIComponent(path)}`,
+      `/api/instances/${instanceId}/files/rename?path=${encodeURIComponent(toBackendPath(path))}`,
       { new_name: newName },
+    )
+  },
+
+  moveEntry: async (instanceId: string, path: string, destParent: string) => {
+    return patch<{ path: string; status: string }>(
+      `/api/instances/${instanceId}/files/move?path=${encodeURIComponent(toBackendPath(path))}`,
+      { dest_parent: toBackendPath(destParent) },
     )
   },
 

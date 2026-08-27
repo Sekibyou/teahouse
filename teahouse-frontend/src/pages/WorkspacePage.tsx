@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
@@ -18,7 +18,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, type InstanceSkill, type InstancePackage } from "@/lib/api"
+import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, toFrontendPath, ROOT, type InstanceSkill, type InstancePackage } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -95,8 +95,35 @@ export function WorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadPathRef = useRef<string>("")
 
+  // ---- File-tree drag & drop (desktop only, pointer-events driven) ----
+  const [dragInfo, setDragInfo] = useState<{ srcPath: string; srcType: "file" | "directory"; name: string } | null>(null)
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dragArmedRef = useRef(false)
+  const dragSrcRef = useRef<{ path: string; type: "file" | "directory"; name: string } | null>(null)
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null)
+  const dragBadgeRef = useRef<HTMLDivElement | null>(null)
+  const dropTargetRef = useRef<string | null>(null)
+  const moveInFlightRef = useRef(false)
+  const dragContainerRef = useRef<HTMLDivElement | null>(null)
+  const clearDrag = useCallback(() => {
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
+    dragArmedRef.current = false
+    dragSrcRef.current = null
+    dragPosRef.current = null
+    dragBadgeRef.current = null
+    dropTargetRef.current = null
+    setDragInfo(null)
+    setDropTargetPath(null)
+  }, [])
+
+  // Convert an instance-relative path to its parent directory path ("" = root).
+  const parentOf = useCallback((path: string) => {
+    const i = path.lastIndexOf("/")
+    return i >= 0 ? path.slice(0, i) : ""
+  }, [])
+
   const showSaveToast = useCallback(() => {
-    if (saveToastTimer.current) clearTimeout(saveToastTimer.current)
     setSaveToast(true)
     saveToastTimer.current = setTimeout(() => {
       const el = saveToastRef.current
@@ -170,8 +197,14 @@ export function WorkspacePage() {
     else setChatCollapsed(false)
   }, [isMobile])
 
-  // Git state — file statuses for tree coloring from unified store
+  // Git state — file statuses for tree coloring from unified store. The store
+  // keys ARE bare backend paths; map them to "root/..." so they match tree nodes.
   const fileStatuses = useGitStore((s) => s.fileStatuses)
+  const fileStatusesRoot = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const [k, v] of fileStatuses) m.set(toFrontendPath(k), v)
+    return m
+  }, [fileStatuses])
 
   // Redirect if no active instance
   useEffect(() => {
@@ -542,6 +575,166 @@ export function WorkspacePage() {
   // Unified refresh hook
   const refresh = useWorkspaceRefresh({ instId, loadFileTree })
 
+  // ---- File-tree drag & drop: commit + event handlers (desktop only) ----
+  const commitMove = useCallback(async (srcPath: string, destParent: string) => {
+    if (!instId || moveInFlightRef.current) return
+    moveInFlightRef.current = true
+    try {
+      const res = await instancesApi.moveEntry(instId, srcPath, destParent)
+      if (!res.ok) return
+      // Remap the open file if it is the moved entry or lives under the moved entry.
+      if (selectedFile === srcPath || selectedFile?.startsWith(srcPath + "/")) {
+        const base = srcPath.split("/").pop() ?? srcPath
+        setSelectedFile(destParent ? `${destParent}/${base}` : base)
+      }
+      await refresh()
+    } finally {
+      moveInFlightRef.current = false
+    }
+  }, [instId, selectedFile, refresh])
+
+  // Given a screen point, resolve the drop target directory ("" = root).
+  // A file acts as a proxy for its parent directory (landing beside it).
+  const resolveDropTarget = useCallback((x: number, y: number): string | null => {
+    const hit = document.elementFromPoint(x, y)?.closest?.("[data-path]") as HTMLElement | null
+    if (!hit) return null
+    const p = hit.dataset.path
+    if (!p) return null
+    return hit.dataset.type === "directory" ? p : parentOf(p)
+  }, [parentOf])
+
+  // Snap a miss back onto the nearest row. Tree rows are block-level and sit
+  // flush, but there can be a 1px seam between adjacent rows; a pointer on that
+  // seam would otherwise resolve to the shared parent (or root). Probe a few px
+  // around the point and fall back to whichever row is closest.
+  const snapDropTarget = useCallback((x: number, y: number): string | null => {
+    for (let dy = 2; dy <= 8; dy += 2) {
+      for (const probeY of [y - dy, y + dy]) {
+        const hit = document.elementFromPoint(x, probeY)?.closest?.("[data-path]") as HTMLElement | null
+        if (!hit) continue
+        const p = hit.dataset.path
+        if (!p) continue
+        return hit.dataset.type === "directory" ? p : parentOf(p)
+      }
+    }
+    return null
+  }, [parentOf])
+
+  const isInvalidTarget = useCallback((dest: string, src: string) =>
+    dest === src || dest.startsWith(src + "/"),
+  [],)
+
+  const onFileTreePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return
+    if (e.button !== 0) return
+    const el = (e.target as HTMLElement).closest("[data-path]") as HTMLElement | null
+    if (!el) return
+    const path = el.dataset.path
+    const type = el.dataset.type as "file" | "directory"
+    if (!path || !type) return
+    // NOTE: no setPointerCapture here — it would redirect the pointer sequence's
+    // synthesized click to the container and break node on-click interactions.
+    dragArmedRef.current = false
+    dragSrcRef.current = { path, type, name: path.split("/").pop() || path }
+    dragPosRef.current = { x: e.clientX, y: e.clientY }
+    dropTargetRef.current = null
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null
+      // Long-press complete → enter dragging, even before any movement.
+      dragArmedRef.current = true
+      const src = dragSrcRef.current!
+      const pos = dragPosRef.current!
+      if (pos) {
+        setDragInfo({ srcPath: src.path, srcType: src.type, name: src.name })
+      }
+    }, 250)
+  }, [isMobile])
+
+  const onFileTreePointerMove = useCallback((e: PointerEvent) => {
+    if (isMobile) return
+    // While the long-press is still pending, moving past ~6px cancels it
+    // (a normal click or fast slide should not start a drag).
+    if (!dragArmedRef.current) {
+      if (longPressTimerRef.current && dragPosRef.current) {
+        const dx = e.clientX - dragPosRef.current.x
+        const dy = e.clientY - dragPosRef.current.y
+        if (dx * dx + dy * dy > 36) {
+          if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
+          dragSrcRef.current = null
+        }
+      }
+      return
+    }
+    dragPosRef.current = { x: e.clientX, y: e.clientY }
+    // Move the follow badge purely through the DOM (no React re-render).
+    if (dragBadgeRef.current) {
+      dragBadgeRef.current.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 14}px)`
+    }
+    // Prevent the click the browser would otherwise synthesize after the drag
+    // release (would toggle/select a node under the release point).
+    if (e.cancelable) e.preventDefault()
+    // Resolve the drop target. A file means "its parent directory". If the
+    // pointer lands in the thin seam between adjacent rows, snap it onto the
+    // nearest row; only a genuinely empty area falls through to the root.
+    const hitEl = document.elementFromPoint(e.clientX, e.clientY)
+    let dest = resolveDropTarget(e.clientX, e.clientY)
+    if (!dest) dest = snapDropTarget(e.clientX, e.clientY)
+    const container = dragContainerRef.current
+    const inContainer = !!hitEl && (container === hitEl || container?.contains(hitEl))
+    if (!dest && inContainer) {
+      dest = ROOT
+    }
+    const src = dragSrcRef.current
+    const final = dest && src && !isInvalidTarget(dest, src.path)
+      ? dest : null
+    if (final !== dropTargetRef.current) {
+      dropTargetRef.current = final
+      setDropTargetPath(final)
+    }
+  }, [isMobile, resolveDropTarget, snapDropTarget, isInvalidTarget])
+
+  const onFileTreePointerUp = useCallback(() => {
+    if (isMobile) return
+    const src = dragSrcRef.current
+    const dest = dropTargetRef.current
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
+    if (dragArmedRef.current && dest && src && !isInvalidTarget(dest, src.path)) {
+      commitMove(src.path, dest)
+    }
+    clearDrag()
+  }, [isMobile, isInvalidTarget, commitMove, clearDrag])
+
+  const onFileTreePointerCancel = useCallback(() => {
+    if (isMobile) return
+    clearDrag()
+  }, [isMobile, clearDrag])
+
+  // Watch pointer move/up/cancel at window scope so a drag that leaves the tree
+  // container still resolves (and never corrupts the browser's click synthesis,
+  // which is why we avoid setPointerCapture).
+  useEffect(() => {
+    if (isMobile) return
+    window.addEventListener("pointermove", onFileTreePointerMove)
+    window.addEventListener("pointerup", onFileTreePointerUp)
+    window.addEventListener("pointercancel", onFileTreePointerCancel)
+    return () => {
+      window.removeEventListener("pointermove", onFileTreePointerMove)
+      window.removeEventListener("pointerup", onFileTreePointerUp)
+      window.removeEventListener("pointercancel", onFileTreePointerCancel)
+    }
+  }, [isMobile, onFileTreePointerMove, onFileTreePointerUp, onFileTreePointerCancel])
+
+  // When the follow badge mounts (drag starts), place it at the current pointer
+  // before it would otherwise sit at left:0/top:0. Subsequent movement is driven
+  // straight through the DOM in onFileTreePointerMove.
+  useLayoutEffect(() => {
+    if (dragInfo && dragBadgeRef.current && dragPosRef.current) {
+      dragBadgeRef.current.style.transform =
+        `translate(${dragPosRef.current.x + 12}px, ${dragPosRef.current.y + 14}px)`
+    }
+  }, [dragInfo])
+
   // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
   useSSERefresh({
     instanceId: instId,
@@ -553,6 +746,9 @@ export function WorkspacePage() {
         refresh()
         return
       }
+      // Backend broadcasts bare relative paths; the tree/editor work in
+      // "root/..." form, so normalize before comparing.
+      path = toFrontendPath(path)
       const currentFile = selectedFileRef.current
       if (currentFile && path === currentFile && isDirtyRef.current) {
         // Dirty file was modified externally — refresh tree + git but
@@ -861,7 +1057,7 @@ export function WorkspacePage() {
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto py-1">
+              <div className="flex-1 overflow-auto py-1 select-none">
                 {isLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -881,7 +1077,7 @@ export function WorkspacePage() {
                     onDelete={handleDeleteEntry}
                     onRename={handleRenameEntry}
                     onUpload={handleUploadClick}
-                    fileStatuses={fileStatuses}
+                    fileStatuses={fileStatusesRoot}
                     isMobile
                   />
                 )}
@@ -1127,6 +1323,22 @@ export function WorkspacePage() {
         className="hidden"
         onChange={handleUploadChange}
       />
+      {/* Drag-follow badge (desktop file-tree DnD). pointer-events:none so it
+          never intercepts elementFromPoint probes while hovering targets.
+          Positioned via translate() written straight to the DOM (dragBadgeRef)
+          in onFileTreePointerMove — no React re-render while dragging. */}
+      {dragInfo && (
+        <div
+          ref={dragBadgeRef}
+          className="pointer-events-none fixed left-0 top-0 z-[9999] flex items-center gap-2 rounded-md bg-blue-600/60 px-3 py-1.5 text-xs font-medium text-white shadow-lg will-change-transform"
+        >
+          {dragInfo.srcType === "directory"
+            ? <Folder className="h-3.5 w-3.5 shrink-0" />
+            : <FileText className="h-3.5 w-3.5 shrink-0" />}
+          <span className="max-w-64 truncate">{dragInfo.name}</span>
+        </div>
+      )}
+
       {/* Left/center area — file tree + editor (backstage) OR output panel (play).
           Both are always mounted to keep SSE connections alive; hidden via CSS. */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -1170,7 +1382,21 @@ export function WorkspacePage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto py-1">
+            <div
+              ref={dragContainerRef}
+              className={`flex-1 overflow-auto py-1 select-none relative ${
+                dragInfo && dropTargetPath === ROOT ? "ring-2 ring-inset ring-accent" : ""
+              }`}
+              onPointerDown={onFileTreePointerDown}
+            >
+              {/* Drop-to-root indicator: a border box around the whole tree, with
+                  a floating caption pinned to the bottom (does not affect layout). */}
+              {dragInfo && dropTargetPath === ROOT && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-2 py-1.5 text-xs font-semibold text-accent-foreground">
+                  <Archive className="h-3.5 w-3.5 shrink-0" />
+                  {t("moveToRoot")}
+                </div>
+              )}
               {isLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1189,7 +1415,10 @@ export function WorkspacePage() {
                   onDelete={handleDeleteEntry}
                   onRename={handleRenameEntry}
                   onUpload={handleUploadClick}
-                  fileStatuses={fileStatuses}
+                  fileStatuses={fileStatusesRoot}
+                  isDragging={dragInfo !== null}
+                  dropTargetPath={dropTargetPath}
+                  dragSource={dragInfo?.srcPath ?? null}
                 />
               )}
             </div>
@@ -1566,6 +1795,7 @@ export function WorkspacePage() {
 function FileTreeView({
   nodes, expanded, selectedFile, onToggle, onSelect,
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
+  isDragging = false, dropTargetPath = null, dragSource = null,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -1580,6 +1810,9 @@ function FileTreeView({
   fileStatuses: Map<string, string>
   depth?: number
   isMobile?: boolean
+  isDragging?: boolean
+  dropTargetPath?: string | null
+  dragSource?: string | null
 }) {
   const { t } = useTranslation("workspace")
   const stColor = (st: string | undefined) => {
@@ -1599,12 +1832,25 @@ function FileTreeView({
       {nodes
         .filter(n => n.name !== ".git")
         .map((node) => (
-        <div key={node.path}>
+        <div
+          key={node.path}
+          className={
+            isDragging && node.type === "directory" && dropTargetPath === node.path
+              ? "relative rounded-md bg-accent/30 ring-2 ring-inset ring-accent mx-1 my-0.5"
+              : ""
+          }
+        >
           <div
-            className={`flex items-center gap-1 px-2 cursor-pointer hover:bg-muted/50 transition-colors group ${
+            data-path={node.path}
+            data-type={node.type}
+            className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none ${
               isMobile ? "py-3" : "py-1"
             } ${
               selectedFile === node.path ? "bg-accent" : ""
+            } ${
+              isDragging ? "" : "hover:bg-muted/50"
+            } ${
+              isDragging && dragSource === node.path ? "opacity-40" : ""
             }`}
             style={{ paddingLeft: `${8 + depth * 16}px` }}
             onClick={() => {
@@ -1637,8 +1883,8 @@ function FileTreeView({
             )}
             <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
 
-            {/* Action buttons — visible on hover */}
-            <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+            {/* Action buttons — visible on hover (hidden while dragging) */}
+            <div className={`${isDragging ? "hidden" : "hidden group-hover:flex"} items-center gap-0.5 shrink-0`}>
               {node.type === "directory" && (
                 <>
                   <button
@@ -1697,6 +1943,9 @@ function FileTreeView({
               fileStatuses={fileStatuses}
               depth={depth + 1}
               isMobile={isMobile}
+              isDragging={isDragging}
+              dropTargetPath={dropTargetPath}
+              dragSource={dragSource}
             />
             )}
           </div>

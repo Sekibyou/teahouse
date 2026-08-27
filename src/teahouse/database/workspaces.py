@@ -861,6 +861,34 @@ def rename_file_or_dir(instance_dir: Path, file_path: str, new_name: str) -> str
     return str(new_full.relative_to(instance_dir.resolve())).replace("\\", "/")
 
 
+def move_file_or_dir(instance_dir: Path, file_path: str, dest_parent: str) -> str:
+    """Move a file/dir into ``dest_parent`` (preserving its basename).
+
+    ``dest_parent`` empty string means the instance root. Returns the new
+    relative path. Raises FileNotFoundError / FileExistsError / ValueError /
+    OSError on failure.
+    """
+    full = _resolve_full(instance_dir, file_path)
+    if not full.exists():
+        raise FileNotFoundError(file_path)
+
+    dest = _resolve_full(instance_dir, dest_parent)
+    if not dest.is_dir():
+        raise ValueError("目标不是目录")
+
+    # Forbid moving an entry into itself or one of its own descendants.
+    full_res = str(full.resolve())
+    dest_res = str(dest.resolve())
+    if dest_res == full_res or dest_res.startswith(full_res + os.sep):
+        raise ValueError("不能移动到自身或其后代目录")
+
+    target = dest / full.name
+    if target.exists():
+        raise FileExistsError(str(target))
+    shutil.move(str(full), str(target))
+    return str(target.relative_to(instance_dir.resolve())).replace("\\", "/")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

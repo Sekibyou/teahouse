@@ -25,6 +25,7 @@ export const enWorkspace = {
   ctrlSHint: "Ctrl+S to save",
   uploadToRoot: "Upload file to root",
   uploadToHere: "Upload file here",
+  moveToRoot: "Release to move into the instance root",
   expandDirector: "Expand director panel",
   location: "Location: {{path}}",
 

@@ -25,6 +25,7 @@ export const zhWorkspace = {
   ctrlSHint: "Ctrl+S 保存",
   uploadToRoot: "上传文件到根目录",
   uploadToHere: "上传文件到此处",
+  moveToRoot: "拖动到此处释放：移动到实例根目录",
   expandDirector: "展开导演面板",
   location: "位置：{{path}}",
 

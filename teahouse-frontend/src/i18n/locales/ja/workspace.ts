@@ -25,6 +25,7 @@ export const jaWorkspace = {
   ctrlSHint: "Ctrl+S で保存",
   uploadToRoot: "ファイルをルートにアップロード",
   uploadToHere: "ファイルをここにアップロード",
+  moveToRoot: "離してルートへ移動",
   expandDirector: "監督パネルを展開",
   location: "場所：{{path}}",
 

@@ -168,6 +168,16 @@ LLM API key 加密存储（Fernet）在数据库中，与用户绑定。
 
 第三方可通过 API 自行编写前端（QQ 桥接、Web 前端、游戏引擎接入等）。
 
+### ⚠️ 前端文件 path 约定：`root/` 前缀（仅前端）
+
+**前端内部所有实例内文件路径都带 `root/` 前缀**，根目录用 `"root"`（非空），文件为 `root/teahouse.md`、`root/runtime/floors/x.md`。**后端完全不用这套前缀**——后端仍用实例内的裸相对路径。
+
+- **加/剥前缀只在 `src/lib/api.ts` 一处边界**：`instancesApi` 的所有文件方法（readText/readAsset/writeFile/uploadFile/createEntry/deleteEntry/renameEntry/moveEntry）**入参经 `toBackendPath()` 剥掉 `root/`** 后再发给后端；`listFiles` 返回时经 `addRootToTree()` 递归加 `root/`。`toFrontendPath()` 把后端裸路径转成前端形式（`""` → `"root"`）。
+- **后端零改动**：`list_file_tree`、移动/重命名/上传等后端 API 不感知前缀。
+- **派生值随之前缀**：SSE `file_changed` 广播的是后端裸 path，前端回调里须 `toFrontendPath()` 后再与 `selectedFile`（`root/...`）比较；git `fileStatuses` 的键是裸路径，传给 `FileTreeView` 前映射成 `root/...` 才能匹配树节点着色。
+- **`parentOf` 现在自然返回 `"root"`**（根文件的父目录），DnD 拖到根文件/空白 → drop target = `"root"`。
+- 迁移这层前缀时务必保持 api.ts 的加/剥对称，且不得改变后端 path 格式，否则 SandboxManager 等不走前缀的调用方会因格式不一致踩坑。
+
 ## 移动端 / 窄屏适配
 
 前端同时支持**桌面宽屏（≥1081px）**和**窄屏（≤1080px，含竖屏平板/笔记本）**两套布局。
