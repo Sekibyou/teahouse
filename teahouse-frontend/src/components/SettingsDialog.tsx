@@ -4,7 +4,7 @@ import {
   Server, Cpu, Sliders, X, ChevronLeft, Check, Loader2, Plus, Pencil, Trash2,
   AlertCircle, Download, Star, FileText, Link2, ExternalLink,
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
-  BookOpen, Package, Users, Languages,
+  BookOpen, Package, Users, Languages, ArrowUp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -1473,7 +1473,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                   <div className="rounded-lg border p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 space-y-1">
                         <div className="text-sm font-medium flex items-center gap-1.5">
                           <Download className="h-3.5 w-3.5" />
                           {t("general.aboutVersion")}
@@ -1483,6 +1483,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                               {t("general.newVersionAvailable", { latest: newVersion.latestVersion })}
                             </span>
                           )}
+                        </div>
+                        <div className="text-sm flex items-center gap-1.5">
+                          <ArrowUp className="h-3.5 w-3.5 text-muted-foreground" />
+                          {t("general.latestVersion")}
+                          <span className="font-mono text-muted-foreground">
+                            {newVersion.latestVersion ?? t("general.versionUnknown")}
+                          </span>
                         </div>
                       </div>
                       <Button

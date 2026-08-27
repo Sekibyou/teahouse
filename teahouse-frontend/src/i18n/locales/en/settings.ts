@@ -141,6 +141,7 @@ export const enSettings = {
     maxParseDepth: "Max placeholder parse depth",
     maxParseDepthDesc: "Upper bound for multi-round ${} and {{path}} resolution, especially cross-message @mention matching. Set 0 to disable placeholder resolution (all kept literal). Default 10.",
     aboutVersion: "Current version",
+    latestVersion: "Latest version",
     versionUnknown: "unknown",
     newVersionAvailable: "New version {{latest}} available",
     goToRelease: "Go to GitHub Releases",
