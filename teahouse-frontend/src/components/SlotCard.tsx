@@ -1,7 +1,12 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
+import { AlertCircle } from "lucide-react"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { SavedBadge } from "@/components/SavedBadge"
 import { useTranslation } from "react-i18next"
 
 interface SlotCardProps {
@@ -42,6 +47,18 @@ function computeMatches(modelName: string | undefined, profiles: ModelProfile[],
   return { profileIds, presetIds }
 }
 
+/** 供应商徽章 + 模型名，下拉选项与选中项共用一套渲染 */
+function ModelLabel({ model }: { model: LLMModel }) {
+  return (
+    <>
+      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        {model.provider_name}
+      </span>
+      <span className="truncate">{model.name}</span>
+    </>
+  )
+}
+
 export function SlotCard({ slotId, label, binding, models, profiles, presets, onChange }: SlotCardProps) {
   const { t } = useTranslation("misc")
   const [selectedModelId, setSelectedModelId] = useState<string>(binding.model_id || "")
@@ -51,6 +68,8 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
   const [matchedPresetIds, setMatchedPresetIds] = useState<Set<string>>(new Set())
   const [userPickedProfile, setUserPickedProfile] = useState(false)
   const [userPickedPreset, setUserPickedPreset] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const showPresets = slotId === "director" && presets !== undefined
 
@@ -67,6 +86,8 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     setSelectedProfileId(binding.profile_id || "")
     setSelectedPresetId(binding.prompt_preset_id || "")
   }, [binding.model_id, binding.profile_id, binding.prompt_preset_id])
+
+  useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current) }, [])
 
   // Auto-match when model changes
   useEffect(() => {
@@ -91,119 +112,130 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
     }
   }, [selectedModelId, models, profiles])
 
-  const handleModelChange = (modelId: string) => {
-    setSelectedModelId(modelId)
-    setUserPickedProfile(false)
-    setUserPickedPreset(false)
-    onChange({ model_id: modelId || null, profile_id: null, prompt_preset_id: null })
-  }
-
-  const handleProfileChange = (profileId: string) => {
-    setSelectedProfileId(profileId)
-    setUserPickedProfile(true)
-    onChange({ ...binding, profile_id: profileId || null })
-  }
-
-  const handlePresetChange = (presetId: string) => {
-    setSelectedPresetId(presetId)
-    setUserPickedPreset(true)
-    onChange({ ...binding, prompt_preset_id: presetId || null })
-  }
-
-  const handleSave = async () => {
-    const modelId = selectedModelId || null
-    const profileId = selectedProfileId || null
-    const presetId = showPresets ? (selectedPresetId || null) : null
-    if (!modelId) {
-      toast.error(t("slot.selectModelFirst"))
-      return
+  // 选取即保存：任一下拉框变更后立刻落库，失败才打扰用户
+  const persist = async (next: SlotBinding) => {
+    const payload: SlotBinding = {
+      model_id: next.model_id || null,
+      profile_id: next.profile_id || null,
+      prompt_preset_id: showPresets ? (next.prompt_preset_id || null) : null,
     }
-    const result = await llmSlotsApi.setSlot(slotId, {
-      model_id: modelId,
-      profile_id: profileId,
-      prompt_preset_id: presetId,
-    })
+    const result = await llmSlotsApi.setSlot(slotId, payload)
     if (result.ok) {
-      onChange({ model_id: modelId, profile_id: profileId, prompt_preset_id: presetId })
-      toast.success(t("slot.slotSaved", { label }))
+      onChange(payload)
+      setSavedFlash(true)
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1600)
     } else {
       toast.error(result.error || t("slot.saveFailed"))
     }
   }
 
+  const handleModelChange = (modelId: string) => {
+    setSelectedModelId(modelId)
+    setUserPickedProfile(false)
+    setUserPickedPreset(false)
+    // 换模型即重新自动匹配参数/提示词预设，一并写回
+    const model = models.find(m => m.id === modelId)
+    const matches = computeMatches(model?.model_name, profiles, presets)
+    const autoProfile = profiles.find(p => matches.profileIds.has(p.id))
+    const autoPreset = presets?.find(p => matches.presetIds.has(p.id) && !p.is_builtin)
+    setSelectedProfileId(autoProfile?.id || "")
+    setSelectedPresetId(autoPreset?.id || "")
+    persist({ model_id: modelId, profile_id: autoProfile?.id || null, prompt_preset_id: autoPreset?.id || null })
+  }
+
+  const handleProfileChange = (profileId: string) => {
+    setSelectedProfileId(profileId)
+    setUserPickedProfile(true)
+    persist({ model_id: selectedModelId, profile_id: profileId, prompt_preset_id: selectedPresetId })
+  }
+
+  const handlePresetChange = (presetId: string) => {
+    setSelectedPresetId(presetId)
+    setUserPickedPreset(true)
+    persist({ model_id: selectedModelId, profile_id: selectedProfileId, prompt_preset_id: presetId })
+  }
+
   const enabledModels = models.filter(m => m.is_enabled)
+  const selectedModel = enabledModels.find(m => m.id === selectedModelId)
+  const matchedClass = "text-amber-600 dark:text-amber-400 font-medium"
 
   return (
     <div className="border rounded-lg p-4 space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between h-5">
         <h4 className="font-semibold text-sm">{label}</h4>
+        <SavedBadge show={savedFlash} />
       </div>
 
       {/* Model select */}
       <div>
         <label className="text-xs text-muted-foreground mb-1 block">{t("slot.model")}</label>
-        <select
-          className="w-full border rounded px-2 py-1 text-sm bg-background"
-          value={selectedModelId}
-          onChange={e => handleModelChange(e.target.value)}
-        >
-          <option value="">-- None --</option>
-          {enabledModels.map(m => (
-            <option key={m.id} value={m.id}>
-              {m.name} ({m.provider_name})
-            </option>
-          ))}
-        </select>
+        <Select value={selectedModelId} onValueChange={(v) => handleModelChange(v as string)}>
+          <SelectTrigger className="w-full">
+            <SelectValue>
+              {selectedModel ? (
+                <ModelLabel model={selectedModel} />
+              ) : (
+                <span className="flex items-center gap-1.5 text-destructive">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {t("slot.noModel")}
+                </span>
+              )}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {enabledModels.map(m => (
+              <SelectItem key={m.id} value={m.id}>
+                <ModelLabel model={m} />
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Profile select */}
       <div>
         <label className="text-xs text-muted-foreground mb-1 block">{t("slot.profile")}</label>
-        <select
-          className="w-full border rounded px-2 py-1 text-sm bg-background"
-          value={effectiveProfileId}
-          onChange={e => handleProfileChange(e.target.value)}
-        >
-          {profiles.map(p => (
-            <option
-              key={p.id}
-              value={p.id}
-              style={matchedProfileIds.has(p.id) ? { color: "#b8860b", fontWeight: 600 } : undefined}
-            >
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Select value={effectiveProfileId} onValueChange={(v) => handleProfileChange(v as string)}>
+          <SelectTrigger className="w-full">
+            <SelectValue>
+              <span className={matchedProfileIds.has(effectiveProfileId) ? matchedClass : undefined}>
+                {profiles.find(p => p.id === effectiveProfileId)?.name}
+              </span>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {profiles.map(p => (
+              <SelectItem key={p.id} value={p.id}>
+                <span className={matchedProfileIds.has(p.id) ? matchedClass : undefined}>{p.name}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Prompt preset select (director only) */}
       {showPresets && (
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">{t("slot.preset")}</label>
-          <select
-            className="w-full border rounded px-2 py-1 text-sm bg-background"
-            value={effectivePresetId}
-            onChange={e => handlePresetChange(e.target.value)}
-          >
-            {presets!.map(p => (
-              <option key={p.id} value={p.id}
-                style={matchedPresetIds && matchedPresetIds.has(p.id) ? { color: "#b8860b", fontWeight: 600 } : undefined}
-              >
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <Select value={effectivePresetId} onValueChange={(v) => handlePresetChange(v as string)}>
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                <span className={matchedPresetIds.has(effectivePresetId) ? matchedClass : undefined}>
+                  {presets!.find(p => p.id === effectivePresetId)?.name}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {presets!.map(p => (
+                <SelectItem key={p.id} value={p.id}>
+                  <span className={matchedPresetIds.has(p.id) ? matchedClass : undefined}>{p.name}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
-
-      <div className="flex justify-end">
-        <button
-          className="bg-primary text-primary-foreground rounded px-4 py-1.5 text-sm hover:bg-primary/90"
-          onClick={handleSave}
-        >
-          {t("common:save")}
-        </button>
-      </div>
     </div>
   )
 }

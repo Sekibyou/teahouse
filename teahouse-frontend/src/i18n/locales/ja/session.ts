@@ -67,7 +67,7 @@ export const jaSession = {
   noReadmeProto: "このプロトタイプには README の紹介がありません。",
   noReadmeInstance: "このインスタンスに関連付けられたプロトタイプの紹介はありません。",
   builtin: "内蔵",
-  manageSkills: "Skill を管理（あなたの skill ライブラリから有効化）",
+  manageSkills: "Skill を管理（あなたの Skill ライブラリから有効化）",
   manageSkillsShort: "Skill を管理",
   managePackages: "プロンプトパッケージを管理（あなたのパッケージライブラリから有効化）",
   managePackagesShort: "プロンプトパッケージを管理",
@@ -85,17 +85,17 @@ export const jaSession = {
   // Skill 管理
   skill: {
     manage: "Skill 管理",
-    enableFor: "「{{name}}」の skill を有効化または削除",
-    enabledTitle: "このインスタンスで有効化されている skill",
-    noEnabled: "skill はまだ有効化されていません",
-    addFrom: "あなたの skill ライブラリから追加",
-    libEmpty: "skill ライブラリはまだ空です。まず設定ページ「Skill 管理」でインポートするか、インスタンス内でエクスポートしてください。",
+    enableFor: "「{{name}}」の Skill を有効化または削除",
+    enabledTitle: "このインスタンスで有効化されている Skill",
+    noEnabled: "Skill はまだ有効化されていません",
+    addFrom: "あなたの Skill ライブラリから追加",
+    libEmpty: "Skill ライブラリはまだ空です。まず設定ページ「Skill 管理」でインポートするか、インスタンス内でエクスポートしてください。",
     enable: {
       fail: "有効化に失敗",
     },
     remove: {
-      title: "skill を削除",
-      message: "「{{name}}」を削除しますか？このインスタンスから削除されるだけで、skill ライブラリには残ります。",
+      title: "Skill を削除",
+      message: "「{{name}}」を削除しますか？このインスタンスから削除されるだけで、Skill ライブラリには残ります。",
       fail: "削除に失敗",
     },
   },

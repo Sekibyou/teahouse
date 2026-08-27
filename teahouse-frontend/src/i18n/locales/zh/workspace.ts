@@ -99,11 +99,11 @@ export const zhWorkspace = {
       submit: "导出到库里",
     },
     skill: {
-      title: "导出 Skill 到 skill 库",
-      desc: "选取当前实例里的一个 skill，复制到你的 skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。",
-      select: "选择 skill",
-      empty: "该实例没有可作为 skill 导出的条目。",
-      ph: "选择一个 skill",
+      title: "导出 Skill 到 Skill 库",
+      desc: "选取当前实例里的一个 Skill，复制到你的 Skill 库（可在设置页「Skill 管理」中管理，也可到其他实例里启用）。",
+      select: "选择 Skill",
+      empty: "该实例没有可作为 Skill 导出的条目。",
+      ph: "选择一个 Skill",
       submit: "导出到库里",
     },
     submit: "导出",
@@ -112,10 +112,10 @@ export const zhWorkspace = {
   // 覆盖确认
   overwrite: {
     "title.package": "覆盖提示词包",
-    "title.skill": "覆盖 skill",
+    "title.skill": "覆盖 Skill",
     lib: {
       package: "提示词包库",
-      skill: "skill 库",
+      skill: "Skill 库",
     },
     message: "你的{{lib}}中已有同名「{{name}}」。覆盖会删除库里已有的旧版本并用当前实例里的覆盖，已复制进其它实例的副本不受影响。确认覆盖？",
     confirm: "覆盖",
@@ -123,6 +123,6 @@ export const zhWorkspace = {
 
   // 错误回退文案
   exportFail: "导出失败",
-  skillLoadFail: "加载 skill 列表失败",
+  skillLoadFail: "加载 Skill 列表失败",
   packageLoadFail: "加载提示词包列表失败",
 }

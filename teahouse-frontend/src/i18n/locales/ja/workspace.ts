@@ -99,11 +99,11 @@ export const jaWorkspace = {
       submit: "ライブラリへエクスポート",
     },
     skill: {
-      title: "Skill を skill ライブラリにエクスポート",
-      desc: "現在のインスタンスから skill を選び、skill ライブラリへ複製します（設定ページ「Skill 管理」で管理でき、他のインスタンスでも有効化できます）。",
-      select: "skill を選択",
-      empty: "このインスタンスには skill としてエクスポートできる項目がありません。",
-      ph: "skill を選択",
+      title: "Skill を Skill ライブラリにエクスポート",
+      desc: "現在のインスタンスから Skill を選び、Skill ライブラリへ複製します（設定ページ「Skill 管理」で管理でき、他のインスタンスでも有効化できます）。",
+      select: "Skill を選択",
+      empty: "このインスタンスには Skill としてエクスポートできる項目がありません。",
+      ph: "Skill を選択",
       submit: "ライブラリへエクスポート",
     },
     submit: "エクスポート",
@@ -112,10 +112,10 @@ export const jaWorkspace = {
   // 覆盖确认
   overwrite: {
     "title.package": "プロンプトパッケージを上書き",
-    "title.skill": "skill を上書き",
+    "title.skill": "Skill を上書き",
     lib: {
       package: "プロンプトパッケージライブラリ",
-      skill: "skill ライブラリ",
+      skill: "Skill ライブラリ",
     },
     message: "あなたの{{lib}}に同名の「{{name}}」が既にあります。上書きするとライブラリ内の旧バージョンを削除し、現在のインスタンスのもので置き換えます。他のインスタンスに複製済みのコピーには影響しません。上書きしますか？",
     confirm: "上書き",
@@ -123,6 +123,6 @@ export const jaWorkspace = {
 
   // 错误回退文案
   exportFail: "エクスポートに失敗",
-  skillLoadFail: "skill 一覧の読み込みに失敗",
+  skillLoadFail: "Skill 一覧の読み込みに失敗",
   packageLoadFail: "プロンプトパッケージ一覧の読み込みに失敗",
 }

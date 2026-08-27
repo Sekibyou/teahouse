@@ -80,8 +80,7 @@ export const jaMisc = {
     model: "モデル",
     profile: "パラメータプリセット",
     preset: "監督プリセット",
-    selectModelFirst: "先にモデルを選択してください",
-    slotSaved: "{{label}} スロットを保存しました",
+    noModel: "モデル未選択",
     saveFailed: "保存に失敗",
   },
   layout: {

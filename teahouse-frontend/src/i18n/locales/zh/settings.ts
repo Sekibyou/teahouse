@@ -36,7 +36,7 @@ export const zhSettings = {
   errSave: "保存失败",
   errPluginPreview: "插件预检失败",
   errInstall: "安装失败",
-  errSkillPreview: "skill 预检失败",
+  errSkillPreview: "Skill 预检失败",
   errPackagePreview: "提示词包预检失败",
   errLoadNetRules: "加载网络白名单失败",
   errNetRuleHostEmpty: "host 不能为空",
@@ -155,7 +155,7 @@ export const zhSettings = {
 
   // ─── Plugins tab ───
   plugin: {
-    foundCount: "已发现 {{n}} 个插件",
+    count: "你的插件库共 {{n}} 个插件",
     import: "导入插件",
     pluginId: "插件 ID: {{id}}",
     conflictTitle: "以下工具与内置工具冲突，安装将被拒绝：",
@@ -167,6 +167,7 @@ export const zhSettings = {
     confirmInstall: "确认安装",
     noPlugins: "暂无可用插件",
     emptyHint: "将插件放入 {{dir}} 目录后自动发现，或点击「导入插件」上传 .zip",
+    hint: "插件是账号级库存：启用后其工具对导演与沙盒可用；带网络权限的插件还需在插件卡片里逐条放行域名，未放行则无法联网。",
     enabled: "已启用",
     disabled: "已禁用",
     uninstallTitle: "卸载插件",
@@ -192,23 +193,23 @@ export const zhSettings = {
 
   // ─── Skills tab ───
   skill: {
-    count: "你的 skill 库共 {{n}} 个 skill",
-    import: "导入 skill",
-    importHeading: "导入 skill 「{{name}}」",
-    fileCount: "{{n}} 个文件，确认后加入你的 skill 库",
+    count: "你的 Skill 库共 {{n}} 个 Skill",
+    import: "导入 Skill",
+    importHeading: "导入 Skill 「{{name}}」",
+    fileCount: "{{n}} 个文件，确认后加入你的 Skill 库",
     confirmImport: "确认导入",
-    emptyTitle: "你的 skill 库还是空的",
-    emptyHint: "在实例内将 skill 导出到库里，或点击「导入 skill」上传 .zip 打包的 skill 文件夹",
+    emptyTitle: "你的 Skill 库还是空的",
+    emptyHint: "在实例内将 Skill 导出到库里，或点击「导入 Skill」上传 .zip 打包的 Skill 文件夹",
     filesCount: "{{n}} 个文件",
     missingSkillMd: "缺少 SKILL.md",
     download: "下载",
     delete: "删除",
-    hint: "提示：skill 库是你的库存，导入或从实例导出后存入。要让它对某个实例生效，请在该实例详情中「添加 skill」复制进去。",
+    hint: "Skill 库是你的库存，导入或从实例导出后存入。要让它对某个实例生效，请在该实例详情中「添加 Skill」复制进去。",
   },
 
   // ─── Packages tab ───
   pkg: {
-    count: "你的提示词包库共 {{n}} 个包",
+    count: "你的提示词包库共 {{n}} 个提示词包",
     import: "导入提示词包",
     importHeading: "导入提示词包「{{name}}」",
     fileCount: "{{n}} 个文件，确认后加入你的提示词包库",
@@ -220,7 +221,7 @@ export const zhSettings = {
     noReadme: " · 无 README",
     download: "下载",
     delete: "删除",
-    hint: "提示：提示词包库是你的库存。要让它对某实例生效，请在该实例中安装（复制进实例 packages/）；然后在组装器/正文里用 @包名/路径 引用形式（外层花括号）显式引用其内容。包名可含空格与版本号，如 `某人的修仙设定 v1.01`。",
+    hint: "提示词包库是你的库存。要让它对某实例生效，请在该实例中安装（复制进实例 packages/）；然后在组装器/正文里用 @包名/路径 引用形式（外层花括号）显式引用其内容。包名可含空格与版本号，如 `某人的修仙设定 v1.01`。",
   },
 
   // ─── Delete confirmations ───
@@ -234,8 +235,8 @@ export const zhSettings = {
     pluginTitle: "卸载插件",
     pluginMessage: "确定卸载「{{name}}」吗？此操作将删除该插件的所有文件和数据。",
     uninstalling: "卸载中...",
-    skillTitle: "删除 skill",
-    skillMessage: "确定从你的 skill 库删除「{{name}}」吗？只会从你的库存删除，已将其复制进实例的不受影响。",
+    skillTitle: "删除 Skill",
+    skillMessage: "确定从你的 Skill 库删除「{{name}}」吗？只会从你的库存删除，已将其复制进实例的不受影响。",
     deleting: "删除中...",
     pkgTitle: "删除提示词包",
     pkgMessage: "确定从你的提示词包库删除「{{name}}」吗？只会从你的库存删除，已将其复制进实例的不受影响。",

@@ -155,7 +155,7 @@ export const enSettings = {
 
   // ─── Plugins tab ───
   plugin: {
-    foundCount: "{{n}} plugins found",
+    count: "Your plugin library has {{n}} plugins",
     import: "Import plugin",
     pluginId: "Plugin ID: {{id}}",
     conflictTitle: "The following tools conflict with built-in tools; installation will be rejected:",
@@ -167,6 +167,7 @@ export const enSettings = {
     confirmInstall: "Confirm install",
     noPlugins: "No plugins available yet",
     emptyHint: "Drop plugins into the {{dir}} directory for automatic discovery, or click \"Import plugin\" to upload a .zip",
+    hint: "Plugins are account-level inventory: once enabled, their tools are available to the director and the sandbox. A plugin with the network permission also needs each host allowlisted on its card — without that it cannot reach the network.",
     enabled: "Enabled",
     disabled: "Disabled",
     uninstallTitle: "Uninstall plugin",
@@ -192,23 +193,23 @@ export const enSettings = {
 
   // ─── Skills tab ───
   skill: {
-    count: "Your skill library has {{n}} skills",
-    import: "Import skill",
-    importHeading: "Import skill \"{{name}}\"",
-    fileCount: "{{n}} files; add to your skill library after confirming",
+    count: "Your Skill library has {{n}} Skills",
+    import: "Import Skill",
+    importHeading: "Import Skill \"{{name}}\"",
+    fileCount: "{{n}} files; add to your Skill library after confirming",
     confirmImport: "Confirm import",
-    emptyTitle: "Your skill library is still empty",
-    emptyHint: "Export skills from an instance into the library, or click \"Import skill\" to upload a .zip-packed skill folder",
+    emptyTitle: "Your Skill library is still empty",
+    emptyHint: "Export Skills from an instance into the library, or click \"Import Skill\" to upload a .zip-packed Skill folder",
     filesCount: "{{n}} files",
     missingSkillMd: "Missing SKILL.md",
     download: "Download",
     delete: "Delete",
-    hint: "Tip: the skill library is your inventory — import or export from an instance to store skills. To make one take effect in an instance, open that instance's details and copy it in via \"Add skill\".",
+    hint: "The Skill library is your inventory — import or export from an instance to store Skills. To make one take effect in an instance, open that instance's details and copy it in via \"Add Skill\".",
   },
 
   // ─── Packages tab ───
   pkg: {
-    count: "Your prompt package library has {{n}} packages",
+    count: "Your prompt package library has {{n}} prompt packages",
     import: "Import prompt package",
     importHeading: "Import prompt package \"{{name}}\"",
     fileCount: "{{n}} files; add to your prompt package library after confirming",
@@ -220,7 +221,7 @@ export const enSettings = {
     noReadme: " · No README",
     download: "Download",
     delete: "Delete",
-    hint: "Tip: the prompt package library is your inventory. To make it take effect in an instance, install it there (copy into the instance's packages/); then reference its content explicitly in the assembler/writer using @package-name/path (outer braces). Package names may contain spaces and version numbers, e.g. `Someone's cultivation settings v1.01`.",
+    hint: "The prompt package library is your inventory. To make it take effect in an instance, install it there (copy into the instance's packages/); then reference its content explicitly in the assembler/writer using @package-name/path (outer braces). Package names may contain spaces and version numbers, e.g. `Someone's cultivation settings v1.01`.",
   },
 
   // ─── Delete confirmations ───
@@ -234,8 +235,8 @@ export const enSettings = {
     pluginTitle: "Uninstall plugin",
     pluginMessage: "Uninstall \"{{name}}\"? This will delete all files and data of the plugin.",
     uninstalling: "Uninstalling...",
-    skillTitle: "Delete skill",
-    skillMessage: "Delete \"{{name}}\" from your skill library? This only removes it from your inventory; copies already added to instances are unaffected.",
+    skillTitle: "Delete Skill",
+    skillMessage: "Delete \"{{name}}\" from your Skill library? This only removes it from your inventory; copies already added to instances are unaffected.",
     deleting: "Deleting...",
     pkgTitle: "Delete prompt package",
     pkgMessage: "Delete \"{{name}}\" from your prompt package library? This only removes it from your inventory; copies already added to instances are unaffected.",

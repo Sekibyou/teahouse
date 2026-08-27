@@ -80,8 +80,7 @@ export const enMisc = {
     model: "Model",
     profile: "Parameter preset",
     preset: "Director prompt preset",
-    selectModelFirst: "Please select a model first",
-    slotSaved: "{{label}} slot saved",
+    noModel: "No model selected",
     saveFailed: "Save failed",
   },
   layout: {

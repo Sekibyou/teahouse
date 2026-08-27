@@ -67,7 +67,7 @@ export const enSession = {
   noReadmeProto: "This prototype has no README introduction.",
   noReadmeInstance: "This instance has no associated prototype introduction.",
   builtin: "Built-in",
-  manageSkills: "Manage Skills (enable from your skill library)",
+  manageSkills: "Manage Skills (enable from your Skill library)",
   manageSkillsShort: "Manage Skills",
   managePackages: "Manage prompt packages (enable from your package library)",
   managePackagesShort: "Manage prompt packages",
@@ -85,17 +85,17 @@ export const enSession = {
   // Skill 管理
   skill: {
     manage: "Skill management",
-    enableFor: "Enable or remove skills for \"{{name}}\"",
+    enableFor: "Enable or remove Skills for \"{{name}}\"",
     enabledTitle: "Skills enabled for this instance",
-    noEnabled: "No skills enabled yet",
-    addFrom: "Add from your skill library",
-    libEmpty: "Your skill library is still empty — import in Settings > \"Skill management\" first, or export from an instance.",
+    noEnabled: "No Skills enabled yet",
+    addFrom: "Add from your Skill library",
+    libEmpty: "Your Skill library is still empty — import in Settings > \"Skill management\" first, or export from an instance.",
     enable: {
       fail: "Enable failed",
     },
     remove: {
-      title: "Remove skill",
-      message: "Remove \"{{name}}\"? This only removes it from this instance; it remains in your skill library.",
+      title: "Remove Skill",
+      message: "Remove \"{{name}}\"? This only removes it from this instance; it remains in your Skill library.",
       fail: "Remove failed",
     },
   },

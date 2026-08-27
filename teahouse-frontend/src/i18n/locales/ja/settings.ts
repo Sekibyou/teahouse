@@ -36,7 +36,7 @@ export const jaSettings = {
   errSave: "保存に失敗",
   errPluginPreview: "プラグインの事前チェックに失敗",
   errInstall: "インストールに失敗",
-  errSkillPreview: "skill の事前チェックに失敗",
+  errSkillPreview: "Skill の事前チェックに失敗",
   errPackagePreview: "プロンプトパッケージの事前チェックに失敗",
   errLoadNetRules: "ネットワークホワイトリストの読み込みに失敗",
   errNetRuleHostEmpty: "host は空にできません",
@@ -155,7 +155,7 @@ export const jaSettings = {
 
   // ─── Plugins tab ───
   plugin: {
-    foundCount: "{{n}} 個のプラグインを検出",
+    count: "プラグインライブラリには {{n}} 個のプラグインがあります",
     import: "プラグインをインポート",
     pluginId: "プラグイン ID: {{id}}",
     conflictTitle: "以下のツールが内蔵ツールと競合するため、インストールは拒否されます：",
@@ -167,6 +167,7 @@ export const jaSettings = {
     confirmInstall: "インストールを確認",
     noPlugins: "利用可能なプラグインがありません",
     emptyHint: "{{dir}} ディレクトリにプラグインを配置すると自動検出されます。「プラグインをインポート」で .zip をアップロードすることもできます。",
+    hint: "プラグインはアカウント単位の在庫です。有効にすると、そのツールを監督とサンドボックスから利用できます。ネットワーク権限を持つプラグインは、カード上でホストを個別に許可しない限り通信できません。",
     enabled: "有効",
     disabled: "無効",
     uninstallTitle: "プラグインをアンインストール",
@@ -192,23 +193,23 @@ export const jaSettings = {
 
   // ─── Skills tab ───
   skill: {
-    count: "skill ライブラリには {{n}} 個の skill があります",
-    import: "skill をインポート",
-    importHeading: "skill 「{{name}}」をインポート",
-    fileCount: "{{n}} 個のファイル。確認後、skill ライブラリに追加します",
+    count: "Skill ライブラリには {{n}} 個の Skill があります",
+    import: "Skill をインポート",
+    importHeading: "Skill 「{{name}}」をインポート",
+    fileCount: "{{n}} 個のファイル。確認後、Skill ライブラリに追加します",
     confirmImport: "インポートを確認",
-    emptyTitle: "skill ライブラリはまだ空です",
-    emptyHint: "インスタンス内の skill をライブラリへエクスポートするか、「skill をインポート」で .zip にパックした skill フォルダをアップロードしてください",
+    emptyTitle: "Skill ライブラリはまだ空です",
+    emptyHint: "インスタンス内の Skill をライブラリへエクスポートするか、「Skill をインポート」で .zip にパックした Skill フォルダをアップロードしてください",
     filesCount: "{{n}} 個のファイル",
     missingSkillMd: "SKILL.md がありません",
     download: "ダウンロード",
     delete: "削除",
-    hint: "ヒント：skill ライブラリはあなたの在庫です。インポートするか、インスタンスからエクスポートして保存します。特定のインスタンスに適用するには、そのインスタンス詳細で「skill を追加」して複製してください。",
+    hint: "Skill ライブラリはあなたの在庫です。インポートするか、インスタンスからエクスポートして保存します。特定のインスタンスに適用するには、そのインスタンス詳細で「Skill を追加」して複製してください。",
   },
 
   // ─── Packages tab ───
   pkg: {
-    count: "プロンプトパッケージライブラリには {{n}} 個のパッケージがあります",
+    count: "プロンプトパッケージライブラリには {{n}} 個のプロンプトパッケージがあります",
     import: "プロンプトパッケージをインポート",
     importHeading: "プロンプトパッケージ「{{name}}」をインポート",
     fileCount: "{{n}} 個のファイル。確認後、プロンプトパッケージライブラリに追加します",
@@ -220,7 +221,7 @@ export const jaSettings = {
     noReadme: " · README なし",
     download: "ダウンロード",
     delete: "削除",
-    hint: "ヒント：プロンプトパッケージライブラリはあなたの在庫です。特定のインスタンスに適用するには、そのインスタンスでインストール（インスタンスの packages/ に複製）してください。その後、アセンブラ/正文で @パッケージ名/パス の参照形式（外側の波括弧）で明示的に参照します。パッケージ名にはスペースとバージョン番号を含められます（例: `某人の修行設定 v1.01`）。",
+    hint: "プロンプトパッケージライブラリはあなたの在庫です。特定のインスタンスに適用するには、そのインスタンスでインストール（インスタンスの packages/ に複製）してください。その後、アセンブラ/正文で @パッケージ名/パス の参照形式（外側の波括弧）で明示的に参照します。パッケージ名にはスペースとバージョン番号を含められます（例: `某人の修行設定 v1.01`）。",
   },
 
   // ─── Delete confirmations ───
@@ -234,8 +235,8 @@ export const jaSettings = {
     pluginTitle: "プラグインをアンインストール",
     pluginMessage: "「{{name}}」をアンインストールしますか？この操作でプラグインの全ファイルとデータが削除されます。",
     uninstalling: "アンインストール中...",
-    skillTitle: "skill を削除",
-    skillMessage: "skill ライブラリから「{{name}}」を削除しますか？在庫からのみ削除され、インスタンスに複製済みのものには影響しません。",
+    skillTitle: "Skill を削除",
+    skillMessage: "Skill ライブラリから「{{name}}」を削除しますか？在庫からのみ削除され、インスタンスに複製済みのものには影響しません。",
     deleting: "削除中...",
     pkgTitle: "プロンプトパッケージを削除",
     pkgMessage: "プロンプトパッケージライブラリから「{{name}}」を削除しますか？在庫からのみ削除され、インスタンスに複製済みのものには影響しません。",

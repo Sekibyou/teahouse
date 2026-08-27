@@ -99,11 +99,11 @@ export const enWorkspace = {
       submit: "Export to library",
     },
     skill: {
-      title: "Export a Skill to the skill library",
-      desc: "Pick one skill from the current instance and copy it to your skill library (manageable in Settings > \"Skill management\", also enable-able in other instances).",
-      select: "Select a skill",
-      empty: "This instance has no entry that can be exported as a skill.",
-      ph: "Select a skill",
+      title: "Export a Skill to the Skill library",
+      desc: "Pick one Skill from the current instance and copy it to your Skill library (manageable in Settings > \"Skill management\", also enable-able in other instances).",
+      select: "Select a Skill",
+      empty: "This instance has no entry that can be exported as a Skill.",
+      ph: "Select a Skill",
       submit: "Export to library",
     },
     submit: "Export",
@@ -112,7 +112,7 @@ export const enWorkspace = {
   // 覆盖确认
   overwrite: {
     "title.package": "Overwrite prompt package",
-    "title.skill": "Overwrite skill",
+    "title.skill": "Overwrite Skill",
     lib: {
       package: "Prominent package library",
       skill: "Skill library",
@@ -123,6 +123,6 @@ export const enWorkspace = {
 
   // 错误回退文案
   exportFail: "Export failed",
-  skillLoadFail: "Failed to load skill list",
+  skillLoadFail: "Failed to load Skill list",
   packageLoadFail: "Failed to load prompt package list",
 }

@@ -387,7 +387,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
   return (
     <iframe
       ref={iframeRef}
-      className="w-full h-full border-0 bg-white dark:bg-neutral-900"
+      className="w-full h-full border-0 bg-white dark:bg-background"
       sandbox="allow-scripts"
       title="Teahouse Sandbox"
       srcDoc={srcdoc}

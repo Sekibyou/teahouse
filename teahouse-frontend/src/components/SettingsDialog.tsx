@@ -6,6 +6,7 @@ import {
   Sun, Moon, SlidersHorizontal, Puzzle, Upload, Power, PowerOff, Shield,
   BookOpen, Package, Users, Languages, ArrowUp,
 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -18,6 +19,7 @@ import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { llmProvidersApi, llmModelsApi, modelProfilesApi, llmSlotsApi, directorPromptPresetsApi, appSettingsApi, pluginsApi, skillsApi, packagesApi } from "@/lib/api"
 import type { LLMProvider, LLMModel, ModelProfile, SlotBindings, AvailableModel, SlotBinding, DirectorPromptPreset, AppSettings } from "@/lib/types"
 import { SlotCard } from "@/components/SlotCard"
+import { SavedBadge } from "@/components/SavedBadge"
 import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -37,6 +39,24 @@ interface SettingsDialogProps {
 }
 
 type TabKey = "models" | "profiles" | "presets" | "slots" | "general" | "plugins" | "skills" | "packages" | "users"
+
+/**
+ * 插件 / Skill / 提示词包三个库页共用的空状态。
+ * 用法说明（原先挂在页尾的那条 hint）作为 lines 的一部分只在空状态显示 —— 库里有东西时不再占版面。
+ */
+function LibraryEmptyState({ icon: Icon, title, lines }: { icon: LucideIcon; title: string; lines: string[] }) {
+  return (
+    <div className="text-center text-muted-foreground py-12">
+      <Icon className="h-12 w-12 mx-auto mb-3 opacity-20" />
+      <p className="text-sm">{title}</p>
+      <div className="mt-2 space-y-1.5 max-w-md mx-auto">
+        {lines.map((line, i) => (
+          <p key={i} className="text-xs opacity-60 leading-relaxed">{line}</p>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const API_FORMAT_OPTIONS = [
   { value: "openai", label: "openai" },
@@ -260,6 +280,13 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   const packagesLoadedRef = useRef(false)
   // 通用设置滑块即时生效的 debounce 计时器
   const settingSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 「已保存」绿标：按设置项 key 亮灯，各自独立倒计时
+  const [savedSettingKeys, setSavedSettingKeys] = useState<Set<string>>(new Set())
+  const savedFlashTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  useEffect(() => () => {
+    if (settingSaveTimer.current) clearTimeout(settingSaveTimer.current)
+    Object.values(savedFlashTimers.current).forEach(clearTimeout)
+  }, [])
   useEffect(() => {
     if (!open) return
     if (tab === "general" && !settingsLoadedRef.current) {
@@ -509,13 +536,37 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setSettingsLoading(false)
   }
 
+  const flashSaved = (keys: string[]) => {
+    setSavedSettingKeys((prev) => {
+      const next = new Set(prev)
+      keys.forEach((k) => next.add(k))
+      return next
+    })
+    keys.forEach((k) => {
+      const existing = savedFlashTimers.current[k]
+      if (existing) clearTimeout(existing)
+      savedFlashTimers.current[k] = setTimeout(() => {
+        setSavedSettingKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(k)
+          return next
+        })
+        delete savedFlashTimers.current[k]
+      }, 1600)
+    })
+  }
+
   // 滑块即时生效：本地先更新以保持拖拽手感，随后 debounce 推到后端。
+  // 写入成功后给对应项亮一枚「已保存」绿标，表明无需再找保存按钮。
   const setAppSetting = (patch: Partial<AppSettings>) => {
     setAppSettings((prev) => ({ ...prev, ...patch }))
     if (settingSaveTimer.current) clearTimeout(settingSaveTimer.current)
     settingSaveTimer.current = setTimeout(async () => {
       const res = await appSettingsApi.update(patch)
-      if (res.ok) setAppSettings(res.data!)
+      if (res.ok) {
+        setAppSettings(res.data!)
+        flashSaved(Object.keys(patch))
+      }
     }, 250)
   }
 
@@ -1586,9 +1637,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     <>
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium">
-                            {t("general.maxRetries")}
-                          </label>
+                          <div className="flex items-center justify-between gap-2 min-h-5">
+                            <label className="text-sm font-medium">
+                              {t("general.maxRetries")}
+                            </label>
+                            <SavedBadge show={savedSettingKeys.has("max_retries")} />
+                          </div>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxRetriesDesc")}
                           </p>
@@ -1618,9 +1672,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium">
-                            {t("general.maxToolRounds")}
-                          </label>
+                          <div className="flex items-center justify-between gap-2 min-h-5">
+                            <label className="text-sm font-medium">
+                              {t("general.maxToolRounds")}
+                            </label>
+                            <SavedBadge show={savedSettingKeys.has("max_tool_rounds")} />
+                          </div>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxToolRoundsDesc")}
                           </p>
@@ -1650,9 +1707,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
                       <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
-                          <label className="text-sm font-medium">
-                            {t("general.maxParseDepth")}
-                          </label>
+                          <div className="flex items-center justify-between gap-2 min-h-5">
+                            <label className="text-sm font-medium">
+                              {t("general.maxParseDepth")}
+                            </label>
+                            <SavedBadge show={savedSettingKeys.has("max_parse_depth")} />
+                          </div>
                           <p className="text-xs text-muted-foreground mt-1">
                             {t("general.maxParseDepthDesc")}
                           </p>
@@ -1694,7 +1754,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   <div className="p-5 space-y-6">
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
-                        {t("plugin.foundCount", { n: plugins.length })}
+                        {t("plugin.count", { n: plugins.length })}
                       </p>
                       <div>
                         <input
@@ -1809,11 +1869,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     )}
 
                     {plugins.length === 0 ? (
-                      <div className="text-center text-muted-foreground py-12">
-                        <Puzzle className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">{t("plugin.noPlugins")}</p>
-                        <p className="text-xs mt-1 opacity-60">{t("plugin.emptyHint", { dir: `data/{用户名}/plugins/` })}</p>
-                      </div>
+                      <LibraryEmptyState
+                        icon={Puzzle}
+                        title={t("plugin.noPlugins")}
+                        lines={[t("plugin.emptyHint", { dir: "data/<user>/plugins/" }), t("plugin.hint")]}
+                      />
                     ) : (
                       <div className="space-y-4">
                         {plugins.map((p) => (
@@ -2058,13 +2118,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     )}
 
                     {mySkills.length === 0 ? (
-                      <div className="text-center text-muted-foreground py-12">
-                        <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">{t("skill.emptyTitle")}</p>
-                        <p className="text-xs mt-1 opacity-60">
-                          {t("skill.emptyHint")}
-                        </p>
-                      </div>
+                      <LibraryEmptyState
+                        icon={BookOpen}
+                        title={t("skill.emptyTitle")}
+                        lines={[t("skill.emptyHint"), t("skill.hint")]}
+                      />
                     ) : (
                       <div className="space-y-4">
                         {mySkills.map((s) => (
@@ -2101,10 +2159,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         ))}
                       </div>
                     )}
-
-                    <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
-                      {t("skill.hint")}
-                    </div>
                   </div>
                 )
               )}
@@ -2171,13 +2225,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     )}
 
                     {myPackages.length === 0 ? (
-                      <div className="text-center text-muted-foreground py-12">
-                        <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p className="text-sm">{t("pkg.emptyTitle")}</p>
-                        <p className="text-xs mt-1 opacity-60">
-                          {t("pkg.emptyHint")}
-                        </p>
-                      </div>
+                      <LibraryEmptyState
+                        icon={Package}
+                        title={t("pkg.emptyTitle")}
+                        lines={[t("pkg.emptyHint"), t("pkg.hint")]}
+                      />
                     ) : (
                       <div className="space-y-4">
                         {myPackages.map((p) => (
@@ -2215,10 +2267,6 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         ))}
                       </div>
                     )}
-
-                    <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
-                      {t("pkg.hint")}
-                    </div>
                   </div>
                 )
               )}

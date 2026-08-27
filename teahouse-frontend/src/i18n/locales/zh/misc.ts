@@ -80,8 +80,7 @@ export const zhMisc = {
     model: "模型",
     profile: "参数预设",
     preset: "导演提示词预设",
-    selectModelFirst: "请先选择一个模型",
-    slotSaved: "{{label}} 槽位已保存",
+    noModel: "未选择模型",
     saveFailed: "保存失败",
   },
   layout: {

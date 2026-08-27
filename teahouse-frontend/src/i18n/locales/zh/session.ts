@@ -67,7 +67,7 @@ export const zhSession = {
   noReadmeProto: "该原型没有 README 介绍。",
   noReadmeInstance: "此实例没有关联的原型介绍。",
   builtin: "内置",
-  manageSkills: "管理 Skill（从你的 skill 库启用）",
+  manageSkills: "管理 Skill（从你的 Skill 库启用）",
   manageSkillsShort: "管理 Skill",
   managePackages: "管理提示词包（从你的包库启用）",
   managePackagesShort: "管理提示词包",
@@ -85,17 +85,17 @@ export const zhSession = {
   // Skill 管理
   skill: {
     manage: "Skill 管理",
-    enableFor: "为「{{name}}」启用或移除 skill",
-    enabledTitle: "该实例已启用的 skill",
-    noEnabled: "尚未启用任何 skill",
-    addFrom: "从你的 skill 库添加",
-    libEmpty: "你的 skill 库还是空的，可先在设置页「Skill 管理」导入，或在实例里导出。",
+    enableFor: "为「{{name}}」启用或移除 Skill",
+    enabledTitle: "该实例已启用的 Skill",
+    noEnabled: "尚未启用任何 Skill",
+    addFrom: "从你的 Skill 库添加",
+    libEmpty: "你的 Skill 库还是空的，可先在设置页「Skill 管理」导入，或在实例里导出。",
     enable: {
       fail: "启用失败",
     },
     remove: {
-      title: "移除 skill",
-      message: "确定移除「{{name}}」吗？这只会从该实例删除，你的 skill 库里仍保留。",
+      title: "移除 Skill",
+      message: "确定移除「{{name}}」吗？这只会从该实例删除，你的 Skill 库里仍保留。",
       fail: "移除失败",
     },
   },
