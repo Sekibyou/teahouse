@@ -136,7 +136,7 @@ export const zhSettings = {
     switchLight: "切换日间模式",
     switchDark: "切换夜间模式",
     language: "语言",
-    languageDesc: "切换界面语言（English 为占位验收，暂无翻译会显示 key）。",
+    languageDesc: "切换界面语言",
     maxRetries: "LLM 请求最大重试次数",
     maxRetriesDesc: "网络波动时自动重试 LLM API 请求。不重试业务错误（4xx/5xx）。设为 0 则禁用重试。",
     maxToolRounds: "单轮最大调用次数",

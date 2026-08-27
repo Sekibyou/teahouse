@@ -816,18 +816,18 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   return (
     <>
       <div
-        className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-background/70 backdrop-blur-lg flex items-center justify-center"}`}
+        className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/50 backdrop-blur-sm flex items-center justify-center"}`}
         onClick={onClose}
       >
         <div
           className={`flex flex-col overflow-hidden ${isMobile
             ? "h-full w-full"
-            : "bg-background rounded-lg shadow-xl"
+            : "bg-card border border-border rounded-xl shadow-2xl"
           }`}
           style={
             isMobile
               ? undefined
-              : { width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }
+              : { width: "min(92vw, 1100px)", height: "min(88vh, 760px)", maxWidth: 1100, maxHeight: 760 }
           }
           onClick={e => e.stopPropagation()}
         >
@@ -1469,9 +1469,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
               {/* ── Tab 5: General Settings ── */}
               {tab === "general" && (
-                <div className="p-5 space-y-6">
-                  <div className="rounded-lg border p-4">
-                    <div className="flex items-center justify-between">
+                <div className={isMobile ? "p-5 space-y-6" : "p-5 columns-2 gap-5"}>
+                  <div className="rounded-lg border p-4 mb-5 break-inside-avoid">
+                    <div className="flex flex-col gap-3">
                       <div>
                         <div className="text-sm font-medium">{t("general.appearance")}</div>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -1482,7 +1482,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         variant="outline"
                         size="sm"
                         onClick={() => setTheme(!isDark)}
-                        className="gap-1.5"
+                        className="gap-1.5 self-start"
                       >
                         {isDark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
                         {isDark ? t("general.switchLight") : t("general.switchDark")}
@@ -1490,8 +1490,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     </div>
                   </div>
 
-                  <div className="rounded-lg border p-4">
-                    <div className="flex items-center justify-between">
+                  <div className="rounded-lg border p-4 mb-5 break-inside-avoid">
+                    <div className="flex flex-col gap-3">
                       <div>
                         <div className="text-sm font-medium flex items-center gap-1.5">
                           <Languages className="h-3.5 w-3.5" />
@@ -1516,8 +1516,8 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                     </div>
                   </div>
 
-                  <div className="rounded-lg border p-4">
-                    <div className="flex items-center justify-between gap-3">
+                  <div className="rounded-lg border p-4 mb-5 break-inside-avoid">
+                    <div className="flex flex-col gap-3">
                       <div className="min-w-0 space-y-1">
                         <div className="text-sm font-medium flex items-center gap-1.5">
                           <Download className="h-3.5 w-3.5" />
@@ -1540,7 +1540,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       <Button
                         variant={newVersion.hasUpdate ? "default" : "outline"}
                         size="sm"
-                        className="gap-1.5 shrink-0"
+                        className="gap-1.5 shrink-0 self-start"
                         onClick={() => window.open(newVersion.url, "_blank", "noopener,noreferrer")}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -1550,12 +1550,12 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                   </div>
 
                   {settingsLoading ? (
-                    <div className="flex items-center justify-center py-12">
+                    <div className="flex items-center justify-center py-12 break-inside-avoid">
                       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="rounded-lg border p-4 space-y-4">
+                    <>
+                      <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
                           <label className="text-sm font-medium flex items-center justify-between">
                             <span>{t("general.maxRetries")}</span>
@@ -1590,7 +1590,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         </div>
                       </div>
 
-                      <div className="rounded-lg border p-4 space-y-4">
+                      <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
                           <label className="text-sm font-medium flex items-center justify-between">
                             <span>{t("general.maxToolRounds")}</span>
@@ -1625,7 +1625,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                         </div>
                       </div>
 
-                      <div className="rounded-lg border p-4 space-y-4">
+                      <div className="rounded-lg border p-4 space-y-4 mb-5 break-inside-avoid">
                         <div>
                           <label className="text-sm font-medium flex items-center justify-between">
                             <span>{t("general.maxParseDepth")}</span>
@@ -1659,7 +1659,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
               )}

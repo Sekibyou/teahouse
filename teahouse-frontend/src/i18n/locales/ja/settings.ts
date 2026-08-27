@@ -136,7 +136,7 @@ export const jaSettings = {
     switchLight: "ライトモードへ切り替え",
     switchDark: "ダークモードへ切り替え",
     language: "言語",
-    languageDesc: "インターフェース言語を切り替えます（English は受け入れ確認用の仮実装で、未翻訳の key はそのまま表示されます）。",
+    languageDesc: "インターフェース言語を切り替えます",
     maxRetries: "LLM リクエスト最大リトライ回数",
     maxRetriesDesc: "ネットワーク変動時に LLM API リクエストを自動リトライします。ビジネスエラー（4xx/5xx）はリトライしません。0 でリトライを無効化。",
     maxToolRounds: "1 ラウンドあたりの最大呼び出し回数",

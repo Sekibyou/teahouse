@@ -136,7 +136,7 @@ export const enSettings = {
     switchLight: "Switch to light mode",
     switchDark: "Switch to dark mode",
     language: "Language",
-    languageDesc: "Change the UI language (English is an acceptance placeholder; untranslated keys are shown as-is).",
+    languageDesc: "Change the UI language",
     maxRetries: "Max LLM request retries",
     maxRetriesDesc: "Automatically retry LLM API requests on network fluctuations. Business errors (4xx/5xx) are not retried. Set to 0 to disable retries.",
     maxToolRounds: "Max calls per round",
