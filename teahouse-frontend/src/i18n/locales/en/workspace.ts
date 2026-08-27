@@ -59,6 +59,8 @@ export const enWorkspace = {
     cut: "Cut",
     paste: "Paste",
     copiedPath: "Instance path copied",
+    copied: "Copied \"{{name}}\"",
+    pasted: "Pasted/moved \"{{name}}\"",
     copySuffix: " (copy)",
     cutActive: "Cut \"{{name}}\" — right-click a target to paste",
   },

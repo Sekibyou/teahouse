@@ -59,6 +59,8 @@ export const zhWorkspace = {
     cut: "剪切",
     paste: "粘贴",
     copiedPath: "已复制实例内路径",
+    copied: "已复制「{{name}}」",
+    pasted: "已粘贴/移动「{{name}}」",
     copySuffix: " (copy)",
     cutActive: "已剪切「{{name}}」，右键目标位置粘贴",
   },

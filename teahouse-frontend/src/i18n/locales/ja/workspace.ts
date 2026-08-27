@@ -59,6 +59,8 @@ export const jaWorkspace = {
     cut: "切り取り",
     paste: "貼り付け",
     copiedPath: "インスタンス内パスをコピーしました",
+    copied: "「{{name}}」をコピーしました",
+    pasted: "「{{name}}」を貼り付け/移動しました",
     copySuffix: "_コピー",
     cutActive: "「{{name}}」を切り取りました。貼り付け先を右クリックしてください",
   },

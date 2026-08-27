@@ -5,12 +5,12 @@ import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
 import {
   File, Folder, FolderOpen, Plus, Trash2, Loader2,
-  ChevronRight, ChevronDown, Save, FileText,
+  ChevronLeft, ChevronRight, ChevronDown, Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
   MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
   GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
   Eye, Code2, Users, Languages,
-  ClipboardCopy, ClipboardPaste, Scissors,
+  ClipboardCopy, ClipboardPaste, Scissors, EllipsisVertical,
 } from "lucide-react"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
@@ -110,7 +110,12 @@ export function WorkspacePage() {
   const dragBadgeRef = useRef<HTMLDivElement | null>(null)
   const dropTargetRef = useRef<string | null>(null)
   const moveInFlightRef = useRef(false)
-  const dragContainerRef = useRef<HTMLDivElement | null>(null)
+  // "Current active tree container" — desktop sidebar or mobile overlay, whichever
+  // is mounted right now (isMobile is session-locked, so only one holds it).
+  const dragContainerEl = useRef<HTMLDivElement | null>(null)
+  // Set once a long-press arms a move; consumed (cleared) once by the row onClick
+  // so a pointer release can't synthesize a toggle/select after a real drag.
+  const dragWasActiveRef = useRef(false)
 
   // ---- Clipboard for copy / cut / paste (ContextMenu on the file tree) ----
   // Stores the copied/cut entry. `path` is the frontend root/... form; the
@@ -118,16 +123,22 @@ export function WorkspacePage() {
   const [clipboard, setClipboard] = useState<{ path: string; cut: boolean; type: "file" | "directory"; name: string } | null>(null)
   // Blank-area right-click menu (root operations). Positioned at the cursor.
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
+  // Mobile per-node "⋯" menu (fixed-position, rootMenu-style). Positioned at the icon.
+  const [treeMenu, setTreeMenu] = useState<{ node: { path: string; type: "file" | "directory"; name: string }; x: number; y: number } | null>(null)
   // System-file drag-in (from OS file manager) in progress. target = dir it
   // will land in (a directory path, or ROOT for the empty area). Only desktop.
   const [externalDrop, setExternalDrop] = useState<{ target: string } | null>(null)
   const clearDrag = useCallback(() => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
     dragArmedRef.current = false
+    dragWasActiveRef.current = false
     dragSrcRef.current = null
     dragPosRef.current = null
     dragBadgeRef.current = null
     dropTargetRef.current = null
+    // Always restore scrollability — even if no drag was armed — so no code path
+    // can leave the tree permanently locked to touch-action:none.
+    if (dragContainerEl.current) dragContainerEl.current.style.touchAction = ""
     setDragInfo(null)
     setDropTargetPath(null)
   }, [])
@@ -163,6 +174,10 @@ export function WorkspacePage() {
 
   // Export prototype state
   const [showExportDialog, setShowExportDialog] = useState(false)
+  // System back closes the mobile file-tree drawer and the export panel one level
+  // at a time (nested with director above), instead of jumping straight home.
+  useDialogBackClose(showFileTree, () => setShowFileTree(false))
+  useDialogBackClose(showExportDialog, () => setShowExportDialog(false))
   const [exportType, setExportType] = useState<"prototype" | "skill" | "package">("prototype")
   const [exportName, setExportName] = useState("")
   const [exportDescription, setExportDescription] = useState("")
@@ -267,14 +282,15 @@ export function WorkspacePage() {
     setExternalDrop(null)
   }, [instId])
 
-  // Esc closes the blank-area root context menu.
+  // Esc closes the blank-area root context menu / mobile per-node menu.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && rootMenu) setRootMenu(null)
+      if (e.key === "Escape" && treeMenu) setTreeMenu(null)
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [rootMenu])
+  }, [rootMenu, treeMenu])
 
   // Ctrl+S to save
   useEffect(() => {
@@ -648,7 +664,8 @@ export function WorkspacePage() {
 
   const copyEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
     setClipboard({ path, cut: false, type, name })
-  }, [])
+    toast.success(t("clipboard.copied", { name }))
+  }, [t])
 
   const cutEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
     setClipboard({ path, cut: true, type, name })
@@ -740,13 +757,14 @@ export function WorkspacePage() {
       }
       setClipboard(null)
       await refresh()
+      toast.success(t("clipboard.pasted", { name: clip.name }))
       return
     }
 
     // copy (non-destructive) — dedupe the destination name
     const destPath = uniquePath(target, clip.name)
     const ok = await duplicateEntry(clip.path, destPath, clip.type)
-    if (ok) await refresh()
+    if (ok) { await refresh(); toast.success(t("clipboard.pasted", { name: clip.name })) }
     else toast.error(t("common:failed"))
   }, [clipboard, instId, parentOf, selectedFile, uniquePath, duplicateEntry, refresh, t])
 
@@ -782,7 +800,9 @@ export function WorkspacePage() {
   [],)
 
   const onFileTreePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Tree drag & drop is desktop-only. Mobile moves via the ⋯ menu (cut → paste).
     if (isMobile) return
+    // Mouse responds to left button only.
     if (e.button !== 0) return
     const el = (e.target as HTMLElement).closest("[data-path]") as HTMLElement | null
     if (!el) return
@@ -792,6 +812,7 @@ export function WorkspacePage() {
     // NOTE: no setPointerCapture here — it would redirect the pointer sequence's
     // synthesized click to the container and break node on-click interactions.
     dragArmedRef.current = false
+    dragWasActiveRef.current = false
     dragSrcRef.current = { path, type, name: path.split("/").pop() || path }
     dragPosRef.current = { x: e.clientX, y: e.clientY }
     dropTargetRef.current = null
@@ -800,6 +821,7 @@ export function WorkspacePage() {
       longPressTimerRef.current = null
       // Long-press complete → enter dragging, even before any movement.
       dragArmedRef.current = true
+      dragWasActiveRef.current = true
       const src = dragSrcRef.current!
       const pos = dragPosRef.current!
       if (pos) {
@@ -809,7 +831,6 @@ export function WorkspacePage() {
   }, [isMobile])
 
   const onFileTreePointerMove = useCallback((e: PointerEvent) => {
-    if (isMobile) return
     // While the long-press is still pending, moving past ~6px cancels it
     // (a normal click or fast slide should not start a drag).
     if (!dragArmedRef.current) {
@@ -837,7 +858,7 @@ export function WorkspacePage() {
     const hitEl = document.elementFromPoint(e.clientX, e.clientY)
     let dest = resolveDropTarget(e.clientX, e.clientY)
     if (!dest) dest = snapDropTarget(e.clientX, e.clientY)
-    const container = dragContainerRef.current
+    const container = dragContainerEl.current
     const inContainer = !!hitEl && (container === hitEl || container?.contains(hitEl))
     if (!dest && inContainer) {
       dest = ROOT
@@ -849,10 +870,9 @@ export function WorkspacePage() {
       dropTargetRef.current = final
       setDropTargetPath(final)
     }
-  }, [isMobile, resolveDropTarget, snapDropTarget, isInvalidTarget])
+  }, [resolveDropTarget, snapDropTarget, isInvalidTarget])
 
   const onFileTreePointerUp = useCallback(() => {
-    if (isMobile) return
     const src = dragSrcRef.current
     const dest = dropTargetRef.current
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null }
@@ -860,18 +880,16 @@ export function WorkspacePage() {
       commitMove(src.path, dest)
     }
     clearDrag()
-  }, [isMobile, isInvalidTarget, commitMove, clearDrag])
+  }, [isInvalidTarget, commitMove, clearDrag])
 
   const onFileTreePointerCancel = useCallback(() => {
-    if (isMobile) return
     clearDrag()
-  }, [isMobile, clearDrag])
+  }, [clearDrag])
 
   // Watch pointer move/up/cancel at window scope so a drag that leaves the tree
   // container still resolves (and never corrupts the browser's click synthesis,
   // which is why we avoid setPointerCapture).
   useEffect(() => {
-    if (isMobile) return
     window.addEventListener("pointermove", onFileTreePointerMove)
     window.addEventListener("pointerup", onFileTreePointerUp)
     window.addEventListener("pointercancel", onFileTreePointerCancel)
@@ -880,7 +898,7 @@ export function WorkspacePage() {
       window.removeEventListener("pointerup", onFileTreePointerUp)
       window.removeEventListener("pointercancel", onFileTreePointerCancel)
     }
-  }, [isMobile, onFileTreePointerMove, onFileTreePointerUp, onFileTreePointerCancel])
+  }, [onFileTreePointerMove, onFileTreePointerUp, onFileTreePointerCancel])
 
   // When the follow badge mounts (drag starts), place it at the current pointer
   // before it would otherwise sit at left:0/top:0. Subsequent movement is driven
@@ -955,6 +973,99 @@ export function WorkspacePage() {
   // Chat panel resize via drag
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Drag-follow badge (shared by desktop + mobile return trees). pointer-events:none
+  // so it never intercepts elementFromPoint probes. Positioned via translate()
+  // written straight to the DOM (dragBadgeRef) in onFileTreePointerMove.
+  const dragBadgeEl = dragInfo && (
+    <div
+      ref={dragBadgeRef}
+      className="pointer-events-none fixed left-0 top-0 z-[9999] flex items-center gap-2 rounded-md bg-blue-600/60 px-3 py-1.5 text-xs font-medium text-white shadow-lg will-change-transform"
+    >
+      {dragInfo.srcType === "directory"
+        ? <Folder className="h-3.5 w-3.5 shrink-0" />
+        : <FileText className="h-3.5 w-3.5 shrink-0" />}
+      <span className="max-w-64 truncate">{dragInfo.name}</span>
+    </div>
+  )
+
+  // Mobile per-node "⋯" menu — fixed-position (treeMenu-style), anchored at the
+  // clicked icon. Items mirror the desktop ContextMenu on the same node.
+  // Shared by desktop + mobile return trees.
+  const treeMenuEl = treeMenu && (
+    <>
+      <div className="fixed inset-0 z-[70]" onClick={() => setTreeMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTreeMenu(null) }} />
+      <div
+        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto max-h-[calc(100vh-16px)]"
+        style={
+          (() => {
+            const right = Math.max(8, window.innerWidth - treeMenu.x)
+            // Below the anchor is usually ~360px of menu; if there isn't room on
+            // screen, open upward instead of overflowing off the bottom edge.
+            const spaceBelow = window.innerHeight - treeMenu.y
+            return spaceBelow >= 380
+              ? { top: treeMenu.y, right }
+              : { bottom: Math.max(8, window.innerHeight - treeMenu.y), right }
+          })()
+        }
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {(() => {
+          const node = treeMenu.node
+          // Directory → operations land inside it; file → its parent dir.
+          const opTarget = node.type === "directory" ? node.path : parentOf(node.path)
+          const itemCls = "relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-2.5 text-sm outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
+          const disabledCls = "pointer-events-none opacity-50"
+          return (
+            <>
+              <button className={itemCls} onClick={() => { setShowCreate({ parentPath: opTarget, type: "file" }); setCreateName(""); setTreeMenu(null) }}>
+                <Plus className="h-4 w-4 shrink-0" />
+                {t("create.fileTitle")}
+              </button>
+              <button className={itemCls} onClick={() => { setShowCreate({ parentPath: opTarget, type: "directory" }); setCreateName(""); setTreeMenu(null) }}>
+                <Folder className="h-4 w-4 shrink-0" />
+                {t("create.folderTitle")}
+              </button>
+              <button className={itemCls} onClick={() => { handleUploadClick(opTarget); setTreeMenu(null) }}>
+                <Upload className="h-4 w-4 shrink-0" />
+                {t("uploadToHere")}
+              </button>
+              <div className="-mx-1 my-1 h-px bg-border" />
+              <button className={itemCls} onClick={() => { copyPathEntry(node.path); setTreeMenu(null) }}>
+                <ClipboardCopy className="h-4 w-4 shrink-0" />
+                {t("clipboard.copyPath")}
+              </button>
+              <button className={itemCls} onClick={() => { copyEntry(node.path, node.type, node.name); setTreeMenu(null) }}>
+                <ClipboardCopy className="h-4 w-4 shrink-0" />
+                {t("clipboard.copy")}
+              </button>
+              <button className={itemCls} onClick={() => { cutEntry(node.path, node.type, node.name); setTreeMenu(null) }}>
+                <Scissors className="h-4 w-4 shrink-0" />
+                {t("clipboard.cut")}
+              </button>
+              <button
+                className={`${itemCls} ${!clipboard ? disabledCls : ""}`}
+                disabled={!clipboard}
+                onClick={() => { pasteEntry(opTarget); setTreeMenu(null) }}
+              >
+                <ClipboardPaste className="h-4 w-4 shrink-0" />
+                {t("clipboard.paste")}
+              </button>
+              <div className="-mx-1 my-1 h-px bg-border" />
+              <button className={itemCls} onClick={() => { handleRenameEntry(node.path); setTreeMenu(null) }}>
+                <Pencil className="h-4 w-4 shrink-0" />
+                {t("rename.title")}
+              </button>
+              <button className={`${itemCls} text-destructive hover:bg-destructive/10 hover:text-destructive`} onClick={() => { handleDeleteEntry(node.path); setTreeMenu(null) }}>
+                <Trash2 className="h-4 w-4 shrink-0" />
+                {t("common:delete")}
+              </button>
+            </>
+          )
+        })()}
+      </div>
+    </>
+  )
 
   const handleDragStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
@@ -1206,15 +1317,18 @@ export function WorkspacePage() {
                   {activeInstance.name}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => handleUploadClick("")} title={t("uploadToRoot")}>
-                    <Upload className="h-4 w-4" />
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => openExportDialog("prototype")} title={t("export.titleBar")}>
+                    <Archive className="h-4 w-4" />
                   </button>
                   <button className="p-1.5 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
                     <X className="h-4 w-4" />
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto py-1 select-none">
+              <div
+                className="flex-1 overflow-auto py-1 select-none"
+                onContextMenu={(e) => e.preventDefault()}
+              >
                 {isLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1236,6 +1350,17 @@ export function WorkspacePage() {
                     onUpload={handleUploadClick}
                     fileStatuses={fileStatusesRoot}
                     isMobile
+                    isDragging={dragInfo !== null || externalDrop !== null}
+                    dropTargetPath={externalDrop ? externalDrop.target : dropTargetPath}
+                    dragSource={dragInfo?.srcPath ?? null}
+                    clipboard={clipboard}
+                    cutSource={clipboard?.cut ? clipboard.path : null}
+                    onCopyPath={copyPathEntry}
+                    onCopy={copyEntry}
+                    onCut={cutEntry}
+                    onPaste={pasteEntry}
+                    dragWasActiveRef={dragWasActiveRef}
+                    onOpenTreeMenu={(node, x, y) => setTreeMenu({ node, x, y })}
                   />
                 )}
               </div>
@@ -1317,10 +1442,22 @@ export function WorkspacePage() {
           onCancel={() => setDeleteTarget(null)}
         />
 
-        {/* Export prototype / skill dialog */}
+        {/* Export prototype / skill dialog (fullscreen panel on mobile) */}
         {showExportDialog && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
-            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-50 bg-background flex flex-col">
+            {/* Fullscreen panel nav — ChevronLeft back on mobile */}
+            <div className="h-10 border-b border-border flex items-center gap-1 px-1 shrink-0">
+              <button
+                className="p-2 rounded-md hover:bg-muted shrink-0"
+                onClick={() => setShowExportDialog(false)}
+                title={t("common:cancel")}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="flex-1 text-sm font-medium text-center truncate">{t("export.titleBar")}</span>
+              <span className="w-9 shrink-0" />
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" onClick={e => e.stopPropagation()}>
 
               {/* Type toggle */}
               <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
@@ -1465,6 +1602,9 @@ export function WorkspacePage() {
             </div>
           </div>
         )}
+
+        {dragBadgeEl}
+        {treeMenuEl}
       </div>
     )
   }
@@ -1480,21 +1620,7 @@ export function WorkspacePage() {
         className="hidden"
         onChange={handleUploadChange}
       />
-      {/* Drag-follow badge (desktop file-tree DnD). pointer-events:none so it
-          never intercepts elementFromPoint probes while hovering targets.
-          Positioned via translate() written straight to the DOM (dragBadgeRef)
-          in onFileTreePointerMove — no React re-render while dragging. */}
-      {dragInfo && (
-        <div
-          ref={dragBadgeRef}
-          className="pointer-events-none fixed left-0 top-0 z-[9999] flex items-center gap-2 rounded-md bg-blue-600/60 px-3 py-1.5 text-xs font-medium text-white shadow-lg will-change-transform"
-        >
-          {dragInfo.srcType === "directory"
-            ? <Folder className="h-3.5 w-3.5 shrink-0" />
-            : <FileText className="h-3.5 w-3.5 shrink-0" />}
-          <span className="max-w-64 truncate">{dragInfo.name}</span>
-        </div>
-      )}
+      {dragBadgeEl}
 
       {/* Left/center area — file tree + editor (backstage) OR output panel (play).
           Both are always mounted to keep SSE connections alive; hidden via CSS. */}
@@ -1519,7 +1645,7 @@ export function WorkspacePage() {
             </div>
 
             <div
-              ref={dragContainerRef}
+              ref={(el) => { if (!isMobile) dragContainerEl.current = el }}
               className={`flex-1 overflow-auto py-1 select-none relative ${
                 ((externalDrop !== null) || dragInfo !== null) && (externalDrop ? externalDrop.target : dropTargetPath) === ROOT
                   ? "ring-2 ring-inset ring-accent" : ""
@@ -1533,12 +1659,12 @@ export function WorkspacePage() {
                 e.dataTransfer.dropEffect = "copy"
                 let t = resolveDropTarget(e.clientX, e.clientY)
                 if (!t) t = snapDropTarget(e.clientX, e.clientY)
-                if (t == null && dragContainerRef.current?.contains(e.target as Node)) t = ROOT
+                if (t == null && dragContainerEl.current?.contains(e.target as Node)) t = ROOT
                 setExternalDrop(prev => (prev?.target === t ? prev : { target: t ?? ROOT }))
               }}
               onDragLeave={(e) => {
                 if (isMobile) return
-                if (!dragContainerRef.current?.contains(e.relatedTarget as Node)) setExternalDrop(null)
+                if (!dragContainerEl.current?.contains(e.relatedTarget as Node)) setExternalDrop(null)
               }}
               onDrop={(e) => {
                 if (isMobile) return
@@ -1763,6 +1889,8 @@ export function WorkspacePage() {
           </div>
         </>
       )}
+
+      {treeMenuEl}
 
       {/* Create Dialog */}
       {showCreate && (
@@ -2003,6 +2131,7 @@ function FileTreeView({
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
   isDragging = false, dropTargetPath = null, dragSource = null,
   clipboard = null, cutSource = null, onCopyPath, onCopy, onCut, onPaste,
+  dragWasActiveRef, onOpenTreeMenu,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
@@ -2026,6 +2155,8 @@ function FileTreeView({
   onCopy?: (path: string, type: "file" | "directory", name: string) => void
   onCut?: (path: string, type: "file" | "directory", name: string) => void
   onPaste?: (targetParent: string) => void
+  dragWasActiveRef?: React.MutableRefObject<boolean>
+  onOpenTreeMenu?: (node: { path: string; type: "file" | "directory"; name: string }, x: number, y: number) => void
 }) {
   const { t } = useTranslation("workspace")
   // Parent directory of a frontend path ("" = root).
@@ -2059,19 +2190,26 @@ function FileTreeView({
           }
         >
           {isMobile ? (
-            /* 移动端：保留原 hover 按钮 */
+            /* 移动端：常驻 ⋯ 菜单按钮（点击弹 treeMenu）替代无效的 hover 按钮。
+               长按 = 拖拽移动（onFileTreePointerDown）。 */
             <div
               data-path={node.path}
               data-type={node.type}
               className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-3 ${
                 selectedFile === node.path ? "bg-accent" : ""
               } ${
-                isDragging ? "" : "hover:bg-muted/50"
+                isDragging ? "" : ""
               } ${
                 isDragging && dragSource === node.path ? "opacity-40" : ""
+              } ${
+                cutSource === node.path ? "opacity-40" : ""
               }`}
               style={{ paddingLeft: `${8 + depth * 16}px` }}
               onClick={() => {
+                // Consume the once-set flag so a drag release can't accidentally
+                // toggle/select the node under the release point.  (Cleared by the
+                // click that follows a completed drag; clearDrag is the fallback.)
+                if (dragWasActiveRef?.current) { dragWasActiveRef.current = false; return }
                 if (node.type === "directory") {
                   onToggle(node.path)
                 } else {
@@ -2101,48 +2239,19 @@ function FileTreeView({
               )}
               <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
 
-              {/* Action buttons — visible on hover (hidden while dragging) */}
-              <div className={`${isDragging ? "hidden" : "hidden group-hover:flex"} items-center gap-0.5 shrink-0`}>
-                {node.type === "directory" && (
-                  <>
-                    <button
-                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                      onClick={e => { e.stopPropagation(); onCreateFile(node.path) }}
-                      title={t("create.fileTitle")}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                    <button
-                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                      onClick={e => { e.stopPropagation(); onCreateFolder(node.path) }}
-                      title={t("create.folderTitle")}
-                    >
-                      <Folder className="h-3 w-3" />
-                    </button>
-                    <button
-                      className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                      onClick={e => { e.stopPropagation(); onUpload(node.path) }}
-                      title={t("uploadToHere")}
-                    >
-                      <Upload className="h-3 w-3" />
-                    </button>
-                  </>
-                )}
-                <button
-                  className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={e => { e.stopPropagation(); onRename(node.path) }}
-                  title={t("rename.title")}
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-                <button
-                  className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-red-500 cursor-pointer"
-                  onClick={e => { e.stopPropagation(); onDelete(node.path) }}
-                  title={t("common:delete")}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
+              {/* ⋯ menu button — always visible on touch (no hover). ≥44px target. */}
+              <button
+                className="shrink-0 flex items-center justify-center w-11 h-11 -mr-2 rounded-md hover:bg-muted active:bg-muted cursor-pointer text-muted-foreground"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  onOpenTreeMenu?.({ path: node.path, type: node.type, name: node.name }, r.right - 8, r.bottom)
+                }}
+                title={t("fileTreeTitle")}
+                aria-haspopup="menu"
+              >
+                <EllipsisVertical className="h-4 w-4" />
+              </button>
             </div>
           ) : (
             /* 桌面端：右键菜单替代 hover 按钮。ContextMenuTrigger 经 render 注入
@@ -2265,6 +2374,8 @@ function FileTreeView({
               onCopy={onCopy}
               onCut={onCut}
               onPaste={onPaste}
+              dragWasActiveRef={dragWasActiveRef}
+              onOpenTreeMenu={onOpenTreeMenu}
             />
             )}
           </div>
