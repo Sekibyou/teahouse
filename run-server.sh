@@ -12,8 +12,7 @@ cd "$SCRIPT_DIR"
 if [ "${1:-}" = "--build" ]; then
     echo "[run-server] Building frontend..."
     cd "$SCRIPT_DIR/teahouse-frontend"
-    pnpm build
-    if [ $? -ne 0 ]; then
+    if ! pnpm build; then
         echo "[run-server] Frontend build failed, aborting."
         exit 1
     fi
