@@ -24,6 +24,10 @@ export const jaLogin = {
   loginRequired: "ユーザー名とパスワードを入力してください",
   registerRequired: "必須項目をすべて入力してください",
   passwordMinLength: "パスワードは 6 文字以上で入力してください",
+  invalidCredentials: "ユーザー名またはパスワードが間違っています",
+  usernameTaken: "このユーザー名は既に使用されています",
+  registrationDisabled: "登録は現在受け付けていません。管理者に teahouse.yaml で有効にしてもらってください",
+  tooManyAttempts: "ログイン失敗が多すぎます。しばらくしてから再試行してください",
 
   // 请求失败回退文案
   loginFail: "ログインに失敗",

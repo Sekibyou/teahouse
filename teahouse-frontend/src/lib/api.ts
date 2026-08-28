@@ -60,7 +60,7 @@ async function request<T>(
     })
     clearTimeout(timeoutId)
 
-    if (response.status === 401) {
+    if (response.status === 401 && !skipAuth) {
       clearAuth()
       return { ok: false, error: "认证已过期，请重新登录" }
     }
@@ -119,16 +119,18 @@ export interface AuthUser {
 
 export const authApi = {
   login: async (username: string, password: string) => {
-    return post<{ user: AuthUser; token: string }>(
+    return request<{ user: AuthUser; token: string }>(
       "/api/auth/login",
-      { username, password }
+      { method: "POST", body: JSON.stringify({ username, password }) },
+      true // public endpoint — never treat a 401 here as "token expired"
     )
   },
 
   register: async (username: string, password: string, displayName?: string) => {
-    return post<{ user: AuthUser; token: string }>(
+    return request<{ user: AuthUser; token: string }>(
       "/api/auth/register",
-      { username, password, display_name: displayName }
+      { method: "POST", body: JSON.stringify({ username, password, display_name: displayName }) },
+      true // public endpoint — 401/403 surface their real detail
     )
   },
 

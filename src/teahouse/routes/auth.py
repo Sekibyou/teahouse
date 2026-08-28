@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ..database.auth import configure_jwt, login, validate_token, UserInfo
+from ..database.auth import configure_jwt, login, validate_token, login_throttle, UserInfo
 from ..database.users import (
     create_user,
     get_user_by_id,
@@ -119,7 +119,14 @@ async def api_registration_status():
 
 
 @router.post("/login")
-async def api_login(body: LoginRequest):
+async def api_login(body: LoginRequest, request: Request):
+    remaining = login_throttle.check(body.username)
+    if remaining is not None:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts, try again in {int(remaining) + 1}s",
+        )
+
     token = await login(body.username, body.password)
     if not token:
         raise HTTPException(status_code=401, detail="Invalid credentials")

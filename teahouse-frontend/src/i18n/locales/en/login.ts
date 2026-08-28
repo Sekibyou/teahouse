@@ -24,6 +24,10 @@ export const enLogin = {
   loginRequired: "Please enter your username and password",
   registerRequired: "Please fill in all required fields",
   passwordMinLength: "Password must be at least 6 characters",
+  invalidCredentials: "Incorrect username or password",
+  usernameTaken: "Username is already taken",
+  registrationDisabled: "Registration is not open, please ask the administrator to enable it in teahouse.yaml",
+  tooManyAttempts: "Too many failed login attempts, please try again later",
 
   // 请求失败回退文案
   loginFail: "Login failed",

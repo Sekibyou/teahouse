@@ -24,6 +24,10 @@ export const zhLogin = {
   loginRequired: "请输入用户名和密码",
   registerRequired: "请填写所有必填字段",
   passwordMinLength: "密码长度不能少于 6 位",
+  invalidCredentials: "用户名或密码错误",
+  usernameTaken: "用户名已被占用",
+  registrationDisabled: "注册未开放，请联系管理员在 teahouse.yaml 中开启",
+  tooManyAttempts: "登录失败次数过多，请稍后再试",
 
   // 请求失败回退文案
   loginFail: "登录失败",

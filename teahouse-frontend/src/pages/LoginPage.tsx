@@ -46,7 +46,14 @@ export function LoginPage() {
       if (result.ok && result.data?.token && result.data?.user) {
         setAuth(result.data.user, result.data.token)
       } else {
-        setError(result.error || t("loginFail"))
+        // 429 -> frozen for too many attempts; 401 -> bad credentials; else fallback
+        setError(
+          result.status === 429
+            ? t("tooManyAttempts")
+            : result.status === 401
+              ? t("invalidCredentials")
+              : result.error || t("loginFail")
+        )
       }
     } catch {
       setError(t("networkError"))
@@ -72,7 +79,14 @@ export function LoginPage() {
       if (result.ok && result.data?.token && result.data?.user) {
         setAuth(result.data.user, result.data.token)
       } else {
-        setError(result.error || t("registerFail"))
+        // 409 -> username taken; 403 -> registration disabled; else fallback
+        setError(
+          result.status === 409
+            ? t("usernameTaken")
+            : result.status === 403
+              ? t("registrationDisabled")
+              : result.error || t("registerFail")
+        )
       }
     } catch {
       setError(t("networkError"))
