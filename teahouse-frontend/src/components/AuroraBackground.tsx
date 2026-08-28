@@ -1,49 +1,74 @@
-import { motion, useReducedMotion } from "motion/react"
-
 /**
- * 主页背景：一整片主题渐变，缓慢漂移，不做离散光斑。
- *
- * 用三层 `color-mix` 把绿色系主题色（青绿 chart-2 / 黄绿 chart-4）揉进背景色，
- * 整体压向深绿：去掉暖金 primary、拉高 chart-2 浓度，让绿更沉更深。每一处像素
- * 都有色、没有透明死区，所以看起来是"整片渐变"而非几团光斑。漂移只动 transform
- * （整层交给合成器），渐变本身不重算，长期挂在首页也不掉帧。
- *
- * - 颜色全走主题变量，light 茶褐暖调 / dark 灰绿雾墨 自动跟随。
- * - 底层铺到 `-inset-[30%]`（1.6 倍视口），漂移时不会露出边缘。
- * - `prefers-reduced-motion` 时停在静止构图。
+ * 主页背景：暗色为静态墨绿渐变 + 颗粒纹理；light 模式为纸张质感（暖白基底 + 细纤维噪点）。
+ * 均无动效、无分层光斑。用 .dark 变体在两套背景间切换。
  */
 
-export function AuroraBackground({ className = "" }: { className?: string }) {
-  const reduced = useReducedMotion()
-  // 临时诊断：确认 reduced-motion 是否吞掉了动画，确认后删除
-  console.log("[Aurora] reduced-motion =", reduced)
+const NOISE_URL =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")"
 
+export function AuroraBackground({ className = "" }: { className?: string }) {
   return (
     <div
       aria-hidden
       className={`pointer-events-none absolute inset-0 -z-10 overflow-hidden ${className}`}
     >
-      <motion.div
-        className="absolute -inset-[30%]"
+      {/* ============ 暗色：墨绿山雾 ============ */}
+      {/* 基底墨绿渐变：左上深 → 右下略浅带暖，长过渡不分层 */}
+      <div
+        className="absolute inset-0 hidden dark:block"
         style={{
           background:
-            "linear-gradient(118deg, " +
-            "color-mix(in oklch, var(--chart-2) 32%, var(--background)) 0%, " +
-            "color-mix(in oklch, var(--chart-2) 10%, var(--background)) 52%, " +
-            "color-mix(in oklch, var(--chart-4) 18%, var(--background)) 100%)",
-          willChange: "transform",
+            "linear-gradient(160deg, oklch(0.105 0.028 158) 0%, oklch(0.09 0.024 158) 48%, oklch(0.15 0.03 152) 100%)",
         }}
-        animate={{
-          x: ["0%", "-8%", "5%", "0%"],
-          y: ["0%", "6%", "-5%", "0%"],
-          rotate: [0, 4, -3, 0],
-          scale: [1, 1.08, 1.04, 1],
+      />
+      {/* 柔和透光晕染 */}
+      <div
+        className="absolute inset-0 hidden dark:block"
+        style={{
+          background:
+            "radial-gradient(120% 90% at 82% 8%, oklch(0.22 0.038 150 / 0.22), transparent 70%)",
         }}
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* 暗色颗粒纹理 */}
+      <div
+        className="absolute inset-0 hidden dark:block"
+        style={{ backgroundImage: NOISE_URL, opacity: 0.035 }}
       />
 
-      {/* 底部渐隐：让卡片区底下有个收口，渐变不至于被裁断得太生硬 */}
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background to-transparent" />
+      {/* ============ Light：纸张质感 ============ */}
+      {/* 暖白纸面基底：左上略亮（受光），右下略暖偏黄 */}
+      <div
+        className="absolute inset-0 dark:hidden"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.985 0.008 88) 0%, oklch(0.965 0.012 92) 55%, oklch(0.945 0.016 90) 100%)",
+        }}
+      />
+      {/* 纸张纤维噪点：横向细丝 + 细颗粒双层叠加，突出纸面纤维质感 */}
+      <div
+        className="absolute inset-0 dark:hidden"
+        style={{
+          backgroundImage: NOISE_URL,
+          opacity: 0.08,
+        }}
+      />
+      {/* 横向纤维丝：x/y 频率不对称拉出细长纤维，read 起来更像纸张肌理 */}
+      <div
+        className="absolute inset-0 dark:hidden"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.45' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E\")",
+          opacity: 0.12,
+        }}
+      />
+      {/* 顶部受光边缘：极淡高光让纸面有厚度 */}
+      <div
+        className="absolute inset-0 dark:hidden"
+        style={{
+          background:
+            "radial-gradient(70% 40% at 50% 0%, oklch(1 0 0 / 0.35), transparent 70%)",
+        }}
+      />
     </div>
   )
 }
