@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Cpu, X, ChevronLeft, Check } from "lucide-react"
+import { Cpu, X, ChevronLeft, Check, Loader2 } from "lucide-react"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
@@ -38,7 +38,11 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   useDialogBackClose(open, onClose)
 
   const { user: currentUser } = useAuth()
-  const visibleTabs = TAB_ITEMS.filter((item) => !item.adminOnly || isAdminRole(currentUser?.role))
+  // useMemo 缓存：引用只在 role 变化时变，避免被当作 effect 依赖导致每次渲染都触发
+  const visibleTabs = useMemo(
+    () => TAB_ITEMS.filter((item) => !item.adminOnly || isAdminRole(currentUser?.role)),
+    [currentUser?.role]
+  )
 
   const [tabMenuOpen, setTabMenuOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<TabKey>("general")
@@ -80,17 +84,61 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     setActiveSection(activeSectionRef.current)
   }, [visibleTabs])
 
-  const scrollToSection = useCallback((key: TabKey) => {
+  const scrollToSection = useCallback((key: TabKey, smooth = true) => {
     const el = sectionRefs.current[key]
     if (!el) return
-    // 点击定位：立即高亮点击项
+    // 定位：立即高亮目标项
     activeSectionRef.current = key
     setActiveSection(key)
-    // 取消进行中的去抖，避免平滑滚动停稳前触发重算
+    // 取消进行中的去抖，避免滚动停稳前触发重算
     if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current)
     scrollDebounceRef.current = null
-    el.scrollIntoView({ behavior: "smooth", block: "start" })
+    el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" })
   }, [])
+
+  // 打开时从外界转跳：等布局稳定（section 高度定型）后再滚动。
+  // 各 Panel 数据是异步加载的，section 高度会动态变化；若立即滚会按未定型的高度算出偏差，
+  // 导致落点偏上、滑到靠前的 section。轮询目标 section 的 offsetTop（绝对位置，不受当前滚动影响），
+  // 连续两轮稳定即视为定型；超时兜底避免无限等。
+  const scrollToSectionWhenStable = useCallback((key: TabKey, onDone?: () => void, timeoutMs = 3000) => {
+    const finish = () => {
+      scrollToSection(key, false) // 外部转跳：直接跳到位，不滚动
+      onDone?.()
+    }
+    let lastOffset: number | null = null
+    let lastChangeAt = Date.now()
+    const start = Date.now()
+    const poll = () => {
+      if (Date.now() - start > timeoutMs) {
+        finish()
+        return
+      }
+      const el = sectionRefs.current[key]
+      if (!el) {
+        requestAnimationFrame(poll)
+        return
+      }
+      const offset = el.offsetTop
+      if (lastOffset === null) {
+        lastOffset = offset
+        requestAnimationFrame(poll)
+        return
+      }
+      if (offset !== lastOffset) {
+        lastOffset = offset
+        lastChangeAt = Date.now()
+        requestAnimationFrame(poll)
+        return
+      }
+      // 连续稳定：距上次变化已超过一段静默期，视为定型
+      if (Date.now() - lastChangeAt > 250) {
+        finish()
+        return
+      }
+      requestAnimationFrame(poll)
+    }
+    requestAnimationFrame(poll)
+  }, [scrollToSection])
 
   // 手动滚动：去抖重算高亮（滚动停止 150ms 后）
   const handleScroll = useCallback(() => {
@@ -104,15 +152,27 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current)
   }, [])
 
-  // 打开时：若指定了 defaultTab，滚动到对应 section（scrollToSection 会即时高亮目标）
+  // 外部转跳等待布局稳定期间，右侧内容盖一层「加载中」遮罩，稳定跳转后清除
+  const [pendingScroll, setPendingScroll] = useState(false)
+
+  // 打开时：若指定了 defaultTab 且非首项，显示等待遮罩，等布局稳定后直接跳到位
   useEffect(() => {
     if (open) {
       const target = defaultTab || "general"
       setTabMenuOpen(false)
-      // 等一帧让 section 挂载后再滚动
-      requestAnimationFrame(() => scrollToSection(target))
+      if (target === visibleTabs[0].key) {
+        // 首项无需等待跳转（列表本就在顶部），直接定位高亮即可
+        setActiveSection(target)
+        activeSectionRef.current = target
+        scrollToSectionWhenStable(target)
+      } else {
+        setPendingScroll(true)
+        scrollToSectionWhenStable(target, () => setPendingScroll(false))
+      }
+    } else {
+      setPendingScroll(false)
     }
-  }, [open, defaultTab, scrollToSection])
+  }, [open, defaultTab, visibleTabs, scrollToSectionWhenStable])
 
   if (!open) return null
 
@@ -227,24 +287,33 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
             )}
 
             {/* Right content: 一整张纵向滚动的设置列表 */}
-            <div
-              ref={scrollRef}
-              onScroll={handleScroll}
-              className="flex-1 overflow-y-auto"
-            >
-              {visibleSections.map(({ key, Panel }) => {
-                const meta = sectionMeta(key)
-                return (
-                  <SettingsSection
-                    key={key}
-                    title={t(meta.label)}
-                    Icon={meta.Icon}
-                    sectionRef={(el) => { sectionRefs.current[key] = el }}
-                  >
-                    <Panel />
-                  </SettingsSection>
-                )
-              })}
+            <div className="relative flex-1">
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="h-full overflow-y-auto"
+              >
+                {visibleSections.map(({ key, Panel }) => {
+                  const meta = sectionMeta(key)
+                  return (
+                    <SettingsSection
+                      key={key}
+                      title={t(meta.label)}
+                      Icon={meta.Icon}
+                      sectionRef={(el) => { sectionRefs.current[key] = el }}
+                    >
+                      <Panel />
+                    </SettingsSection>
+                  )
+                })}
+              </div>
+
+              {/* 外部转跳等待布局稳定期间：盖住内容，显示加载中 */}
+              {pendingScroll && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 pointer-events-none">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
           </div>
         </div>
