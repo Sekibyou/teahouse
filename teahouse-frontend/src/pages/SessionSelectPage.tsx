@@ -24,6 +24,8 @@ import { useWizardDoneStore } from "@/stores/wizardDoneStore"
 import { WelcomeWizard } from "@/components/WelcomeWizard/WelcomeWizard"
 import { AuroraBackground } from "@/components/AuroraBackground"
 import { CoverWithFetch } from "@/components/Cover"
+import { motion, AnimatePresence, useReducedMotion } from "motion/react"
+import { STAGGER_CONTAINER, CARD_UP, dialogShell, BACKDROP_FADE } from "@/lib/animations"
 import type { Prototype, Instance } from "@/lib/types"
 
 export function SessionSelectPage() {
@@ -268,40 +270,44 @@ export function SessionSelectPage() {
       )}
 
       {/* Detail dialog */}
-      {dialogInstance && (
-        <InstanceDialog
-          instance={dialogInstance}
-          isMobile={isMobile}
-          readmeData={readmeData}
-          readmeLoading={readmeLoading}
-          renaming={renaming}
-          renameValue={renameValue}
-          onRenameValue={(v) => setRenameValue(v)}
-          onToggleRename={() => { setRenaming(!renaming) }}
-          onConfirmRename={confirmRename}
-          actionLoading={actionLoading}
-          onContinue={() => handleContinue(dialogInstance)}
-          onDelete={() => setInstanceToDelete(dialogInstance)}
-          onCopy={() => openCopyDialog(dialogInstance)}
-          onManageSkills={() => setManageSkillsFor(dialogInstance)}
-          onManagePackages={() => setManagePackagesFor(dialogInstance)}
-          onClose={() => setDialogInstance(null)}
-        />
-      )}
+      <AnimatePresence>
+        {dialogInstance && (
+          <InstanceDialog
+            instance={dialogInstance}
+            isMobile={isMobile}
+            readmeData={readmeData}
+            readmeLoading={readmeLoading}
+            renaming={renaming}
+            renameValue={renameValue}
+            onRenameValue={(v) => setRenameValue(v)}
+            onToggleRename={() => { setRenaming(!renaming) }}
+            onConfirmRename={confirmRename}
+            actionLoading={actionLoading}
+            onContinue={() => handleContinue(dialogInstance)}
+            onDelete={() => setInstanceToDelete(dialogInstance)}
+            onCopy={() => openCopyDialog(dialogInstance)}
+            onManageSkills={() => setManageSkillsFor(dialogInstance)}
+            onManagePackages={() => setManagePackagesFor(dialogInstance)}
+            onClose={() => setDialogInstance(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Bookshelf overlay */}
-      {bookshelfOpen && (
-        <Bookshelf
-          prototypes={prototypes}
-          importState={importState}
-          fileInputRef={fileInputRef}
-          onImport={handleImport}
-          onClose={() => setBookshelfOpen(false)}
-          onCreate={handleCreateFromBookshelf}
-          onDownload={handleDownload}
-          onDeleteProto={(p) => setProtoToDelete(p)}
-        />
-      )}
+      <AnimatePresence>
+        {bookshelfOpen && (
+          <Bookshelf
+            prototypes={prototypes}
+            importState={importState}
+            fileInputRef={fileInputRef}
+            onImport={handleImport}
+            onClose={() => setBookshelfOpen(false)}
+            onCreate={handleCreateFromBookshelf}
+            onDownload={handleDownload}
+            onDeleteProto={(p) => setProtoToDelete(p)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Instance skill management overlay */}
       {manageSkillsFor && (
@@ -337,7 +343,7 @@ export function SessionSelectPage() {
 
       {/* Copy instance dialog */}
       {instanceToCopy && (
-        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => { if (!copying) setInstanceToCopy(null) }}>
           <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="font-semibold">{t("copy.title")}</h3>
             <p className="text-xs text-muted-foreground">
@@ -450,13 +456,18 @@ function InstanceWaterfall({
   onQuickStart: (i: Instance) => void
   onNew: () => void
 }) {
+  const reduced = useReducedMotion()
   return (
-    <div className="columns-2 lg:columns-3 xl:columns-4 2xl:columns-5 gap-6">
+    <motion.div
+      className="columns-2 lg:columns-3 xl:columns-4 2xl:columns-5 gap-6"
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+    >
       <NewInstanceCard onNew={onNew} />
       {instances.map((inst) => (
         <InstanceMasonCard key={inst.id} instance={inst} onOpen={onOpenInstance} onQuickStart={onQuickStart} />
       ))}
-    </div>
+    </motion.div>
   )
 }
 
@@ -466,9 +477,9 @@ function NewInstanceCard({ onNew }: { onNew: () => void }) {
   return (
     <button
       onClick={onNew}
-      className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card hover:border-primary/50 hover:shadow-md transition-all cursor-pointer w-full"
+      className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card hover:border-primary/50 cursor-pointer w-full
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring card-hover-glow"
       aria-label={t("newInstance")}
-      title={t("newInstance")}
     >
       <div className="shrink-0 p-3">
         <div className="aspect-square w-full flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/30 hover:border-primary/60 transition-colors text-center">
@@ -487,12 +498,18 @@ function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Insta
   const { t } = useTranslation("session")
   return (
     <div
-      className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
+      className="mb-4 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm cursor-pointer
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring card-hover-glow group"
       onClick={() => onOpen(instance)}
     >
       <div className="shrink-0 p-3 pb-0">
         <div className="aspect-square w-full overflow-hidden rounded-lg bg-muted">
-          <CoverWithFetch kind="instance" id={instance.id} name={instance.name} />
+          <CoverWithFetch
+            kind="instance"
+            id={instance.id}
+            name={instance.name}
+            className="transition-transform duration-300 ease-out group-hover:scale-[1.06]"
+          />
         </div>
       </div>
       <div className="flex items-center gap-3 p-3">
@@ -514,7 +531,8 @@ function InstanceMasonCard({ instance, onOpen, onQuickStart }: { instance: Insta
         </div>
         {/* Right: square play icon — 快速进入会话 */}
         <button
-          className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
+          className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer
+            transition-colors duration-150 active:scale-90"
           onClick={(e) => { e.stopPropagation(); onQuickStart(instance) }}
           title={t("quickStart")}
           aria-label={t("quickStart")}
@@ -561,6 +579,7 @@ function InstanceDialog({
   const { t } = useTranslation("session")
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
   useDialogBackClose(true, onClose)
+  const reduced = useReducedMotion()
 
   // Mobile: fullscreen sheet; desktop: centered modal above a dimmed backdrop.
   const outer = isMobile
@@ -595,8 +614,21 @@ function InstanceDialog({
   }, [])
 
   return (
-    <div className={outer} onClick={isMobile ? undefined : onClose}>
-      <div className={shell} onClick={(e) => e.stopPropagation()}>
+    <motion.div
+      className={outer}
+      onClick={isMobile ? undefined : onClose}
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduced ? undefined : { opacity: 0, transition: { duration: 0.15 } }}
+    >
+      <motion.div
+        className={shell}
+        onClick={(e) => e.stopPropagation()}
+        variants={reduced ? undefined : dialogShell(isMobile ? "mobile" : "desktop")}
+        initial="hidden"
+        animate="show"
+        exit="exit"
+      >
         {isMobile ? (
           /* ===================== 窄屏：纵向三段式 ===================== */
           <>
@@ -802,8 +834,8 @@ function InstanceDialog({
             </div>
           </>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -827,6 +859,7 @@ function MobileMain({
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
   const currentLang = useCurrentLang()
   const setLang = useLangStore((s) => s.setLang)
+  const reduced = useReducedMotion()
   const [showMenu, setShowMenu] = useState(false)
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -904,12 +937,16 @@ function MobileMain({
             </div>
           </SetupGateEmpty>
         ) : (
-          <div className="columns-2 gap-3">
+          <motion.div
+            className="columns-2 gap-3"
+            initial={reduced ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
             <NewInstanceCard onNew={onNew} />
             {instances.map((inst) => (
               <MobileInstanceCard key={inst.id} instance={inst} onOpen={() => onOpenInstance(inst)} onQuickStart={() => onQuickStart(inst)} />
             ))}
-          </div>
+          </motion.div>
         )}
       </div>
     </div>
@@ -920,12 +957,12 @@ function MobileInstanceCard({ instance, onOpen, onQuickStart }: { instance: Inst
   const { t } = useTranslation("session")
   return (
     <div
-      className="mb-3 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm cursor-pointer active:scale-[0.98] transition"
+      className="mb-3 break-inside-avoid flex flex-col rounded-xl overflow-hidden border border-border bg-card shadow-sm cursor-pointer active:scale-[0.98] transition-transform duration-150 card-hover-glow group"
       onClick={onOpen}
     >
       <div className="shrink-0 p-2 pb-0">
         <div className="aspect-square w-full overflow-hidden rounded-md bg-muted">
-          <CoverWithFetch kind="instance" id={instance.id} name={instance.name} />
+          <CoverWithFetch kind="instance" id={instance.id} name={instance.name} className="transition-transform duration-300 ease-out group-hover:scale-[1.05]" />
         </div>
       </div>
       <div className="flex items-center gap-2 p-2">
@@ -941,7 +978,7 @@ function MobileInstanceCard({ instance, onOpen, onQuickStart }: { instance: Inst
         </div>
         {/* Right: square play icon — 快速进入会话 */}
         <button
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md bg-primary text-primary-foreground cursor-pointer"
+          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md bg-primary text-primary-foreground cursor-pointer active:scale-90 transition-transform"
           onClick={(e) => { e.stopPropagation(); onQuickStart() }}
           title={t("quickStart")}
           aria-label={t("quickStart")}
@@ -971,6 +1008,7 @@ function Bookshelf({
   const { t } = useTranslation("session")
   const [selected, setSelected] = useState<Prototype | null>(null)
   const mobile = useIsMobile()
+  const reduced = useReducedMotion()
   useDialogBackClose(true, onClose)
 
   // Render the dialog only while the selected prototype still exists, so a
@@ -978,23 +1016,44 @@ function Bookshelf({
   const showDialog = !!selected && prototypes.some((p) => p.id === selected.id)
 
   return (
-    <div className="absolute inset-0 z-40">
+    <motion.div
+      className="absolute inset-0 z-40"
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduced ? undefined : { opacity: 0, transition: { duration: 0.15 } }}
+    >
       {/* Blur backdrop */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-lg" onClick={onClose} />
+      <motion.div
+        className="absolute inset-0 bg-background/70 backdrop-blur-lg"
+        onClick={onClose}
+        variants={reduced ? undefined : BACKDROP_FADE}
+        initial="hidden"
+        animate="show"
+        exit="exit"
+      />
 
-      <div className="absolute inset-0 flex flex-col overflow-hidden px-6 sm:px-10 lg:px-16 py-6 sm:py-8 relative">
+      <motion.div
+        className="absolute inset-0 flex flex-col overflow-hidden px-6 sm:px-10 lg:px-16 py-6 sm:py-8 relative"
+        variants={reduced ? undefined : STAGGER_CONTAINER}
+        initial="hidden"
+        animate="show"
+      >
         {/* Back arrow — mobile: floating black circle top-left; desktop: inline in the header */}
         {mobile ? (
-          <button
+          <motion.button
+            variants={reduced ? undefined : CARD_UP}
             className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
             onClick={onClose}
             title={t("closeShelf")}
           >
             <ArrowLeft className="h-5 w-5" />
-          </button>
+          </motion.button>
         ) : null}
         {/* Bookshelf header */}
-        <div className={`flex items-center gap-3 mb-2 shrink-0 ${mobile ? "pl-10" : ""}`}>
+        <motion.div
+          variants={reduced ? undefined : CARD_UP}
+          className={`flex items-center gap-3 mb-2 shrink-0 ${mobile ? "pl-10" : ""}`}
+        >
           <h2 className="text-lg sm:text-xl font-serif font-bold">{t("shelfTitle")}</h2>
           <div className="flex-1" />
           <input
@@ -1045,11 +1104,14 @@ function Bookshelf({
               )}
             </button>
           )}
-        </div>
+        </motion.div>
 
-        <p className="text-xs text-muted-foreground mb-4 shrink-0">
+        <motion.p
+          variants={reduced ? undefined : CARD_UP}
+          className="text-xs text-muted-foreground mb-4 shrink-0"
+        >
           {t("shelfHint")}
-        </p>
+        </motion.p>
 
         {/* Prototype waterfall — clicking non-card area closes the shelf (landscape) */}
         <div
@@ -1065,27 +1127,31 @@ function Bookshelf({
               </Button>
             </div>
           ) : (
-            <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-6 pb-8">
+            <motion.div
+              className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-6 px-8 pb-10 pt-8"
+            >
               {prototypes.map((p) => (
                 <BookshelfCard key={p.id} proto={p} onSelect={() => setSelected(p)} />
               ))}
-            </div>
+            </motion.div>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Prototype detail dialog — floats above the shelf */}
-      {showDialog && selected && (
-        <PrototypeDetailDialog
-          prototype={selected}
-          isMobile={mobile}
-          onClose={() => setSelected(null)}
-          onCreate={onCreate}
-          onDownload={onDownload}
-          onDeleteProto={onDeleteProto}
-        />
-      )}
-    </div>
+      <AnimatePresence>
+        {showDialog && selected && (
+          <PrototypeDetailDialog
+            prototype={selected}
+            isMobile={mobile}
+            onClose={() => setSelected(null)}
+            onCreate={onCreate}
+            onDownload={onDownload}
+            onDeleteProto={onDeleteProto}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
@@ -1152,6 +1218,7 @@ function PrototypeDetailDialog({
     }
   }, [])
 
+  const reduced = useReducedMotion()
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
 
   const doCreate = async () => {
@@ -1173,8 +1240,21 @@ function PrototypeDetailDialog({
     : "bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-h-[90vh] flex flex-col overflow-hidden relative"
 
   return (
-    <div className={outer} onClick={isMobile ? undefined : onClose}>
-      <div className={shell} onClick={(e) => e.stopPropagation()}>
+    <motion.div
+      className={outer}
+      onClick={isMobile ? undefined : onClose}
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduced ? undefined : { opacity: 0, transition: { duration: 0.15 } }}
+    >
+      <motion.div
+        className={shell}
+        onClick={(e) => e.stopPropagation()}
+        variants={reduced ? undefined : dialogShell(isMobile ? "mobile" : "desktop")}
+        initial="hidden"
+        animate="show"
+        exit="exit"
+      >
         {isMobile ? (
           /* ===================== 窄屏：纵向三段式 ===================== */
           <>
@@ -1340,8 +1420,8 @@ function PrototypeDetailDialog({
             </div>
           </>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -1349,10 +1429,16 @@ function BookshelfCard({ proto, onSelect }: { proto: Prototype; onSelect: (p: Pr
   const { t } = useTranslation("session")
   return (
     <div
-      className="mb-6 break-inside-avoid rounded-xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer"
+      className="mb-6 break-inside-avoid rounded-xl overflow-hidden border border-border bg-card shadow-sm cursor-pointer
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring card-hover-glow group"
       onClick={(e) => { e.stopPropagation(); onSelect(proto) }}
     >
-      <CoverWithFetch kind="prototype" id={proto.id} name={proto.name} />
+      <CoverWithFetch
+        kind="prototype"
+        id={proto.id}
+        name={proto.name}
+        className="transition-transform duration-300 ease-out group-hover:scale-[1.05]"
+      />
       <div className="p-3">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm truncate flex-1">{proto.name}</span>
