@@ -257,3 +257,63 @@
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
 }
+
+/* ---------------------------------------------------------------------------
+ * Card breathing backlight (outer glow) — 两段顺序播放：
+ *   1) 亮灯（0.9s 一次性）：hover 进入快速冲到顶峰，再衰减到 13% 基线。
+ *      用 forwards 停在 13%，作为呼吸的起点。
+ *   2) 呼吸（亮灯结束 delay 后无限循环）：13% → 26% → 13%，与亮灯终点
+ *      同值无缝衔接。
+ * 外发光 = box-shadow 向外扩散，避开卡片自身的 overflow-hidden 裁切。
+ * prefers-reduced-motion 下降级为静态柔光。
+ * ------------------------------------------------------------------------- */
+.card-hover-glow {
+  position: relative;
+}
+/* 背光基色：dark 用 primary（暗底上金色够亮）；light 纸底上浅色光看不清，
+   改用暗金色（低明度深金），让 shadow 在浅底上成为清晰可见的暗色辉光 */
+.card-hover-glow {
+  --glow-color: var(--primary);
+}
+:root:not(.dark) .card-hover-glow {
+  --glow-color: oklch(0.32 0.12 60);
+}
+.card-hover-glow:hover {
+  /* 提升层级：让外发光盖住相邻卡片，避免被瀑布里贴着的邻居背景吞掉 */
+  z-index: 1;
+  /* 亮灯 0.9s 一次性 + forwards 停在 13%；呼吸 delay 0.9s 后接管无限循环 */
+  animation:
+    glow-light 0.9s ease-out 0s 1 forwards,
+    glow-breathe 3.4s ease-in-out 0.9s infinite;
+}
+@keyframes glow-light {
+  0% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  15% {
+    /* 快速冲到峰 */
+    box-shadow: 0 0 38px 9px color-mix(in oklch, var(--glow-color) 40%, transparent);
+  }
+  100% {
+    /* 长段衰减到 13% 基线（= 呼吸 0% 值，forwards 停在这 → 无缝进呼吸） */
+    box-shadow: 0 0 13px 2px color-mix(in oklch, var(--glow-color) 13%, transparent);
+  }
+}
+@keyframes glow-breathe {
+  /* 0%=100%=13%，无缝循环 */
+  0%,
+  100% {
+    box-shadow: 0 0 13px 2px color-mix(in oklch, var(--glow-color) 13%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 22px 4px color-mix(in oklch, var(--glow-color) 26%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-hover-glow:hover {
+    animation: none;
+    box-shadow: 0 0 13px 2px color-mix(in oklch, var(--glow-color) 25%, transparent);
+  }
+}
+
+

@@ -1,12 +1,17 @@
+import { motion, useReducedMotion } from "motion/react"
+import { AURORA_DRIFT } from "@/lib/animations"
+
 /**
  * 主页背景：暗色为静态墨绿渐变 + 颗粒纹理；light 模式为纸张质感（暖白基底 + 细纤维噪点）。
- * 均无动效、无分层光斑。用 .dark 变体在两套背景间切换。
+ * 两层径向光斑（暗色光晕 / 亮色高光）带 18s 慢速漂移，给背景一丝呼吸感但不扰人。
+ * 尊重 prefers-reduced-motion：降级为纯静态。
  */
 
 const NOISE_URL =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")"
 
 export function AuroraBackground({ className = "" }: { className?: string }) {
+  const reduced = useReducedMotion()
   return (
     <div
       aria-hidden
@@ -21,13 +26,16 @@ export function AuroraBackground({ className = "" }: { className?: string }) {
             "linear-gradient(160deg, oklch(0.105 0.028 158) 0%, oklch(0.09 0.024 158) 48%, oklch(0.15 0.03 152) 100%)",
         }}
       />
-      {/* 柔和透光晕染 */}
-      <div
+      {/* 柔和透光晕染：慢速漂移 */}
+      <motion.div
         className="absolute inset-0 hidden dark:block"
         style={{
           background:
             "radial-gradient(120% 90% at 82% 8%, oklch(0.22 0.038 150 / 0.22), transparent 70%)",
         }}
+        initial={false}
+        animate={reduced ? undefined : { x: [0, 40, 0], y: [0, 18, 0] }}
+        transition={AURORA_DRIFT}
       />
       {/* 暗色颗粒纹理 */}
       <div
@@ -61,13 +69,16 @@ export function AuroraBackground({ className = "" }: { className?: string }) {
           opacity: 0.12,
         }}
       />
-      {/* 顶部受光边缘：极淡高光让纸面有厚度 */}
-      <div
+      {/* 顶部受光边缘：极淡高光让纸面有厚度，缓慢漂移 */}
+      <motion.div
         className="absolute inset-0 dark:hidden"
         style={{
           background:
             "radial-gradient(70% 40% at 50% 0%, oklch(1 0 0 / 0.35), transparent 70%)",
         }}
+        initial={false}
+        animate={reduced ? undefined : { x: [0, -30, 0], y: [0, 14, 0] }}
+        transition={AURORA_DRIFT}
       />
     </div>
   )
