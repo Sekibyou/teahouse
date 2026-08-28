@@ -180,7 +180,7 @@ assistant: |
       ) : presets.length === 0 ? (
         <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">{t("preset.none")}</div>
       ) : (
-        <div className="space-y-2 overflow-auto flex-1">
+        <div className="grid grid-cols-2 gap-3 overflow-auto flex-1 content-start">
           {presets.filter(p => p.is_builtin).map(p => (
             <div key={p.id} className="rounded-lg border border-border bg-muted/20 p-4 flex items-start justify-between opacity-70">
               <div className="space-y-1 flex-1 min-w-0">

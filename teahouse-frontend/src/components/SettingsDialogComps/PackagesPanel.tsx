@@ -157,7 +157,7 @@ export function PackagesPanel() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="text-red-500 hover:text-red-500"
+                    className="text-red-500 hover:text-red-700"
                     onClick={() => setPackageDeleteTarget(p.name)}
                     disabled={packageDeleting === p.name}
                   >

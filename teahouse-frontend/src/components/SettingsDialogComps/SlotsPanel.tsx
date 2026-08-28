@@ -36,7 +36,7 @@ export function SlotsPanel() {
       {slotsLoading ? (
         <div className="flex items-center justify-center flex-1"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : (
-        <div className="flex flex-col gap-4 flex-1 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto content-start">
           <SlotCard
             slotId="director"
             label={t("slot.director")}

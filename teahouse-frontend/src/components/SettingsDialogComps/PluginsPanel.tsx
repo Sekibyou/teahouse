@@ -302,7 +302,7 @@ export function PluginsPanel() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="text-muted-foreground hover:text-red-500"
+                    className="text-red-500 hover:text-red-700"
                     onClick={() => setDeleteTarget(p)}
                     title={t("plugin.uninstallTitle")}
                   >
