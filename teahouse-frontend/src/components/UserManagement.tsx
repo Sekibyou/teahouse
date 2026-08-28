@@ -158,8 +158,7 @@ export function UserManagementPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-muted-foreground">{t("user.title")}</h3>
+      <div className="flex items-center justify-end">
         <Button size="sm" variant="outline" onClick={() => { setCreating((v) => !v); setCreateError("") }}>
           <Plus className="h-3.5 w-3.5 mr-1.5" />{t("user.newUser")}
         </Button>
