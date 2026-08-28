@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { LibraryEmptyState } from "@/components/SettingsDialogComps/SettingsSection"
 import { useCurrentLang } from "@/i18n/config"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { resolvePluginText } from "@/lib/pluginI18n"
 import { pluginsApi } from "@/lib/api"
 import type { Plugin, PluginPreview, NetworkRule } from "@/lib/pluginTypes"
@@ -22,6 +23,7 @@ import { permLabels } from "@/components/SettingsDialogComps/types"
 export function PluginsPanel() {
   const { t } = useTranslation("settings")
   const currentLang = useCurrentLang()
+  const isMobile = useIsMobile()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [toggling, setToggling] = useState<Set<string>>(new Set())
@@ -290,7 +292,7 @@ export function PluginsPanel() {
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{resolvePluginText(p.description, p.i18n, currentLang)}</p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className={`flex gap-1 shrink-0 ${isMobile ? "flex-col items-stretch" : "items-center"}`}>
                   <Button
                     size="sm"
                     variant={p.enabled ? "default" : "outline"}

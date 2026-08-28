@@ -2,11 +2,13 @@ import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Loader2 } from "lucide-react"
 import { SlotCard } from "@/components/SlotCard"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { llmSlotsApi, llmModelsApi, modelProfilesApi, directorPromptPresetsApi } from "@/lib/api"
 import type { SlotBindings, SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 
 export function SlotsPanel() {
   const { t } = useTranslation("settings")
+  const isMobile = useIsMobile()
   const [slotBindings, setSlotBindings] = useState<SlotBindings>({ director: { model_id: null, profile_id: null, prompt_preset_id: null }, writer: { model_id: null, profile_id: null, prompt_preset_id: null } })
   const [slotsLoading, setSlotsLoading] = useState(false)
   const [models, setModels] = useState<LLMModel[]>([])
@@ -36,7 +38,7 @@ export function SlotsPanel() {
       {slotsLoading ? (
         <div className="flex items-center justify-center flex-1"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto content-start">
+        <div className={`grid ${isMobile ? "grid-cols-1" : "grid-cols-2"} gap-4 flex-1 overflow-y-auto content-start`}>
           <SlotCard
             slotId="director"
             label={t("slot.director")}
