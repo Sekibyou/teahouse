@@ -47,3 +47,4 @@ ignored/
 plugins/*
 !plugins/.gitkeep
 !plugins/README.md
+CLAUDE.md
