@@ -103,6 +103,7 @@ export const enMisc = {
     skip: "Skip",
     recommended: "Recommended",
     skipped: "Skipped",
+    confirm: "Done, start creating",
     steps: {
       providerReady: {
         title: "Add a provider",
@@ -113,7 +114,7 @@ export const enMisc = {
         desc: "Open \"Model pool\", fetch models from the provider and import them, then enable at least one.",
       },
       slotsReady: {
-        title: "Assign the writer model",
+        title: "Assign model slots",
         desc: "Bind an enabled model to each of the two slots (director + writer) before you can start writing.",
       },
       profileReady: {

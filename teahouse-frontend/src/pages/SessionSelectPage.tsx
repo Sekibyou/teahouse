@@ -20,6 +20,7 @@ import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { useSetupStatus } from "@/hooks/useSetupStatus"
+import { useWizardDoneStore } from "@/stores/wizardDoneStore"
 import { WelcomeWizard } from "@/components/WelcomeWizard/WelcomeWizard"
 import { AuroraBackground } from "@/components/AuroraBackground"
 import { CoverWithFetch } from "@/components/Cover"
@@ -400,7 +401,16 @@ function DesktopMain({
  */
 function SetupGateEmpty({ children }: { onNew: () => void; children: React.ReactNode }) {
   const { complete } = useSetupStatus()
-  if (!complete) return <WelcomeWizard />
+  const done = useWizardDoneStore((s) => s.done)
+  const resetDone = useWizardDoneStore((s) => s.resetDone)
+
+  // 配置回退（删了供应商/模型等）→ 清掉「已确认」标记，下次配好仍要走一遍点确定
+  useEffect(() => {
+    if (!complete) resetDone()
+  }, [complete, resetDone])
+
+  // 不再「配好即移除」：清单全绿仍停留在向导里，等用户点「完成」才放行
+  if (!complete || !done) return <WelcomeWizard />
   return <>{children}</>
 }
 

@@ -4,6 +4,7 @@ import { Loader2, Check, Circle, Sparkles, SkipForward } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useSetupStatus } from "@/hooks/useSetupStatus"
+import { useWizardDoneStore } from "@/stores/wizardDoneStore"
 import { WIZARD_STEPS, type WizardTab } from "./steps"
 import { loadLitSteps, saveLitSteps } from "./progressMemory"
 import { useTranslation } from "react-i18next"
@@ -178,9 +179,9 @@ function StepRow({
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{desc}</p>
       </div>
-      {!settled && (
+      {!done && (
         <div className="shrink-0 flex items-center gap-1.5">
-          {onSkip && (
+          {onSkip && !skipped && (
             <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={onSkip}>
               {t("wizard.skip")}
             </Button>
@@ -248,6 +249,17 @@ export function WelcomeWizard() {
   const doneCount = WIZARD_STEPS.filter((s) => ready[s.key] || skipped[s.key]).length
   const total = WIZARD_STEPS.length
 
+  // 收尾确认：清单全绿后不再直接移除，而是亮出「完成」按钮；点击后每条清单
+  // 依次折叠消失，播完动画再正式放行（markDone → SetupGateEmpty 切到正常空态）。
+  const markDone = useWizardDoneStore((s) => s.markDone)
+  const [confirming, setConfirming] = useState(false)
+  const handleConfirm = () => {
+    if (confirming || !complete) return
+    setConfirming(true)
+    // 折叠动画：5 条各 0.18s 错峰 + 0.45s 单条时长，约 1.2s 播完，留 0.4s 缓冲再放行
+    window.setTimeout(() => markDone(), 1600)
+  }
+
   return (
     <div className="h-full overflow-y-auto flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-lg flex flex-col gap-5 py-6">
@@ -284,24 +296,59 @@ export function WelcomeWizard() {
               </span>
             </div>
 
-            {/* 清单：硬门槛 + 推荐项（推荐项可跳过，跳过也前进一格） */}
-            <div className="space-y-2">
+            {/* 清单：硬门槛 + 推荐项（推荐项可跳过，跳过也前进一格）。
+                确认时每条依次折叠消失（height + opacity + margin 同步收拢）。 */}
+            <div className="flex flex-col">
               {WIZARD_STEPS.map((s, i) => (
-                <StepRow
+                <motion.div
                   key={s.key}
-                  done={ready[s.key]}
-                  skipped={!!skipped[s.key]}
-                  title={t(s.titleKey)}
-                  desc={t(s.descKey)}
-                  actionTab={s.tab}
-                  actionLabel={s.actionLabelKey ? t(s.actionLabelKey) : undefined}
-                  recommended={s.skippable}
-                  onSkip={s.skippable ? () => skipStep(s.key) : undefined}
-                  celebrateDelay={celebrations[s.key] ?? null}
-                  breathDelay={i * 0.4}
-                />
+                  initial={false}
+                  animate={
+                    confirming
+                      ? { height: 0, opacity: 0, marginBottom: 0 }
+                      : { height: "auto", opacity: 1, marginBottom: 8 }
+                  }
+                  transition={{
+                    duration: 0.45,
+                    delay: confirming ? i * 0.18 : 0,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                  style={{ overflow: "hidden" }}
+                >
+                  <StepRow
+                    done={ready[s.key]}
+                    skipped={!!skipped[s.key]}
+                    title={t(s.titleKey)}
+                    desc={t(s.descKey)}
+                    actionTab={s.tab}
+                    actionLabel={s.actionLabelKey ? t(s.actionLabelKey) : undefined}
+                    recommended={s.skippable}
+                    onSkip={s.skippable ? () => skipStep(s.key) : undefined}
+                    celebrateDelay={celebrations[s.key] ?? null}
+                    breathDelay={i * 0.4}
+                  />
+                </motion.div>
               ))}
             </div>
+
+            {/* 确认按钮：达成条件不直接移除向导，等用户点下才算收尾 */}
+            {complete && (
+              <div className="flex justify-center pt-1">
+                <Button
+                  size="lg"
+                  className="gap-2 px-8"
+                  disabled={confirming}
+                  onClick={handleConfirm}
+                >
+                  {confirming ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {t("wizard.confirm")}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </div>

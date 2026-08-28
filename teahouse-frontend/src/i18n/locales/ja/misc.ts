@@ -103,6 +103,7 @@ export const jaMisc = {
     skip: "スキップ",
     recommended: "推奨",
     skipped: "スキップ済み",
+    confirm: "完了して創作を開始",
     steps: {
       providerReady: {
         title: "プロバイダーを追加",
@@ -113,7 +114,7 @@ export const jaMisc = {
         desc: "「モデルプール」からプロバイダーのモデル一覧を取得してインポートし、1 つ以上を有効化します。",
       },
       slotsReady: {
-        title: "正文（本文）モデルを指定",
+        title: "モデルスロットを指定",
         desc: "「監督＋正文」の 2 つのスロットにそれぞれ有効なモデルを割り当てると、小説の創作を開始できます。",
       },
       profileReady: {

@@ -33,13 +33,6 @@ export const WIZARD_STEPS: WizardStep[] = [
     descKey: "wizard.steps.modelReady.desc",
   },
   {
-    key: "slotsReady",
-    tab: "slots",
-    titleKey: "wizard.steps.slotsReady.title",
-    descKey: "wizard.steps.slotsReady.desc",
-    actionLabelKey: "wizard.goSpecify",
-  },
-  {
     key: "profileReady",
     tab: "profiles",
     titleKey: "wizard.steps.profileReady.title",
@@ -54,5 +47,12 @@ export const WIZARD_STEPS: WizardStep[] = [
     descKey: "wizard.steps.presetReady.desc",
     actionLabelKey: "wizard.goCreate",
     skippable: true,
+  },
+  {
+    key: "slotsReady",
+    tab: "slots",
+    titleKey: "wizard.steps.slotsReady.title",
+    descKey: "wizard.steps.slotsReady.desc",
+    actionLabelKey: "wizard.goSpecify",
   },
 ]

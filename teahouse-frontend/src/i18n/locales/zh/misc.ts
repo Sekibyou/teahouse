@@ -103,6 +103,7 @@ export const zhMisc = {
     skip: "跳过",
     recommended: "推荐",
     skipped: "已跳过",
+    confirm: "完成，开始创作",
     steps: {
       providerReady: {
         title: "添加供应商",
@@ -113,7 +114,7 @@ export const zhMisc = {
         desc: "进入「模型池」从供应商拉取并导入模型，启用至少一个。",
       },
       slotsReady: {
-        title: "指定正文模型",
+        title: "指定模型槽位",
         desc: "为「导演+正文」两个槽位各绑定一个已启用的模型，才能开始小说创作。",
       },
       profileReady: {
