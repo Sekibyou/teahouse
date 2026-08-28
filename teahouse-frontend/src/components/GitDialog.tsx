@@ -289,18 +289,18 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
   return (
     <div
-      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-background/70 backdrop-blur-lg flex items-center justify-center"}`}
+      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/50 backdrop-blur-sm flex items-center justify-center"}`}
       onClick={onClose}
     >
       <div
         className={`flex flex-col overflow-hidden ${isMobile
           ? "h-full w-full"
-          : "bg-background rounded-lg shadow-xl"
+          : "bg-card border border-border rounded-xl shadow-2xl"
         }`}
         style={
           isMobile
             ? undefined
-            : { width: "90vw", height: "90vh", maxWidth: 1400, maxHeight: 900 }
+            : { width: "min(92vw, 1100px)", height: "min(88vh, 760px)", maxWidth: 1100, maxHeight: 760 }
         }
         onClick={e => e.stopPropagation()}
       >
@@ -631,7 +631,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
                 {/* ── Tab: 提交管理 ── */}
                 {tab === "commit" && (
-                  <div className={`flex-1 overflow-hidden ${isMobile ? "flex flex-col" : "flex"}`}>
+                  <div className={`h-full overflow-hidden ${isMobile ? "flex flex-col" : "flex"}`}>
                     {/* Left: uncommitted files */}
                     <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? "" : "border-r border-border"}`}>
                       <div className="flex-1 overflow-auto p-4">
