@@ -3,6 +3,13 @@ import { useTranslation } from "react-i18next"
 import { Loader2, Upload, X, Shield, Trash2, Power, PowerOff, Link2, Puzzle, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PluginConfigPanel } from "@/components/PluginConfigPanel"
 import { LibraryEmptyState } from "@/components/SettingsDialogComps/SettingsSection"
@@ -395,14 +402,18 @@ export function PluginsPanel() {
                   </div>
 
                   <div className="flex items-center gap-2 pt-1">
-                    <select
+                    <Select
                       value={newRule.scheme}
-                      onChange={(e) => setNewRule({ ...newRule, scheme: e.target.value })}
-                      className="h-8 rounded-md border bg-transparent text-xs px-2"
+                      onValueChange={(v) => setNewRule({ ...newRule, scheme: v ?? "https" })}
                     >
-                      <option value="https">https</option>
-                      <option value="http">http</option>
-                    </select>
+                      <SelectTrigger className="h-8 w-24 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="https">https</SelectItem>
+                        <SelectItem value="http">http</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
                       className="h-8 text-xs flex-1"
                       placeholder={t("plugin.hostPH")}

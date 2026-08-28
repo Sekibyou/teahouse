@@ -5,6 +5,13 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { Field } from "@/components/SettingsDialogComps/SettingsSection"
@@ -230,15 +237,19 @@ export function ModelsPanel() {
                 <Input value={providerCreateForm.name} onChange={e => setProviderCreateForm(f => ({ ...f, name: e.target.value }))} placeholder={t("provider.namePH")} className="text-sm" autoFocus />
               </Field>
               <Field label={t("provider.apiFormat")}>
-                <select
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                <Select
                   value={providerCreateForm.api_format}
-                  onChange={e => setProviderCreateForm(f => ({ ...f, api_format: e.target.value }))}
+                  onValueChange={(v) => setProviderCreateForm(f => ({ ...f, api_format: v ?? "" }))}
                 >
-                  {API_FORMAT_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                  <SelectTrigger className="w-full h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {API_FORMAT_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label={t("provider.baseUrl")} className="col-span-2">
                 <Input value={providerCreateForm.api_url} onChange={e => setProviderCreateForm(f => ({ ...f, api_url: e.target.value }))} placeholder={t("provider.apiUrlPH")} className="text-sm font-mono" />
@@ -360,15 +371,19 @@ export function ModelsPanel() {
                 {expanded && (<>
                   <div className="grid grid-cols-3 gap-3">
                     <Field label={t("provider.apiFormat")}>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                      <Select
                         value={form.api_format}
-                        onChange={e => setProviderFormField(p.id, "api_format", e.target.value)}
+                        onValueChange={(v) => setProviderFormField(p.id, "api_format", v ?? "")}
                       >
-                        {API_FORMAT_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="w-full h-9 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {API_FORMAT_OPTIONS.map(opt => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </Field>
                     <Field label={t("provider.apiKey")} className="col-span-2">
                       <Input

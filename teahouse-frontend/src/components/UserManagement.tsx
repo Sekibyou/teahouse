@@ -4,6 +4,13 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { usersApi, type ManagedUser } from "@/lib/api"
 import { useAuth } from "@/stores/authStore"
@@ -206,16 +213,19 @@ export function UserManagementPanel() {
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">{t("user.role")}</label>
-              <select
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+              <Select
                 value={createForm.role}
-                onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value }))}
+                onValueChange={(v) => setCreateForm((f) => ({ ...f, role: v ?? "user" }))}
                 disabled={!isSuper}
-                title={isSuper ? "" : t("user.onlySuperCanGrant")}
               >
-                <option value="user">{t("user.normalUser")}</option>
-                <option value="admin" disabled={!isSuper}>{t("user.admin")}</option>
-              </select>
+                <SelectTrigger className="w-full h-9 text-sm" title={isSuper ? "" : t("user.onlySuperCanGrant")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">{t("user.normalUser")}</SelectItem>
+                  <SelectItem value="admin" disabled={!isSuper}>{t("user.admin")}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           {createError && <p className="text-xs text-red-500">{createError}</p>}

@@ -8,6 +8,14 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { gitApi } from "@/lib/api"
@@ -669,15 +677,19 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                       {/* Commit form */}
                       <div className="p-4 border-b border-border space-y-3 shrink-0">
                         <div className="flex gap-2">
-                          <select
-                            className="w-20 shrink-0 rounded-md border border-input bg-background px-1 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                          <Select
                             value={commitPrefix}
-                            onChange={e => setCommitPrefix(e.target.value as CommitType)}
+                            onValueChange={(v) => setCommitPrefix(v as CommitType)}
                           >
-                            {COMMIT_PREFIXES.map(p => (
-                              <option key={p.value} value={p.value}>{t(`commit.type.${p.value}`)}</option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="w-20 h-9 shrink-0 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {COMMIT_PREFIXES.map(p => (
+                                <SelectItem key={p.value} value={p.value}>{t(`commit.type.${p.value}`)}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <Input
                             value={commitMessage}
                             onChange={e => setCommitMessage(e.target.value)}
@@ -693,7 +705,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               type="number"
                               value={floorNumber}
                               onChange={e => setFloorNumber(Number(e.target.value))}
-                              className="w-24 text-sm"
+                              className="w-24 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               min={1}
                             />
                           </div>
@@ -705,7 +717,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               type="number"
                               value={summaryStart}
                               onChange={e => setSummaryStart(Number(e.target.value))}
-                              className="w-24 text-sm"
+                              className="w-24 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               min={1}
                             />
                             <label className="text-xs text-muted-foreground shrink-0">{t("commit.endFloor")}</label>
@@ -713,7 +725,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                               type="number"
                               value={summaryEnd}
                               onChange={e => setSummaryEnd(Number(e.target.value))}
-                              className="w-24 text-sm"
+                              className="w-24 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               min={1}
                             />
                           </div>
@@ -737,11 +749,10 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
                         <div className="space-y-2">
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={commitAndBranch}
-                              onChange={e => setCommitAndBranch(e.target.checked)}
-                              className="rounded border-border"
+                              onCheckedChange={(checked) => setCommitAndBranch(!!checked)}
+                              className="size-4"
                             />
                             <span className="text-xs text-muted-foreground">{t("commit.andBranch")}</span>
                           </label>
