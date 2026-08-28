@@ -29,6 +29,7 @@
 - **React Router** 路由（布局层路由守卫）
 - **Tailwind CSS v4** + OKLCH 色彩空间 + 暗黑模式
 - **pnpm** 进行包管理，严禁混用npm
+- **⚠️ 依赖必须「声明进清单」才算数**：新增第三方依赖时，后端改 `pyproject.toml` 的 `dependencies`（或 `uv add` 一步声明+安装）、前端改 `package.json`（`pnpm add`）。`pip install` / `pnpm install` **只把已声明的装进环境、绝不自动写回清单**——本地临时装了但没声明，别的机器打包（如 linux 那台跑 `pip install -e .` / `pnpm install`）只会装已声明的，会静默缺依赖
 - **前端检查以 `build` 为准**：验证前端改动时直接 `pnpm run build`（即 `tsc -b && vite build`），不要只做 `tsc --noEmit` 之类的语法/类型检查——`tsc -b` 走 project references 全量检查，比 `tsc --noEmit` 严格，后者会漏报错误
 - **⚠️ PWA 缓存版本号**：每次前端改动、`pnpm run build` 部署前，须手动把 `teahouse-frontend/public/sw.js` 里的 `CACHE_NAME` 版本号 +1（`teahouse-v2` → `teahouse-v3` …）。否则浏览器因 sw.js 内容没变不重建缓存，PWA/浏览器仍可能回退到旧 bundle（磁盘 HTTP 缓存删 PWA、重装都清不掉）
 - **⚠️ 禁止使用浏览器原生弹窗**（`alert`、`confirm`、`prompt`），一律使用 `ConfirmDialog` 组件（`@/components/ConfirmDialog`）

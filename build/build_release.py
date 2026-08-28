@@ -247,9 +247,13 @@ def step_check() -> bool:
 
 
 def step_frontend() -> bool:
-    _log("[frontend] Building frontend (pnpm build)...")
+    _log("[frontend] Installing deps (pnpm install), then building (pnpm build)...")
     if not (FRONTEND / "package.json").exists():
         _log(f"  ERROR: no frontend at {FRONTEND}")
+        return False
+    rc = _run(["pnpm", "install"], cwd=FRONTEND)
+    if rc != 0:
+        _log("  ERROR: frontend dependency install failed")
         return False
     rc = _run(["pnpm", "build"], cwd=FRONTEND)
     if rc != 0:
@@ -298,9 +302,13 @@ def step_assets() -> bool:
 
 
 def step_backend() -> bool:
-    _log("[backend] Injecting version, then running PyInstaller (backend + resources)...")
+    _log("[backend] Installing deps (pip install -e .), then PyInstaller (backend + resources)...")
     if not SPEC.exists():
         _log(f"  ERROR: spec not found at {SPEC}")
+        return False
+    rc = _run([str(PYTHON), "-m", "pip", "install", "-e", ".", "--quiet"], cwd=ROOT)
+    if rc != 0:
+        _log("  ERROR: backend dependency install failed")
         return False
     _write_version_source()
     rc = _run([str(PYINSTALLER), "--clean", "--noconfirm", str(SPEC)], cwd=ROOT)
