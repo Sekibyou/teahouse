@@ -28,7 +28,7 @@ class LLMConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     host: str = Field(default="127.0.0.1", description="Bind address; 127.0.0.1 is the safe default (localhost only), set 0.0.0.0 to expose on the LAN")
-    port: int = Field(default=8888, ge=1024, le=65535)
+    port: int = Field(default=8888, ge=1, le=65535)
 
     @field_validator("port", mode="before")
     @classmethod
