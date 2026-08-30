@@ -1,4 +1,6 @@
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
+import * as SelectPrimitive from "@radix-ui/react-select"
+import { Select, SelectContent, SelectItem } from "@/components/ui/select"
+import { Button } from "@/components/ui/button"
 import { Languages } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
@@ -14,15 +16,16 @@ export function LangSwitcher({ className }: LangSwitcherProps) {
   const setLang = useLangStore((s) => s.setLang)
   return (
     <Select value={currentLang} onValueChange={(v) => setLang(v as Lang)}>
-      <SelectTrigger
-        aria-label="Switch language"
-        className={cn(
-          "w-8 px-0 justify-center hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent",
-          className,
-        )}
-      >
-        <Languages className="h-4 w-4" />
-      </SelectTrigger>
+      <SelectPrimitive.Trigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Switch language"
+          className={cn("relative", className)}
+        >
+          <Languages className="h-4 w-4" />
+        </Button>
+      </SelectPrimitive.Trigger>
       <SelectContent>
         {SUPPORTED_LANGS.map((l) => (
           <SelectItem key={l} value={l}>
