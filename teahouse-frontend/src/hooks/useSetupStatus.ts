@@ -45,8 +45,10 @@ export function useSetupStatus(): SetupStatus {
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
   const [presets, setPresets] = useState<DirectorPromptPreset[]>([])
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    // silent：不翻 loading——弹窗内的悬浮向导在轮询刷新时不能闪加载态（否则面板卸载/重挂，
+    // expanded 与庆祝状态被重置）。仅首次拉取 / 关闭时刷新才翻 loading。
+    if (!opts?.silent) setLoading(true)
     const [pRes, mRes, sRes, profRes, presRes] = await Promise.all([
       llmProvidersApi.list(),
       llmModelsApi.listEnabled(),
@@ -59,7 +61,7 @@ export function useSetupStatus(): SetupStatus {
     if (sRes.ok) setSlots(sRes.data!.slots)
     if (profRes.ok) setProfiles(profRes.data!.profiles)
     if (presRes.ok) setPresets(presRes.data!.presets)
-    setLoading(false)
+    if (!opts?.silent) setLoading(false)
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
@@ -73,6 +75,24 @@ export function useSetupStatus(): SetupStatus {
       refresh()
     }
     prevSettingsOpenRef.current = settingsOpen
+  }, [settingsOpen, refresh])
+
+  // 弹窗打开期间静默轮询：用户在设置里配置（建供应商/导入模型/绑槽位/建预设）时，
+  // 悬浮向导的进度能实时跟上，不必等关闭弹窗。silent 刷新不翻 loading，面板不会闪退。
+  useEffect(() => {
+    if (!settingsOpen) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      await refresh({ silent: true })
+      if (cancelled) return
+      timer = setTimeout(poll, 2000)
+    }
+    poll()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [settingsOpen, refresh])
 
   const providerReady = providers.some((p) => p.is_enabled)
