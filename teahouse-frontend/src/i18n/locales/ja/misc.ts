@@ -108,6 +108,9 @@ export const jaMisc = {
     recommended: "推奨",
     skipped: "スキップ済み",
     confirm: "完了して創作を開始",
+    panelTitle: "次にやること",
+    panelTriggerAria: "設定チェックリストを表示",
+    panelCloseAria: "パネルを閉じる",
     steps: {
       providerReady: {
         title: "プロバイダーを追加",

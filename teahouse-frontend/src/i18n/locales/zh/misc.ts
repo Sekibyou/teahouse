@@ -108,6 +108,9 @@ export const zhMisc = {
     recommended: "推荐",
     skipped: "已跳过",
     confirm: "完成，开始创作",
+    panelTitle: "接下来要做什么",
+    panelTriggerAria: "查看配置清单",
+    panelCloseAria: "收起面板",
     steps: {
       providerReady: {
         title: "添加供应商",

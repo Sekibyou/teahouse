@@ -108,6 +108,9 @@ export const enMisc = {
     recommended: "Recommended",
     skipped: "Skipped",
     confirm: "Done, start creating",
+    panelTitle: "What's next",
+    panelTriggerAria: "View setup checklist",
+    panelCloseAria: "Collapse panel",
     steps: {
       providerReady: {
         title: "Add a provider",

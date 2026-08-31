@@ -9,7 +9,7 @@ import { WIZARD_STEPS, type WizardTab } from "./steps"
 import { loadLitSteps, saveLitSteps } from "./progressMemory"
 import { useTranslation } from "react-i18next"
 
-type CircleState = "pending" | "done" | "skipped"
+export type CircleState = "pending" | "done" | "skipped"
 
 /**
  * 清单左侧的状态灯。三态各有不同的"光"：
@@ -21,7 +21,7 @@ type CircleState = "pending" | "done" | "skipped"
  * 迅速扩散的光晕 + 图标弹入。只有**本次新完成**的项才拿得到这个值（见 WelcomeWizard），
  * 早就亮着的项进页面时是稳定的常亮，不会每次都闪一遍。
  */
-function StepCircle({
+export function StepCircle({
   state, celebrateDelay, breathDelay,
 }: {
   state: CircleState

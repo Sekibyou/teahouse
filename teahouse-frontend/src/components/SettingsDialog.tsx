@@ -18,6 +18,7 @@ import { SkillsPanel } from "@/components/SettingsDialogComps/SkillsPanel"
 import { PackagesPanel } from "@/components/SettingsDialogComps/PackagesPanel"
 import { UsersPanel } from "@/components/SettingsDialogComps/UsersPanel"
 import { SettingsDialogContext } from "@/components/SettingsDialogComps/SettingsContext"
+import { WizardFloatingPanel } from "@/components/WizardFloatingPanel/WizardFloatingPanel"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -321,6 +322,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
           </div>
         </div>
       </div>
+      <WizardFloatingPanel />
     </>
   )
 }
