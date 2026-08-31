@@ -84,6 +84,7 @@ export const jaMisc = {
     profile: "パラメータプリセット",
     preset: "監督プリセット",
     noModel: "モデル未選択",
+    noModelEmpty: "利用可能なモデルがありません。「モデルプール」でプロバイダーを追加し、モデルをインポートしてください。",
     saveFailed: "保存に失敗",
   },
   layout: {

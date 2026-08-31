@@ -17,6 +17,7 @@ import { PluginsPanel } from "@/components/SettingsDialogComps/PluginsPanel"
 import { SkillsPanel } from "@/components/SettingsDialogComps/SkillsPanel"
 import { PackagesPanel } from "@/components/SettingsDialogComps/PackagesPanel"
 import { UsersPanel } from "@/components/SettingsDialogComps/UsersPanel"
+import { SettingsDialogContext } from "@/components/SettingsDialogComps/SettingsContext"
 
 interface SettingsDialogProps {
   open?: boolean
@@ -302,7 +303,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       Icon={meta.Icon}
                       sectionRef={(el) => { sectionRefs.current[key] = el }}
                     >
-                      <Panel />
+                      <SettingsDialogContext.Provider value={{ activeSection }}>
+                        <Panel />
+                      </SettingsDialogContext.Provider>
                     </SettingsSection>
                   )
                 })}

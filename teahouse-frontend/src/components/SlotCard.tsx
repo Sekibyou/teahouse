@@ -18,6 +18,8 @@ interface SlotCardProps {
   profiles: ModelProfile[]
   presets?: DirectorPromptPreset[]
   onChange: (binding: SlotBinding) => void
+  /** 任意下拉框展开时调用，用于刷新最新数据（模型/参数预设/导演预设可能在本弹窗其他页或外部新增） */
+  onRefresh?: () => void
 }
 
 interface MatchedIds {
@@ -60,7 +62,7 @@ function ModelLabel({ model }: { model: LLMModel }) {
   )
 }
 
-export function SlotCard({ slotId, label, binding, models, profiles, presets, onChange }: SlotCardProps) {
+export function SlotCard({ slotId, label, binding, models, profiles, presets, onChange, onRefresh }: SlotCardProps) {
   const { t } = useTranslation("misc")
   const [selectedModelId, setSelectedModelId] = useState<string>(binding.model_id || "")
   const [selectedProfileId, setSelectedProfileId] = useState<string>(binding.profile_id || "")
@@ -171,7 +173,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
       {/* Model select */}
       <div>
         <label className="text-xs text-muted-foreground mb-1 block">{t("slot.model")}</label>
-        <Select value={selectedModelId} onValueChange={(v) => handleModelChange(v as string)}>
+        <Select value={selectedModelId} onValueChange={(v) => handleModelChange(v as string)} onOpenChange={(open) => { if (open) onRefresh?.() }}>
           <SelectTrigger className="w-full">
             <SelectValue>
               {selectedModel ? (
@@ -185,11 +187,17 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {enabledModels.map(m => (
-              <SelectItem key={m.id} value={m.id}>
-                <ModelLabel model={m} />
-              </SelectItem>
-            ))}
+            {enabledModels.length === 0 ? (
+              <div className="px-3 py-2.5 text-xs text-muted-foreground leading-relaxed">
+                {t("slot.noModelEmpty")}
+              </div>
+            ) : (
+              enabledModels.map(m => (
+                <SelectItem key={m.id} value={m.id}>
+                  <ModelLabel model={m} />
+                </SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -197,7 +205,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
       {/* Profile select */}
       <div>
         <label className="text-xs text-muted-foreground mb-1 block">{t("slot.profile")}</label>
-        <Select value={effectiveProfileId} onValueChange={(v) => handleProfileChange(v as string)}>
+        <Select value={effectiveProfileId} onValueChange={(v) => handleProfileChange(v as string)} onOpenChange={(open) => { if (open) onRefresh?.() }}>
           <SelectTrigger className="w-full">
             <SelectValue>
               <span className={matchedProfileIds.has(effectiveProfileId) ? matchedClass : undefined}>
@@ -219,7 +227,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
       {showPresets && (
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">{t("slot.preset")}</label>
-          <Select value={effectivePresetId} onValueChange={(v) => handlePresetChange(v as string)}>
+          <Select value={effectivePresetId} onValueChange={(v) => handlePresetChange(v as string)} onOpenChange={(open) => { if (open) onRefresh?.() }}>
             <SelectTrigger className="w-full">
               <SelectValue>
                 <span className={matchedPresetIds.has(effectivePresetId) ? matchedClass : undefined}>

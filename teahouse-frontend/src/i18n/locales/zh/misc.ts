@@ -84,6 +84,7 @@ export const zhMisc = {
     profile: "参数预设",
     preset: "导演提示词预设",
     noModel: "未选择模型",
+    noModelEmpty: "当前没有可用模型，请在「模型池」添加供应商并导入模型",
     saveFailed: "保存失败",
   },
   layout: {

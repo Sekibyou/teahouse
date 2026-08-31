@@ -84,6 +84,7 @@ export const enMisc = {
     profile: "Parameter preset",
     preset: "Director prompt preset",
     noModel: "No model selected",
+    noModelEmpty: "No available models. Add a provider and import models in the Model Pool.",
     saveFailed: "Save failed",
   },
   layout: {
