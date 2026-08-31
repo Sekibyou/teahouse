@@ -402,6 +402,15 @@ class SessionLoop:
         task_tracker.register(self.instance_dir.name, self.session_id, compact_task)
         try:
             await compact_task
+            # Compact truncated the jsonl (only the [compact] marker remains).
+            # Reset the in-memory order watermark to the post-compact on-disk
+            # count; otherwise the next enqueue / streaming round inherits the
+            # pre-compact sequence (38, 39, ...) and its records render out of
+            # chronological order (they sort after the much-lower orders of
+            # records written after the next loop rebuild).
+            self._order = sessions._count_records(
+                self.instance_dir / sessions.SESSION_DIR / f"{self.session_id}.jsonl"
+            )
             return True
         except asyncio.CancelledError:
             _event_log(self.instance_dir, self.session_id, "compact_interrupted", {})
