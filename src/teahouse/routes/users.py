@@ -81,8 +81,11 @@ def _public(user: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def api_list_users(_actor: UserInfo = Depends(require_admin_or_super)):
+async def api_list_users(actor: UserInfo = Depends(require_user)):
     users = await list_users()
+    # 普通用户只能看到并管理自己（改显示名/改密），看不到其他账户
+    if actor.role == ROLE_USER:
+        users = [u for u in users if u["id"] == actor.user_id]
     return [_public(u) for u in users]
 
 

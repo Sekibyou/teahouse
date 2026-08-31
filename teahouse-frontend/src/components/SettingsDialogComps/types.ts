@@ -19,7 +19,7 @@ export const TAB_ITEMS: TabItem[] = [
   { key: "plugins", Icon: Puzzle, label: "tab.plugins" },
   { key: "skills", Icon: BookOpen, label: "tab.skills" },
   { key: "packages", Icon: Package, label: "tab.packages" },
-  { key: "users", Icon: Users, label: "tab.users", adminOnly: true },
+  { key: "users", Icon: Users, label: "tab.users" },
 ]
 
 export const permLabels: Record<string, string> = {

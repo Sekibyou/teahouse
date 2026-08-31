@@ -12,8 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { usersApi, type ManagedUser } from "@/lib/api"
-import { useAuth } from "@/stores/authStore"
+import { usersApi, authApi, type ManagedUser } from "@/lib/api"
+import { useAuth, useAuthActions } from "@/stores/authStore"
 import { useTranslation } from "react-i18next"
 
 // 角色标签改用 i18n key,渲染处经 user.normalUser / user.admin / user.superAdmin 取值。
@@ -27,8 +27,10 @@ type ManagedRole = "super" | "admin" | "user"
 
 export function UserManagementPanel() {
   const { t } = useTranslation("misc")
-  const { user: actor } = useAuth()
+  const { user: actor, token } = useAuth()
+  const { setAuth } = useAuthActions()
   const isSuper = actor?.role === "super"
+  const isPlainUser = actor?.role === "user"
 
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(false)
@@ -44,6 +46,7 @@ export function UserManagementPanel() {
   const [editingName, setEditingName] = useState<{ id: string; display_name: string } | null>(null)
   const [pwdFor, setPwdFor] = useState<ManagedUser | null>(null)
   const [pwdValue, setPwdValue] = useState("")
+  const [oldPwdValue, setOldPwdValue] = useState("")
   const [pwdSaving, setPwdSaving] = useState(false)
   const [pwdError, setPwdError] = useState("")
 
@@ -71,12 +74,13 @@ export function UserManagementPanel() {
   }, [])
 
   // ── Permission model (frontend disable layer; backend re-checks) ──
-  // actor is super → can manage everyone except: can't delete self, can't touch
-  // the super account's role (never demote). actor is admin → can only manage
-  // regular users.
+  // super → can manage everyone except: can't delete self, can't touch the
+  // super account's role (never demote). admin → can only manage regular
+  // users. plain user → can only manage themselves (name/password).
   const canSetRole = (t: ManagedUser) => isSuper && t.role !== "super"
   const isSelf = (t: ManagedUser) => t.id === actor?.user_id
-  const canEdit = (t: ManagedUser) => isSuper || t.role === "user" || isSelf(t)
+  const canEdit = (t: ManagedUser) =>
+    isSuper || t.role === "user" || isSelf(t)
   const canDelete = (t: ManagedUser) =>
     isSuper ? t.id !== actor?.user_id && t.role !== "super" : t.role === "user"
 
@@ -109,6 +113,13 @@ export function UserManagementPanel() {
     if (res.ok) {
       setEditingName(null)
       await load()
+      // 同步本地身份缓存，顶栏显示名即时更新
+      if (isPlainUser) {
+        const me = await authApi.me()
+        if (me.ok && me.data && actor && token) {
+          setAuth({ ...actor, display_name: me.data.display_name }, token)
+        }
+      }
     } else {
       setError(res.error || t("user.saveFailed"))
     }
@@ -122,11 +133,16 @@ export function UserManagementPanel() {
     }
     setPwdSaving(true)
     setPwdError("")
-    const res = await usersApi.update(pwdFor.id, { password: pwdValue })
+    const res = await usersApi.update(pwdFor.id, {
+      password: pwdValue,
+      // 普通用户改自己密码必须验证旧密码（后端强制）；管理员/超管改自己或他人为受信旁路，不传
+      ...(isPlainUser ? { old_password: oldPwdValue } : {}),
+    })
     setPwdSaving(false)
     if (res.ok) {
       setPwdFor(null)
       setPwdValue("")
+      setOldPwdValue("")
     } else {
       setPwdError(res.error || t("user.pwdUpdateFailed"))
     }
@@ -166,9 +182,11 @@ export function UserManagementPanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        <Button size="sm" variant="outline" onClick={() => { setCreating((v) => !v); setCreateError("") }}>
-          <Plus className="h-3.5 w-3.5 mr-1.5" />{t("user.newUser")}
-        </Button>
+        {!isPlainUser && (
+          <Button size="sm" variant="outline" onClick={() => { setCreating((v) => !v); setCreateError("") }}>
+            <Plus className="h-3.5 w-3.5 mr-1.5" />{t("user.newUser")}
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -251,6 +269,7 @@ export function UserManagementPanel() {
             const canRole = canSetRole(u)
             const canE = canEdit(u)
             const canDel = canDelete(u)
+            const isMine = isPlainUser && isSelf(u)
             const canRoleReason = isSuper ? t("user.cannotChangeSuperRole") : t("user.onlySuperCanChangeRole")
             const canEditReason = isSuper ? undefined : t("user.onlyManageNormal")
             return (
@@ -274,8 +293,8 @@ export function UserManagementPanel() {
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
-                  {/* Toggle admin */}
-                  {u.role !== "super" && (
+                  {/* Toggle admin — 普通用户自身也不显示（不可自行提升/降级角色） */}
+                  {!isMine && u.role !== "super" && (
                     <Button
                       variant="ghost"
                       size="icon-xs"
@@ -313,22 +332,24 @@ export function UserManagementPanel() {
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    onClick={() => { setPwdFor(u); setPwdValue(""); setPwdError("") }}
+                    onClick={() => { setPwdFor(u); setPwdValue(""); setOldPwdValue(""); setPwdError("") }}
                     disabled={!canE}
                     title={canE ? t("user.changePwd") : canEditReason}
                   >
                     <KeyRound className="h-3.5 w-3.5" />
                   </Button>
-                  {/* Delete */}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={() => setDeleteTarget(u)}
-                    disabled={!canDel}
-                    title={canDel ? t("user.deleteUser") : isSuper ? t("user.cannotDeleteSuper") : t("user.onlyDeleteNormal")}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                  </Button>
+                  {/* Delete — 普通用户不显示（不能删自己，也无权删他人） */}
+                  {!isMine && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setDeleteTarget(u)}
+                      disabled={!canDel}
+                      title={canDel ? t("user.deleteUser") : isSuper ? t("user.cannotDeleteSuper") : t("user.onlyDeleteNormal")}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                    </Button>
+                  )}
                 </div>
               </div>
             )
@@ -337,7 +358,7 @@ export function UserManagementPanel() {
       )}
 
       <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
-        {isSuper ? t("user.footerTipSuper") : t("user.footerTipAdmin")}
+        {isSuper ? t("user.footerTipSuper") : isPlainUser ? t("user.footerTipUser") : t("user.footerTipAdmin")}
       </div>
 
       {/* Change password dialog */}
@@ -346,19 +367,32 @@ export function UserManagementPanel() {
           <div className="bg-background rounded-lg border border-border shadow-xl p-4 w-[320px] space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">{t("user.changePwdTitle", { name: pwdFor.username })}</span>
-              <button className="p-1 rounded hover:bg-muted" onClick={() => setPwdFor(null)}><X className="h-4 w-4" /></button>
+              <button className="p-1 rounded hover:bg-muted" onClick={() => { setPwdFor(null); setOldPwdValue("") }}><X className="h-4 w-4" /></button>
             </div>
+            {isPlainUser && (
+              <>
+                <Input
+                  type="password"
+                  value={oldPwdValue}
+                  onChange={(e) => setOldPwdValue(e.target.value)}
+                  placeholder={t("user.oldPassword")}
+                  className="text-sm"
+                  autoFocus
+                />
+                <div className="text-[11px] text-muted-foreground -mt-1">{t("user.oldPasswordHint")}</div>
+              </>
+            )}
             <Input
               type="password"
               value={pwdValue}
               onChange={(e) => setPwdValue(e.target.value)}
               placeholder={t("user.newPassword")}
               className="text-sm"
-              autoFocus
+              autoFocus={!isPlainUser}
             />
             {pwdError && <p className="text-xs text-red-500">{pwdError}</p>}
             <div className="flex gap-2 justify-end">
-              <Button size="sm" variant="outline" onClick={() => setPwdFor(null)}>{t("common:cancel")}</Button>
+              <Button size="sm" variant="outline" onClick={() => { setPwdFor(null); setOldPwdValue("") }}>{t("common:cancel")}</Button>
               <Button size="sm" onClick={savePwd} disabled={pwdSaving}>
                 {pwdSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Save className="h-3 w-3 mr-1" />}{t("common:save")}
               </Button>
