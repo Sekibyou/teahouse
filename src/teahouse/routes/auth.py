@@ -95,6 +95,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     display_name: str = ""
+    invite_key: Optional[str] = None  # required when auth.registration_mode == "invite"
 
 
 class UpdateMeRequest(BaseModel):
@@ -113,9 +114,18 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.get("/registration")
 async def api_registration_status():
     """Public — whether self-service registration is open. Frontend hides the
-    register entry when false, instead of discovering it on a 403 at submit."""
+    register entry when false, instead of discovering it on a 403 at submit.
+
+    Returns the derived three-state `mode` ("disabled" | "open" | "invite") plus
+    a legacy-compatible boolean `allow_registration` (True for both open and invite,
+    since both show a register entry).
+    """
     cfg = state.config
-    return {"allow_registration": bool(cfg and cfg.auth.allow_registration)}
+    mode = cfg.auth.registration_mode if (cfg and cfg.auth) else "disabled"
+    return {
+        "mode": mode,
+        "allow_registration": mode in ("open", "invite"),
+    }
 
 
 @router.post("/login")
@@ -140,11 +150,32 @@ async def api_login(body: LoginRequest, request: Request):
 @router.post("/register")
 async def api_register(body: RegisterRequest):
     cfg = state.config
-    if cfg is None or not cfg.auth.allow_registration:
+    mode = cfg.auth.registration_mode if (cfg and cfg.auth) else "disabled"
+
+    if mode == "disabled":
         raise HTTPException(status_code=403, detail="registration is not open, please ask the administrator to enable it in teahouse.yaml")
+
+    if mode == "invite":
+        # Invite-only: a valid, unused, un-revoked invite key is mandatory.
+        key = (body.invite_key or "").strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="an invite key is required to register")
+        from ..database.invite_keys import consume_invite_key
+        # Atomic consume BEFORE user creation, so concurrent registrations on the
+        # same key can't both win. If user creation then fails (e.g. name taken),
+        # the key stays consumed to avoid retry loops; admins can re-issue.
+        if not await consume_invite_key(key, "__pending__"):
+            raise HTTPException(status_code=400, detail="invalid or already used invite key")
+
     user = await create_user(body.username, body.password, body.display_name, role=ROLE_USER)
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")
+
+    if mode == "invite":
+        # Attribute the key to the now-created user id (it was consumed with a
+        # placeholder owner to win the key above).
+        from ..database.invite_keys import attribute_invite_key
+        await attribute_invite_key((body.invite_key or "").strip(), user["id"])
 
     # Auto-register all built-in prototypes for the new user
     try:

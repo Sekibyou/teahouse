@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import {
-  Plus, Trash2, Loader2, Pencil, Save, X, KeyRound, Shield, Crown, AlertCircle,
+  Plus, Trash2, Loader2, Pencil, Save, X, KeyRound, Shield, Crown, AlertCircle, Copy, Check,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { usersApi, authApi, type ManagedUser } from "@/lib/api"
+import { usersApi, authApi, inviteKeysApi, type ManagedUser, type InviteKey } from "@/lib/api"
 import { useAuth, useAuthActions } from "@/stores/authStore"
 import { useTranslation } from "react-i18next"
 
@@ -56,6 +56,62 @@ export function UserManagementPanel() {
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null)
   const [mutating, setMutating] = useState(false)
 
+  // invite keys
+  const [inviteKeys, setInviteKeys] = useState<InviteKey[]>([])
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteGenerating, setInviteGenerating] = useState(false)
+  const [inviteError, setInviteError] = useState("")
+  const [revokeTarget, setRevokeTarget] = useState<InviteKey | null>(null)
+  const [revoking, setRevoking] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  const loadInviteKeys = async () => {
+    if (isPlainUser) return
+    setInviteLoading(true)
+    const res = await inviteKeysApi.list()
+    setInviteLoading(false)
+    if (res.ok) {
+      setInviteKeys(res.data!)
+    } else {
+      setInviteError(res.error || t("inviteKeys.loadFailed"))
+    }
+  }
+
+  const generateInviteKey = async () => {
+    setInviteGenerating(true)
+    setInviteError("")
+    const res = await inviteKeysApi.create()
+    setInviteGenerating(false)
+    if (res.ok) {
+      await loadInviteKeys()
+    } else {
+      setInviteError(res.error || t("inviteKeys.generateFailed"))
+    }
+  }
+
+  const applyRevoke = async () => {
+    if (!revokeTarget) return
+    setRevoking(true)
+    const res = await inviteKeysApi.revoke(revokeTarget.id)
+    setRevoking(false)
+    setRevokeTarget(null)
+    if (res.ok) {
+      await loadInviteKeys()
+    } else {
+      setInviteError(res.error || t("inviteKeys.revokeFailed"))
+    }
+  }
+
+  const copyInviteKey = async (id: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedId(id)
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500)
+    } catch {
+      // clipboard unavailable — ignore
+    }
+  }
+
   const load = async () => {
     setLoading(true)
     const res = await usersApi.list()
@@ -70,6 +126,7 @@ export function UserManagementPanel() {
 
   useEffect(() => {
     load()
+    loadInviteKeys()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -357,6 +414,60 @@ export function UserManagementPanel() {
         </div>
       )}
 
+      {!isPlainUser && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{t("inviteKeys.title")}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{t("inviteKeys.description")}</div>
+            </div>
+            <Button size="sm" variant="outline" onClick={generateInviteKey} disabled={inviteGenerating} className="shrink-0">
+              {inviteGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <KeyRound className="h-3.5 w-3.5 mr-1.5" />}
+              {t("inviteKeys.generate")}
+            </Button>
+          </div>
+
+          {inviteError && (
+            <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{inviteError}</span>
+            </div>
+          )}
+
+          {inviteLoading ? (
+            <div className="flex items-center justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : inviteKeys.length === 0 ? (
+            <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">{t("inviteKeys.empty")}</div>
+          ) : (
+            <div className="space-y-2">
+              {inviteKeys.map((k) => (
+                <div key={k.id} className="rounded-md border px-3 py-2 flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs truncate">{k.key}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => copyInviteKey(k.id, k.key)}
+                        title={t("inviteKeys.copy")}
+                      >
+                        {copiedId === k.id ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      {t("inviteKeys.issuedBy")}: {k.issued_by_username || "—"} · {t("inviteKeys.createdAt")}: {new Date(k.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" className="text-red-500 shrink-0" onClick={() => setRevokeTarget(k)}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />{t("inviteKeys.revoke")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="text-[11px] text-muted-foreground pt-2 border-t border-border">
         {isSuper ? t("user.footerTipSuper") : isPlainUser ? t("user.footerTipUser") : t("user.footerTipAdmin")}
       </div>
@@ -421,6 +532,16 @@ export function UserManagementPanel() {
         confirmText={mutating ? t("user.deleting") : t("common:delete")}
         onConfirm={applyDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        title={t("inviteKeys.revokeTitle")}
+        message={t("inviteKeys.revokeMsg")}
+        variant="destructive"
+        confirmText={revoking ? t("inviteKeys.revoking") : t("common:confirm")}
+        onConfirm={applyRevoke}
+        onCancel={() => setRevokeTarget(null)}
       />
     </div>
   )

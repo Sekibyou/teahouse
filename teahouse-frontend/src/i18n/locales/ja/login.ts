@@ -2,6 +2,7 @@ export const jaLogin = {
   // 标题 / 副标题
   title: "Teahouse",
   subtitleRegister: "新しいアカウントを作成して開始",
+  subtitleRegisterInvite: "招待登録 — 招待コードを入力してアカウントを作成",
   subtitleLogin: "あなたのアカウントにログイン",
 
   // 表单字段
@@ -9,6 +10,8 @@ export const jaLogin = {
   displayName: "表示名",
   displayNameOptional: "（任意）",
   password: "パスワード",
+  inviteKey: "招待コード",
+  inviteKeyPlaceholder: "管理者から発行された招待コードを入力してください",
 
   // 按钮
   submitRegister: "登録",
@@ -16,6 +19,7 @@ export const jaLogin = {
 
   // 切换登录 / 注册
   switchToRegister: "アカウントをお持ちでない方？",
+  switchToRegisterInvite: "招待コードをお持ちの方？",
   switchToLogin: "すでにアカウントをお持ちの方？",
   goLogin: "ログインへ",
   goRegister: "新規アカウントを登録",
@@ -24,6 +28,7 @@ export const jaLogin = {
   loginRequired: "ユーザー名とパスワードを入力してください",
   registerRequired: "必須項目をすべて入力してください",
   passwordMinLength: "パスワードは 6 文字以上で入力してください",
+  inviteKeyRequired: "招待コードを入力してください",
   invalidCredentials: "ユーザー名またはパスワードが間違っています",
   usernameTaken: "このユーザー名は既に使用されています",
   registrationDisabled: "登録は現在受け付けていません。管理者に teahouse.yaml で有効にしてもらってください",

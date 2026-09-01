@@ -18,12 +18,16 @@ export function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [allowRegistration, setAllowRegistration] = useState(false)
+  const [registrationMode, setRegistrationMode] = useState<"disabled" | "open" | "invite">("disabled")
+  const [inviteKey, setInviteKey] = useState("")
 
   useEffect(() => {
     let active = true
     authApi.registrationStatus().then((res) => {
       if (active) {
-        const open = !!res.data?.allow_registration
+        const mode = res.data?.mode ?? "disabled"
+        const open = !!res.data?.allow_registration || mode !== "disabled"
+        setRegistrationMode(mode)
         setAllowRegistration(open)
         if (!open) setMode("login") // 关闭注册时不允许停留在注册表单
       }
@@ -73,9 +77,13 @@ export function LoginPage() {
       setError(t("passwordMinLength"))
       return
     }
+    if (registrationMode === "invite" && !inviteKey.trim()) {
+      setError(t("inviteKeyRequired"))
+      return
+    }
     setIsLoading(true)
     try {
-      const result = await authApi.register(username, password, displayName || undefined)
+      const result = await authApi.register(username, password, displayName || undefined, inviteKey.trim() || undefined)
       if (result.ok && result.data?.token && result.data?.user) {
         setAuth(result.data.user, result.data.token)
       } else {
@@ -103,7 +111,11 @@ export function LoginPage() {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">{t("title")}</CardTitle>
           <CardDescription>
-            {isRegister ? t("subtitleRegister") : t("subtitleLogin")}
+            {isRegister
+              ? registrationMode === "invite"
+                ? t("subtitleRegisterInvite")
+                : t("subtitleRegister")
+              : t("subtitleLogin")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -129,6 +141,20 @@ export function LoginPage() {
                   id="displayName"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </div>
+            )}
+
+            {isRegister && registrationMode === "invite" && (
+              <div className="space-y-2">
+                <label htmlFor="inviteKey" className="text-sm font-medium">
+                  {t("inviteKey")}
+                </label>
+                <Input
+                  id="inviteKey"
+                  value={inviteKey}
+                  onChange={(e) => setInviteKey(e.target.value)}
+                  placeholder={t("inviteKeyPlaceholder")}
                 />
               </div>
             )}
@@ -170,7 +196,7 @@ export function LoginPage() {
 
             {allowRegistration && (
               <div className="text-center text-sm text-muted-foreground">
-                {isRegister ? t("switchToLogin") : t("switchToRegister")}
+                {isRegister ? t("switchToLogin") : registrationMode === "invite" ? t("switchToRegisterInvite") : t("switchToRegister")}
                 <button
                   type="button"
                   className="text-primary hover:underline ml-1"

@@ -2,6 +2,7 @@ export const enLogin = {
   // 标题 / 副标题
   title: "Teahouse",
   subtitleRegister: "Create a new account to get started",
+  subtitleRegisterInvite: "Invite registration — enter your invite code to create an account",
   subtitleLogin: "Log in to your account",
 
   // 表单字段
@@ -9,6 +10,8 @@ export const enLogin = {
   displayName: "Display name",
   displayNameOptional: "(optional)",
   password: "Password",
+  inviteKey: "Invite code",
+  inviteKeyPlaceholder: "Enter the invite code issued by an administrator",
 
   // 按钮
   submitRegister: "Register",
@@ -16,6 +19,7 @@ export const enLogin = {
 
   // 切换登录 / 注册
   switchToRegister: "No account?",
+  switchToRegisterInvite: "Have an invite code?",
   switchToLogin: "Already have an account?",
   goLogin: "Go to login",
   goRegister: "Register a new account",
@@ -24,6 +28,7 @@ export const enLogin = {
   loginRequired: "Please enter your username and password",
   registerRequired: "Please fill in all required fields",
   passwordMinLength: "Password must be at least 6 characters",
+  inviteKeyRequired: "Please enter your invite code",
   invalidCredentials: "Incorrect username or password",
   usernameTaken: "Username is already taken",
   registrationDisabled: "Registration is not open, please ask the administrator to enable it in teahouse.yaml",

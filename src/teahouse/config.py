@@ -56,6 +56,26 @@ class AuthConfig(BaseModel):
         description="Whether self-service registration via POST /api/auth/register is open. "
         "Closed by default; enable to allow anyone to create a regular user account.",
     )
+    invited_registration: bool = Field(
+        default=False,
+        description="Whether registration requires an invite key. Only meaningful when "
+        "allow_registration is true: when both are true, the service runs in invite-only "
+        "mode and a valid, unused invite key must accompany registration.",
+    )
+
+    @property
+    def registration_mode(self) -> str:
+        """Derived three-state registration mode: "disabled" | "open" | "invite".
+
+        Collapses the two booleans into one clean enum the rest of the code (routes,
+        frontend) consumes, so business logic never re-combines the flags itself:
+        - allow_registration False, invited_registration any  -> disabled (dead combo: false wins)
+        - allow_registration True,  invited_registration False -> open
+        - allow_registration True,  invited_registration True  -> invite
+        """
+        if not self.allow_registration:
+            return "disabled"
+        return "invite" if self.invited_registration else "open"
 
 
 def _project_root() -> Path:

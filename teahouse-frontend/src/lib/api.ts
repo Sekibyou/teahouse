@@ -126,10 +126,10 @@ export const authApi = {
     )
   },
 
-  register: async (username: string, password: string, displayName?: string) => {
+  register: async (username: string, password: string, displayName?: string, inviteKey?: string) => {
     return request<{ user: AuthUser; token: string }>(
       "/api/auth/register",
-      { method: "POST", body: JSON.stringify({ username, password, display_name: displayName }) },
+      { method: "POST", body: JSON.stringify({ username, password, display_name: displayName, invite_key: inviteKey }) },
       true // public endpoint — 401/403 surface their real detail
     )
   },
@@ -139,7 +139,28 @@ export const authApi = {
   },
 
   registrationStatus: async () => {
-    return get<{ allow_registration: boolean }>("/api/auth/registration")
+    return get<{ mode: "disabled" | "open" | "invite"; allow_registration: boolean }>("/api/auth/registration")
+  },
+}
+
+// Invite-key management API (admin / super admin)
+export interface InviteKey {
+  id: string
+  key: string
+  issued_by: string
+  issued_by_username?: string | null
+  created_at: number
+}
+
+export const inviteKeysApi = {
+  list: async () => {
+    return get<InviteKey[]>("/api/invite-keys")
+  },
+  create: async () => {
+    return post<InviteKey>("/api/invite-keys", {})
+  },
+  revoke: async (id: string) => {
+    return del<{ status: string }>(`/api/invite-keys/${id}`)
   },
 }
 

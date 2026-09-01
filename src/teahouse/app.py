@@ -46,6 +46,7 @@ from .database.workspaces import (
 )
 from .routes.auth import router as auth_router
 from .routes.users import router as users_router
+from .routes.invite_keys import router as invite_keys_router
 from .routes.llm_configs import router as llm_configs_router
 from .routes.llm_providers import router as llm_providers_router
 from .routes.llm_models import router as llm_models_router
@@ -150,6 +151,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(invite_keys_router)
 app.include_router(llm_configs_router)  # deprecated — kept for backward compat
 app.include_router(llm_providers_router)
 app.include_router(llm_models_router)
