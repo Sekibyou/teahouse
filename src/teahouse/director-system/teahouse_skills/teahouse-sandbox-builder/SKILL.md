@@ -224,6 +224,17 @@ const [user] = await Teahouse.getVars(["user_name"])
 >
 > 同理，`setVar` 的返回是"写后全部变量"，也可用它做 `getVars` 的镜像缓存。
 
+#### `Teahouse.roll(expr) → Promise<number>`
+
+按 RPG 骰子语法掷骰并返回 int 总数。**复用后端 placeholder 的同一套 `roll()` 语法（单一事实源）**，与导演代码块 `${ if...: }` 里的 `roll("1d6")` 语义完全一致。异步（经后端往返），需要 `await`：
+
+```js
+const dmg = await Teahouse.roll("2d6+1")
+const loot = await Teahouse.roll("4d6k3")   // 保最高 3 个
+```
+
+支持语法（同导演 `roll()`）：`XdN` + 可选 `kN`(保最高) / `dlN`(丢最低) / `rN`(重掷≤N) / `roN`(重掷一次≤N) / `e`/`!`(爆炸) / `p`(穿透) / 尾随 `+/-` 修正，如 `"1d6"`、`"2d10+5"`、`"4d6k3"`、`"4d6d1"`、`"1d6r1"`、`"1d6!"`。非法表达式 → Promise reject。
+
 #### 变量字面量替换：`Teahouse.replacePlaceholders(text?)`
 
 沙盒默认**不自动**把正文里的 `${name}` 字面量替换为变量值（渲染层须接触原始正文、且要留机会做特效特写，如 `${user_name}` → 正则 → `[rainbow]LowStar[/rainbow]`）。需要统一替换时手动调用：

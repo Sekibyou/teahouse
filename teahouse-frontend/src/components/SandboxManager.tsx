@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { renderText, clearRenderTextCache } from "@/lib/htmlSanitizer"
-import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi } from "@/lib/api"
+import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi, rollApi } from "@/lib/api"
 import type { ToolsRunStep, SandboxVarEntry } from "@/lib/api"
 import { consumeVars } from "@/lib/teahouseVars"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
@@ -288,6 +288,17 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
             const names = Array.isArray(_args[0]) ? (_args[0] as string[]) : []
             const res = await sandboxVarsApi.get(instanceId, names)
             result = res.ok ? res.data?.vars : []
+          }
+          break
+        }
+        case "roll": {
+          // 骰子：复用后端 placeholder 的 roll 语法（单一事实源），返回 {result, expr}。
+          const expr = _args[0] as string | undefined
+          if (expr) {
+            const res = await rollApi.roll(expr)
+            result = res.ok ? res.data : { ok: false, error: res.error }
+          } else {
+            result = { ok: false, error: "roll requires an expression string" }
           }
           break
         }

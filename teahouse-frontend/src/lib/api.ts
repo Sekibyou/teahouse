@@ -759,6 +759,11 @@ export const versionApi = {
   get: () => get<{ status: string; version: string }>("/v1/status"),
 }
 
+// Dice roll API — 复用后端 placeholder 的骰子语法（单一事实源）
+export const rollApi = {
+  roll: (expr: string) => post<{ result: number; expr: string }>("/v1/roll", { expr }),
+}
+
 // Plugins API
 export const pluginsApi = {
   list: () => get<{ plugins: Plugin[] }>("/api/plugins"),

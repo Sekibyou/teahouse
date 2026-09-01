@@ -190,6 +190,14 @@
     setVar: function(updates) { return callHost('setVar', [updates]); },
     getVars: function(names) { return callHost('getVars', [names]); },
 
+    // 骰子（复用后端 placeholder 的 roll 语法，单一事实源；返回 Promise<number>）
+    roll: function(expr) {
+      return callHost('roll', [String(expr)]).then(function(res) {
+        if (res && res.ok === false) throw new Error(res.error || 'roll failed');
+        return res && typeof res.result === 'number' ? res.result : res;
+      });
+    },
+
     // 变量字面量替换
     replacePlaceholders: function(text, fallbacks) {
       var fb = fallbacks || {};

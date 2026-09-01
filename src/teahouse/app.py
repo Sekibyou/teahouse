@@ -995,6 +995,26 @@ async def status():
 
 
 # ---------------------------------------------------------------------------
+# Dice roll endpoint — 复用 placeholder 的骰子语法（单一事实源）
+# ---------------------------------------------------------------------------
+
+class RollRequest(BaseModel):
+    expr: str
+
+
+@app.post("/v1/roll")
+async def roll_dice(req: RollRequest):
+    """解析 RPG 骰子表达式（"2d6+1"、"4d6k3" 等，语法同导演代码块 roll()）
+    并返回 int 总数。语法非法抛 ValueError → 400。"""
+    from .placeholder import _roll
+    try:
+        result = _roll(req.expr)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"result": result, "expr": req.expr}
+
+
+# ---------------------------------------------------------------------------
 # Static frontend hosting (single-port deployment)
 #
 # Serves the built frontend (teahouse-frontend/dist/) from the same origin so
