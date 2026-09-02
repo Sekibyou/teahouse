@@ -50,6 +50,7 @@ import random
 import re
 import token
 import tokenize
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -1560,3 +1561,266 @@ def _find_unique_anchor(text: str, anchor: str) -> int:
     if count > 1:
         raise PlaceholderError(f"Anchor appears {count} times (must be unique): '{anchor}'")
     return text.find(anchor)
+
+
+# =====================================================================
+# 行感知切片 — resolve_slice_spans（供 Read 的 slice 入参展示源真实行号）
+# =====================================================================
+#
+# 与 _resolve_file / _resolve_glob 产出**内容相同**的裁剪，但额外记录结果里
+# 每一行对应的**源文件真实行号**（及 from/to/glob 单文件场景、between/and
+# 中腰切的 partial 标志），使 Read 展示层能标真实行号而非裁切段内重排的 1..N。
+#
+# 字符串结果与既有切片**逐字节一致**（resolve_slice_spans().text ==
+# resolve_placeholders()）——本模块在 tests/ 用回归断言锁住，防止漂移。
+# 它不在 Write/Edit/Generate 的字符串调用面上，仅供 Read slice 消费。
+
+
+@dataclass(frozen=True)
+class SliceSource:
+    """结果文本中连续一段的源来源（普通单文件 / glob 里的一段 / 包内一段）。"""
+    file_rel: str          # 源文件相对实例根目录的路径（包引用为 packages/<pkg>/<path>）
+    start_line: int        # 该段首个字符所在源行号（1-indexed）
+    end_line: int          # 该段最后一个字符所在源行号（1-indexed）
+
+
+@dataclass(frozen=True)
+class SliceLine:
+    """resolved 结果中的一行（含行尾换行）。"""
+    text: str              # 该行文本（保留换行，展示层 rstrip）
+    line_no: int           # 该行在源文件的真实行号（1-indexed）；partial 行也为所在真实行
+    partial: bool          # True = between/and 把该行从行中腰切开（只展示局部）
+
+
+@dataclass(frozen=True)
+class SliceSegment:
+    """一个源文件的连续裁剪段，其 text 由若干 SliceLine 组成。"""
+    source: SliceSource
+    lines: list[SliceLine]
+
+
+def _lines_of(content: str) -> list[str]:
+    return content.splitlines(keepends=True)
+
+
+def _resolve_single_file_segment(
+    content: str, full_lines: list[str], rel: str
+) -> SliceSegment:
+    """把一整份单文件内容切成连续段（无行内裁剪，用于 glob/包整段引用）。"""
+    lines = [
+        SliceLine(text=ln, line_no=i + 1, partial=False)
+        for i, ln in enumerate(full_lines)
+    ]
+    # 保证无 trailing-newline 的末行也在展示里（splitlines(keepends=True) 保证）
+    source = SliceSource(file_rel=rel, start_line=1, end_line=len(full_lines) or 1)
+    return SliceSegment(source=source, lines=lines)
+
+
+def _resolve_file_lines(raw: str, instance_dir: Path, base_dir: Path | None = None) -> list[SliceSegment]:
+    """Single-file slice crop (line-level from/to/range AND string-level between/and)
+    that tracks real source line numbers. Mirrors _resolve_file's semantics exactly."""
+    # Parse base + line range + anchors — reusing the same helpers as _resolve_file.
+    pipe_parts = _split_pipes_outside_quotes(raw)
+    base_part = pipe_parts[0].strip()
+    anchor_parts = pipe_parts[1:]
+
+    colon_pos = base_part.find(":")
+    if colon_pos == -1:
+        file_path = base_part
+        line_range = None
+    else:
+        file_path = base_part[:colon_pos].strip()
+        line_range = _extract_line_range(base_part[colon_pos + 1:].strip())
+
+    full = _resolve_file_path(instance_dir, file_path, base_dir=base_dir)
+    # full 已被 _resolve_file_path resolve；对 instance_dir 也 resolve，避免
+    # Windows 8.3 短路径使 relative_to 在长/短名混杂时抛错。
+    base_root = base_dir.resolve() if base_dir else instance_dir.resolve()
+    try:
+        rel = str(full.relative_to(base_root)).replace("\\", "/")
+    except ValueError:
+        rel = str(full).replace("\\", "/")
+    content = full.read_text(encoding="utf-8")
+    full_lines = _lines_of(content)
+
+    # Keep the lines that survive all CROPS as (original_index, line_text).
+    # Working on original indices lets us recover true line numbers at the end.
+    kept = list(range(len(full_lines)))  # original line indices
+
+    # 1. Line range
+    if line_range is not None:
+        s, e = line_range
+        s = max(0, s)
+        e = min(len(kept), e)
+        if s >= e:
+            raise PlaceholderError(f"Line range out of bounds: {s+1}-{e}")
+        kept = kept[s:e]
+
+    # Helper to map a current kept-lines view onto original indices for _find_anchor_line
+    def _kept_text_list() -> list[str]:
+        return [full_lines[i] for i in kept]
+
+    # 2. Line-level anchors (from/to)
+    for part in anchor_parts:
+        part = part.strip()
+        from_a = _extract_quoted(part, "from")
+        to_a = _extract_quoted(part, "to")
+        if from_a is not None:
+            idx = _find_anchor_line(from_a, _kept_text_list())
+            kept = kept[idx:]
+        if to_a is not None:
+            idx = _find_anchor_line(to_a, _kept_text_list())
+            kept = kept[: idx + 1]
+
+    # 3. String-level anchors (between/and) on the joined surviving text.
+    between_a = and_a = None
+    for part in anchor_parts:
+        part = part.strip()
+        b = _extract_quoted(part, "between")
+        a = _extract_quoted(part, "and")
+        if b is not None:
+            between_a = b
+        if a is not None:
+            and_a = a
+
+    if between_a is None and and_a is None:
+        # Pure line crop — every kept line is a full real line.
+        seg_lines = [
+            SliceLine(text=full_lines[i], line_no=i + 1, partial=False) for i in kept
+        ]
+        sl = SliceLine(text=full_lines[kept[0]], line_no=kept[0] + 1, partial=False) if kept else None
+        source = SliceSource(
+            file_rel=rel,
+            start_line=(kept[0] + 1) if kept else 1,
+            end_line=(kept[-1] + 1) if kept else 1,
+        )
+        return [SliceSegment(source=source, lines=seg_lines)]
+
+    # between/and substring crop over the joined text. Need to map substring char
+    # offsets back to (original_index, within-line) to mark partial first/last.
+    joined = "".join(full_lines[i] for i in kept)
+    # offsets: start offset in `joined` of each kept line
+    offsets = []
+    acc = 0
+    for i in kept:
+        offsets.append(acc)
+        acc += len(full_lines[i])
+
+    lo = 0
+    if between_a is not None:
+        lo = _find_unique_anchor(joined, between_a)
+    hi = len(joined)
+    if and_a is not None:
+        a_pos = _find_unique_anchor(joined, and_a)
+        hi = a_pos + len(and_a)
+    if lo > hi:
+        raise PlaceholderError(
+            f"between anchor '{between_a}' starts after and anchor '{and_a}' ends"
+        )
+
+    # Determine which kept lines [lo, hi) overlaps, and assemble SliceLines.
+    seg_lines: list[SliceLine] = []
+    for pos, orig_i in enumerate(kept):
+        off = offsets[pos]
+        line_len = len(full_lines[orig_i])
+        # overlap of [lo,hi) with [off, off+line_len)
+        ov_lo = max(lo, off)
+        ov_hi = min(hi, off + line_len)
+        if ov_hi <= ov_lo:
+            continue
+        if ov_lo == off and ov_hi == off + line_len:
+            seg_lines.append(SliceLine(text=full_lines[orig_i], line_no=orig_i + 1, partial=False))
+        else:
+            seg_lines.append(
+                SliceLine(
+                    text=full_lines[orig_i][ov_lo - off:ov_hi - off],
+                    line_no=orig_i + 1,
+                    partial=True,
+                )
+            )
+    if seg_lines:
+        first_idx = seg_lines[0].line_no
+        last_idx = seg_lines[-1].line_no
+    else:
+        first_idx = last_idx = 1
+    source = SliceSource(
+        file_rel=rel,
+        start_line=first_idx,
+        end_line=last_idx,
+    )
+    return [SliceSegment(source=source, lines=seg_lines)]
+
+
+def resolve_slice_spans(
+    expr: str, instance_dir: Path
+) -> list[SliceSegment]:
+    """Resolve ONE {{...}} slice expression into line-tracking segments.
+
+    ``expr`` should be the whole placeholder text (e.g. "{{file|from=\"A\"|to=\"B\"}}"
+    or "{{glob:floors/floor-*.md:last3}}"); a leading/trailing wrapper is tolerated.
+    Supports single-file (line range, from/to, between/and), glob, and {{@pkg/...}}.
+    Returns segments whose SliceLine carry REAL source file + line numbers, so a
+    caller (Read) can display true line numbers instead of re-numbering the crop.
+
+    The concatenated text of the segments equals what resolve_placeholders would
+    return for the same expression (guarded by regression tests).
+    """
+    s = expr.strip()
+    if s.startswith("{{"):
+        s = s[2:]
+    if s.endswith("}}"):
+        s = s[:-2]
+    inner = s.strip()
+
+    if inner.startswith("glob:"):
+        return _resolve_glob_lines(inner[5:].strip(), instance_dir)
+    if inner.startswith("@"):
+        return _resolve_package_lines(inner, instance_dir)
+    return _resolve_file_lines(inner, instance_dir)
+
+
+def _resolve_glob_lines(raw_pattern: str, instance_dir: Path) -> list[SliceSegment]:
+    """Glob multi-file — one SliceSegment per file (each line = real file + line)."""
+    raw_pattern = raw_pattern.replace("\\", "/")
+    pattern = raw_pattern
+    last_n: int | None = None
+    if ":" in raw_pattern:
+        head, _, tail = raw_pattern.rpartition(":")
+        low = tail.strip()
+        if low.lower().startswith("last"):
+            try:
+                n = int(low[4:].strip())
+            except ValueError:
+                n = None
+            if n is not None:
+                if n <= 0:
+                    raise PlaceholderError(f"lastN must be > 0: {raw_pattern}")
+                pattern, last_n = head.strip(), n
+            else:
+                raise PlaceholderError(f"Invalid lastN suffix in glob: {raw_pattern}")
+
+    matched = sorted(instance_dir.glob(pattern))
+    if not matched:
+        raise PlaceholderError(f"glob pattern matched no files: {pattern}")
+    if last_n is not None:
+        matched = _take_last_by_number(matched, last_n)
+
+    segs: list[SliceSegment] = []
+    for path in matched:
+        rel = str(path.relative_to(instance_dir)).replace("\\", "/")
+        content = path.read_text(encoding="utf-8")
+        segs.append(_resolve_single_file_segment(content, _lines_of(content), rel))
+    return segs
+
+
+def _resolve_package_lines(raw: str, instance_dir: Path) -> list[SliceSegment]:
+    """{{@pkg/rest}} — resolve rest inside packages/<pkg>/, tracking source lines."""
+    pkg_name, rest = _split_package_ref(raw)
+    if not pkg_name:
+        raise PlaceholderError(f"Package path empty: {raw}")
+    pkg_root = instance_dir / "packages" / pkg_name
+    if not pkg_root.is_dir():
+        raise PlaceholderError(f"Package not installed: {pkg_name}")
+    if not rest:
+        raise PlaceholderError(f"Package path is a directory: {pkg_name}")
+    return _resolve_file_lines(rest, instance_dir, base_dir=pkg_root)

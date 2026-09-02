@@ -22,7 +22,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .placeholder import resolve_placeholders, resolve_variables, validate_var_name, drop_unmatched_mentions, strip_placeholder_shells, MAX_RESOLVE_DEPTH
+from .placeholder import resolve_placeholders, resolve_variables, validate_var_name, drop_unmatched_mentions, strip_placeholder_shells, resolve_slice_spans, MAX_RESOLVE_DEPTH
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
@@ -208,7 +208,29 @@ def _validate_path(instance_dir: Path, file_path: str) -> Path:
 
 
 async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Read file contents with optional offset and limit."""
+    """Read file contents, optionally by line range OR by a slice expression.
+
+    Two mutually-exclusive modes:
+      - path/offset/limit: read a file's lines (existing behavior).
+      - slice: a {{path|...}} placeholder expression (e.g.
+        "{{payload.json|between=\"A\"|and=\"B\"}}") that is resolved to text via the
+        SAME placeholder resolver — so every slice capability (between/and in-line
+        crop, from/to line anchors, :line-range, {{glob}}) is available without
+        adding a parallel param set. When slice is present, path/offset/limit are
+        ignored. strict=True so an unresolvable slice (bad file / non-unique anchor)
+        raises an explicit error instead of silently echoing the {{...}} literal.
+    """
+    slice_expr = args.get("slice")
+
+    # Slice mode: resolve the expression with source-line tracking and display
+    # REAL source file + line numbers (unlike plain re-numbering of the crop).
+    if slice_expr is not None:
+        try:
+            segs = resolve_slice_spans(str(slice_expr), instance_dir)
+        except Exception as e:
+            return f"Error: 切片解析失败: {e}"
+        return _format_read_slice(segs, file_label=str(slice_expr))
+
     path = args["path"]
     offset = args.get("offset")
     limit = args.get("limit")
@@ -238,18 +260,28 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
     selected = lines[start:end]
 
+    # Slice mode never truncates (its text is already the crop); the whole-file /
+    # no-limit line path is the only one subject to the char cap below. Pass a
+    # marker so the footer's truncation note matches how selected was built.
+    return _format_read_result(selected, start=start, end=end, total=total,
+                               file_label=path, instance_dir=instance_dir)
+
+
+def _format_read_result(selected: list[str], start: int, end: int, total: int,
+                        file_label: str, instance_dir: Path) -> str:
+    """Shared line-numbered Read output for both file lines and slice text.
+
+    Applies the BIG_INPUT_CHAR_LIMIT cap only on a whole-selection (no range) read.
+    """
     from .compact import BIG_INPUT_CHAR_LIMIT
 
-    # Total character count of the whole file (we already read it above).
-    total_chars = sum(len(l) for l in lines)
+    # Line numbers shown are 1-based absolute (start is the 0-based index of the
+    # first selected line); total_chars reflects the SELECTED lines, not the file.
+    total_chars = sum(len(l) for l in selected)
 
-    # Defensive cap: never inject more than BIG_INPUT_CHAR_LIMIT chars from one
-    # file in a single Read. When the selected window exceeds the cap, keep only
-    # enough leading lines to stay under it and report how much was dropped (and
-    # the file's true size), so the director can fetch the rest with offset/limit.
     truncated = False
-    if limit is None and start == 0:
-        # Whole-file read path — count chars over the full selection.
+    if start == 0 and end == total:
+        # Whole-selection path — cap chars over the full selection.
         budget = BIG_INPUT_CHAR_LIMIT
         kept_lines: list[str] = []
         used = 0
@@ -273,7 +305,7 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
     #   M  │ last line
     #     │
     #   (N–M/M lines, file: path)
-    line_width = len(str(end))
+    line_width = len(str(end)) if end else 1
     result_lines = []
     for i, line in enumerate(selected):
         line_num = start + 1 + i
@@ -284,11 +316,65 @@ async def execute_read(instance_dir: Path, args: dict[str, Any]) -> str:
     if truncated:
         size_note = (
             f"; 已达单次读取上限 {BIG_INPUT_CHAR_LIMIT:,} 字符，"
-            f"文件共 {total_chars:,} 字符，已省略后续部分，可用 limit/offset 分段读取"
+            f"文件共 {total_chars:,} 字符，已省略后续部分，可用 limit/offset 或更窄的切片分段读取"
         )
-    result_lines.append(f"  ({start + 1}–{min(end, total)}/{total} lines, file: {path}){size_note}")
+    result_lines.append(f"  ({start + 1}–{min(end, total)}/{total} lines, source: {file_label}){size_note}")
 
     return "\n".join(result_lines)
+
+
+def _format_read_slice(segs, file_label: str) -> str:
+    """Render line-aware slice segments with REAL source line numbers.
+
+    Each SliceSegment (one source file) gets a header line; within a segment every
+    row shows the line's true 1-indexed line number in that source file. A row whose
+    line was cut mid-way by between/and is marked with a `~` prefix on its number.
+    Mirrors _format_read_result's look (rjust, │ gutter) so slice output reads the
+    same as plain Read but locates rows in the source file.
+    """
+    from .compact import BIG_INPUT_CHAR_LIMIT
+
+    # Flatten segments but keep per-line real numbers. Compute the max width from
+    # the largest real line number shown, for a stable gutter.
+    all_rows = []  # (text, line_no, partial, file_header_before)
+    max_ln = 1
+    for sg in segs:
+        header = f"── file: {sg.source.file_rel}  (lines {sg.source.start_line}–{sg.source.end_line}) ──"
+        for ln in sg.lines:
+            all_rows.append((ln.text, ln.line_no, ln.partial, header))
+            max_ln = max(max_ln, ln.line_no)
+    if not all_rows:
+        return "（切片结果为空）"
+
+    # Char cap across the whole slice result.
+    used = 0
+    truncated = False
+    capped_rows = []
+    for text, lno, partial, hdr in all_rows:
+        if used + len(text) > BIG_INPUT_CHAR_LIMIT and capped_rows:
+            truncated = True
+            break
+        capped_rows.append((text, lno, partial, hdr))
+        used += len(text)
+
+    width = len(str(max_ln))
+    out = []
+    last_hdr = None
+    for text, lno, partial, hdr in capped_rows:
+        if hdr != last_hdr:
+            out.append(hdr)
+            last_hdr = hdr
+        num = f"{lno}" if not partial else f"~{lno}"
+        out.append(f"{num.rjust(width)}  │ {text.rstrip(chr(10)).rstrip(chr(13))}")
+    size_note = (
+        f"; 已达单次读取上限 {BIG_INPUT_CHAR_LIMIT:,} 字符，已省略后续部分"
+        if truncated else ""
+    )
+    nfiles = len(segs)
+    total_rows = len(capped_rows)
+    out.append(f"  (slice: {total_rows} 行 / {nfiles} 个文件, source: {file_label}){size_note}")
+    out.append("  注: 行号为源文件真实行号; `~` 开头=该行被 between/and 从中腰裁切(仅部分显示)")
+    return "\n".join(out)
 
 
 def _fmt_var_entry(item: dict) -> str:

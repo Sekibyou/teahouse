@@ -2,24 +2,27 @@
   {
     "name": "Read",
     "short": "读取文件内容",
-    "description": "读取文件内容，支持指定行范围",
-    "usage": "读取文件内容，支持指定行范围。用于在操作前了解文件当前状态。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录。例如 settings/world.yaml、floors/floor-001.md\n- `offset`（可选）：起始行号，从 1 开始。不指定则从文件开头读取\n- `limit`（可选）：最大读取行数。不指定则读取 offset 之后的所有行\n\n注意：path 必须指向文件，读取目录会报错。",
+    "description": "读取文件内容，支持行范围或切片表达式",
+    "usage": "读取内容，用于操作前了解当前状态。**二选一**：\n\n模式 A —— 按行读取文件：\n- `path`：文件路径，相对于实例根目录，如 settings/world.yaml、floors/floor-001.md\n- `offset`（可选）：起始行号，从 1 开始\n- `limit`（可选）：最大读取行数\n\n模式 B —— 按切片表达式读取（slice，优先于此路径时忽略 path/offset/limit）：\n- `slice`：一段与 `{{path}}` 切片完全相同的占位符表达式，Read 会把它展开成实际内容并带行号展示。**复用全部切片语法**：`{{path|between=\"A\"|and=\"B\"}}` 串内裁切、`{{path|from=\"A\"|to=\"B\"}}` 行级锚点、`:行号` 范围、`{{glob:...}}` 等，无需另记一套参数。\n- 用途：dry-run 产出 payload 后，直接 `Read(slice=\"{{payload.json|between=\\\"前置锚点\\\"|and=\\\"后置锚点\\\"}}\")` 当场核对两锚点之间的展开结果，不必先切片写文件再读；平时也可按关键词间内容速读。\n- 注意：slice 表达式解析失败（文件不存在 / 锚点不唯一 / 锚点顺序颠倒）会**显式报错**，不会把 `{{...}}` 原文回显给你。",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {
-          "type": "string"
+          "type": "string",
+          "description": "模式 A：文件路径（相对实例根目录）。"
         },
         "offset": {
           "type": "integer"
         },
         "limit": {
           "type": "integer"
+        },
+        "slice": {
+          "type": "string",
+          "description": "模式 B：一段 {{path}} 切片表达式，如 \"{{payload.json|between=\\\"A\\\"|and=\\\"B\\\"}}\"。展开后带行号展示；与 path/offset/limit 二选一（优先于此路径）。"
         }
       },
-      "required": [
-        "path"
-      ]
+      "required": []
     }
   },
   {
