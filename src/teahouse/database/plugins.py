@@ -90,6 +90,17 @@ async def set_enabled(plugin_id: str, user_id: str, enabled: bool) -> bool:
     return True
 
 
+async def set_plugin_git_url(plugin_id: str, user_id: str, git_url: str) -> bool:
+    """Record the source git url of a git-installed plugin ("" for zip-imported).
+    Called only on install/update confirm — never by the scan, which must not
+    blank it. zip reinstall passes "" to clear any previous git url."""
+    await execute(
+        "UPDATE plugins SET git_url = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (git_url, current_timestamp(), plugin_id, user_id),
+    )
+    return True
+
+
 async def delete_plugin(plugin_id: str, user_id: str) -> bool:
     """Delete a plugin record. Plugin data is cascade-deleted via FK."""
     await execute(

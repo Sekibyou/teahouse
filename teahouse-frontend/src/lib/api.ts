@@ -788,6 +788,9 @@ export const pluginsApi = {
   },
   confirmInstall: (previewId: string) =>
     post<{ status: string; plugin_id: string; message: string }>("/api/plugins/import/confirm", { preview_id: previewId }),
+  // Import from a git repo URL: shallow-clone + preview, reusing the same card.
+  previewGit: (url: string) =>
+    post<PluginPreview>("/api/plugins/preview-git", { url }),
   // Network allowlist
   getNetworkRules: (id: string) => get<{ plugin_id: string; rules: NetworkRule[] }>(`/api/plugins/${id}/network-rules`),
   addNetworkRule: (id: string, rule: { scheme: string; host: string; port: number | null }) =>

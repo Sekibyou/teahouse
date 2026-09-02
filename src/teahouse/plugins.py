@@ -663,7 +663,9 @@ async def install_plugin_from_path(user_id: str, safe_name: str, source: Path) -
         dest = user_dir / m.id
         if dest.exists():
             shutil.rmtree(dest)
-        shutil.copytree(source, dest)
+        # Exclude .git: a git-cloned source shouldn't drag its repo metadata
+        # (history, remote URLs, possibly credentials) into the plugin dir.
+        shutil.copytree(source, dest, ignore=shutil.ignore_patterns(".git"))
     else:
         raise ValueError(f"Unsupported source type: {source}")
 

@@ -20,6 +20,8 @@ export interface Plugin {
   permissions: string[]
   has_backend: boolean
   has_frontend: boolean
+  /** Source git url for git-imported plugins; "" for zip-imported (custom). */
+  git_url: string
   config: ConfigField[]
   /**
    * 插件声明的多语言字典：{ locale: { key: 文案 } }。
@@ -58,4 +60,9 @@ export interface PluginPreview {
   network_allowlist: { scheme: string; host: string; port: number | null }[]
   has_backend: boolean
   has_frontend: boolean
+  /** Source git url ("" for zip). Present so the update flow can reuse it. */
+  git_url?: string
+  /** True when a plugin with the same id is already installed (update, not install). */
+  installed?: boolean
+  installed_version?: string
 }

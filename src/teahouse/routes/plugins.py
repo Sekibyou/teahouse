@@ -4,6 +4,8 @@ Plugin API routes — per-user plugins: list, enable/disable, data CRUD, install
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -17,6 +19,7 @@ from ..database.plugins import (
     get_plugins,
     get_plugin,
     set_enabled,
+    set_plugin_git_url,
     get_plugin_data,
     set_plugin_data,
     delete_plugin_data,
@@ -31,6 +34,7 @@ from ..database.plugins import (
 from ..plugins import (
     _user_plugins_dir,
     _scan_dir,
+    _find_manifest_dir,
     scan_and_register_user_plugins,
     load_plugin,
     unload_plugin,
@@ -58,11 +62,23 @@ def _preview_cleanup() -> None:
     now = time.time()
     stale = [k for k, v in _previews.items() if now - v["created_at"] > _PREVIEW_TTL]
     for k in stale:
-        try:
-            os.unlink(_previews[k]["path"])
-        except OSError:
-            pass
+        entry = _previews[k]
+        _discard_preview_path(entry.get("path"), entry.get("is_git"), entry.get("cleanup"))
         _previews.pop(k, None)
+
+
+def _discard_preview_path(path, is_git: bool, cleanup: str | None = None) -> None:
+    """Remove a staged preview: rmtree the git clone (cleanup dir or path), unlink zip files."""
+    target = cleanup or path
+    if not target:
+        return
+    try:
+        if is_git:
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            os.unlink(target)
+    except OSError:
+        pass
 
 
 def _detect_tool_conflicts(manifest: PluginManifest) -> list[str]:
@@ -73,6 +89,16 @@ def _detect_tool_conflicts(manifest: PluginManifest) -> list[str]:
     """
     from ..tools import TOOL_EXECUTORS
     return [t["name"] for t in manifest.tools if t["name"] in TOOL_EXECUTORS]
+
+
+async def _installed_info(plugin_id: str, user_id: str) -> dict:
+    """Return whether a plugin with this id is already installed for the user,
+    plus its installed version. Lets the frontend branch preview between
+    "install" (new) and "update" (overwrite) instead of silently covering."""
+    existing = await get_plugin(plugin_id, user_id)
+    if not existing:
+        return {"installed": False}
+    return {"installed": True, "installed_version": existing.get("version", "")}
 
 
 async def _get_safe_name(user_id: str) -> str:
@@ -149,6 +175,7 @@ async def api_list_plugins(user: UserInfo = Depends(require_user)):
                 "permissions": p["permissions"],
                 "has_backend": bool(p["has_backend"]),
                 "has_frontend": bool(p["has_frontend"]),
+                "git_url": p.get("git_url", ""),
                 "config": _config_for_plugin(p),
                 "i18n": _i18n_for_plugin(p),
             }
@@ -171,6 +198,7 @@ async def api_get_plugin(plugin_id: str, user: UserInfo = Depends(require_user))
         "permissions": p["permissions"],
         "has_backend": bool(p["has_backend"]),
         "has_frontend": bool(p["has_frontend"]),
+        "git_url": p.get("git_url", ""),
         "config": _config_for_plugin(p),
         "i18n": _i18n_for_plugin(p),
     }
@@ -362,8 +390,9 @@ async def api_preview_plugin(
         raise HTTPException(status_code=400, detail=f"invalid plugin package: {e}")
 
     conflicts = _detect_tool_conflicts(m)
+    installed = await _installed_info(m.id, user.user_id)
     preview_id = uuid.uuid4().hex
-    _previews[preview_id] = {"path": tmp_path, "created_at": time.time()}
+    _previews[preview_id] = {"path": tmp_path, "created_at": time.time(), "git_url": ""}
 
     return {
         "preview_id": preview_id,
@@ -373,6 +402,109 @@ async def api_preview_plugin(
         "network_allowlist": [r.to_dict() for r in m.network_allowlist],
         "has_backend": m.has_backend,
         "has_frontend": m.has_frontend,
+        "git_url": "",
+        **installed,
+    }
+
+
+class GitPreviewBody(BaseModel):
+    url: str
+
+
+_GIT_CLONE_TIMEOUT = 60  # seconds
+
+
+def _looks_like_git_url(url: str) -> bool:
+    """A git clone URL must be http(s) and look like a repo (.git suffix or the
+    .git/info path form). Rejects file://, ssh://, local paths and arbitrary http
+    links early so a non-repo URL fails fast with a clear message."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    path = parsed.path.rstrip("/")
+    return path.endswith(".git") or ".git/" in url
+
+
+@router.post("/preview-git")
+async def api_preview_plugin_git(
+    body: GitPreviewBody,
+    user: UserInfo = Depends(require_user),
+):
+    """Shallow-clone a git repo, stage + validate it as a plugin WITHOUT
+    installing. Mirrors /preview's response so the frontend can reuse the same
+    preview card; confirm consumes the same preview_id."""
+    url = body.url.strip()
+    if not url or not _looks_like_git_url(url):
+        raise HTTPException(status_code=400, detail="url 不是有效的 git 仓库地址（需 http(s) 且形如 https://github.com/xxx/xxx.git）")
+
+    _preview_cleanup()
+    clone_dir = None
+    try:
+        clone_dir = tempfile.mkdtemp(prefix="teahouse_plugin_git_")
+        dest = Path(clone_dir) / "repo"
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=_GIT_CLONE_TIMEOUT,
+        )
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"git clone 失败: {result.stderr.strip() or result.stdout.strip() or '未知错误'}",
+            )
+        # Locate the dir directly containing plugin.json (flat or nested layout),
+        # mirroring the zip path's _find_manifest_dir behavior.
+        plugin_root = _find_manifest_dir(dest)
+        m = await prevalidate_plugin_source(plugin_root)
+    except HTTPException:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        raise
+    except subprocess.TimeoutExpired:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="git clone 超时，请检查网络或仓库大小")
+    except FileNotFoundError:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="git 命令未找到，请确保已捆绑或安装 git")
+    except NetworkRuleError as e:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"invalid plugin repository: {e}")
+
+    conflicts = _detect_tool_conflicts(m)
+    installed = await _installed_info(m.id, user.user_id)
+    preview_id = uuid.uuid4().hex
+    # Store the resolved plugin root (not the clone root) so confirm's
+    # re-validation of the directory finds plugin.json at that exact path.
+    # git_url rides the preview so confirm can persist it on install/update.
+    _previews[preview_id] = {
+        "path": str(plugin_root),
+        "cleanup": clone_dir,
+        "created_at": time.time(),
+        "is_git": True,
+        "git_url": url,
+    }
+
+    return {
+        "preview_id": preview_id,
+        "available": True,
+        "manifest": _manifest_preview_dict(m),
+        "conflicts": conflicts,
+        "network_allowlist": [r.to_dict() for r in m.network_allowlist],
+        "has_backend": m.has_backend,
+        "has_frontend": m.has_frontend,
+        "source": "git",
+        "git_url": url,
+        **installed,
     }
 
 
@@ -412,6 +544,9 @@ async def api_import_plugin_confirm(
         await seed_declared_network_rules(
             plugin_id, user.user_id, [r.to_dict() for r in m.network_allowlist]
         )
+        # Persist the source: git url for git imports (reinstall keeps it), "" for
+        # zip imports (a zip reinstall clears any previous git url → custom plugin).
+        await set_plugin_git_url(plugin_id, user.user_id, entry.get("git_url", ""))
         return {"status": "ok", "plugin_id": plugin_id, "message": f"plugin '{plugin_id}' installed"}
     except HTTPException:
         raise
@@ -420,10 +555,7 @@ async def api_import_plugin_confirm(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"installation failed: {e}")
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        _discard_preview_path(entry.get("path"), entry.get("is_git"), entry.get("cleanup"))
 
 
 def _manifest_preview_dict(m: PluginManifest) -> dict:
