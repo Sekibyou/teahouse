@@ -30,10 +30,17 @@ File-slice syntax {{path}}:
   {{path|from="A"|to="B"}}               Anchor-based range
   {{path|from="A"}}                      From anchor to end
   {{path|to="B"}}                        From start to anchor
+  {{path|between="A"|and="B"}}           In-line substring crop (INCLUDES both anchors)
+  {{path|between="A"}}                   In-line: from A start to end of text
+  {{path|and="B"}}                       In-line: from start of text to B end
   {{glob:pattern}}                       Glob-matched files, sorted
   {{glob:pattern:lastN}}                 Glob-matched files, keep the last N by numeric segment (descending)
 
-Note: use | as the anchor separator, : for the line range.
+Note: use | as the anchor separator, : for the line range. Line-level anchors
+(from/to) select whole lines; the string-level anchors (between/and) crop a
+substring between two unique markers ON one line (or across lines), INCLUDING
+the anchors themselves (an anchor is a unique identifier worth keeping; drop it
+with an Edit if unwanted). between/and anchors must occur exactly once.
 """
 from __future__ import annotations
 
@@ -1416,7 +1423,8 @@ def _resolve_file(raw: str, instance_dir: Path, base_dir: Path | None = None) ->
             raise PlaceholderError(f"Line range out of bounds: {start+1}-{end}")
         lines = lines[start:end]
 
-    # 2. Anchor modifiers (from= / to=)
+    # 2. Anchor modifiers (from= / to=) — LINE-level. from= cuts from the line
+    #    containing the anchor; to= cuts up to AND INCLUDING that line.
     for part in anchor_parts:
         part = part.strip()
         from_a = _extract_quoted(part, "from")
@@ -1430,7 +1438,37 @@ def _resolve_file(raw: str, instance_dir: Path, base_dir: Path | None = None) ->
             idx = _find_anchor_line(to_a, lines)
             lines = lines[: idx + 1]  # include the anchor line
 
-    return "".join(lines)
+    # 3. String-level anchors (between= / and=) — crop a SUBSTRING between two
+    #    unique markers on a single line (or across lines), INCLUDING the anchors.
+    #    Operates on the whole selected text (post from/to line crop). Both anchors
+    #    must occur exactly once; start order is validated. Half-open: a single
+    #    between= runs to end-of-text, a single and= runs from start-of-text.
+    content = "".join(lines)
+    between_a = and_a = None
+    for part in anchor_parts:
+        part = part.strip()
+        b = _extract_quoted(part, "between")
+        a = _extract_quoted(part, "and")
+        if b is not None:
+            between_a = b
+        if a is not None:
+            and_a = a
+
+    if between_a is not None or and_a is not None:
+        start = 0
+        if between_a is not None:
+            start = _find_unique_anchor(content, between_a)
+        end = len(content)
+        if and_a is not None:
+            a_pos = _find_unique_anchor(content, and_a)
+            end = a_pos + len(and_a)
+        if start > end:
+            raise PlaceholderError(
+                f"between anchor '{between_a}' starts after and anchor '{and_a}' ends"
+            )
+        return content[start:end]
+
+    return content
 
 
 def _read_full(file_path: str, instance_dir: Path) -> str:
@@ -1510,3 +1548,15 @@ def _find_anchor_line(anchor: str, lines: list[str]) -> int:
     if found is None:
         raise PlaceholderError(f"Anchor not found: '{anchor}'")
     return found
+
+
+def _find_unique_anchor(text: str, anchor: str) -> int:
+    """Find the 0-indexed position of a string-level anchor. Raises if not exactly one."""
+    if not anchor:
+        raise PlaceholderError("Anchor must not be empty")
+    count = text.count(anchor)
+    if count == 0:
+        raise PlaceholderError(f"Anchor not found: '{anchor}'")
+    if count > 1:
+        raise PlaceholderError(f"Anchor appears {count} times (must be unique): '{anchor}'")
+    return text.find(anchor)

@@ -1024,6 +1024,82 @@ async def execute_check_package_refs(instance_dir: Path, args: dict[str, Any]) -
     return "\n".join(lines)
 
 
+# Placed before execute_generate. Content extraction + placeholder scan helpers
+# shared by the payload .meta dump.
+_PH_RESIDUE_RE = _re.compile(r"\{\{[^}]*\}\}|\$\{[^}]*\}")
+
+
+def _msg_plaintext(msg: dict) -> str:
+    """Flatten a message's content (str or list-of-parts) into a single string."""
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(
+            p.get("text") if isinstance(p, dict) and isinstance(p.get("text"), str) else ""
+            for p in c
+        )
+    return ""
+
+
+def _placeholder_context(text: str, start: int, end: int, width: int = 40) -> str:
+    """Return the residue hit's neighbours (width chars each side) as a preview line."""
+    lo = max(0, start - width)
+    hi = min(len(text), end + width)
+    left = text[lo:start]
+    right = text[end:hi]
+    return (("…" if lo > 0 else "") + left + text[start:end] + right + ("…" if hi < len(text) else "")).replace("\n", "␤")
+
+
+def _dump_payload_meta(messages: list[dict], total_chars: int) -> str:
+    """Build a plain-text .meta report over the RESOLVED payload messages.
+
+    Report format (per-message + rollups), keeping the Generate return short so
+    the director only Read the .meta file when it wants the full table:
+
+      - Per-message char count + share, and every leftover placeholder
+        (${...} / {{...}}) with a short context window. Resolved payloads are
+        meant for the prose LLM and must contain NO placeholders — a leftover is
+        a real defect (typo'd / unset variable, broken slice), reported verbatim
+        without exemption (teaching text should live in ${@note}, which is
+        stripped before this point).
+      - Total chars + a rough token estimate (中文≈1char/token, 英文≈4char/token;
+        labelled approximate — the exact count only the API knows).
+    """
+    lines: list[str] = []
+    per_role: dict[str, int] = {}
+    residues: list[str] = []
+    for i, msg in enumerate(messages):
+        text = _msg_plaintext(msg)
+        role = str(msg.get("role", "?"))
+        per_role[role] = per_role.get(role, 0) + len(text)
+        share = (len(text) / total_chars * 100) if total_chars else 0.0
+        lines.append(f"[msg {i} | {role}] chars={len(text):,} ({share:.1f}%)")
+        if not text:
+            continue
+        hits = []
+        for m in _PH_RESIDUE_RE.finditer(text):
+            hits.append((m.group(0), m.start(), m.end()))
+        if not hits:
+            lines.append("  残留: 0")
+        else:
+            residues.append(f"[msg {i} | {role}]")
+            for token, s, e in hits:
+                ctx = _placeholder_context(text, s, e).strip()
+                residues.append(f"  {token}")
+                residues.append(f"      上下文: {ctx}")
+    lines.append("")
+    role_summary = ", ".join(f"{r}:{c}" for r, c in per_role.items())
+    est = total_chars  # 中文近似 1char/token; 英文部分实际偏高
+    lines.append(f"messages: {len(messages)}  ({role_summary})")
+    lines.append(f"total chars: {total_chars:,}    估算 token: ~{est:,}(粗略:中文≈1字符/token,英文≈4字符/token;精确以 API 为准)")
+    if residues:
+        lines.append("")
+        lines.append("残留占位符(共 %d 处,payload 本不应含占位符,多为未定义变量/断链切片):" % sum(1 for r in residues if not r.startswith("[")))
+        lines.extend(residues)
+    return "\n".join(lines)
+
+
 async def execute_generate(
     instance_dir: Path,
     args: dict[str, Any],
@@ -1197,11 +1273,24 @@ async def execute_generate(
                 "file_changed",
                 {"path": dump_payload_str, "tool": "Generate.dump", "instance_id": instance_id or instance_dir.name},
             )
+            # 旁路 .meta:残留占位符表(带上下文)+ 字符统计 + 粗略 token 估算。
+            # 写 payload 同根文件(纯文本,便于 Read),不塞进返回串刷屏。
+            try:
+                total_chars = sum(len(_msg_plaintext(m)) for m in resolved)
+                meta_full = Path(str(payload_full) + ".meta")
+                meta_full.write_text(_dump_payload_meta(resolved, total_chars), encoding="utf-8")
+                state.broadcast(
+                    "file_changed",
+                    {"path": dump_payload_str + ".meta", "tool": "Generate.dump.meta", "instance_id": instance_id or instance_dir.name},
+                )
+                meta_note = f"\npayload meta(残留占位符 + 字符统计)已写出到 {dump_payload_str}.meta,导演如需查看可 Read"
+            except Exception:
+                meta_note = "\n(meta 写出失败,仅 payload 已落盘)"
         except ValueError as e:
             return f"Error: dump_payload_path 路径无效: {e}"
         except Exception as e:
             return f"Error: 写入 dump_payload_path 失败: {e}"
-        return f"Dry-run: payload 已写出到 {dump_payload_str}，未调用正文模型"
+        return f"Dry-run: payload 已写出到 {dump_payload_str}，未调用正文模型{meta_note}"
 
     # Step 5/6: Call writer LLM — stream and forward each text chunk to the
     # frontend as an incremental delta via generate_progress (no throttling), but
