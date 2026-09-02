@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, Upload, X, Shield, Trash2, Power, PowerOff, Link2, Puzzle, AlertCircle } from "lucide-react"
+import { toast } from "sonner"
+import { Loader2, Upload, X, Shield, Trash2, Power, PowerOff, Link2, Puzzle, AlertCircle, GitBranch, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -32,6 +33,9 @@ export function PluginsPanel() {
   const [deleting, setDeleting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [gitImportOpen, setGitImportOpen] = useState(false)
+  const [gitUrl, setGitUrl] = useState("")
+  const [gitImporting, setGitImporting] = useState(false)
   const [preview, setPreview] = useState<PluginPreview | null>(null)
   const [previewError, setPreviewError] = useState("")
   const [installing, setInstalling] = useState(false)
@@ -111,6 +115,53 @@ export function PluginsPanel() {
     }
   }
 
+  const handleGitImport = async () => {
+    const url = gitUrl.trim()
+    if (!url) return
+    setGitImporting(true)
+    setPreviewError("")
+    try {
+      const res = await pluginsApi.previewGit(url)
+      if (res.ok) {
+        setGitImportOpen(false)
+        setGitUrl("")
+        setPreview(res.data ?? null)
+      } else {
+        setPreviewError(res.error || t("errGitPreview"))
+      }
+    } finally {
+      setGitImporting(false)
+    }
+  }
+
+  const [updating, setUpdating] = useState<Set<string>>(new Set())
+
+  const handleUpdateClick = async (p: Plugin) => {
+    const url = p.git_url
+    if (!url) return
+    setUpdating((prev) => new Set(prev).add(p.id))
+    setPreviewError("")
+    try {
+      const res = await pluginsApi.previewGit(url)
+      if (res.ok && res.data) {
+        // Same version already installed → nothing to update.
+        if (res.data.installed && res.data.installed_version === res.data.manifest.version) {
+          toast.success(t("plugin.upToDate", { version: res.data.manifest.version }))
+        } else {
+          setPreview(res.data)
+        }
+      } else {
+        setPreviewError(res.error || t("errUpdate"))
+      }
+    } finally {
+      setUpdating((prev) => {
+        const next = new Set(prev)
+        next.delete(p.id)
+        return next
+      })
+    }
+  }
+
   const loadNetRules = async (p: Plugin) => {
     setNetRulesFor(p)
     setNetRulesLoading(true)
@@ -181,6 +232,16 @@ export function PluginsPanel() {
           <Button
             size="sm"
             variant="outline"
+            onClick={() => setGitImportOpen((v) => !v)}
+            disabled={gitImporting}
+            className="mr-2"
+          >
+            {gitImporting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <GitBranch className="h-3 w-3 mr-1" />}
+            {t("plugin.importGit")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
           >
@@ -189,6 +250,29 @@ export function PluginsPanel() {
           </Button>
         </div>
       </div>
+
+      {gitImportOpen && (
+        <div className="flex items-center gap-2">
+          <Input
+            className="h-8 text-xs flex-1 font-mono"
+            placeholder={t("plugin.gitUrlPH")}
+            value={gitUrl}
+            onChange={(e) => setGitUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleGitImport()
+              if (e.key === "Escape") { setGitImportOpen(false); setGitUrl("") }
+            }}
+            autoFocus
+          />
+          <Button size="sm" onClick={handleGitImport} disabled={gitImporting || !gitUrl.trim()}>
+            {gitImporting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+            {t("common:confirm")}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => { setGitImportOpen(false); setGitUrl("") }}>
+            {t("common:cancel")}
+          </Button>
+        </div>
+      )}
 
       {previewError && (
         <div className="flex items-start gap-2 text-xs text-red-600 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2">
@@ -204,6 +288,11 @@ export function PluginsPanel() {
               <div className="font-medium flex items-center gap-2">
                 {resolvePluginText(preview.manifest.name, preview.manifest.i18n, currentLang)}
                 <span className="text-[10px] text-muted-foreground font-normal">v{preview.manifest.version}</span>
+                {preview.installed && (
+                  <span className="text-[10px] text-blue-600 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                    {t("plugin.updateTitle")} {preview.installed_version ? `${preview.installed_version} → ${preview.manifest.version}` : ""}
+                  </span>
+                )}
                 {preview.manifest.description && (
                   <span className="text-xs text-muted-foreground font-normal truncate max-w-[220px]">{resolvePluginText(preview.manifest.description, preview.manifest.i18n, currentLang)}</span>
                 )}
@@ -268,7 +357,7 @@ export function PluginsPanel() {
             </Button>
             <Button size="sm" onClick={handleConfirmInstall} disabled={installing || preview.conflicts.length > 0}>
               {installing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-              {t("plugin.confirmInstall")}
+              {preview.installed ? t("plugin.updateBtn") : t("plugin.confirmInstall")}
             </Button>
           </div>
         </div>
@@ -289,10 +378,20 @@ export function PluginsPanel() {
                   <div className="font-medium flex items-center gap-2">
                     {resolvePluginText(p.name, p.i18n, currentLang)}
                     <span className="text-[10px] text-muted-foreground font-normal">v{p.version}</span>
+                    {p.git_url ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-orange-600 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                        <GitBranch className="h-2.5 w-2.5" />
+                        {t("plugin.fromGit")}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                        {t("plugin.sourceCustom")}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{resolvePluginText(p.description, p.i18n, currentLang)}</p>
                 </div>
-                <div className={`flex gap-1 shrink-0 ${isMobile ? "flex-col items-stretch" : "items-center"}`}>
+                <div className={`flex flex-col gap-1 shrink-0 ${isMobile ? "items-stretch" : "items-end"}`}>
                   <Button
                     size="sm"
                     variant={p.enabled ? "default" : "outline"}
@@ -308,14 +407,27 @@ export function PluginsPanel() {
                     )}
                     {p.enabled ? t("plugin.enabled") : t("plugin.disabled")}
                   </Button>
+                  {p.git_url && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleUpdateClick(p)}
+                      disabled={updating.has(p.id)}
+                      title={t("plugin.update")}
+                    >
+                      {updating.has(p.id) ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                      {t("plugin.update")}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
-                    variant="ghost"
-                    className="text-red-500 hover:text-red-700"
+                    variant="outline"
+                    className="text-red-500 hover:text-red-700 hover:border-red-500/50"
                     onClick={() => setDeleteTarget(p)}
                     title={t("plugin.uninstallTitle")}
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    {t("plugin.uninstall")}
                   </Button>
                 </div>
               </div>
