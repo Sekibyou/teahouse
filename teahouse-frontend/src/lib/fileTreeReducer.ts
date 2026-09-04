@@ -45,9 +45,13 @@ function basename(p: string): string {
   return i === -1 ? p : p.slice(i + 1)
 }
 
-/** A node exists in the tree whose .path === path. */
+/** A node exists in the tree (at any depth) whose .path === path. */
 function hasNode(nodes: FileTreeNode[], path: string): boolean {
-  return nodes.some((n) => n.path === path)
+  for (const n of nodes) {
+    if (n.path === path) return true
+    if (n.type === "directory" && n.children && hasNode(n.children, path)) return true
+  }
+  return false
 }
 
 /** Build a standalone leaf/dir node (frontend path form). */
@@ -68,9 +72,9 @@ function compareSiblings(a: FileTreeNode, b: FileTreeNode): number {
  * target (or a directory on its path) is not present — out of sync → reload.
  */
 export function removeSubtree(tree: FileTreeNode[], path: string): FileTreeNode[] | null {
-  const rec = (nodes: FileTreeNode[]): FileTreeNode[] | null => {
-    let removed = false
+  const rec = (nodes: FileTreeNode[]): { nodes: FileTreeNode[]; removed: boolean } => {
     const next: FileTreeNode[] = []
+    let removed = false
     for (const n of nodes) {
       if (n.path === path) {
         removed = true
@@ -78,15 +82,17 @@ export function removeSubtree(tree: FileTreeNode[], path: string): FileTreeNode[
       }
       if (n.type === "directory" && n.path && path.startsWith(n.path + sep)) {
         const kids = rec(n.children ?? [])
-        if (kids === null) return null
-        next.push({ ...n, children: kids })
+        // A node was removed from this directory's subtree — propagate that up.
+        if (kids.removed) removed = true
+        next.push({ ...n, children: kids.nodes })
       } else {
         next.push(n)
       }
     }
-    return removed ? next : null
+    return { nodes: next, removed }
   }
-  return rec(tree)
+  const r = rec(tree)
+  return r.removed ? r.nodes : null
 }
 
 /** Remove subtree at `path` and return both pruned tree and the detached node. Null if absent. */
