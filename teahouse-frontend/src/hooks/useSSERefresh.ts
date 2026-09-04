@@ -104,9 +104,7 @@ export function useSSERefresh({
         fileTimerRef.current = null
         const structuralInBurst = burstStructuralRef.current
         burstStructuralRef.current = false
-        if (instanceId) {
-          useGitStore.getState().fetchGitStatus(instanceId)
-        }
+        if (instanceId) useGitStore.getState().fetchGitStatus(instanceId)
         const last = lastFileEventRef.current
         const delivered = { ...last }
         // Deliver a synthetic type telling consumers to reload rather than apply
@@ -122,9 +120,7 @@ export function useSSERefresh({
       if (wsTimerRef.current) return
       wsTimerRef.current = setTimeout(() => {
         wsTimerRef.current = null
-        if (instanceId) {
-          useGitStore.getState().fetchGitStatus(instanceId)
-        }
+        if (instanceId) useGitStore.getState().fetchGitStatus(instanceId)
         onWorkspaceChanged()
       }, DEBOUNCE_MS)
     }

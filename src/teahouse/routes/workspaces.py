@@ -1988,12 +1988,16 @@ async def get_git_status(instance_id: str, user: UserInfo = Depends(require_user
     try:
         from ..git_utils import GitError
 
-        branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
-        commits = git_log(instance_dir, limit=50, all_branches=True)
-        branches = git_branch(instance_dir, "list", None)["branches"]
+        # git_utils calls run synchronous subprocesses; offload each to a worker
+        # thread so a slow git call doesn't block the event loop (which would
+        # make unrelated requests like /floors queue up and appear slower and
+        # slower under concurrent git + file polling).
+        branch = await asyncio.to_thread(_git_run, ["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+        commits = await asyncio.to_thread(git_log, instance_dir, 50, True)
+        branches = (await asyncio.to_thread(git_branch, instance_dir, "list", None))["branches"]
 
         # Check for uncommitted changes
-        status_out = _git_run(["status", "--porcelain"], instance_dir)
+        status_out = await asyncio.to_thread(_git_run, ["status", "--porcelain"], instance_dir)
         has_uncommitted = bool(status_out.strip())
 
         return {
@@ -2080,7 +2084,7 @@ async def api_git_log(instance_id: str, limit: int = Query(10, description="Comm
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        return {"commits": git_log(instance_dir, limit)}
+        return {"commits": await asyncio.to_thread(git_log, instance_dir, limit)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2095,7 +2099,7 @@ async def api_git_file_status(instance_id: str, user: UserInfo = Depends(require
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        return {"files": git_status_porcelain(instance_dir)}
+        return {"files": await asyncio.to_thread(git_status_porcelain, instance_dir)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2110,16 +2114,16 @@ async def api_refresh(instance_id: str, user: UserInfo = Depends(require_user)):
 
     instance_dir = _resolve_instance_dir(inst)
 
-    # Git status
+    # Git status (offloaded to threads — see get_git_status)
     try:
         if not (instance_dir / ".git").is_dir():
             git_data = {"git_initialized": False}
         else:
             from ..git_utils import GitError
-            branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
-            commits = git_log(instance_dir, limit=50, all_branches=True)
-            branches = git_branch(instance_dir, "list", None)["branches"]
-            status_out = _git_run(["status", "--porcelain"], instance_dir)
+            branch = await asyncio.to_thread(_git_run, ["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
+            commits = await asyncio.to_thread(git_log, instance_dir, 50, True)
+            branches = (await asyncio.to_thread(git_branch, instance_dir, "list", None))["branches"]
+            status_out = await asyncio.to_thread(_git_run, ["status", "--porcelain"], instance_dir)
             has_uncommitted = bool(status_out.strip())
             git_data = {
                 "git_initialized": True,
@@ -2133,7 +2137,7 @@ async def api_refresh(instance_id: str, user: UserInfo = Depends(require_user)):
 
     # File statuses
     try:
-        files = git_status_porcelain(instance_dir)
+        files = await asyncio.to_thread(git_status_porcelain, instance_dir)
     except Exception:
         files = []
 
@@ -2153,7 +2157,7 @@ async def api_git_show_file(instance_id: str, path: str = Query(...), user: User
 
     instance_dir = _resolve_instance_dir(inst)
     try:
-        content = git_show_file(instance_dir, path)
+        content = await asyncio.to_thread(git_show_file, instance_dir, path)
         return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
