@@ -60,6 +60,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,      # 保持控制台窗口，打印访问地址 / 首启密码
+    icon=str(PROJECT_ROOT / "build" / "app.ico"),  # exe 图标，由 public/icon-512.png 转多尺寸 ico
     disable_windowed_traceback=False,
 )
 coll = COLLECT(
