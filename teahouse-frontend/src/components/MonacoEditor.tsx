@@ -92,6 +92,17 @@ function classifyPlaceholder(inner: string, closed: boolean): string {
   return "keyword.teahouse"
 }
 
+// Earliest `${` or `{{` opener at or after `from`, or -1 if none. A single `{`
+// does not start a placeholder, so it is skipped as plain text.
+function findPlaceholderStart(line: string, from: number): number {
+  for (let j = from; j < line.length - 1; j++) {
+    const a = line[j]
+    const b = line[j + 1]
+    if ((a === "$" && b === "{") || (a === "{" && b === "{")) return j
+  }
+  return -1
+}
+
 function tokenize(line: string, state: Monaco.languages.IState): Monaco.languages.ILineTokens {
   const s = state as TeahouseState
   const tokens: Monaco.languages.IToken[] = []
@@ -122,6 +133,14 @@ function tokenize(line: string, state: Monaco.languages.IState): Monaco.language
     }
   }
 
+  // Emit a default-foreground token over [from, to). These ensure a token
+  // boundary exists at every column: Monaco force-starts the first token at 0
+  // and runs the last to end-of-line, so without these a lone placeholder
+  // would swallow the whole line's color.
+  const pushPlain = (from: number, to: number) => {
+    if (to > from) tokens.push({ startIndex: from, scopes: "" })
+  }
+
   while (i < line.length) {
     if (i === 0) {
       if (/^\s*```/.test(line)) {
@@ -134,31 +153,31 @@ function tokenize(line: string, state: Monaco.languages.IState): Monaco.language
       }
     }
 
-    const c = line[i]
-    if (c === "$" && line[i + 1] === "{") {
-      const { end, depth: d } = scanBrace(line, i)
-      const closed = d === 0
-      const inner = closed ? line.slice(i + 2, end - 1) : line.slice(i + 2)
+    const start = findPlaceholderStart(line, i)
+    if (start < 0) {
+      pushPlain(i, line.length)
+      break
+    }
+
+    pushPlain(i, start)
+    const c = line[start]
+    const isVar = c === "$"
+    const { end, depth: d } = scanBrace(line, start)
+    const closed = d === 0
+    if (isVar) {
+      const inner = closed ? line.slice(start + 2, end - 1) : line.slice(start + 2)
       const token = classifyPlaceholder(inner, closed)
-      tokens.push({ startIndex: i, scopes: token })
+      tokens.push({ startIndex: start, scopes: token })
       if (!closed) {
         return { tokens, endState: new TeahouseState(false, d, token) }
       }
-      i = end
-      continue
-    }
-
-    if (c === "{" && line[i + 1] === "{") {
-      const { end, depth: d } = scanBrace(line, i)
-      tokens.push({ startIndex: i, scopes: "string.teahouse" })
-      if (d > 0) {
+    } else {
+      tokens.push({ startIndex: start, scopes: "string.teahouse" })
+      if (!closed) {
         return { tokens, endState: new TeahouseState(false, d, "string.teahouse") }
       }
-      i = end
-      continue
     }
-
-    i++
+    i = end
   }
 
   return { tokens, endState: new TeahouseState(false, 0, "") }
