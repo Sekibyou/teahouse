@@ -6,6 +6,7 @@ Requires git to be installed and available on PATH.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,41 @@ from typing import Optional
 class GitError(Exception):
     """Raised when a git command fails."""
     pass
+
+
+# Git identity resolved once per process. The 4 `git config --global` probes
+# below cost ~4 subprocess spawns on every single git invocation; on Windows
+# that made each git/status ~330ms. Identity never changes mid-process, so we
+# resolve it lazily once and reuse.
+_identity_cache: dict[str, str] | None = None
+
+
+def _resolve_identity() -> dict[str, str]:
+    global _identity_cache
+    if _identity_cache is not None:
+        return _identity_cache
+    env = os.environ
+    resolved: dict[str, str] = {}
+    mapping = {
+        "GIT_AUTHOR_NAME": "user.name",
+        "GIT_AUTHOR_EMAIL": "user.email",
+        "GIT_COMMITTER_NAME": "user.name",
+        "GIT_COMMITTER_EMAIL": "user.email",
+    }
+    for key, cfg_key in mapping.items():
+        if key in env:
+            resolved[key] = env[key]
+        else:
+            try:
+                val = subprocess.run(
+                    ["git", "config", "--global", cfg_key],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout.strip()
+            except Exception:
+                val = ""
+            resolved[key] = val if val else "teahouse"
+    _identity_cache = resolved
+    return resolved
 
 
 _INDEX_LOCK_RETRIES = 10
@@ -34,21 +70,13 @@ def _git_run(args: list[str], cwd: Path, strip: bool = True) -> str:
     would otherwise eat a genuine leading/trailing empty line in the content.
     """
     try:
-        import os
         env = os.environ.copy()
         env["GIT_PAGER"] = "cat"
         env["GIT_TERMINAL_PROMPT"] = "0"
-        # Ensure git identity is always available, even when ~/.gitconfig is missing
-        for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
-            if key not in env:
-                try:
-                    val = subprocess.run(
-                        ["git", "config", "--global", key.removeprefix("GIT_").lower().replace("_", ".")],
-                        capture_output=True, text=True, timeout=5,
-                    ).stdout.strip()
-                except Exception:
-                    val = ""
-                env[key] = val if val else "teahouse"
+        # Ensure git identity is always available, even when ~/.gitconfig is missing.
+        # Resolved once and cached (see _resolve_identity) so we don't spawn 4
+        # `git config --global` subprocesses on every single git call.
+        env.update(_resolve_identity())
         # Disable path quoting so CJK filenames don't get octal-escaped
         args = ["-c", "core.quotepath=false"] + args
         import time

@@ -1104,6 +1104,8 @@ def main() -> None:
 
     cfg = Config.load_or_create()
     import uvicorn
+    # Access-log verbosity: TEAHOUSE_LOG_LEVEL (default info keeps the per-request
+    # INFO lines; set warning to silence them, e.g. noisy dev terminals).
     uvicorn.run(
         "teahouse.app:app",
         host=cfg.server.host,
@@ -1111,6 +1113,7 @@ def main() -> None:
         reload=reload_flag,
         reload_dirs=["src"] if reload_flag else None,
         reload_excludes=["data/**"] if reload_flag else None,
+        log_level=os.environ.get("TEAHOUSE_LOG_LEVEL", "info"),
     )
 
 
