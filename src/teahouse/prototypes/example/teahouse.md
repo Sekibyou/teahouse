@@ -4,6 +4,18 @@
 
 协助写设定和前端沙盒代码。
 
+## 文末选项功能（给玩家的可选项，默认关闭）
+
+若剧情要采用"章末给玩家可选项"，需要把以下三处从注释/示例改成正文以启用（沙盒 input-bar 的选项条已默认搭载，读到「文末选项」数组即展示）：
+
+| 文件 | 现有形态 | 启用方式 |
+|---|---|---|
+| `settings/key-vars.md` | 变量清单，默认以注释引用 | 按 `settings/key-vars-withOption-example.md`（含文末选项变量的完整示例，不进正文、仅作参考）把「文末选项」变量行与产出要求并入 |
+| `settings/assemble.md` | 变量维护要求包在 `${@note}` 注释里 | 移除该注释块以引用 key-vars |
+| `generate-config/generate.yaml` | user content 里的 `${@note}` 提示 | 把变量系统 note 移除、改为要求产出变量更新块 |
+
+**判定标记格式须与沙盒 input-bar.js 严格一致**：需判定选项在文本内联 方括号`[...]`（判定条件）+ 尖括号`<...>`（骰子串，RPG 语法如 `3d6k2`）。完整要求见 `settings/key-vars-withOption-example.md`。
+
 ## Skill使用
 
 以下为本实例可用的内置 Skill。**正文生成、沙盒搭建、总结、导出等关键动作，动工前先读对应 skill**，严格按其 SOP 执行。

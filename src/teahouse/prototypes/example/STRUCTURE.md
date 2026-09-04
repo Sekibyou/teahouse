@@ -22,6 +22,7 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
     dyn_settings/       动态设定：随剧情变动的中短期文字状态，入 git，总结产出
     static_settings/    静态设定：长期稳定背景（世界观、模板），入 git，只读引用
     key-vars.md         作者维护的变量清单示例：正文 AI 需要看到并维护的变量
+    key-vars-withOption-example.md   含「文末选项」变量的完整 key-vars 示例（演示章末产出可选项；不进正文，需开启时照它改 key-vars.md）
 
   generate-config/      正文生成 / 正文补全的配置文件（薄壳，引用 {{settings/assemble.md}}）
     generate.yaml       生成下一章的 Payload 配置

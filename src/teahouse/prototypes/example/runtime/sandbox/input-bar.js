@@ -13,7 +13,16 @@
      写下一章 = 写 user_msg + Generate floor-N-draft.md，不碰 git；
      续写补全 = Generate 补全到 temp → 子会话合并写回草稿；
      重写草稿 = Generate overwrite 覆写当前草稿（仅草稿，正式稿不可重写）；
-     转正只由「确认草稿」按钮（commitDraft 闸门）驱动。 */
+     转正只由「确认草稿」按钮（commitDraft 闸门）驱动。
+
+     附加：文末选项条 + 通用判定管线（打字与点选项共用）。
+     · 选项区：读变量「文末选项」→ 仅 gen 模式 + READY 态 + 有选项时显示（可折叠），
+       点选项 = 以该项为 user 内容走判定管线 → 立即进生成态。
+     · 判定管线 finalizeUserMsg(raw) 统一处理"打字 / 点选项"的发送前内容——
+         - raw 自带尖括号 <骰子串> → 视为自选判定，roll 该骰子，拼 <骰子串=N> 到末尾；
+         - raw 不带尖括号 → roll 1d100 作通用倾向参考，拼一段说明到末尾；
+         若用户要求明显无需判定，正文 bot 可无视该段。
+  */
 
   var MODE_CHAT = 'chat';
   var MODE_GEN  = 'gen';
@@ -66,15 +75,35 @@
   var activeSessionLabel = '';  // 活跃子会话的类型名
   var statusTimer = null;
 
+  /* 文末选项条状态 */
+  var OPT_VAR = '文末选项';      // 选项数组变量名
+  var optFolded = false;        // 选项区是否折叠
+  var optBusy = false;          // 正在掷骰/已触发生成 → 禁点
+
+  /* 思考强度（input-bar 内所有 Generate 共用）：五档变量，点按钮轮换 */
+  var THINK_VAR = '思考强度';   // 沙盒变量名，值 = 一档
+  var THINK_LEVELS = [          // 按钮显示 = 档名；档名 → Generate 的 reasoning_effort
+    { label: '无',   effort: 'none' },
+    { label: '低',   effort: 'low'  },
+    { label: '中',   effort: 'mid'  },
+    { label: '高',   effort: 'high' },
+    { label: '极',   effort: 'max'  }
+  ];
+  var thinkEffort = 'none';     // 当前生效的 effort（兜底默认无）
+  var thinkInitPromise = null;  // 读档初始化只跑一次
+
   var PLACEHOLDER_BUSY = '导演正在执笔…';
 
   /* ---- 组件级 hover/disabled 样式（固定色按钮无法用内嵌 :hover，注入 <style>） ---- */
   var styleTag = document.createElement('style');
   styleTag.textContent =
     '#teahouse-mode-btn:hover:not(:disabled){background:rgba(255,255,255,0.08);}' +
+    '#teahouse-think-btn:hover:not(:disabled){background:var(--control-bg);border-color:var(--border-strong);}' +
     '#teahouse-input-send:hover:not(:disabled){opacity:0.85;}' +
     '#teahouse-input-send:disabled{opacity:0.5;cursor:not-allowed;}' +
-    '.teahouse-mode-item:hover{background:var(--control-bg);}';
+    '.teahouse-mode-item:hover{background:var(--control-bg);}' +
+    '.teahouse-opt-item:hover{background:var(--control-bg);border-color:var(--border-strong);}' +
+    '#teahouse-opt-fold:hover{background:var(--control-bg);}';
   document.head.appendChild(styleTag);
 
   /* ---- DOM 骨架 ---- */
@@ -84,6 +113,69 @@
     'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
     'z-index:var(--z-bar);width:min(92%, 640px);' +
     'font-family:"Noto Sans SC","PingFang SC",sans-serif;';
+
+  /* ============ 选项区（form 上方，可折叠） ============
+     仅 gen 模式 + READY 态 + 文末选项 length>0 时显示。
+     点选项 = 以该项为 user 内容走通用判定管线 → 立即进生成态（与打字回车一致）。 */
+  var optWrap = document.createElement('div');
+  optWrap.id = 'teahouse-opt-wrap';
+  optWrap.style.cssText = 'display:none;margin-bottom:8px;';
+
+  /* 展开态：头部标题+折叠钮 + 纵向选项列表 */
+  var optPanel = document.createElement('div');
+  optPanel.style.cssText =
+    'background:var(--input-bg);border:1px solid var(--panel-border);' +
+    'border-radius:16px;overflow:hidden;' +
+    'box-shadow:0 8px 28px rgba(0,0,0,0.4);backdrop-filter:blur(10px);';
+
+  var optHead = document.createElement('div');
+  optHead.style.cssText =
+    'display:flex;align-items:center;gap:8px;padding:7px 12px;' +
+    'border-bottom:1px solid var(--panel-border);';
+
+  var optHeadTitle = document.createElement('span');
+  optHeadTitle.textContent = '文末选项';
+  optHeadTitle.style.cssText =
+    'flex:1;font-size:12px;font-weight:700;color:var(--panel-text-soft);' +
+    'letter-spacing:0.05em;user-select:none;';
+
+  var optFoldBtn = document.createElement('button');
+  optFoldBtn.id = 'teahouse-opt-fold';
+  optFoldBtn.type = 'button';
+  optFoldBtn.title = '折叠';
+  optFoldBtn.innerHTML = '&#9660;';   // ▼
+  optFoldBtn.style.cssText =
+    'flex:none;width:24px;height:24px;border:none;border-radius:50%;' +
+    'background:transparent;color:var(--panel-text-dim);cursor:pointer;' +
+    'font-size:12px;line-height:1;transition:background 0.15s,color 0.15s,' +
+    'transform 0.2s;';
+
+  optHead.appendChild(optHeadTitle);
+  optHead.appendChild(optFoldBtn);
+
+  var optList = document.createElement('div');
+  optList.style.cssText =
+    'padding:6px;display:flex;flex-direction:column;gap:6px;' +
+    'max-height:38vh;overflow-y:auto;';
+
+  optPanel.appendChild(optHead);
+  optPanel.appendChild(optList);
+
+  /* 折叠态胶囊（单行，点击展开） */
+  var optChip = document.createElement('button');
+  optChip.type = 'button';
+  optChip.innerHTML = '&#9654; 文末选项';
+  optChip.style.cssText =
+    'display:none;align-items:center;gap:6px;height:34px;padding:0 14px;' +
+    'border-radius:999px;background:var(--input-bg);color:var(--panel-text);' +
+    'border:1px solid var(--panel-border);cursor:pointer;' +
+    'box-shadow:0 6px 20px rgba(0,0,0,0.4);font-size:12.5px;font-weight:600;' +
+    'user-select:none;margin-left:auto;';
+  optChip.addEventListener('mouseenter', function() { optChip.style.borderColor = 'var(--border-strong)'; });
+  optChip.addEventListener('mouseleave', function() { optChip.style.borderColor = 'var(--panel-border)'; });
+
+  optWrap.appendChild(optPanel);
+  optWrap.appendChild(optChip);
 
   var form = document.createElement('form');
   form.style.cssText =
@@ -118,6 +210,22 @@
   modeArrow.style.cssText = 'font-size:9px;opacity:0.8;';
   modeBtn.appendChild(modeLabel);
   modeBtn.appendChild(modeArrow);
+
+  /* 思考强度按钮：点击轮换，显示当前档名 */
+  var thinkBtn = document.createElement('button');
+  thinkBtn.id = 'teahouse-think-btn';
+  thinkBtn.type = 'button';
+  thinkBtn.title = '思考强度：点击轮换（无/低/中/高/极）';
+  thinkBtn.style.cssText =
+    'flex:none;height:24px;padding:0 8px;border-radius:999px;' +
+    'display:inline-flex;align-items:center;gap:3px;' +
+    'background:var(--control-bg);border:1px solid var(--panel-border);' +
+    'font-size:10.5px;font-weight:700;cursor:pointer;user-select:none;' +
+    'color:var(--text-dim);line-height:1;' +
+    'transition:background 0.2s,border-color 0.2s,color 0.2s;';
+
+  var thinkLabel = document.createElement('span');
+  thinkBtn.appendChild(thinkLabel);
 
   var input = document.createElement('input');
   input.id = 'teahouse-input';
@@ -159,6 +267,7 @@
     'transition:opacity 0.2s;';
 
   inputArea.appendChild(modeBtn);
+  inputArea.appendChild(thinkBtn);
   inputArea.appendChild(input);
   inputArea.appendChild(sendBtn);
   inputArea.appendChild(stopBtn);
@@ -246,6 +355,54 @@
   function openMenu() { renderMenu(); menu.style.display = 'block'; }
   function closeMenu() { menu.style.display = 'none'; }
 
+  /* ---- 思考强度档位 ---- */
+  function thinkEffortOfLabel(label) {
+    for (var i = 0; i < THINK_LEVELS.length; i++) {
+      if (THINK_LEVELS[i].label === label) return THINK_LEVELS[i].effort;
+    }
+    return null;   // 未知档名 → 交给外层回退 'none'
+  }
+  function thinkLabelOfEffort(effort) {
+    for (var i = 0; i < THINK_LEVELS.length; i++) {
+      if (THINK_LEVELS[i].effort === effort) return THINK_LEVELS[i].label;
+    }
+    return '中';
+  }
+  function syncThinkBtn() {
+    thinkLabel.textContent = thinkLabelOfEffort(thinkEffort);
+    thinkBtn.title = '思考强度：' + thinkLabelOfEffort(thinkEffort) + '（点击轮换：无/低/中/高/极）';
+  }
+  /* 初始化只读档一次：变量有值（须能匹配某档）→ 采用；否则默认 none */
+  function initThinkOnce() {
+    if (thinkInitPromise) return thinkInitPromise;
+    thinkInitPromise = window.Teahouse.getVars([THINK_VAR]).then(function(entries) {
+      var v = (entries && entries[0]) ? entries[0].value : null;
+      var ef = thinkEffortOfLabel(String(v));
+      if (ef) thinkEffort = ef;
+      syncThinkBtn();
+    }).catch(function() { syncThinkBtn(); });
+    return thinkInitPromise;
+  }
+  function setThinkVar(value) {
+    var next = {};
+    next[THINK_VAR] = value;
+    window.Teahouse.setVar(next).catch(function() {});
+  }
+  /* 点击 → 轮换并落盘 */
+  thinkBtn.addEventListener('click', function() {
+    var cur = thinkLabelOfEffort(thinkEffort);
+    var idx = 0;
+    for (var i = 0; i < THINK_LEVELS.length; i++) {
+      if (THINK_LEVELS[i].label === cur) { idx = i; break; }
+    }
+    idx = (idx + 1) % THINK_LEVELS.length;
+    thinkEffort = THINK_LEVELS[idx].effort;
+    syncThinkBtn();
+    setThinkVar(THINK_LEVELS[idx].label);
+  });
+
+  /* 挂载顺序：选项区在上，form 在下，status 最底 */
+  wrap.appendChild(optWrap);
   wrap.appendChild(form);
   wrap.appendChild(menu);
   wrap.appendChild(status);
@@ -300,6 +457,8 @@
     }
     // 若处于 AWAIT 态，切模式后刷新「打字可用性」（gen 禁用，其余可用）
     applyInputAvailability();
+    // 选项区只在 gen 模式可见，切模式需同步
+    syncOptVisibility();
   }
 
   /* ---- 输入可用性：AWAIT 态下 gen 模式打字禁用 + sendBtn 变确认草稿；其余模式可用 ---- */
@@ -356,6 +515,7 @@
       input.placeholder = MODES[currentMode].placeholder;
       input.setAttribute('placeholder', input.placeholder);
     }
+    syncOptVisibility();
   }
 
   /* 从权威楼层清单判定状态：最新章是 draft → AWAIT_COMMIT，否则 READY */
@@ -421,40 +581,224 @@
     return floors.length ? floors[floors.length - 1] : null;
   }
 
-  /* ---- 生成下一章（READY → GENERATING → 落草稿 → AWAIT_COMMIT） ----
-     只在最新章为正式稿时可用；写 user_msg + Generate 下一楼 draft，不碰 git。 */
-  function doGen(text) {
+  /* ============ 文末选项区 ============ */
+
+  /* 折叠/展开 */
+  function applyOptFold() {
+    optPanel.style.display = optFolded ? 'none' : 'block';
+    optChip.style.display = optFolded ? 'inline-flex' : 'none';
+    optFoldBtn.innerHTML = optFolded ? '&#9650;' : '&#9660;';
+    optFoldBtn.title = optFolded ? '展开选项' : '折叠选项';
+  }
+  optFoldBtn.addEventListener('click', function() { optFolded = true; applyOptFold(); });
+  optChip.addEventListener('click', function() { optFolded = false; applyOptFold(); });
+
+  /* HTML 转义（防选项文本内的 < > 破坏结构） */
+  function optEsc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /* 高亮渲染选项文本：把判定标记单独着色，其余保持默认
+      方括号 [...]（判定条件）→ 黄 var(--warn)
+      尖括号 <...>（骰子串/判定结果）→ 绿 var(--success)
+      每段内容之间用短横线 " — " 分隔，让"行动 — [条件] — <骰子>"三段明确分开 */
+  function optHighlight(s) {
+    var full = String(s);
+    var re = /\[[^\]]*\]|<[^<>]*>/g;
+    var html = '';
+    var last = 0;
+    var m;
+    var segments = [];   // [{type:'text'|'cond'|'dice', str}]
+    while ((m = re.exec(full)) !== null) {
+      var lead = full.slice(last, m.index);
+      if (lead) segments.push({ type: 'text', str: lead });
+      var tok = m[0];
+      segments.push({ type: tok.charAt(0) === '[' ? 'cond' : 'dice', str: tok });
+      last = m.index + tok.length;
+    }
+    var tail = full.slice(last);
+    if (tail) segments.push({ type: 'text', str: tail });
+
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      // 除段首外，段与段之间插分隔短线
+      if (i > 0) html += ' <span style="color:var(--panel-text-dim);">—</span> ';
+      if (seg.type === 'cond') {
+        html += '<span style="color:var(--warn);">' + optEsc(seg.str) + '</span>';
+      } else if (seg.type === 'dice') {
+        html += '<span style="color:var(--success);">' + optEsc(seg.str) + '</span>';
+      } else {
+        html += optEsc(seg.str);
+      }
+    }
+    return html;
+  }
+
+  /* 渲染选项列表 */
+  function renderOpts(opts) {
+    optList.innerHTML = '';
+    var arr = Array.isArray(opts) ? opts : [];
+    if (arr.length === 0) { hideOpt(); return; }
+    optBusy = false;   // 新选项到达 → 重新开放点击（重置上次点选/生成遗留的 busy 锁）
+    optHeadTitle.textContent = '文末选项（' + arr.length + '）';
+    optChip.innerHTML = '&#9654; 文末选项（' + arr.length + '）';
+    for (var i = 0; i < arr.length; i++) {
+      (function(idx) {
+        var text = String(arr[idx]);
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'teahouse-opt-item';
+        btn.style.cssText =
+          'width:100%;height:auto;min-height:34px;padding:7px 12px;' +
+          'border:1px solid transparent;border-radius:10px;' +
+          'background:transparent;color:var(--panel-text);cursor:pointer;' +
+          'font-size:12.5px;line-height:1.5;text-align:left;' +
+          'white-space:normal;word-break:break-word;' +
+          'transition:background 0.15s,border-color 0.15s;';
+        btn.innerHTML = optHighlight(text);
+        btn.addEventListener('click', function() {
+          if (optBusy || state !== S_READY) return;
+          optChoose(idx, btn);
+        });
+        optList.appendChild(btn);
+      })(i);
+    }
+    syncOptVisibility();   // 渲染完再按状态决定显示/隐藏
+  }
+
+  /* 选项显示/隐藏：仅 gen+READY+有选项 时显示 */
+  function syncOptVisibility() {
+    if (state === S_READY && currentMode === MODE_GEN) {
+      if (optList.childNodes.length > 0) {
+        optWrap.style.display = 'block';
+        applyOptFold();
+        return;
+      }
+    }
+    optWrap.style.display = 'none';
+  }
+  /* 清空并隐藏选项区（不保留上次列表） */
+  function hideOpt() {
+    optWrap.style.display = 'none';
+    optBusy = false;
+    optList.innerHTML = '';
+  }
+
+  /* 刷新选项：读变量 → 有则渲染、空则隐藏 */
+  function refreshOpts() {
+    window.Teahouse.getVars([OPT_VAR]).then(function(entries) {
+      var v = (entries && entries[0]) ? entries[0].value : null;
+      if (Array.isArray(v) && v.length > 0) {
+        renderOpts(v);
+      } else {
+        hideOpt();
+      }
+    }).catch(function() {});
+  }
+
+  /* 清空选项变量（选完 / 发送后） */
+  function clearOptVar() {
+    window.Teahouse.setVar({ '文末选项': [] }).catch(function() {});
+  }
+
+  /* ============ 判定管线（打字与点选项共用） ============
+     输入：原始 user 内容（打字 / 选项原文）
+     输出：Promise<最终 user_msg>
+     规则：
+       - 内容自带尖括号 <骰子串> → 视为自选判定，roll 该骰子，拼 <骰子串=N> 到末尾；
+       - 否则 → roll 1d100 作通用倾向参考，拼一段说明到末尾（正文 bot 可酌情参考/无视）。
+     若需"纯点击不判定"或在此之上加动画 / 重掷，改此函数即可。 */
+  function finalizeUserMsg(rawText) {
+    var text = String(rawText || '').trim();
+    if (!text) return Promise.resolve(text);
+    var diceM = /<([^<>]+)>/.exec(text);
+    if (diceM) {
+      // 自带判定：roll 对应骰子，拼 <骰=N> 到末尾
+      var dice = diceM[1].trim();
+      if (dice) {
+        return window.Teahouse.roll(dice).then(function(n) {
+          return text + '<' + dice + '=' + n + '>';
+        }).catch(function() {
+          return text;   // roll 失败：原样发，不阻塞
+        });
+      }
+      return Promise.resolve(text);
+    }
+    // 无判定：通用 1d100 作倾向参考
+    return window.Teahouse.roll('1d100').then(function(n) {
+      return text + '<通用判定：1d100=' + n + '。此为无具体判定要求时的随机倾向参考，你可酌情参考以推动剧情；若用户要求明显无需判定，可无视之。>';
+    }).catch(function() {
+      return text;
+    });
+  }
+
+  /* 点选项：以选项原文为 user 内容，走判定管线后生成下一章 */
+  function optChoose(idx, btn) {
+    var raw = String(optList.childNodes[idx] && optList.childNodes[idx].textContent);
+    // 用缓存的原始文本更稳（避免 textContent 被转义）：从变量里取
+    window.Teahouse.getVars([OPT_VAR]).then(function(entries) {
+      var v = (entries && entries[0]) ? entries[0].value : null;
+      var arr = Array.isArray(v) ? v : [];
+      var text = arr[idx] !== undefined ? String(arr[idx]) : raw;
+      optBusy = true;
+      btn.disabled = true;
+      clearOptVar();            // 立即清空选项（选项条隐藏）
+      genWithJudgement(text);   // 立即进生成态 + 判定管线
+    }).catch(function() {
+      optBusy = true;
+      clearOptVar();
+      genWithJudgement(raw);
+    });
+  }
+
+  /* 生成下一章（含判定管线）：
+     先 applyState(S_GEN) 立即进生成态（与打字回车一致），再异步判定管线拿最终 msg，再 runTool。 */
+  function genWithJudgement(rawText) {
     var top = currentTop();
     if (top && top.draft) {
-      applyState(S_AWAIT);
+      // 防御：有草稿未转正 → 不应开新楼
+      optBusy = false;
+      refreshState();
       flashStatus('最新一章还是草稿，请先确认或切换模式');
       return;
     }
     var nextNum = (top ? top.num : 0) + 1;
-    var steps = [
-      { tool: 'SetRuntimeVar', args: { updates: { user_msg: text } } },
-      { tool: 'Generate', args: {
-        source_file: 'generate-config/generate.yaml',
-        path: 'runtime/floors/floor-' + nextNum + '-draft.md'
-      }}
-    ];
-    applyState(S_GEN);
-    var h = window.Teahouse.runTool(steps);
-    activeRun = h;
-    h.then(function() {
-      activeRun = null;
-      refreshState();
-    }).catch(function(err) {
-      activeRun = null;
-      if (isCancelledErr(err)) {
-        flashStatus('已停止生成');
-        console.log('[InputBar] gen cancelled:', err);
-      } else {
-        status.textContent = '生成失败，请重试';
-        console.error('[InputBar] gen failed:', err);
-      }
-      refreshState();
+    applyState(S_GEN);                       // 同步进生成态（立即反馈）
+    finalizeUserMsg(rawText).then(function(finalMsg) {
+      var steps = [
+        { tool: 'SetRuntimeVar', args: { updates: { user_msg: finalMsg } } },
+        { tool: 'Generate', args: {
+          source_file: 'generate-config/generate.yaml',
+          path: 'runtime/floors/floor-' + nextNum + '-draft.md',
+          reasoning_effort: thinkEffort
+        }}
+      ];
+      var h = window.Teahouse.runTool(steps);
+      activeRun = h;
+      return h.then(function() {
+        activeRun = null;
+        refreshState();
+      }).catch(function(err) {
+        activeRun = null;
+        if (isCancelledErr(err)) {
+          flashStatus('已停止生成');
+          console.log('[InputBar] gen cancelled:', err);
+        } else {
+          status.textContent = '生成失败，请重试';
+          console.error('[InputBar] gen failed:', err);
+        }
+        refreshState();
+      });
     });
+  }
+
+  /* ---- 生成下一章（打字回车用，同样走判定管线） ---- */
+  function doGen(text) {
+    genWithJudgement(text);
   }
 
   /* ---- 重写本章（仅草稿）：Generate overwrite 覆写当前草稿，不碰 git ----
@@ -472,7 +816,8 @@
       { tool: 'Generate', args: {
         source_file: 'generate-config/generate.yaml',
         path: 'runtime/floors/floor-' + n + '-draft.md',
-        overwrite: true
+        overwrite: true,
+        reasoning_effort: thinkEffort
       }}
     ];
     applyState(S_GEN);
@@ -548,7 +893,8 @@
       { tool: 'Generate', args: {
         source_file: CONT_YAML,
         path: contPath,
-        overwrite: true
+        overwrite: true,
+        reasoning_effort: thinkEffort
       }}
     ];
     return Promise.resolve({ steps: steps, n: n, srcPath: srcPath, contPath: contPath });
@@ -742,6 +1088,7 @@
     } else if (currentMode === MODE_GEN) {
       input.value = '';
       input.blur();
+      clearOptVar();          // 打字发送也会清空选项
       doGen(text);
     } else if (currentMode === MODE_REWRITE) {
       input.value = '';
@@ -793,18 +1140,23 @@
   onGenStatus(window.Teahouse.generationStatus || 'idle');
 
   // 转正完成（含导演/其它组件触发的 commitDraft）→ 同步状态
-  window.Teahouse.on('draft.committed', function() { refreshState(); });
+  window.Teahouse.on('draft.committed', function() { refreshState(); refreshOpts(); });
 
-  // 文件变化 → 只关心 floors 路径（草稿出现/消失/转正改名）：
-  // 变量/设定等写入（如 runTool 里 SetRuntimeVar 先于 Generate 落盘）也会推 output.refresh，
-  // 若不过滤会打断生成中 UI，闪回 READY。
+  // 文件变化 → 若涉及 floors / 变量(含文末选项) 都刷新
   window.Teahouse.on('output.refresh', function(data) {
     var p = data && data.path;
-    if (p && p.indexOf('runtime/floors/') === 0) refreshState();
+    if (p && p.indexOf('runtime/floors/') === 0) {
+      refreshState();
+      return;
+    }
+    // 生成中选项必已清空、无需刷新（避免频繁读变量干扰）；其余情况刷新选项区
+    if (state !== S_GEN) refreshOpts();
   });
 
   /* ---- 初始化 ---- */
   applyMode();
+  initThinkOnce();      // 读思考强度变量（若有）并同步按钮
   refreshState();
+  refreshOpts();
   window.registerUI('teahouse-input-bar', wrap);
 })();
