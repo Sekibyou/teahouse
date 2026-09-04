@@ -1,6 +1,6 @@
 // Teahouse 应用壳缓存 + PWA 安装支持。
-const CACHE_NAME = "teahouse-v40";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
+const CACHE_NAME = "teahouse-v41";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.png", "/icon-192.png", "/icon-512.png"];
 const API_PREFIXES = ["/api/", "/v1/", "/events"];
 
 self.addEventListener("install", (event) => {
