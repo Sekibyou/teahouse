@@ -42,7 +42,7 @@ def _maybe_broadcast_vars_changed(instance_dir: Path, full: Path, tool: str, ins
     if full.resolve() == (instance_dir / RUNTIME_VARS_RELPATH).resolve():
         state.broadcast(
             "file_changed",
-            {"path": RUNTIME_VARS_RELPATH, "tool": tool, "instance_id": instance_id or instance_dir.name},
+            {"path": RUNTIME_VARS_RELPATH, "tool": tool, "type": "modified", "instance_id": instance_id or instance_dir.name},
         )
 
 import yaml
@@ -508,7 +508,7 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any], inst
 
     state.broadcast(
         "file_changed",
-        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id or instance_dir.name},
+        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "type": "modified", "instance_id": instance_id or instance_dir.name},
     )
 
     affected = list(updates.keys()) if updates else []
@@ -656,9 +656,10 @@ async def execute_write(instance_dir: Path, args: dict[str, Any], instance_id: s
             return f"Error: 占位符解析失败: {e}"
 
     full = _validate_path(instance_dir, path)
+    existed = full.exists()
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
-    state.broadcast("file_changed", {"path": path, "tool": "Write", "instance_id": instance_id or instance_dir.name})
+    state.broadcast("file_changed", {"path": path, "tool": "Write", "type": "modified" if existed else "created", "instance_id": instance_id or instance_dir.name})
     _maybe_broadcast_vars_changed(instance_dir, full, "Write", instance_id)
     return f"Successfully wrote {len(content.encode('utf-8'))} bytes to {path}. File state is now up to date in your context — no need to Read it back."
 
@@ -699,13 +700,13 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any], instance_id: st
     if replace_all:
         new_content = content.replace(old_string, new_string)
         full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_id or instance_dir.name})
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "type": "modified", "instance_id": instance_id or instance_dir.name})
         _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
         return f"Successfully replaced all {count} occurrences in {path}. File state is now up to date in your context — no need to Read it back."
     else:
         new_content = content.replace(old_string, new_string, 1)
         full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "instance_id": instance_id or instance_dir.name})
+        state.broadcast("file_changed", {"path": path, "tool": "Edit", "type": "modified", "instance_id": instance_id or instance_dir.name})
         _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
         return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
 
@@ -736,9 +737,11 @@ async def execute_report(instance_dir: Path, args: dict[str, Any], instance_id: 
     full.parent.mkdir(parents=True, exist_ok=True)
     if mode == "edit" and full.exists():
         full.write_text(full.read_text(encoding="utf-8") + content, encoding="utf-8")
+        change_type = "modified"
     else:
         full.write_text(content, encoding="utf-8")
-    state.broadcast("file_changed", {"path": rel, "tool": "Report", "instance_id": instance_id or instance_dir.name})
+        change_type = "created"
+    state.broadcast("file_changed", {"path": rel, "tool": "Report", "type": change_type, "instance_id": instance_id or instance_dir.name})
     return f"Report {mode} to {rel}. File state is now up to date in your context — no need to Read it back."
 
 
@@ -952,7 +955,7 @@ async def execute_edit_line(instance_dir: Path, args: dict[str, Any], instance_i
     new_file = before + decoded + after
 
     full.write_text(new_file, encoding="utf-8")
-    state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "instance_id": instance_id or instance_dir.name})
+    state.broadcast("file_changed", {"path": path, "tool": "WriteLine", "type": "modified", "instance_id": instance_id or instance_dir.name})
     _maybe_broadcast_vars_changed(instance_dir, full, "WriteLine", instance_id)
     return f"Successfully replaced lines {start_line}–{end_line} in {path}. File state is now up to date in your context — no need to Read it back."
 
@@ -1357,7 +1360,7 @@ async def execute_generate(
             )
             state.broadcast(
                 "file_changed",
-                {"path": dump_payload_str, "tool": "Generate.dump", "instance_id": instance_id or instance_dir.name},
+                {"path": dump_payload_str, "tool": "Generate.dump", "type": "created", "instance_id": instance_id or instance_dir.name},
             )
             # 旁路 .meta:残留占位符表(带上下文)+ 字符统计 + 粗略 token 估算。
             # 写 payload 同根文件(纯文本,便于 Read),不塞进返回串刷屏。
@@ -1367,7 +1370,7 @@ async def execute_generate(
                 meta_full.write_text(_dump_payload_meta(resolved, total_chars), encoding="utf-8")
                 state.broadcast(
                     "file_changed",
-                    {"path": dump_payload_str + ".meta", "tool": "Generate.dump.meta", "instance_id": instance_id or instance_dir.name},
+                    {"path": dump_payload_str + ".meta", "tool": "Generate.dump.meta", "type": "created", "instance_id": instance_id or instance_dir.name},
                 )
                 meta_note = f"\npayload meta(残留占位符 + 字符统计)已写出到 {dump_payload_str}.meta,导演如需查看可 Read"
             except Exception:
@@ -1417,13 +1420,14 @@ async def execute_generate(
     async def _finalize_write() -> None:
         """Interrupt/error/complete path: write whatever has accumulated, broadcast
         file_changed once. Mid-stream there was no file, so this is the sole flush."""
+        existed = output_full.exists()
         try:
             output_full.write_text(buffered, encoding="utf-8")
         except Exception as e:
             raise RuntimeError(f"写入输出文件失败: {e}") from e
         state.broadcast(
             "file_changed",
-            {"path": output_path_str, "tool": "Generate", "instance_id": instance_id or instance_dir.name},
+            {"path": output_path_str, "tool": "Generate", "type": "modified" if existed else "created", "instance_id": instance_id or instance_dir.name},
         )
 
     try:
@@ -1561,7 +1565,7 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any], instance_id
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(full), str(dest))
-        state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "action": "move", "instance_id": instance_id or instance_dir.name})
+        state.broadcast("file_changed", {"path": destination_str, "tool": "FileOps", "type": "moved", "prev_path": path_str, "action": "move", "instance_id": instance_id or instance_dir.name})
         _maybe_broadcast_vars_changed(instance_dir, dest, "FileOps", instance_id)
         return f"已移动：{path_str} → {destination_str}"
 
@@ -1574,7 +1578,7 @@ async def execute_file_ops(instance_dir: Path, args: dict[str, Any], instance_id
         else:
             full.unlink()
 
-        state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "action": "delete", "instance_id": instance_id or instance_dir.name})
+        state.broadcast("file_changed", {"path": path_str, "tool": "FileOps", "type": "deleted", "action": "delete", "instance_id": instance_id or instance_dir.name})
         _maybe_broadcast_vars_changed(instance_dir, full, "FileOps", instance_id)
         return f"已删除：{path_str}"
 

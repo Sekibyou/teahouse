@@ -4,8 +4,11 @@ import type { FileTreeNode } from "@/lib/types"
 import { useGitStore } from "@/stores/gitStore"
 
 interface SSERefreshOptions {
-  /** Called when a single file was modified (Write, Edit, WriteLine, GitDiscard single file). */
-  onFileChanged: (path: string) => void
+  /** Called when a single file was modified (Write, Edit, WriteLine, GitDiscard single file).
+   * Receives the bare path plus the full parsed file_changed payload (may carry
+   * `type` / `prev_path` when the backend annotated it) so consumers can do
+   * type-aware partial tree updates instead of an unconditional full reload. */
+  onFileChanged: (path: string, event?: Record<string, unknown>) => void
   /** Called when workspace state changed (git operations, branch switch, etc.). */
   onWorkspaceChanged: () => void
   /** Called when a runTool background step broadcast a result (success or failure). */
@@ -42,8 +45,11 @@ const DEBOUNCE_MS = 200
  * We accept the event if it matches either.
  *
  * Debouncing: rapid successive events (e.g. multiple Write tool calls in
- * one LLM round) are coalesced — only the last path in the burst is
- * delivered, and git status is fetched once after the burst settles.
+ * one LLM round) are coalesced — the last event in the burst is delivered
+ * (with its `type` when present), and git status is fetched once after the
+ * burst settles. Consumers use the delivered event to decide whether a
+ * structural tree update is needed (created/deleted/moved) or just a content
+ * touch (modified) that does not change tree shape.
  *
  * Automatically reconnects on disconnect. Cleans up on unmount or
  * instance change.
@@ -63,7 +69,8 @@ export function useSSERefresh({
   const esRef = useRef<EventSource | null>(null)
   const fileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastFilePathRef = useRef<string>("")
+  const lastFileEventRef = useRef<Record<string, unknown>>({})
+  const burstStructuralRef = useRef(false)
   const lastTreeKeyRef = useRef<string>("")
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Latest poll callbacks, read via ref so the interval never has to re-arm
@@ -81,15 +88,33 @@ export function useSSERefresh({
     const treeKey = (nodes: FileTreeNode[]): string =>
       nodes.map((n) => (n.children?.length ? `dir:${n.path}` : `file:${n.path}`)).sort().join("\n")
 
-    const debouncedFileChange = (path: string) => {
-      lastFilePathRef.current = path
+    const debouncedFileChange = (evt: Record<string, unknown>) => {
+      // A burst is a 200ms window of coalesced events. We can only deliver ONE
+      // representative event to the consumer, which is fine when every event in
+      // the burst was a content edit (modified). But if the burst mixes
+      // structural events (created/deleted/moved) such that a single event can't
+      // reconstruct the final shape — e.g. mkdir + Write: the created dir would
+      // be dropped if we delivered only the last modified — we flag it and the
+      // consumer falls back to a full reload.
+      const t = evt.type ? String(evt.type) : ""
+      if (t === "created" || t === "deleted" || t === "moved") burstStructuralRef.current = true
+      lastFileEventRef.current = evt
       if (fileTimerRef.current) return
       fileTimerRef.current = setTimeout(() => {
         fileTimerRef.current = null
+        const structuralInBurst = burstStructuralRef.current
+        burstStructuralRef.current = false
         if (instanceId) {
           useGitStore.getState().fetchGitStatus(instanceId)
         }
-        onFileChanged(lastFilePathRef.current)
+        const last = lastFileEventRef.current
+        const delivered = { ...last }
+        // Deliver a synthetic type telling consumers to reload rather than apply
+        // a partial update that would drop a structural change from this burst.
+        if (structuralInBurst && (!delivered.type || String(delivered.type) === "modified")) {
+          delivered.type = "__full_reload"
+        }
+        onFileChanged(String(delivered.path || ""), delivered)
       }, DEBOUNCE_MS)
     }
 
@@ -115,7 +140,7 @@ export function useSSERefresh({
           const data = JSON.parse(e.data)
           const id = data.instance_id
           if (id && id !== instanceId && id !== instanceName) return
-          debouncedFileChange(data.path || "")
+          debouncedFileChange(data || {})
         } catch {
           // ignore malformed events
         }

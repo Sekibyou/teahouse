@@ -195,6 +195,7 @@ class SessionLoop:
         state.broadcast("file_changed", {
             "path": rel,
             "tool": "PasteSpill",
+            "type": "created",
             "instance_id": self.instance_id or self.instance_dir.name,
         })
         _event_log(self.instance_dir, self.session_id, "spill_pastes", {"rel": rel, "chars": len(body)})

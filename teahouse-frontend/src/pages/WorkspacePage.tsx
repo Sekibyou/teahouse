@@ -39,6 +39,7 @@ import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { FileTreeNode } from "@/lib/types"
+import { applyFileChange } from "@/lib/fileTreeReducer"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
 
@@ -110,6 +111,15 @@ export function WorkspacePage() {
   }
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
+  // Current tree mirrored into a ref so SSE event handlers (which close over the
+  // value at effect-setup time) can read the latest tree synchronously for
+  // reducer-driven partial updates. loadFileTree / applyFileChange both keep it
+  // in sync.
+  const fileTreeRef = useRef<FileTreeNode[]>([])
+  const syncFileTree = useCallback((next: FileTreeNode[]) => {
+    fileTreeRef.current = next
+    setFileTree(next)
+  }, [])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [isImageOpen, setIsImageOpen] = useState(false)
@@ -282,10 +292,10 @@ export function WorkspacePage() {
     if (showSpinner) setIsLoading(true)
     const res = await instancesApi.listFiles(instId)
     if (res.ok) {
-      setFileTree(res.data || [])
+      syncFileTree(res.data || [])
     }
     if (showSpinner) setIsLoading(false)
-  }, [instId])
+  }, [instId, syncFileTree])
 
   useEffect(() => {
     loadFileTree(initialLoadRef.current)
@@ -339,6 +349,12 @@ export function WorkspacePage() {
     return () => window.removeEventListener("keydown", handler)
   }, [isDirty, selectedFile, editedContent, instId])
 
+  // Apply a structural change from a local operation optimistically to the tree.
+  // Falls back to a full reload when the reducer can't reconcile (missing parent
+  // — e.g. creating under a dir not yet in the tree). The backend echoes a
+  // file_changed back for the same op; because the tree is already converged,
+  // that echo becomes an idempotent no-op in applyFileChange, so we don't double
+  // refresh. Git status is refetched here (one source of truth for the op).
   const handleSave = async () => {
     if (!instId || selectedFile === null) return
     setIsSaving(true)
@@ -357,10 +373,11 @@ export function WorkspacePage() {
     const fullPath = showCreate.parentPath
       ? `${showCreate.parentPath}/${createName.trim()}`
       : createName.trim()
-    await instancesApi.createEntry(instId, fullPath, showCreate.type)
+    const res = await instancesApi.createEntry(instId, fullPath, showCreate.type)
+    if (!res.ok) return
     setShowCreate(null)
     setCreateName("")
-    await refresh()
+    applyLocalStructural({ type: "created", path: fullPath, nodeType: showCreate.type })
   }
 
   const handleDeleteEntry = async (path: string) => {
@@ -371,7 +388,8 @@ export function WorkspacePage() {
     if (!instId || !deleteTarget) return
     const path = deleteTarget
     setDeleteTarget(null)
-    await instancesApi.deleteEntry(instId, path)
+    const res = await instancesApi.deleteEntry(instId, path)
+    if (!res.ok) return
     if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
       setSelectedFile(null)
       setIsImageOpen(false)
@@ -381,7 +399,7 @@ export function WorkspacePage() {
       setEditedContent("")
       setIsDirty(false)
     }
-    await refresh()
+    applyLocalStructural({ type: "deleted", path })
   }
 
   const handleRenameEntry = (path: string) => {
@@ -398,15 +416,15 @@ export function WorkspacePage() {
     if (!newName || newName === oldPath.split("/").pop()) return
     const res = await instancesApi.renameEntry(instId, oldPath, newName)
     if (!res.ok) return
+    const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : ""
+    const newPath = parent ? `${parent}/${newName}` : newName
     // Remap the open file if it is the renamed entry or lives under a renamed directory
     if (selectedFile === oldPath || selectedFile?.startsWith(oldPath + "/")) {
-      const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : ""
-      const newPath = parent ? `${parent}/${newName}` : newName
       setSelectedFile(
         selectedFile === oldPath ? newPath : newPath + selectedFile!.slice(oldPath.length),
       )
     }
-    await refresh()
+    applyLocalStructural({ type: "moved", path: newPath, prevPath: oldPath })
   }
 
   // 共享顶层 input 的上传路径（FileTreeView 内部点位仍走这里）：记下目标目录并 .click()。
@@ -422,7 +440,7 @@ export function WorkspacePage() {
     const fullPath = dir ? `${dir}/${file.name}` : file.name
     const res = await instancesApi.uploadFile(instId, fullPath, file)
     if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
-    await refresh()
+    applyLocalStructural({ type: "created", path: fullPath, nodeType: "file" })
   }
 
   // 菜单点位的上传（label→原生 input，直接参与用户手势，不经 .click() 转跳：
@@ -684,6 +702,27 @@ export function WorkspacePage() {
 
   // Unified refresh hook
   const refresh = useWorkspaceRefresh({ instId, loadFileTree })
+
+  // Apply a structural change from a local operation optimistically to the tree.
+  // Falls back to a full reload when the reducer can't reconcile (missing parent
+  // — e.g. creating under a dir not yet in the tree). The backend echoes a
+  // file_changed back for the same op; because the tree is already converged,
+  // that echo becomes an idempotent no-op in applyFileChange, so we don't double
+  // refresh. Git status is refetched here (one source of truth for the op).
+  const applyLocalStructural = useCallback((change: {
+    type: "created" | "deleted" | "moved"
+    path: string
+    prevPath?: string
+    nodeType?: "file" | "directory"
+  }) => {
+    const next = applyFileChange(fileTreeRef.current, change)
+    if (next === null) {
+      refresh()
+      return
+    }
+    if (next !== fileTreeRef.current) syncFileTree(next)
+    if (instId) useGitStore.getState().fetchGitStatus(instId)
+  }, [instId, refresh, syncFileTree])
 
   // ---- File-tree drag & drop: commit + event handlers (desktop only) ----
   const commitMove = useCallback(async (srcPath: string, destParent: string) => {
@@ -961,29 +1000,60 @@ export function WorkspacePage() {
     }
   }, [dragInfo])
 
-  // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events
+  // SSE-driven refresh — backend broadcasts file_changed / workspace_changed events.
+  // file_changed carries a change `type`: content edits (modified) never change
+  // tree shape, so we skip the tree entirely; only structural events
+  // (created/deleted/moved) update the tree — locally via the reducer when it
+  // reconciles, else by a full reload as the convergence backstop.
   useSSERefresh({
     instanceId: instId,
     instanceName: activeInstance?.name,
-    onFileChanged: (path: string) => {
-      if (!path) {
-        // empty path means the changed file is the currently open one
-        // AND it's dirty — just refresh tree + git, skip editor
-        refresh()
-        return
-      }
+    onFileChanged: (path: string, evt?: Record<string, unknown>) => {
       // Backend broadcasts bare relative paths; the tree/editor work in
       // "root/..." form, so normalize before comparing.
-      path = toFrontendPath(path)
+      const frontendPath = path ? toFrontendPath(path) : ""
       const currentFile = selectedFileRef.current
-      if (currentFile && path === currentFile && isDirtyRef.current) {
-        // Dirty file was modified externally — refresh tree + git but
-        // preserve user's unsaved edits in the editor.
+      const isOpen = currentFile !== null && frontendPath === currentFile
+
+      // Apply structural changes to the tree first. modified / unknown / empty
+      // path leave the tree untouched (content edits don't change shape).
+      const type = evt?.type ? String(evt.type) : "modified"
+      if (type === "__full_reload") {
+        // Burst mixed structural + content events in a way a single event can't
+        // reconstruct (e.g. mkdir + write) — reload the whole tree as the safe
+        // convergence path. Editor handling below still applies to this path.
+        refresh()
+      } else if (type !== "modified" && frontendPath) {
+        const next = applyFileChange(fileTreeRef.current, {
+          type,
+          path: frontendPath,
+          prevPath: evt?.prev_path ? toFrontendPath(String(evt.prev_path)) : undefined,
+        })
+        if (next === null) {
+          // Couldn't reconcile (missing parent / already gone) → reload as backstop.
+          refresh()
+        } else if (next !== fileTreeRef.current) {
+          syncFileTree(next)
+        }
+      }
+
+      // Editor handling is orthogonal to tree shape (which was already updated
+      // above for structural events):
+      if (!frontendPath) {
+        // empty path = the changed file is the currently open one and it's dirty —
+        // refresh tree + git, skip the editor so unsaved edits are preserved.
         refresh()
         return
       }
-      refresh()
-      if (currentFile && path === currentFile) {
+      if (isOpen && isDirtyRef.current) {
+        // Open file modified externally while dirty — preserve unsaved edits.
+        refresh()
+        return
+      }
+      if (isOpen && !isDirtyRef.current) {
+        // Open file (clean) changed on disk — reload content; if it was deleted
+        // this clears the editor. Structural moves/deletes of a clean open file
+        // land here too and are handled the same way.
         reloadOpenFile()
       }
     },
@@ -996,18 +1066,18 @@ export function WorkspacePage() {
       }
     },
 
-    // Periodic backstop: backend broadcasts that don't exist (e.g. Generate
-    // dump_payload) never fire file_changed, so poll the tree every 5s and only
-    // apply when it actually changed. Keeps the tree fresh without spraying
-    // git/editor refreshes on an idle workspace. The dirty-check lives in the
-    // hook; onPollTick receives the already-fetched tree, so no double fetch.
-    pollIntervalMs: 5000,
+    // Periodic backstop: broadcasts that never fire file_changed (e.g. external
+    // writes / a second tab) are caught by polling the tree structure and only
+    // applying when its SHAPE changed (content edits don't alter the shape key,
+    // so idle content writes no longer spray refreshes). The dirty-check lives
+    // in the hook; onPollTick receives the already-fetched tree.
+    pollIntervalMs: 8000,
     onPollFetch: async () => {
       const res = await instancesApi.listFiles(instId!)
       return res.ok ? (res.data ?? []) : []
     },
     onPollTick: (tree: FileTreeNode[]) => {
-      setFileTree(tree)
+      syncFileTree(tree)
       if (instId) useGitStore.getState().fetchGitStatus(instId)
     },
   })

@@ -27,7 +27,19 @@ export function SandboxFileList({ instanceId, instanceName, variant, onClose }: 
   useSSERefresh({
     instanceId,
     instanceName,
-    onFileChanged: useCallback(() => setRefresh((v) => v + 1), []),
+    // Only reload when a change lands in the two dirs this list shows
+    // (runtime/sandbox/ or runtime/floors/). Changes elsewhere (teahouse.md,
+    // settings/, a vars write, …) don't affect what this panel renders. The
+    // path arrives backend-bare; the list's file keys are bare too.
+    onFileChanged: useCallback((path: string) => {
+      const isRelevant =
+        path !== undefined && path !== null && path !== "" &&
+        (path.startsWith("runtime/sandbox/") || path.startsWith("runtime/floors/") ||
+         path === "runtime/sandbox" || path === "runtime/floors")
+      // Only a change under the two dirs this panel shows reloads it; anything
+      // else (teahouse.md, settings/, a vars write, …) doesn't affect the list.
+      if (isRelevant) setRefresh((v) => v + 1)
+    }, []),
     onWorkspaceChanged: useCallback(() => setRefresh((v) => v + 1), []),
   })
 

@@ -663,7 +663,7 @@ async def save_instance_file(
     if parts[0] == "runtime" and len(parts) > 1:
         state.broadcast(
             "file_changed",
-            {"path": p, "tool": "EditorSave", "instance_id": instance_id},
+            {"path": p, "tool": "EditorSave", "type": "modified", "instance_id": instance_id},
         )
     return {"path": path, "status": "saved"}
 
@@ -706,7 +706,7 @@ async def upload_instance_file(
     # 上传新文件 → 文件树/git 状态都需刷新；广播 file_changed 让前端 SSE 自动拉 git
     state.broadcast(
         "file_changed",
-        {"path": path, "tool": "UploadFile", "instance_id": instance_id},
+        {"path": path, "tool": "UploadFile", "type": "created", "instance_id": instance_id},
     )
     return {"path": path, "size": len(data), "status": "uploaded"}
 
@@ -772,7 +772,7 @@ async def set_runtime_vars(
 
     state.broadcast(
         "file_changed",
-        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "instance_id": instance_id},
+        {"path": "runtime/runtime_vars.jsonl", "tool": "SetRuntimeVar", "type": "modified", "instance_id": instance_id},
     )
     # Read back the full current vars so the caller (sandbox) can reconcile.
     return {"status": "ok", "vars": read_sandbox_vars(instance_dir, None)}
@@ -799,7 +799,7 @@ async def create_instance_entry(
     # 新建文件/目录 → 文件树/git 状态都需刷新
     state.broadcast(
         "file_changed",
-        {"path": body.path, "tool": "CreateFile", "instance_id": instance_id},
+        {"path": body.path, "tool": "CreateFile", "type": "created", "instance_id": instance_id},
     )
     return {"path": body.path, "status": "created"}
 
@@ -827,7 +827,7 @@ async def delete_instance_entry(
     # 删除文件/目录 → 文件树/git 状态都需刷新
     state.broadcast(
         "file_changed",
-        {"path": path, "tool": "DeleteFile", "instance_id": instance_id},
+        {"path": path, "tool": "DeleteFile", "type": "deleted", "instance_id": instance_id},
     )
     return {"path": path, "status": "deleted"}
 
@@ -859,7 +859,7 @@ async def rename_instance_entry(
 
     state.broadcast(
         "file_changed",
-        {"path": new_path, "tool": "RenameFile", "instance_id": instance_id},
+        {"path": new_path, "tool": "RenameFile", "type": "moved", "prev_path": path, "instance_id": instance_id},
     )
     return {"path": new_path, "status": "renamed"}
 
@@ -891,7 +891,7 @@ async def move_instance_entry(
 
     state.broadcast(
         "file_changed",
-        {"path": new_path, "tool": "MoveFile", "instance_id": instance_id},
+        {"path": new_path, "tool": "MoveFile", "type": "moved", "prev_path": path, "instance_id": instance_id},
     )
     return {"path": new_path, "status": "moved"}
 
@@ -2323,7 +2323,7 @@ async def api_git_discard(instance_id: str, body: GitDiscardRequest, user: UserI
     try:
         if body.path:
             out = git_restore_file(instance_dir, body.path)
-            state.broadcast("file_changed", {"path": body.path, "tool": "GitDiscard", "instance_id": instance_id})
+            state.broadcast("file_changed", {"path": body.path, "tool": "GitDiscard", "type": "modified", "instance_id": instance_id})
         else:
             out = git_discard_changes(instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDiscard", "instance_id": instance_id})

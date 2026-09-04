@@ -111,7 +111,7 @@ class PluginContext:
     def broadcast(self, event: str, data: object) -> None:
         state.broadcast(event, data)
 
-    def emit_file_changed(self, path: str, tool: str = "PluginWrite", action: str | None = None) -> None:
+    def emit_file_changed(self, path: str, tool: str = "PluginWrite", action: str | None = None, change_type: str | None = None) -> None:
         """Broadcast a file_changed event (matches the director-tool schema) so the
         frontend refreshes its file tree / open file for this instance.
 
@@ -122,6 +122,7 @@ class PluginContext:
         data = {
             "path": path,
             "tool": tool,
+            "type": change_type or "modified",
             "instance_id": self.instance_id or (instance_dir.name if instance_dir is not None else ""),
         }
         if action:
@@ -155,10 +156,11 @@ class PluginContext:
         from .tools import _validate_path
         instance_dir = self._require_instance()
         full = _validate_path(instance_dir, path)
+        existed = full.exists()
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
         # File-as-state: any plugin write should refresh the frontend.
-        self.emit_file_changed(path)
+        self.emit_file_changed(path, change_type="modified" if existed else "created")
 
     def list_files(self) -> list[str]:
         instance_dir = self._require_instance()
