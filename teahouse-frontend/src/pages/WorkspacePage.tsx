@@ -4,22 +4,15 @@ import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
 import {
-  File, Folder, FolderOpen, Plus, Trash2, Loader2,
-  ChevronLeft, ChevronRight, ChevronDown, Save, FileText,
+  File, Folder, Loader2,
+  Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
-  MessageCircle, FolderTree, Menu, X, Gamepad2, Wrench,
-  GitBranch, Sun, Moon, Settings, ArrowLeft, Upload, Pencil,
-  Eye, Code2, Users, Languages,
-  ClipboardCopy, ClipboardPaste, Scissors,
+  FolderTree, Menu, X, Gamepad2, Wrench,
+  Eye, Code2,
 } from "lucide-react"
-import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS, type Lang } from "@/i18n/config"
+import { useCurrentLang, useLangStore } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
-import { instancesApi, gitApi, prototypesApi, skillsApi, packagesApi, toFrontendPath, toBackendPath, ROOT, type InstanceSkill, type InstancePackage } from "@/lib/api"
+import { instancesApi, gitApi, toFrontendPath, toBackendPath, ROOT } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useGitStore } from "@/stores/gitStore"
@@ -31,50 +24,21 @@ import { SandboxFileList } from "@/components/SandboxFileList"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { GitDialog } from "@/components/GitDialog"
 import { toast } from "sonner"
-import {
-  ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
-} from "@/components/ui/context-menu"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { FileTreeNode } from "@/lib/types"
 import { applyFileChange } from "@/lib/fileTreeReducer"
+import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
+import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
+import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
+import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
+import { MobileMenuDropdown } from "./WorkspacePageComps/MobileMenuDropdown"
+import { TreeMenu } from "./WorkspacePageComps/TreeMenu"
+import { ExportDialog, type ExportDialogHandle } from "./WorkspacePageComps/ExportDialog"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
-
-// 上传菜单项：label → 内联原生 input。安卓在 fixed 浮层里对共享 input 的 .click() 转跳
-// 会被系统静默拦截，而 label 原生关联让 input 直接参与用户手势、不经 .click()，最稳。
-// input 用 opacity-0 而非 hidden。
-function UploadMenuItem({
-  parentPath,
-  className,
-  children,
-  onUpload,
-}: {
-  parentPath: string
-  className?: string
-  children: React.ReactNode
-  onUpload: (parentPath: string, file: File) => void
-}) {
-  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    e.target.value = "" // 允许重复选同一文件
-    if (f) onUpload(parentPath, f)
-  }
-  return (
-    <label className={className}>
-      {children}
-      <input
-        type="file"
-        aria-label="上传文件"
-        className="fixed left-0 top-0 h-px w-px opacity-0 pointer-events-none"
-        tabIndex={-1}
-        onChange={onChange}
-      />
-    </label>
-  )
-}
 
 export function WorkspacePage() {
   const { t } = useTranslation("workspace")
@@ -215,33 +179,13 @@ export function WorkspacePage() {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
 
-  // Export prototype state
+  // Export prototype / skill / package dialog（自治组件，见 ExportDialog）
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const exportDialogRef = useRef<ExportDialogHandle>(null)
   // System back closes the mobile file-tree drawer and the export panel one level
   // at a time (nested with director above), instead of jumping straight home.
   useDialogBackClose(showFileTree, () => setShowFileTree(false))
   useDialogBackClose(showExportDialog, () => setShowExportDialog(false))
-  const [exportType, setExportType] = useState<"prototype" | "skill" | "package">("prototype")
-  const [exportName, setExportName] = useState("")
-  const [exportDescription, setExportDescription] = useState("")
-  const [exportAuthor, setExportAuthor] = useState("")
-  const [exportVersion, setExportVersion] = useState("1.0.0")
-  const [exportLoading, setExportLoading] = useState(false)
-  const [exportError, setExportError] = useState("")
-  // Export-skill plane: list instance skills, pick one, export to user library
-  const [instSkills, setInstSkills] = useState<InstanceSkill[]>([])
-  const [instSkillsLoading, setInstSkillsLoading] = useState(false)
-  const [exportSelectedSkill, setExportSelectedSkill] = useState("")
-  const [exportSkillError, setExportSkillError] = useState("")
-  const [exportSkillLoading, setExportSkillLoading] = useState(false)
-  // Export-package plane: list instance packages, pick one, export to user library
-  const [instPackages, setInstPackages] = useState<InstancePackage[]>([])
-  const [instPackagesLoading, setInstPackagesLoading] = useState(false)
-  const [exportSelectedPackage, setExportSelectedPackage] = useState("")
-  const [exportPackageError, setExportPackageError] = useState("")
-  const [exportPackageLoading, setExportPackageLoading] = useState(false)
-  // Overwrite confirmation: a same-named target already exists in the library.
-  const [pendingOverwrite, setPendingOverwrite] = useState<{ kind: "skill" | "package"; name: string } | null>(null)
 
   const instId = activeInstance?.id
 
@@ -477,120 +421,6 @@ export function WorkspacePage() {
     if (failNames.length) toast.error(t("dropUpload.fail", { names: failNames.join(", ") }))
   }
 
-  const openExportDialog = async (type: "prototype" | "skill" | "package") => {
-    setExportType(type)
-    setExportError("")
-    setExportSkillError("")
-    setExportPackageError("")
-    if (type === "skill") {
-      setExportSelectedSkill("")
-      if (!instId) return
-      setInstSkillsLoading(true)
-      const res = await skillsApi.listForInstance(instId)
-      if (res.ok) {
-        const instanceOnly = res.data!.filter(s => s.source === "instance" && s.has_skill)
-        setInstSkills(instanceOnly)
-      } else {
-        setExportSkillError(res.error || t("skillLoadFail"))
-      }
-      setInstSkillsLoading(false)
-    } else if (type === "package") {
-      setExportSelectedPackage("")
-      if (!instId) return
-      setInstPackagesLoading(true)
-      const res = await packagesApi.listInInstance(instId)
-      if (res.ok) {
-        setInstPackages(res.data!.packages)
-      } else {
-        setExportPackageError(res.error || t("packageLoadFail"))
-      }
-      setInstPackagesLoading(false)
-    }
-    setShowExportDialog(true)
-  }
-
-  // Shared "export a library item into the user's library" with overwrite confirm.
-  const doExportToLibrary = async (kind: "skill" | "package", name: string, overwrite: boolean, setLoading: (v: boolean) => void, setErr: (v: string) => void) => {
-    if (!instId) return
-    setLoading(true)
-    setErr("")
-    let res: { ok: boolean; error?: string; status?: number }
-    if (kind === "skill") {
-      res = await skillsApi.exportToLibrary(instId, name, overwrite)
-    } else {
-      res = await packagesApi.exportToLibrary(instId, name, overwrite)
-    }
-    setLoading(false)
-    if (res.ok) {
-      setShowExportDialog(false)
-      if (kind === "skill") setExportSelectedSkill("")
-      else setExportSelectedPackage("")
-      showSaveToast()
-    } else if (!overwrite && res.status === 409) {
-      // Same-named target already exists in the library → ask before overwriting.
-      setPendingOverwrite({ kind, name })
-    } else {
-      setErr(res.error || t("exportFail"))
-    }
-  }
-
-  const handleExport = async () => {
-    if (!instId) return
-    if (exportType === "prototype") {
-      if (!exportName.trim()) return
-      setExportLoading(true)
-      setExportError("")
-      const res = await prototypesApi.create(
-        instId, exportName.trim(), exportDescription.trim(),
-        exportAuthor.trim(), exportVersion.trim() || "1.0.0",
-      )
-      if (res.ok) {
-        setShowExportDialog(false)
-        setExportName("")
-        setExportDescription("")
-        setExportAuthor("")
-        setExportVersion("1.0.0")
-        showSaveToast()
-      } else {
-        setExportError(res.error || t("exportFail"))
-      }
-      setExportLoading(false)
-    } else if (exportType === "package") {
-      if (!exportSelectedPackage) return
-      await doExportToLibrary("package", exportSelectedPackage, false, setExportPackageLoading, setExportPackageError)
-    } else {
-      if (!exportSelectedSkill) return
-      await doExportToLibrary("skill", exportSelectedSkill, false, setExportSkillLoading, setExportSkillError)
-    }
-  }
-
-  const handleConfirmOverwrite = async () => {
-    if (!pendingOverwrite) return
-    const { kind, name } = pendingOverwrite
-    setPendingOverwrite(null)
-    if (!instId) return
-    if (kind === "skill") {
-      const setL = setExportSkillLoading
-      const setE = setExportSkillError
-      setL(true); setE("")
-      const res = await skillsApi.exportToLibrary(instId, name, true)
-      setL(false)
-      if (res.ok) {
-        setShowExportDialog(false)
-        setExportSelectedSkill("")
-        showSaveToast()
-      } else setE(res.error || t("exportFail"))
-    } else {
-      setExportPackageLoading(true); setExportPackageError("")
-      const res = await packagesApi.exportToLibrary(instId, name, true)
-      setExportPackageLoading(false)
-      if (res.ok) {
-        setShowExportDialog(false)
-        setExportSelectedPackage("")
-        showSaveToast()
-      } else setExportPackageError(res.error || t("exportFail"))
-    }
-  }
 
   // Keep a ref for latest selectedFile so callbacks always have current value
   const selectedFileRef = useRef(selectedFile)
@@ -1110,125 +940,24 @@ export function WorkspacePage() {
     </div>
   )
 
-  // Real, post-layout menu height (measured once it opens). The menu content is
-  // fixed per node, so the height is stable — the estimate M_H below used to be a
-  // hardcoded 360 that badly undershot (~600px actual), so near the bottom of a
-  // tall tree the up-flip placed the menu's top almost at the finger and clipped
-  // the action buttons. Measuring the real box lets us pick the side that shows
-  // the most buttons and cap the box to exactly the viewport.
-  const [treeMenuH, setTreeMenuH] = useState(0)
-  const treeMenuRef = useRef<HTMLDivElement | null>(null)
-  useLayoutEffect(() => {
-    if (!treeMenu) return
-    setTreeMenuH(treeMenuRef.current?.getBoundingClientRect().height ?? 0)
-    // Menu is fixed-position; the tree keeps scrolling underneath while it's open.
-  }, [treeMenu])
-
   // Mobile per-node "⋯" menu — fixed-position (treeMenu-style), anchored at the
   // clicked icon. Items mirror the desktop ContextMenu on the same node.
   // Shared by desktop + mobile return trees.
   const treeMenuEl = treeMenu && (
-    <>
-      <div className="fixed inset-0 z-[70]" onClick={() => setTreeMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTreeMenu(null) }} />
-      <div
-        ref={treeMenuRef}
-        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto"
-        style={
-          (() => {
-            // Edge-avoidance for the fixed menu. The menu is taller than the
-            // viewport can show on small screens, so this measures the *real*
-            // box (treeMenuH, set in a layout effect above) and both flips and
-            // clamps to the side that exposes the most action items.
-            const M = 8 // screen edge margin
-            const M_W = 224 // ≈ max-w-56
-            const x = treeMenu.x
-            const y = treeMenu.y
-            // Horizontal: prefer right of the finger, else flip left.
-            const left = x + M_W + M <= window.innerWidth
-              ? x
-              : Math.max(M, x - M_W - M)
-            // How tall the menu can actually be within the viewport.
-            const maxH = Math.max(120, window.innerHeight - 2 * M)
-            const H = Math.min(treeMenuH || 0, maxH)
-            // Vertical — pick the flip that keeps the most menu visible, with
-            // below-follow (menu top ~finger) preferred because action buttons
-            // sit below the header title.
-            const belowTop = y
-            const belowVisible = Math.max(0, window.innerHeight - M - belowTop)
-            const aboveTop = Math.max(M, y - H - M)
-            const aboveVisible = Math.max(0, aboveTop + H - M)
-            const useBelow = belowTop + H <= window.innerHeight - M
-              || belowVisible > aboveVisible
-            const top = useBelow ? belowTop : aboveTop
-            return { top, left, maxHeight: maxH }
-          })()
-        }
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {(() => {
-          const node = treeMenu.node
-          // Directory → operations land inside it; file → its parent dir.
-          const opTarget = node.type === "directory" ? node.path : parentOf(node.path)
-          const itemCls = "relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-2.5 text-sm outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
-          const disabledCls = "pointer-events-none opacity-50"
-          return (
-            <>
-              <div className="pointer-events-none flex items-center gap-1.5 px-1.5 py-2 text-xs font-medium text-muted-foreground select-none">
-                {node.type === "directory" ? (
-                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                ) : (
-                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                )}
-                <span className="truncate" title={node.path}>{node.name}</span>
-              </div>
-              <div className="-mx-1 mb-1 h-px bg-border" />
-              <button className={itemCls} onClick={() => { setShowCreate({ parentPath: opTarget, type: "file" }); setCreateName(""); setTreeMenu(null) }}>
-                <Plus className="h-4 w-4 shrink-0" />
-                {t("create.fileTitle")}
-              </button>
-              <button className={itemCls} onClick={() => { setShowCreate({ parentPath: opTarget, type: "directory" }); setCreateName(""); setTreeMenu(null) }}>
-                <Folder className="h-4 w-4 shrink-0" />
-                {t("create.folderTitle")}
-              </button>
-              <UploadMenuItem parentPath={opTarget} className={itemCls} onUpload={handleMenuUpload}>
-                <Upload className="h-4 w-4 shrink-0" />
-                {t("uploadToHere")}
-              </UploadMenuItem>
-              <div className="-mx-1 my-1 h-px bg-border" />
-              <button className={itemCls} onClick={() => { copyPathEntry(node.path); setTreeMenu(null) }}>
-                <ClipboardCopy className="h-4 w-4 shrink-0" />
-                {t("clipboard.copyPath")}
-              </button>
-              <button className={itemCls} onClick={() => { copyEntry(node.path, node.type, node.name); setTreeMenu(null) }}>
-                <ClipboardCopy className="h-4 w-4 shrink-0" />
-                {t("clipboard.copy")}
-              </button>
-              <button className={itemCls} onClick={() => { cutEntry(node.path, node.type, node.name); setTreeMenu(null) }}>
-                <Scissors className="h-4 w-4 shrink-0" />
-                {t("clipboard.cut")}
-              </button>
-              <button
-                className={`${itemCls} ${!clipboard ? disabledCls : ""}`}
-                disabled={!clipboard}
-                onClick={() => { pasteEntry(opTarget); setTreeMenu(null) }}
-              >
-                <ClipboardPaste className="h-4 w-4 shrink-0" />
-                {t("clipboard.paste")}
-              </button>
-              <div className="-mx-1 my-1 h-px bg-border" />
-              <button className={itemCls} onClick={() => { handleRenameEntry(node.path); setTreeMenu(null) }}>
-                <Pencil className="h-4 w-4 shrink-0" />
-                {t("rename.title")}
-              </button>
-              <button className={`${itemCls} text-destructive hover:bg-destructive/10 hover:text-destructive`} onClick={() => { handleDeleteEntry(node.path); setTreeMenu(null) }}>
-                <Trash2 className="h-4 w-4 shrink-0" />
-                {t("common:delete")}
-              </button>
-            </>
-          )
-        })()}
-      </div>
-    </>
+    <TreeMenu
+      treeMenu={treeMenu}
+      clipboard={clipboard}
+      onNewFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName(""); setTreeMenu(null) }}
+      onNewFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName(""); setTreeMenu(null) }}
+      onUpload={handleMenuUpload}
+      onCopyPath={(path) => { copyPathEntry(path); setTreeMenu(null) }}
+      onCopy={(path, type, name) => { copyEntry(path, type, name); setTreeMenu(null) }}
+      onCut={(path, type, name) => { cutEntry(path, type, name); setTreeMenu(null) }}
+      onPaste={(target) => { pasteEntry(target); setTreeMenu(null) }}
+      onRename={(path) => { handleRenameEntry(path); setTreeMenu(null) }}
+      onDelete={(path) => { handleDeleteEntry(path); setTreeMenu(null) }}
+      onClose={() => setTreeMenu(null)}
+    />
   )
 
   const handleDragStart = useCallback((e: React.PointerEvent) => {
@@ -1262,100 +991,21 @@ export function WorkspacePage() {
   if (isMobile) {
     // 移动端主菜单下拉面板（游玩模式悬浮球 / 后台模式顶部栏最右共用同一份）
     const mobileMenuDropdown = (
-      <>
-        <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
-        <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[160px]">
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm">{t("mode.play")}</span>
-            <Switch
-              checked={mode === "backstage"}
-              onCheckedChange={(v) => {
-                useViewModeStore.getState().setMode(v ? "backstage" : "play")
-                setShowMobileMenu(false)
-              }}
-            />
-          </div>
-          <div className="border-t border-border" />
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
-          >
-            <MessageCircle className="h-4 w-4" />
-            {t("director")}
-          </button>
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
-          >
-            <GitBranch className="h-4 w-4" />
-            {t("versionControl")}
-          </button>
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
-          >
-            <FileText className="h-4 w-4" />
-            {t("fileList")}
-          </button>
-          {isAdminRole(currentUser?.role) && (
-            <button
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-              onClick={() => { openSettings("users"); setShowMobileMenu(false) }}
-            >
-              <Users className="h-4 w-4" />
-              {t("userManagement")}
-            </button>
-          )}
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => { openSettings(); setShowMobileMenu(false) }}
-          >
-            <Settings className="h-4 w-4" />
-            {t("common:settings")}
-          </button>
-          <div className="border-t border-border" />
-          <div className="px-3 py-2 space-y-1">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Languages className="h-4 w-4" />
-              {t("language")}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap pl-6">
-              {SUPPORTED_LANGS.map((l) => (
-                <button
-                  key={l}
-                  className={`px-2 py-1 text-xs rounded border ${
-                    currentLang === l
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "border-border hover:bg-muted"
-                  }`}
-                  onClick={() => setLang(l as Lang)}
-                >
-                  {LANG_LABELS[l]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="border-t border-border" />
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => { handleToggleTheme(); setShowMobileMenu(false) }}
-          >
-            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            {t("themeToggle")}
-          </button>
-          <div className="border-t border-border" />
-          <button
-            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-            onClick={() => {
-              setActiveInstance(null)
-              navigate("/", { replace: true })
-            }}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {t("exitToHome")}
-          </button>
-        </div>
-      </>
+      <MobileMenuDropdown
+        mode={mode}
+        isDark={isDark}
+        currentLang={currentLang}
+        isAdmin={isAdminRole(currentUser?.role)}
+        onChangeLang={setLang}
+        onToggleTheme={handleToggleTheme}
+        onOpenDirector={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
+        onOpenGit={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
+        onOpenFiles={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
+        onOpenUsers={() => { openSettings("users"); setShowMobileMenu(false) }}
+        onOpenSettings={() => { openSettings(); setShowMobileMenu(false) }}
+        onExit={() => { setActiveInstance(null); navigate("/", { replace: true }) }}
+        onClose={() => setShowMobileMenu(false)}
+      />
     )
     return (
       <div className="h-full flex flex-col overflow-hidden bg-background">
@@ -1481,7 +1131,7 @@ export function WorkspacePage() {
                   {activeInstance.name}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => openExportDialog("prototype")} title={t("export.titleBar")}>
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => exportDialogRef.current?.open("prototype")} title={t("export.titleBar")}>
                     <Archive className="h-4 w-4" />
                   </button>
                   <button className="p-1.5 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
@@ -1550,50 +1200,25 @@ export function WorkspacePage() {
 
         {/* Create Dialog */}
         {showCreate && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCreate(null)}>
-            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <h3 className="font-semibold">{showCreate.type === "directory" ? t("create.titleFolder") : t("create.titleFile")}</h3>
-              <div>
-                {showCreate.parentPath && (
-                  <p className="text-xs text-muted-foreground mb-2">{t("location", { path: showCreate.parentPath || "/" })}</p>
-                )}
-                <Input
-                  value={createName}
-                  onChange={e => setCreateName(e.target.value)}
-                  placeholder={showCreate.type === "directory" ? t("create.folderPh") : t("create.filePh")}
-                  autoFocus
-                  onKeyDown={e => { if (e.key === "Enter") handleCreateEntry() }}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>{t("common:cancel")}</Button>
-                <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>{t("create.submit")}</Button>
-              </div>
-            </div>
-          </div>
+          <CreateDialog
+            type={showCreate.type}
+            parentPath={showCreate.parentPath}
+            name={createName}
+            onNameChange={setCreateName}
+            onSubmit={handleCreateEntry}
+            onCancel={() => setShowCreate(null)}
+          />
         )}
 
         {/* Rename dialog */}
         {renameTarget && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
-            <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-              <h3 className="font-semibold">{t("rename.title")}</h3>
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">{t("location", { path: renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/" })}</p>
-                <Input
-                  value={renameName}
-                  onChange={e => setRenameName(e.target.value)}
-                  placeholder={t("rename.ph")}
-                  autoFocus
-                  onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>{t("common:cancel")}</Button>
-                <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>{t("common:ok")}</Button>
-              </div>
-            </div>
-          </div>
+          <RenameDialog
+            target={renameTarget}
+            name={renameName}
+            onNameChange={setRenameName}
+            onSubmit={confirmRename}
+            onCancel={() => { setRenameTarget(null); setRenameName("") }}
+          />
         )}
 
         {/* Confirm delete dialog */}
@@ -1607,166 +1232,15 @@ export function WorkspacePage() {
           onCancel={() => setDeleteTarget(null)}
         />
 
-        {/* Export prototype / skill dialog (fullscreen panel on mobile) */}
-        {showExportDialog && (
-          <div className="fixed inset-0 z-50 bg-background flex flex-col">
-            {/* Fullscreen panel nav — ChevronLeft back on mobile */}
-            <div className="h-10 border-b border-border flex items-center gap-1 px-1 shrink-0">
-              <button
-                className="p-2 rounded-md hover:bg-muted shrink-0"
-                onClick={() => setShowExportDialog(false)}
-                title={t("common:cancel")}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-              <span className="flex-1 text-sm font-medium text-center truncate">{t("export.titleBar")}</span>
-              <span className="w-9 shrink-0" />
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4" onClick={e => e.stopPropagation()}>
-
-              {/* Type toggle */}
-              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
-                <button
-                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => openExportDialog("prototype")}
-                >
-                  {t("export.type.prototype")}
-                </button>
-                <button
-                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => openExportDialog("skill")}
-                >
-                  {t("export.type.skill")}
-                </button>
-                <button
-                  className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                  onClick={() => openExportDialog("package")}
-                >
-                  {t("export.type.package")}
-                </button>
-              </div>
-
-              {exportType === "prototype" ? (
-                <>
-                  <h3 className="font-semibold">{t("export.prototype.title")}</h3>
-                  <p className="text-xs text-muted-foreground">{t("export.prototype.desc")}</p>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">{t("export.prototype.name")}</label>
-                    <Input
-                      value={exportName}
-                      onChange={e => { setExportName(e.target.value); setExportError("") }}
-                      placeholder={t("export.prototype.namePh")}
-                      autoFocus
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">{t("export.prototype.descLabel")} <span className="text-muted-foreground font-normal">{t("export.prototype.maxChars")}</span></label>
-                    <Input
-                      value={exportDescription}
-                      onChange={e => setExportDescription(e.target.value)}
-                      placeholder={t("export.prototype.descPh")}
-                      maxLength={50}
-                    />
-                  </div>
-                  <div className="flex gap-3">
-                    <div className="space-y-1 flex-1">
-                      <label className="text-sm font-medium">{t("export.prototype.author")} <span className="text-muted-foreground font-normal">{t("export.prototype.optional")}</span></label>
-                      <Input
-                        value={exportAuthor}
-                        onChange={e => setExportAuthor(e.target.value)}
-                        placeholder={t("export.prototype.authorPh")}
-                      />
-                    </div>
-                    <div className="space-y-1 w-24">
-                      <label className="text-sm font-medium">{t("common:version")}</label>
-                      <Input
-                        value={exportVersion}
-                        onChange={e => setExportVersion(e.target.value)}
-                        placeholder="1.0.0"
-                      />
-                    </div>
-                  </div>
-                  {exportError && <p className="text-sm text-red-500">{exportError}</p>}
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                    <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
-                      {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      {t("export.submit")}
-                    </Button>
-                  </div>
-                </>
-              ) : exportType === "package" ? (
-                <>
-                  <h3 className="font-semibold">{t("export.package.title")}</h3>
-                  <p className="text-xs text-muted-foreground">{t("export.package.desc")}</p>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">{t("export.package.select")}</label>
-                    {instPackagesLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
-                      </div>
-                    ) : instPackages.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">{t("export.package.empty")}</p>
-                    ) : (
-                      <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("export.package.ph")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {instPackages.map(p => (
-                            <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
-                  {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                    <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
-                      {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      {t("export.package.submit")}
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <h3 className="font-semibold">{t("export.skill.title")}</h3>
-                  <p className="text-xs text-muted-foreground">{t("export.skill.desc")}</p>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">{t("export.skill.select")}</label>
-                    {instSkillsLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
-                      </div>
-                    ) : instSkills.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">{t("export.skill.empty")}</p>
-                    ) : (
-                      <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("export.skill.ph")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {instSkills.map(s => (
-                            <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
-                  {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                    <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
-                      {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                      {t("export.skill.submit")}
-                    </Button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Export 对话框（移动全屏/桌面弹窗统一由 ExportDialog 自治组件渲染） */}
+        <ExportDialog
+          ref={exportDialogRef}
+          open={showExportDialog}
+          onOpenChange={setShowExportDialog}
+          instId={instId}
+          isMobile={isMobile}
+          onSaved={showSaveToast}
+        />
 
         {dragBadgeEl}
         {treeMenuEl}
@@ -1805,7 +1279,7 @@ export function WorkspacePage() {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   className="p-0.5 rounded hover:bg-muted cursor-pointer"
-                  onClick={() => openExportDialog("prototype")}
+                  onClick={() => exportDialogRef.current?.open("prototype")}
                   title={t("export.titleBar")}
                 >
                   <Archive className="h-3.5 w-3.5" />
@@ -2022,92 +1496,41 @@ export function WorkspacePage() {
 
       {/* Blank-area (root) context menu — right-click on tree background */}
       {rootMenu && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setRootMenu(null)} onContextMenu={(e) => { e.preventDefault(); setRootMenu(null) }} />
-          <div
-            className="fixed z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
-            style={{ left: rootMenu.x, top: rootMenu.y }}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            <button
-              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
-              onClick={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName(""); setRootMenu(null) }}
-            >
-              {t("create.fileTitle")}
-            </button>
-            <button
-              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
-              onClick={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName(""); setRootMenu(null) }}
-            >
-              {t("create.folderTitle")}
-            </button>
-            <UploadMenuItem
-              parentPath=""
-              className="relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none"
-              onUpload={handleMenuUpload}
-            >
-              {t("uploadToRoot")}
-            </UploadMenuItem>
-            <div className="-mx-1 my-1 h-px bg-border" />
-            <button
-              className={`relative flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none ${!clipboard ? "pointer-events-none opacity-50" : ""}`}
-              disabled={!clipboard}
-              onClick={() => { pasteEntry(""); setRootMenu(null) }}
-            >
-              {t("clipboard.paste")}
-            </button>
-          </div>
-        </>
+        <RootContextMenu
+          x={rootMenu.x}
+          y={rootMenu.y}
+          clipboard={clipboard}
+          onNewFile={() => { setShowCreate({ parentPath: "", type: "file" }); setCreateName(""); setRootMenu(null) }}
+          onNewFolder={() => { setShowCreate({ parentPath: "", type: "directory" }); setCreateName(""); setRootMenu(null) }}
+          onUpload={handleMenuUpload}
+          onPaste={() => { pasteEntry(""); setRootMenu(null) }}
+          onClose={() => setRootMenu(null)}
+        />
       )}
 
       {treeMenuEl}
 
       {/* Create Dialog */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowCreate(null)}>
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">{showCreate.type === "directory" ? t("create.titleFolder") : t("create.titleFile")}</h3>
-            <div>
-              {showCreate.parentPath && (
-                <p className="text-xs text-muted-foreground mb-2">{t("location", { path: showCreate.parentPath || "/" })}</p>
-              )}
-              <Input
-                value={createName}
-                onChange={e => setCreateName(e.target.value)}
-                placeholder={showCreate.type === "directory" ? t("create.folderPh") : t("create.filePh")}
-                autoFocus
-                onKeyDown={e => { if (e.key === "Enter") handleCreateEntry() }}
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowCreate(null)}>{t("common:cancel")}</Button>
-              <Button size="sm" onClick={handleCreateEntry} disabled={!createName.trim()}>{t("create.submit")}</Button>
-            </div>
-          </div>
-        </div>
+        <CreateDialog
+          type={showCreate.type}
+          parentPath={showCreate.parentPath}
+          name={createName}
+          onNameChange={setCreateName}
+          onSubmit={handleCreateEntry}
+          onCancel={() => setShowCreate(null)}
+        />
       )}
 
       {/* Rename dialog */}
       {renameTarget && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setRenameTarget(null); setRenameName("") }}>
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold">{t("rename.title")}</h3>
-            <div>
-              <p className="text-xs text-muted-foreground mb-2">{t("location", { path: renameTarget.includes("/") ? renameTarget.slice(0, renameTarget.lastIndexOf("/")) || "/" : "/" })}</p>
-              <Input
-                value={renameName}
-                onChange={e => setRenameName(e.target.value)}
-                placeholder={t("rename.ph")}
-                autoFocus
-                onKeyDown={e => { if (e.key === "Enter") confirmRename() }}
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => { setRenameTarget(null); setRenameName("") }}>{t("common:cancel")}</Button>
-              <Button size="sm" onClick={confirmRename} disabled={!renameName.trim()}>{t("common:ok")}</Button>
-            </div>
-          </div>
-        </div>
+        <RenameDialog
+          target={renameTarget}
+          name={renameName}
+          onNameChange={setRenameName}
+          onSubmit={confirmRename}
+          onCancel={() => { setRenameTarget(null); setRenameName("") }}
+        />
       )}
 
       {/* Confirm delete dialog */}
@@ -2121,166 +1544,13 @@ export function WorkspacePage() {
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Export prototype / skill dialog */}
-      {showExportDialog && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-sm mx-4 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            {/* Type toggle */}
-            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
-              <button
-                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "prototype" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => openExportDialog("prototype")}
-              >
-                {t("export.type.prototype")}
-              </button>
-              <button
-                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "skill" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => openExportDialog("skill")}
-              >
-                {t("export.type.skill")}
-              </button>
-              <button
-                className={`py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${exportType === "package" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => openExportDialog("package")}
-              >
-                {t("export.type.package")}
-              </button>
-            </div>
-
-            {exportType === "prototype" ? (
-              <>
-                <h3 className="font-semibold">{t("export.prototype.title")}</h3>
-                <p className="text-xs text-muted-foreground">{t("export.prototype.desc")}</p>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">{t("export.prototype.name")}</label>
-                  <Input
-                    value={exportName}
-                    onChange={e => { setExportName(e.target.value); setExportError("") }}
-                    placeholder={t("export.prototype.namePh")}
-                    autoFocus
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">{t("export.prototype.descLabel")} <span className="text-muted-foreground font-normal">{t("export.prototype.maxChars")}</span></label>
-                  <Input
-                    value={exportDescription}
-                    onChange={e => setExportDescription(e.target.value)}
-                    placeholder={t("export.prototype.descPh")}
-                    maxLength={50}
-                  />
-                </div>
-                <div className="flex gap-3">
-                  <div className="space-y-1 flex-1">
-                    <label className="text-sm font-medium">{t("export.prototype.author")} <span className="text-muted-foreground font-normal">{t("export.prototype.optional")}</span></label>
-                    <Input
-                      value={exportAuthor}
-                      onChange={e => setExportAuthor(e.target.value)}
-                      placeholder={t("export.prototype.authorPh")}
-                    />
-                  </div>
-                  <div className="space-y-1 w-24">
-                    <label className="text-sm font-medium">{t("common:version")}</label>
-                    <Input
-                      value={exportVersion}
-                      onChange={e => setExportVersion(e.target.value)}
-                      placeholder="1.0.0"
-                    />
-                  </div>
-                </div>
-                {exportError && <p className="text-sm text-red-500">{exportError}</p>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                  <Button size="sm" onClick={handleExport} disabled={!exportName.trim() || exportLoading}>
-                    {exportLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    {t("export.submit")}
-                  </Button>
-                </div>
-              </>
-            ) : exportType === "package" ? (
-              <>
-                <h3 className="font-semibold">{t("export.package.title")}</h3>
-                <p className="text-xs text-muted-foreground">{t("export.package.desc")}</p>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">{t("export.package.select")}</label>
-                  {instPackagesLoading ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
-                    </div>
-                  ) : instPackages.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">{t("export.package.empty")}</p>
-                  ) : (
-                    <Select value={exportSelectedPackage || undefined} onValueChange={(v) => { if (v) setExportSelectedPackage(v) }}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("export.package.ph")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {instPackages.map(p => (
-                          <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-                {exportPackageError && <p className="text-sm text-red-500">{exportPackageError}</p>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                  <Button size="sm" onClick={handleExport} disabled={!exportSelectedPackage || exportPackageLoading}>
-                    {exportPackageLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    {t("export.package.submit")}
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3 className="font-semibold">{t("export.skill.title")}</h3>
-                <p className="text-xs text-muted-foreground">{t("export.skill.desc")}</p>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">{t("export.skill.select")}</label>
-                  {instSkillsLoading ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" /> {t("common:loading")}
-                    </div>
-                  ) : instSkills.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">{t("export.skill.empty")}</p>
-                  ) : (
-                    <Select value={exportSelectedSkill || undefined} onValueChange={(v) => { if (v) setExportSelectedSkill(v) }}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("export.skill.ph")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {instSkills.map(s => (
-                          <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-                {exportSkillError && <p className="text-sm text-red-500">{exportSkillError}</p>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setShowExportDialog(false)}>{t("common:cancel")}</Button>
-                  <Button size="sm" onClick={handleExport} disabled={!exportSelectedSkill || exportSkillLoading}>
-                    {exportSkillLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    {t("export.skill.submit")}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Overwrite confirm — same-named package/skill already exists in library */}
-      <ConfirmDialog
-        open={pendingOverwrite !== null}
-        title={pendingOverwrite?.kind === "package" ? t("overwrite.title.package") : t("overwrite.title.skill")}
-        message={t("overwrite.message", {
-          lib: pendingOverwrite?.kind === "package" ? t("overwrite.lib.package") : t("overwrite.lib.skill"),
-          name: pendingOverwrite?.name,
-        })}
-        variant="destructive"
-        confirmText={t("overwrite.confirm")}
-        onConfirm={handleConfirmOverwrite}
-        onCancel={() => setPendingOverwrite(null)}
+      <ExportDialog
+        ref={exportDialogRef}
+        open={showExportDialog}
+        onOpenChange={setShowExportDialog}
+        instId={instId}
+        isMobile={isMobile}
+        onSaved={showSaveToast}
       />
 
       {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
@@ -2293,373 +1563,3 @@ export function WorkspacePage() {
     </div>
   )
 }
-
-// ---- File tree recursive component ----
-
-function FileTreeView({
-  nodes, expanded, selectedFile, onToggle, onSelect,
-  onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
-  isDragging = false, dropTargetPath = null, dragSource = null,
-  clipboard = null, cutSource = null, onCopyPath, onCopy, onCut, onPaste,
-  dragWasActiveRef, onOpenTreeMenu, menuNodePath,
-}: {
-  nodes: FileTreeNode[]
-  expanded: Set<string>
-  selectedFile: string | null
-  onToggle: (path: string) => void
-  onSelect: (path: string) => void
-  onCreateFile: (parentPath: string) => void
-  onCreateFolder: (parentPath: string) => void
-  onDelete: (path: string) => void
-  onRename: (path: string) => void
-  onUpload: (parentPath: string) => void
-  fileStatuses: Map<string, string>
-  depth?: number
-  isMobile?: boolean
-  isDragging?: boolean
-  dropTargetPath?: string | null
-  dragSource?: string | null
-  clipboard?: { path: string; cut: boolean; type: "file" | "directory"; name: string } | null
-  cutSource?: string | null
-  onCopyPath?: (path: string) => void
-  onCopy?: (path: string, type: "file" | "directory", name: string) => void
-  onCut?: (path: string, type: "file" | "directory", name: string) => void
-  onPaste?: (targetParent: string) => void
-  dragWasActiveRef?: React.MutableRefObject<boolean>
-  onOpenTreeMenu?: (node: { path: string; type: "file" | "directory"; name: string }, x: number, y: number) => void
-  menuNodePath?: string | null
-}) {
-  const { t } = useTranslation("workspace")
-  // Parent directory of a frontend path ("" = root).
-  const dirOf = (p: string) => {
-    const i = p.lastIndexOf("/")
-    return i >= 0 ? p.slice(0, i) : ""
-  }
-  const stColor = (st: string | undefined) => {
-    if (!st) return "text-muted-foreground"
-    const m: Record<string, string> = {
-      "M": "text-amber-600 dark:text-amber-400",
-      "A": "text-green-600 dark:text-green-400",
-      "?": "text-green-600 dark:text-green-400",
-      "D": "text-red-600 dark:text-red-400",
-      "R": "text-purple-600 dark:text-purple-400",
-    }
-    return m[st] || "text-muted-foreground"
-  }
-  // VSCode 惯例：目录自身无改动，仅因内部(任意层级)有新建/修改而被着色时，用
-  // 更浅的 "soft" 色，让目录变色弱于真正的文件改动、不再误读成目录本身被改。
-  const softColor = (st: string | undefined) => {
-    if (!st) return ""
-    const m: Record<string, string> = {
-      "M": "text-amber-400/80 dark:text-amber-300/70",
-      "A": "text-green-400/80 dark:text-green-300/70",
-      "?": "text-green-400/80 dark:text-green-300/70",
-      "D": "text-red-400/80 dark:text-red-300/70",
-      "R": "text-purple-400/80 dark:text-purple-300/70",
-    }
-    return m[st] || ""
-  }
-  // "X" 标记"目录本身无改动、仅因内部有变动而被标亮"，区别于真实的新建/删除。
-  const stLetter = (st: string | undefined) => {
-    if (!st) return ""
-    const m: Record<string, string> = { "M": "M", "D": "D", "R": "R", "A": "A", "?": "U" }
-    return m[st] || ""
-  }
-  // 目录内部有改动时右缘的小圆点(实心背景)。用半透明的淡色，与目录"浅色"呼应。
-  const dotBg = (st: string | undefined) => {
-    if (!st) return ""
-    const m: Record<string, string> = {
-      "M": "bg-amber-400/60 dark:bg-amber-300/50",
-      "A": "bg-green-400/60 dark:bg-green-300/50",
-      "?": "bg-green-400/60 dark:bg-green-300/50",
-      "D": "bg-red-400/60 dark:bg-red-300/50",
-      "R": "bg-purple-400/60 dark:bg-purple-300/50",
-    }
-    return m[st] || ""
-  }
-  // 目录汇总：对每个"已改动文件"路径，把它每一个祖先目录标成"内部有改动"。
-  // 节点 path 都是前端形态("root/..."），故 dirChanges 的 key 也用 "root/<dir>"，
-  // 与树节点 node.path 精确匹配。归类优先级：新建/未跟踪 > 删除 > 修改/重命名，
-  // 让文件夹的浅色/圈点反映子树里"最抢眼"的变动。
-  const dirChanges = useMemo(() => {
-    const rank: Record<string, number> = { "A": 3, "?": 3, "D": 2, "M": 1, "R": 1 }
-    const inner = new Map<string, string>()
-    for (const p of fileStatuses.keys()) {
-      const segs = p.split("/").filter(Boolean) // ["root", "runtime", "floors", "file.md"]
-      const rel = segs.slice(1)                 // 去掉 "root"
-      if (rel.length < 2) continue              // 顶层文件没有祖先目录可标
-      const st = fileStatuses.get(p) ?? ""
-      for (let i = 0; i < rel.length - 1; i++) {
-        const dir = "root/" + rel.slice(0, i + 1).join("/")
-        const prev = inner.get(dir)
-        if (!prev || (rank[st] ?? 0) > (rank[prev] ?? 0)) inner.set(dir, st)
-      }
-    }
-    return inner
-  }, [fileStatuses])
-
-  // ---- Mobile long-press on a row opens the per-node menu (no ⋯ button).
-  // Managed per component instance: a level's rows share one pointer sequence,
-  // so the timer/flag live here rather than bubbling to the parent.
-  const mobilePressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mobilePressConsumedRef = useRef(false)
-  const mobilePressPosRef = useRef<{ x: number; y: number } | null>(null)
-  const mobilePressNodeRef = useRef<{ path: string; type: "file" | "directory"; name: string } | null>(null)
-  const cancelMobilePress = () => {
-    if (mobilePressTimerRef.current) { clearTimeout(mobilePressTimerRef.current); mobilePressTimerRef.current = null }
-    mobilePressPosRef.current = null
-    mobilePressNodeRef.current = null
-  }
-  // Long-press only applies on mobile; desktop rows go through the ContextMenu.
-  // `node` is bound per row at render time (this level renders many rows).
-  const onMobileRowPointerDown = isMobile
-    ? (e: React.PointerEvent<HTMLDivElement>, onNode: { path: string; type: "file" | "directory"; name: string }) => {
-        // Let the user scroll/tap normally without fighting the app for the gesture.
-        mobilePressConsumedRef.current = false
-        mobilePressPosRef.current = { x: e.clientX, y: e.clientY }
-        mobilePressNodeRef.current = onNode
-        if (mobilePressTimerRef.current) clearTimeout(mobilePressTimerRef.current)
-        mobilePressTimerRef.current = setTimeout(() => {
-          mobilePressTimerRef.current = null
-          const pos = mobilePressPosRef.current
-          const held = mobilePressNodeRef.current
-          if (!pos || !held) return
-          // A long-press is complete → open the menu and swallow the click the
-          // browser will synthesize on release, so the row doesn't also toggle/select.
-          mobilePressConsumedRef.current = true
-          onOpenTreeMenu?.(held, pos.x, pos.y)
-        }, 450)
-      }
-    : undefined
-
-  return (
-    <>
-      {nodes
-        .filter(n => n.name !== ".git")
-        .map((node) => {
-          // 节点自身 git 状态(仅文件命中；目录只有当后端恰好报该目录路径才可能命中)。
-          const selfSt = fileStatuses.get(node.path)
-          // 目录"内部(任意层级)有改动"的归类；文件节点无此概念。
-          const dirInner = node.type === "directory" ? dirChanges.get(node.path) : undefined
-          // 节点着色主状态：目录优先用自身状态(真改动)；否则若仅内部有改动则用浅色。
-          const isDirInnerOnly = node.type === "directory" && !selfSt && !!dirInner
-          const colored = isDirInnerOnly ? softColor(dirInner) : stColor(selfSt)
-        return (
-        <div
-          key={node.path}
-          className={
-            isDragging && node.type === "directory" && dropTargetPath === node.path
-              ? "relative rounded-md bg-accent/30 ring-2 ring-inset ring-accent mx-1 my-0.5"
-              : ""
-          }
-        >
-          {isMobile ? (
-            /* 移动端：无 ⋯ 按钮，长按 item 弹 treeMenu（onMobileRowPointerDown）。 */
-            <div
-              data-path={node.path}
-              data-type={node.type}
-              className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-3 ${
-                menuNodePath === node.path ? "bg-accent" : selectedFile === node.path ? "bg-accent" : ""
-              } ${
-                isDragging ? "" : ""
-              } ${
-                isDragging && dragSource === node.path ? "opacity-40" : ""
-              } ${
-                cutSource === node.path ? "opacity-40" : ""
-              }`}
-              style={{ paddingLeft: `${8 + depth * 16}px` }}
-              onPointerDown={(e) => onMobileRowPointerDown?.(e, { path: node.path, type: node.type, name: node.name })}
-              onPointerUp={cancelMobilePress}
-              onPointerLeave={cancelMobilePress}
-              onPointerCancel={cancelMobilePress}
-              onContextMenu={(e) => e.preventDefault()}
-              onClick={() => {
-                // Consume a completed drag's once-set flag so its release can't
-                // toggle/select the node under the release point.  (Cleared by the
-                // click that follows a completed drag; clearDrag is the fallback.)
-                if (dragWasActiveRef?.current) { dragWasActiveRef.current = false; return }
-                // Swallow the click a long-press synthesizes on release — the
-                // menu is already open, don't also toggle/select the row.
-                if (mobilePressConsumedRef.current) { mobilePressConsumedRef.current = false; return }
-                if (node.type === "directory") {
-                  onToggle(node.path)
-                } else {
-                  onSelect(node.path)
-                }
-              }}
-            >
-              {node.type === "directory" ? (
-                <>
-                  <span className="shrink-0">
-                    {expanded.has(node.path) ? (
-                      <ChevronDown className="h-3 w-3" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3" />
-                    )}
-                  </span>
-                  {(() => {
-                    const Icon = expanded.has(node.path) ? FolderOpen : Folder
-                    return <Icon className={`h-4 w-4 shrink-0 ${colored}`} />
-                  })()}
-                </>
-              ) : (
-                <>
-                  <span className="w-3 shrink-0" />
-                  <FileText className={`h-4 w-4 shrink-0 ${colored}`} />
-                </>
-              )}
-              <span className={`flex-1 truncate text-sm ${colored}`}>{node.name}</span>
-              {/* 行末指示：文件 -> 修改类型字母；目录(仅内部有改动) -> 小圈点 */}
-              {node.type === "file" ? (
-                stLetter(selfSt) ? (
-                  <span className={`shrink-0 pl-1 text-[10px] font-semibold leading-none ${stColor(selfSt)}`}>
-                    {stLetter(selfSt)}
-                  </span>
-                ) : null
-              ) : isDirInnerOnly ? (
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotBg(dirInner)}`} />
-              ) : null}
-            </div>
-          ) : (
-            /* 桌面端：右键菜单替代 hover 按钮。ContextMenuTrigger 经 render 注入
-               data-path/data-type（桌面拖拽依赖），行 click 选中/折叠不变。 */
-            <ContextMenu disabled={isDragging}>
-              <ContextMenuTrigger
-                render={
-                  <div
-                    data-path={node.path}
-                    data-type={node.type}
-                    className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-1 ${
-                      selectedFile === node.path ? "bg-accent" : ""
-                    } ${
-                      isDragging ? "" : "hover:bg-muted/50"
-                    } ${
-                      isDragging && dragSource === node.path ? "opacity-40" : ""
-                    } ${
-                      cutSource === node.path ? "opacity-40" : ""
-                    }`}
-                    style={{ paddingLeft: `${8 + depth * 16}px` }}
-                    onClick={() => {
-                      if (node.type === "directory") {
-                        onToggle(node.path)
-                      } else {
-                        onSelect(node.path)
-                      }
-                    }}
-                  />
-                }
-              >
-                {node.type === "directory" ? (
-                  <>
-                    <span className="shrink-0">
-                      {expanded.has(node.path) ? (
-                        <ChevronDown className="h-3 w-3" />
-                      ) : (
-                        <ChevronRight className="h-3 w-3" />
-                      )}
-                    </span>
-                    {(() => {
-                      const Icon = expanded.has(node.path) ? FolderOpen : Folder
-                      return <Icon className={`h-4 w-4 shrink-0 ${colored}`} />
-                    })()}
-                  </>
-                ) : (
-                  <>
-                    <span className="w-3 shrink-0" />
-                    <FileText className={`h-4 w-4 shrink-0 ${colored}`} />
-                  </>
-                )}
-                <span className={`flex-1 truncate text-sm ${colored}`}>{node.name}</span>
-                {/* 行末指示：文件 -> 修改类型字母；目录(仅内部有改动) -> 小圈点 */}
-                {node.type === "file" ? (
-                  stLetter(selfSt) ? (
-                    <span className={`shrink-0 pl-1 text-[10px] font-semibold leading-none ${stColor(selfSt)}`}>
-                      {stLetter(selfSt)}
-                    </span>
-                  ) : null
-                ) : isDirInnerOnly ? (
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotBg(dirInner)}`} />
-                ) : null}
-              </ContextMenuTrigger>
-
-              <ContextMenuContent side="right" align="start" alignOffset={4}>
-                {/* 新建/上传作用于：目录→目录内，文件→同级目录 */}
-                {(() => {
-                  const opTarget = node.type === "directory" ? node.path : dirOf(node.path)
-                  return <>
-                    <ContextMenuItem onClick={() => onCreateFile(opTarget)}>
-                      {t("create.fileTitle")}
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onCreateFolder(opTarget)}>
-                      {t("create.folderTitle")}
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onUpload(opTarget)}>
-                      {t("uploadToHere")}
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem onClick={() => onCopyPath?.(node.path)}>
-                      <ClipboardCopy className="h-3.5 w-3.5" />
-                      {t("clipboard.copyPath")}
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onCopy?.(node.path, node.type, node.name)}>
-                      <ClipboardCopy className="h-3.5 w-3.5" />
-                      {t("clipboard.copy")}
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onCut?.(node.path, node.type, node.name)}>
-                      <Scissors className="h-3.5 w-3.5" />
-                      {t("clipboard.cut")}
-                    </ContextMenuItem>
-                    <ContextMenuItem disabled={!clipboard} onClick={() => onPaste?.(opTarget)}>
-                      <ClipboardPaste className="h-3.5 w-3.5" />
-                      {t("clipboard.paste")}
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem onClick={() => onRename(node.path)}>
-                      {t("rename.title")}
-                    </ContextMenuItem>
-                    <ContextMenuItem variant="destructive" onClick={() => onDelete(node.path)}>
-                      {t("common:delete")}
-                    </ContextMenuItem>
-                  </>
-                })()}
-              </ContextMenuContent>
-            </ContextMenu>
-          )}
-
-          {/* Children */}
-          {node.type === "directory" && expanded.has(node.path) && node.children && (
-            <FileTreeView
-              nodes={node.children}
-              expanded={expanded}
-              selectedFile={selectedFile}
-              onToggle={onToggle}
-              onSelect={onSelect}
-              onCreateFile={onCreateFile}
-              onCreateFolder={onCreateFolder}
-              onDelete={onDelete}
-              onRename={onRename}
-              onUpload={onUpload}
-              fileStatuses={fileStatuses}
-              depth={depth + 1}
-              isMobile={isMobile}
-              isDragging={isDragging}
-              dropTargetPath={dropTargetPath}
-              dragSource={dragSource}
-              clipboard={clipboard}
-              cutSource={cutSource}
-              onCopyPath={onCopyPath}
-              onCopy={onCopy}
-              onCut={onCut}
-              onPaste={onPaste}
-              dragWasActiveRef={dragWasActiveRef}
-              onOpenTreeMenu={onOpenTreeMenu}
-              menuNodePath={menuNodePath}
-            />
-            )}
-          </div>
-          )
-        })}
-    </>
-  )
-}
-
