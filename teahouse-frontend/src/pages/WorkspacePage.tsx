@@ -2346,6 +2346,57 @@ function FileTreeView({
     }
     return m[st] || "text-muted-foreground"
   }
+  // VSCode 惯例：目录自身无改动，仅因内部(任意层级)有新建/修改而被着色时，用
+  // 更浅的 "soft" 色，让目录变色弱于真正的文件改动、不再误读成目录本身被改。
+  const softColor = (st: string | undefined) => {
+    if (!st) return ""
+    const m: Record<string, string> = {
+      "M": "text-amber-400/80 dark:text-amber-300/70",
+      "A": "text-green-400/80 dark:text-green-300/70",
+      "?": "text-green-400/80 dark:text-green-300/70",
+      "D": "text-red-400/80 dark:text-red-300/70",
+      "R": "text-purple-400/80 dark:text-purple-300/70",
+    }
+    return m[st] || ""
+  }
+  // "X" 标记"目录本身无改动、仅因内部有变动而被标亮"，区别于真实的新建/删除。
+  const stLetter = (st: string | undefined) => {
+    if (!st) return ""
+    const m: Record<string, string> = { "M": "M", "D": "D", "R": "R", "A": "A", "?": "U" }
+    return m[st] || ""
+  }
+  // 目录内部有改动时右缘的小圆点(实心背景)。用半透明的淡色，与目录"浅色"呼应。
+  const dotBg = (st: string | undefined) => {
+    if (!st) return ""
+    const m: Record<string, string> = {
+      "M": "bg-amber-400/60 dark:bg-amber-300/50",
+      "A": "bg-green-400/60 dark:bg-green-300/50",
+      "?": "bg-green-400/60 dark:bg-green-300/50",
+      "D": "bg-red-400/60 dark:bg-red-300/50",
+      "R": "bg-purple-400/60 dark:bg-purple-300/50",
+    }
+    return m[st] || ""
+  }
+  // 目录汇总：对每个"已改动文件"路径，把它每一个祖先目录标成"内部有改动"。
+  // 节点 path 都是前端形态("root/..."），故 dirChanges 的 key 也用 "root/<dir>"，
+  // 与树节点 node.path 精确匹配。归类优先级：新建/未跟踪 > 删除 > 修改/重命名，
+  // 让文件夹的浅色/圈点反映子树里"最抢眼"的变动。
+  const dirChanges = useMemo(() => {
+    const rank: Record<string, number> = { "A": 3, "?": 3, "D": 2, "M": 1, "R": 1 }
+    const inner = new Map<string, string>()
+    for (const p of fileStatuses.keys()) {
+      const segs = p.split("/").filter(Boolean) // ["root", "runtime", "floors", "file.md"]
+      const rel = segs.slice(1)                 // 去掉 "root"
+      if (rel.length < 2) continue              // 顶层文件没有祖先目录可标
+      const st = fileStatuses.get(p) ?? ""
+      for (let i = 0; i < rel.length - 1; i++) {
+        const dir = "root/" + rel.slice(0, i + 1).join("/")
+        const prev = inner.get(dir)
+        if (!prev || (rank[st] ?? 0) > (rank[prev] ?? 0)) inner.set(dir, st)
+      }
+    }
+    return inner
+  }, [fileStatuses])
 
   // ---- Mobile long-press on a row opens the per-node menu (no ⋯ button).
   // Managed per component instance: a level's rows share one pointer sequence,
@@ -2385,7 +2436,15 @@ function FileTreeView({
     <>
       {nodes
         .filter(n => n.name !== ".git")
-        .map((node) => (
+        .map((node) => {
+          // 节点自身 git 状态(仅文件命中；目录只有当后端恰好报该目录路径才可能命中)。
+          const selfSt = fileStatuses.get(node.path)
+          // 目录"内部(任意层级)有改动"的归类；文件节点无此概念。
+          const dirInner = node.type === "directory" ? dirChanges.get(node.path) : undefined
+          // 节点着色主状态：目录优先用自身状态(真改动)；否则若仅内部有改动则用浅色。
+          const isDirInnerOnly = node.type === "directory" && !selfSt && !!dirInner
+          const colored = isDirInnerOnly ? softColor(dirInner) : stColor(selfSt)
+        return (
         <div
           key={node.path}
           className={
@@ -2440,16 +2499,26 @@ function FileTreeView({
                   </span>
                   {(() => {
                     const Icon = expanded.has(node.path) ? FolderOpen : Folder
-                    return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                    return <Icon className={`h-4 w-4 shrink-0 ${colored}`} />
                   })()}
                 </>
               ) : (
                 <>
                   <span className="w-3 shrink-0" />
-                  <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                  <FileText className={`h-4 w-4 shrink-0 ${colored}`} />
                 </>
               )}
-              <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
+              <span className={`flex-1 truncate text-sm ${colored}`}>{node.name}</span>
+              {/* 行末指示：文件 -> 修改类型字母；目录(仅内部有改动) -> 小圈点 */}
+              {node.type === "file" ? (
+                stLetter(selfSt) ? (
+                  <span className={`shrink-0 pl-1 text-[10px] font-semibold leading-none ${stColor(selfSt)}`}>
+                    {stLetter(selfSt)}
+                  </span>
+                ) : null
+              ) : isDirInnerOnly ? (
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotBg(dirInner)}`} />
+              ) : null}
             </div>
           ) : (
             /* 桌面端：右键菜单替代 hover 按钮。ContextMenuTrigger 经 render 注入
@@ -2491,16 +2560,26 @@ function FileTreeView({
                     </span>
                     {(() => {
                       const Icon = expanded.has(node.path) ? FolderOpen : Folder
-                      return <Icon className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                      return <Icon className={`h-4 w-4 shrink-0 ${colored}`} />
                     })()}
                   </>
                 ) : (
                   <>
                     <span className="w-3 shrink-0" />
-                    <FileText className={`h-4 w-4 shrink-0 ${stColor(fileStatuses.get(node.path))}`} />
+                    <FileText className={`h-4 w-4 shrink-0 ${colored}`} />
                   </>
                 )}
-                <span className={`flex-1 truncate text-sm ${stColor(fileStatuses.get(node.path))}`}>{node.name}</span>
+                <span className={`flex-1 truncate text-sm ${colored}`}>{node.name}</span>
+                {/* 行末指示：文件 -> 修改类型字母；目录(仅内部有改动) -> 小圈点 */}
+                {node.type === "file" ? (
+                  stLetter(selfSt) ? (
+                    <span className={`shrink-0 pl-1 text-[10px] font-semibold leading-none ${stColor(selfSt)}`}>
+                      {stLetter(selfSt)}
+                    </span>
+                  ) : null
+                ) : isDirInnerOnly ? (
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotBg(dirInner)}`} />
+                ) : null}
               </ContextMenuTrigger>
 
               <ContextMenuContent side="right" align="start" alignOffset={4}>
@@ -2578,7 +2657,8 @@ function FileTreeView({
             />
             )}
           </div>
-        ))}
+          )
+        })}
     </>
   )
 }
