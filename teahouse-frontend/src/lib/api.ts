@@ -335,6 +335,24 @@ export const instancesApi = {
     return del<{ path: string; status: string }>(`/api/instances/${instanceId}/files?path=${encodeURIComponent(toBackendPath(path))}`)
   },
 
+  trashEntry: async (instanceId: string, path: string) => {
+    return post<{ trash_ref: string; original_path: string; status: string }>(
+      `/api/instances/${instanceId}/files/trash`,
+      { path: toBackendPath(path) },
+    )
+  },
+
+  restoreEntry: async (instanceId: string, ref: string) => {
+    return post<{ path: string; status: string }>(
+      `/api/instances/${instanceId}/files/restore`,
+      { ref },
+    )
+  },
+
+  clearTrash: async (instanceId: string) => {
+    return post<{ status: string }>(`/api/instances/${instanceId}/trash/clear`, {})
+  },
+
   renameEntry: async (instanceId: string, path: string, newName: string) => {
     return patch<{ path: string; status: string }>(
       `/api/instances/${instanceId}/files/rename?path=${encodeURIComponent(toBackendPath(path))}`,

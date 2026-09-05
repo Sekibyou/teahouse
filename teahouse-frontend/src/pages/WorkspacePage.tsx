@@ -28,7 +28,7 @@ import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
-import type { FileTreeNode, TreeNodeRef, TreeClipboard } from "@/lib/types"
+import type { FileTreeNode, TreeNodeRef, TreeClipboard, UndoableOp, TrashItem } from "@/lib/types"
 import { applyFileChange } from "@/lib/fileTreeReducer"
 import { collectAllEntries, pruneNestedItems, isEditableTarget } from "@/lib/fileTreeOps"
 import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
@@ -260,7 +260,9 @@ export function WorkspacePage() {
   const [gitHeadContent, setGitHeadContent] = useState<string | null>(null)
 
   // File content is loaded by `openFile` (load-first + key remount). Reset the
-  // editor state whenever the instance changes.
+  // editor state whenever the instance changes. Entering an instance also clears
+  // its recycle bin (backend) + the undo/redo stacks (frontend) — undo lives
+  // only for the current active session (single frontend link).
   useEffect(() => {
     setSelectedFile(null)
     setIsImageOpen(false)
@@ -276,6 +278,10 @@ export function WorkspacePage() {
     setExternalDrop(null)
     setSelection([])
     setDeleteTargets([])
+    if (instId) {
+      clearUndoStacks()
+      instancesApi.clearTrash(instId) // fire-and-forget; 失败静默
+    }
   }, [instId])
 
   // Esc closes the blank-area root context menu / mobile per-node menu.
@@ -326,11 +332,25 @@ export function WorkspacePage() {
     const fullPath = showCreate.parentPath
       ? `${showCreate.parentPath}/${createName.trim()}`
       : createName.trim()
-    const res = await instancesApi.createEntry(instId, fullPath, showCreate.type)
+    const nodeType = showCreate.type
+    const res = await instancesApi.createEntry(instId, fullPath, nodeType)
     if (!res.ok) return
     setShowCreate(null)
     setCreateName("")
-    applyLocalStructural({ type: "created", path: fullPath, nodeType: showCreate.type })
+    applyLocalStructural({ type: "created", path: fullPath, nodeType })
+    pushUndo({
+      undo: async () => {
+        const rr = await instancesApi.deleteEntry(instId!, fullPath)
+        if (!rr.ok) return
+        closeEditorFor(fullPath)
+        await refresh()
+      },
+      redo: async () => {
+        const rr = await instancesApi.createEntry(instId!, fullPath, nodeType)
+        if (!rr.ok) return
+        await refresh()
+      },
+    })
   }
 
   // 右键单节点删除：若该节点已在 selection 内则作用整个 selection，否则收敛单选。
@@ -350,25 +370,46 @@ export function WorkspacePage() {
 
   const confirmDelete = async () => {
     if (!instId || !deleteTargets.length) return
-    const targets = deleteTargets
+    const targets = pruneNestedItems(deleteTargets)
     setDeleteTargets([])
-    for (const it of pruneNestedItems(targets)) {
+
+    // 把整批删除收成一个 undoable op：逐个 trash（记录 ref），undo=顺序 restore。
+    // delete op 跨 undo/redo 时后端引用会变（每次 trash 生成新 ref），故用可变容器
+    // liveRefs 保存"当前代"的引用，undo 消费后清、redo 重新 trash 后更新。
+    const liveRefs: { items: TrashItem[] } = { items: [] }
+    for (const it of targets) {
       const path = it.path
-      const res = await instancesApi.deleteEntry(instId, path)
+      const res = await instancesApi.trashEntry(instId, path)
       if (!res.ok) continue
-      if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
-        setSelectedFile(null)
-        setIsImageOpen(false)
-        setImageDataUri(null)
-        setImageMeta(null)
-        setFileContent("")
-        setEditedContent("")
-        setIsDirty(false)
-      }
+      liveRefs.items.push({ trash_ref: res.data!.trash_ref, original_path: res.data!.original_path })
+      closeEditorFor(path)
       applyLocalStructural({ type: "deleted", path })
     }
-    // 清理 selection 里已消失的路径
-    setSelection(prev => prev.filter(s => !pruneNestedItems(targets).some(t => t.path === s.path || s.path.startsWith(t.path + "/"))))
+    if (liveRefs.items.length) {
+      dropFromSelection(targets.map(t => t.path))
+      pushUndo({
+        undo: async () => {
+          for (const r of [...liveRefs.items].reverse()) {
+            const rr = await instancesApi.restoreEntry(instId!, r.trash_ref)
+            if (!rr.ok) continue
+            closeEditorFor(r.original_path)
+          }
+          liveRefs.items = []
+          await refresh()
+        },
+        redo: async () => {
+          const fresh: TrashItem[] = []
+          for (const it of targets) {
+            const res = await instancesApi.trashEntry(instId!, it.path)
+            if (!res.ok) continue
+            fresh.push({ trash_ref: res.data!.trash_ref, original_path: res.data!.original_path })
+            closeEditorFor(it.path)
+          }
+          liveRefs.items = fresh
+          await refresh()
+        },
+      })
+    }
   }
 
   const handleRenameEntry = (path: string) => {
@@ -394,6 +435,26 @@ export function WorkspacePage() {
       )
     }
     applyLocalStructural({ type: "moved", path: newPath, prevPath: oldPath })
+    pushUndo({
+      undo: async () => {
+        const rr = await instancesApi.renameEntry(instId!, newPath, oldPath.split("/").pop()!)
+        if (!rr.ok) return
+        if (selectedFileRef.current === newPath || selectedFileRef.current?.startsWith(newPath + "/")) {
+          const cur = selectedFileRef.current
+          setSelectedFile(cur === newPath ? oldPath : oldPath + cur.slice(newPath.length))
+        }
+        await refresh()
+      },
+      redo: async () => {
+        const rr = await instancesApi.renameEntry(instId!, oldPath, newName)
+        if (!rr.ok) return
+        if (selectedFileRef.current === oldPath || selectedFileRef.current?.startsWith(oldPath + "/")) {
+          const cur = selectedFileRef.current
+          setSelectedFile(cur === oldPath ? newPath : newPath + cur.slice(oldPath.length))
+        }
+        await refresh()
+      },
+    })
   }
 
   // 共享顶层 input 的上传路径（FileTreeView 内部点位仍走这里）：记下目标目录并 .click()。
@@ -410,6 +471,7 @@ export function WorkspacePage() {
     const res = await instancesApi.uploadFile(instId, fullPath, file)
     if (!res.ok) return // 由 API 返回错误文案；此处静默（错误可在网络面板查看）
     applyLocalStructural({ type: "created", path: fullPath, nodeType: "file" })
+    pushUndo(uploadOp(fullPath, file))
   }
 
   // 菜单点位的上传（label→原生 input，直接参与用户手势，不经 .click() 转跳：
@@ -435,13 +497,17 @@ export function WorkspacePage() {
     if (!instId) return
     let okCount = 0
     const failNames: string[] = []
+    const uploaded: { fullPath: string; file: File }[] = []
     for (const f of files) {
       const fullPath = dir ? `${dir}/${f.name}` : f.name
       const res = await instancesApi.uploadFile(instId, fullPath, f)
-      if (res.ok) okCount++
+      if (res.ok) { okCount++; uploaded.push({ fullPath, file: f }) }
       else failNames.push(f.name)
     }
     await refresh()
+    for (const { fullPath, file } of uploaded) {
+      pushUndo(uploadOp(fullPath, file))
+    }
     if (okCount > 0) toast.success(t("dropUpload.done", { count: okCount }))
     if (failNames.length) toast.error(t("dropUpload.fail", { names: failNames.join(", ") }))
   }
@@ -581,6 +647,87 @@ export function WorkspacePage() {
     if (instId) useGitStore.getState().fetchGitStatus(instId)
   }, [instId, refresh, syncFileTree])
 
+  // ---- File-operation undo/redo stacks (VSCode Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) ----
+  // 命令式：每个 op 携带 undo/redo 闭包，覆盖新建/删除/重命名/移动/复制/上传。
+  // 文本内容编辑的撤销不在此——由 Monaco/textarea 内置，焦点在编辑器时让位。
+  // 栈只存 ref（键盘 handler 同步读，无 UI 需渲染），未来加 undo 按钮再上 state。
+  const undoStackRef = useRef<UndoableOp[]>([])
+  const redoStackRef = useRef<UndoableOp[]>([])
+  const MAX_UNDO = 100
+
+  const clearUndoStacks = useCallback(() => {
+    undoStackRef.current = []
+    redoStackRef.current = []
+  }, [])
+
+  // 压栈：清空 redo（新正向操作使重做失效），超限丢最旧。
+  const pushUndo = useCallback((op: UndoableOp) => {
+    undoStackRef.current = [...undoStackRef.current, op].slice(-MAX_UNDO)
+    redoStackRef.current = []
+  }, [])
+
+  // 撤销/重做都只在 api 成功后弹栈（失败保留栈顶可重试），每次经 applyLocalStructural
+  // 收敛树。runUndo 弹 undoStackRef 顶，执行 undo，成功后挪到 redoStackRef。
+  const runUndo = useCallback(async () => {
+    const stack = undoStackRef.current
+    if (!instId || !stack.length) return
+    const op = stack[stack.length - 1]
+    try {
+      await op.undo()
+    } catch {
+      return // 保留栈顶，允许重试
+    }
+    undoStackRef.current = stack.slice(0, -1)
+    redoStackRef.current = [...redoStackRef.current, op]
+  }, [instId])
+
+  const runRedo = useCallback(async () => {
+    const stack = redoStackRef.current
+    if (!instId || !stack.length) return
+    const op = stack[stack.length - 1]
+    try {
+      await op.redo()
+    } catch {
+      return
+    }
+    redoStackRef.current = stack.slice(0, -1)
+    undoStackRef.current = [...undoStackRef.current, op]
+  }, [instId])
+
+  // 若 path 是被删除/撤销移除的文件（或含其目录），则清空编辑器。
+  const closeEditorFor = useCallback((path: string) => {
+    const open = selectedFileRef.current
+    if (open && (open === path || open.startsWith(path + "/"))) {
+      setSelectedFile(null)
+      setIsImageOpen(false)
+      setImageDataUri(null)
+      setImageMeta(null)
+      setFileContent("")
+      setEditedContent("")
+      setIsDirty(false)
+    }
+  }, [])
+
+  // 从 selection 剔除 path（撤销后该路径可能已不存在）。
+  const dropFromSelection = useCallback((paths: string[]) => {
+    setSelection(prev => prev.filter(s => !paths.some(p => s.path === p || s.path.startsWith(p + "/"))))
+  }, [])
+
+  // 上传的撤销/重做：undo=删产物；redo=闭包捕获原 File 重传。
+  const uploadOp = useCallback((fullPath: string, file: File): UndoableOp => ({
+    undo: async () => {
+      const rr = await instancesApi.deleteEntry(instId!, fullPath)
+      if (!rr.ok) return
+      closeEditorFor(fullPath)
+      await refresh()
+    },
+    redo: async () => {
+      const rr = await instancesApi.uploadFile(instId!, fullPath, file)
+      if (!rr.ok) return
+      await refresh()
+    },
+  }), [instId, closeEditorFor, refresh])
+
   // ---- File-tree drag & drop: commit + event handlers (desktop only) ----
   const commitMove = useCallback(async (srcPath: string, destParent: string) => {
     if (!instId || moveInFlightRef.current) return
@@ -594,10 +741,24 @@ export function WorkspacePage() {
         setSelectedFile(destParent ? `${destParent}/${base}` : base)
       }
       await refresh()
+      // drag&drop 移动可撤销：undo 移回原父目录。
+      const fromParent = parentOf(srcPath)
+      pushUndo({
+        undo: async () => {
+          const rr = await instancesApi.moveEntry(instId!, srcPath, fromParent)
+          if (!rr.ok) return
+          await refresh()
+        },
+        redo: async () => {
+          const rr = await instancesApi.moveEntry(instId!, srcPath, destParent)
+          if (!rr.ok) return
+          await refresh()
+        },
+      })
     } finally {
       moveInFlightRef.current = false
     }
-  }, [instId, selectedFile, refresh])
+  }, [instId, selectedFile, refresh, parentOf, pushUndo])
 
   // ---- Clipboard operations: copy path / copy / cut / paste ----
   const copyPathEntry = useCallback(async (path: string) => {
@@ -670,13 +831,14 @@ export function WorkspacePage() {
   // 把一个条目复制进 `targetParent` 父目录；目标名按 uniquePath 去重防覆盖。
   // 若 targetParent 落在源目录自身内（原地复制自己的目录 → 想产出同级 copy），
   // 回退到源所在的父目录做 sibling 复制，对齐 VSCode"在自身位置复制"语义。
-  const copyOneInto = useCallback(async (src: TreeNodeRef, targetParent: string): Promise<boolean> => {
-    if (!instId) return false
+  // 返回后端实际生成的路径（copyEntry 响应权威），供 undo 精确删产物。
+  const copyOneInto = useCallback(async (src: TreeNodeRef, targetParent: string): Promise<{ ok: boolean; path: string }> => {
+    if (!instId) return { ok: false, path: "" }
     const inSelf = targetParent === src.path || targetParent.startsWith(src.path + "/")
     const realTarget = inSelf ? parentOf(src.path) : targetParent
     const dest = uniquePath(realTarget, src.name)
     const res = await instancesApi.copyEntry(instId, src.path, realTarget, dest.split("/").pop())
-    return res.ok
+    return { ok: res.ok, path: res.ok ? res.data!.path : "" }
   }, [instId, uniquePath, parentOf])
 
   // Paste the clipboard into `targetParent` ("" = root). cut → move each item
@@ -698,13 +860,28 @@ export function WorkspacePage() {
       }
       for (const it of items) {
         if (parentOf(it.path) === target) continue // already there
-        const res = await instancesApi.moveEntry(instId, it.path, target)
+        const srcPath = it.path
+        const fromParent = parentOf(srcPath)
+        const res = await instancesApi.moveEntry(instId, srcPath, target)
         if (!res.ok) { toast.error(res.error || t("common:failed")); continue }
         // Remap the open file if it is the moved entry or lives under it.
-        if (selectedFile === it.path || selectedFile?.startsWith(it.path + "/")) {
-          const base = it.path.split("/").pop() ?? it.path
+        if (selectedFile === srcPath || selectedFile?.startsWith(srcPath + "/")) {
+          const base = srcPath.split("/").pop() ?? srcPath
           setSelectedFile(target ? `${target}/${base}` : base)
         }
+        // cut-move undo：移回原父目录。
+        pushUndo({
+          undo: async () => {
+            const rr = await instancesApi.moveEntry(instId!, srcPath, fromParent)
+            if (!rr.ok) return
+            await refresh()
+          },
+          redo: async () => {
+            const rr = await instancesApi.moveEntry(instId!, srcPath, target)
+            if (!rr.ok) return
+            await refresh()
+          },
+        })
       }
       setClipboard(null)
       setSelection(prev => prev.filter(s => !items.some(it => it.path === s.path)))
@@ -713,13 +890,28 @@ export function WorkspacePage() {
       return
     }
 
-    // copy (non-destructive) — dedupe each destination name.
+    // copy (non-destructive) — dedupe each destination name; undo removes the copy.
     for (const it of items) {
-      await copyOneInto(it, target)
+      const r = await copyOneInto(it, target)
+      if (!r.ok || !r.path) continue
+      const destPath = r.path
+      pushUndo({
+        undo: async () => {
+          const rr = await instancesApi.deleteEntry(instId!, destPath)
+          if (!rr.ok) return
+          closeEditorFor(destPath)
+          await refresh()
+        },
+        redo: async () => {
+          const rr = await copyOneInto(it, target)
+          if (!rr.ok) return
+          await refresh()
+        },
+      })
     }
     await refresh()
     toast.success(t("clipboard.pasted", { name: items.map(i => i.name).join(", ") }))
-  }, [clipboard, instId, parentOf, selectedFile, copyOneInto, pruneNestedItems, refresh, t])
+  }, [clipboard, instId, parentOf, selectedFile, copyOneInto, pruneNestedItems, refresh, t, pushUndo, closeEditorFor])
 
   // Given a screen point, resolve the drop target directory ("" = root).
   // A file acts as a proxy for its parent directory (landing beside it).
@@ -1010,7 +1202,14 @@ export function WorkspacePage() {
         return
       }
       if (!mod) return
-      if (key === "a") {
+      // 先判 redo（Ctrl+Shift+Z / Ctrl+Y）再判 undo（Ctrl+Z）。
+      if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault()
+        runRedo()
+      } else if (key === "z") {
+        e.preventDefault()
+        runUndo()
+      } else if (key === "a") {
         e.preventDefault()
         setSelection(collectAllEntries(fileTreeRef.current))
       } else if (key === "c") {
@@ -1026,7 +1225,7 @@ export function WorkspacePage() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, syncSelectionToOpenFile, beginDelete])
+  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, syncSelectionToOpenFile, beginDelete, runUndo, runRedo])
 
   // Chat panel resize via drag
   const [isDragging, setIsDragging] = useState(false)

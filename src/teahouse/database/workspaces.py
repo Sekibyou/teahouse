@@ -832,6 +832,104 @@ def delete_file_or_dir(instance_dir: Path, file_path: str) -> None:
         full.unlink()
 
 
+# ---------------------------------------------------------------------------
+# Recycle / undo-trash staging (backend-level, OUTSIDE any instance dir).
+# .trash lives at <workspace_base>/<user>/.trash/<instance_id>/ — a sibling of
+# instances/ + prototypes/, so it is invisible to list_file_tree / git / SSE
+# (all of which walk only the instance dir). Deletion "moves" an entry here so
+# an undo (Ctrl+Z) can restore it without a content snapshot.
+# ---------------------------------------------------------------------------
+
+_TRASH_DIR_NAME = ".trash"
+
+
+def _trash_inst_dir(user_dir: Path, instance_id: str) -> Path:
+    """Return the trash staging dir for one instance, creating it lazily.
+
+    instance_id is validated to a safe charset to prevent path traversal.
+    """
+    if not instance_id or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for c in instance_id):
+        raise ValueError("非法 instance_id")
+    d = user_dir / _TRASH_DIR_NAME / instance_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _trash_originals_dir(trash_inst: Path) -> Path:
+    return trash_inst / ".originals"
+
+
+def trash_entry(user_dir: Path, instance_dir: Path, instance_id: str, rel_path: str) -> dict:
+    """Move an entry from inside the instance into the trash staging area.
+
+    ``rel_path`` is validated against the instance root first (reuses the
+    traversal guard). The entry is parked under a uuid prefix so two deletions
+    of the same name never collide, and a mapping record is written so
+    restore_entry knows where to put it back. Returns
+    ``{"trash_ref": "<uuid>", "original_path": rel_path}``.
+    """
+    src = _resolve_full(instance_dir, rel_path)
+    if not src.exists():
+        raise FileNotFoundError(rel_path)
+    if src.resolve() == instance_dir.resolve():
+        raise ValueError("不能删除实例根")
+
+    trash_inst = _trash_inst_dir(user_dir, instance_id)
+    originals = _trash_originals_dir(trash_inst)
+    originals.mkdir(parents=True, exist_ok=True)
+
+    uid = generate_uuid()
+    parked = trash_inst / f"{uid}--{src.name}"
+    if parked.exists():
+        raise OSError("回收站同名冲突，请重试")
+
+    shutil.move(str(src), str(parked))
+    # record where it came from (relative to instance root), for restore.
+    (originals / f"{uid}.json").write_text(
+        json.dumps({"rel_path": rel_path, "trash": f"{uid}--{src.name}"}),
+        encoding="utf-8",
+    )
+    return {"trash_ref": uid, "original_path": rel_path}
+
+
+def restore_entry(user_dir: Path, instance_dir: Path, instance_id: str, trash_ref: str) -> str:
+    """Move an entry back out of the trash to its original instance path.
+
+    Raises FileExistsError if the original target is now occupied (kept in
+    trash rather than auto-renamed). Returns the restored relative path.
+    """
+    if not trash_ref or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in trash_ref):
+        raise ValueError("非法 trash_ref")
+    trash_inst = _trash_inst_dir(user_dir, instance_id)
+    record = trash_inst / ".originals" / f"{trash_ref}.json"
+    if not record.exists():
+        raise FileNotFoundError("回收项不存在")
+    meta = json.loads(record.read_text(encoding="utf-8"))
+    parked = trash_inst / meta["trash"]
+    if not parked.exists():
+        raise FileNotFoundError("回收内容缺失")
+
+    target = _resolve_full(instance_dir, meta["rel_path"])
+    if target.exists():
+        raise FileExistsError(str(target))
+
+    # ensure parent dir chain exists (original dir may have been deleted too)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(parked), str(target))
+    record.unlink(missing_ok=True)
+    return meta["rel_path"]
+
+
+def clear_trash(user_dir: Path, instance_id: str) -> None:
+    """Empty one instance's trash staging area (idempotent)."""
+    try:
+        d = user_dir / _TRASH_DIR_NAME / instance_id
+    except Exception:
+        return
+    if d.exists():
+        shutil.rmtree(d)
+
+
 def create_file_or_dir(instance_dir: Path, file_path: str, item_type: str) -> None:
     """Create a file or directory."""
     full = (instance_dir / file_path).resolve()

@@ -49,8 +49,8 @@ export const zhWorkspace = {
   // 删除确认
   deleteConfirm: {
     title: "确认删除",
-    message: "确定删除 \"{{path}}\" 吗？此操作不可撤销。",
-    messageMany: "确定删除选中的 {{count}} 项吗？此操作不可撤销。",
+    message: "确定删除 \"{{path}}\" 吗？将移入回收站，可用 Ctrl+Z 撤销。",
+    messageMany: "确定删除选中的 {{count}} 项吗？将移入回收站，可用 Ctrl+Z 撤销。",
   },
 
   // 右键菜单 · 剪贴板

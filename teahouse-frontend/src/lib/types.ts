@@ -54,6 +54,18 @@ export interface TreeNodeRef {
 // 多条目剪贴板。cut=true 剪切（粘贴后清空），否则复制（可多次粘贴）。
 export type TreeClipboard = { items: TreeNodeRef[]; cut: boolean } | null
 
+// 回收站（撤销暂存）中一个被删条目的引用。
+export interface TrashItem {
+  trash_ref: string
+  original_path: string
+}
+
+// 文件操作撤销/重做栈的一个命令：各带正/逆闭包，复用操作成功分支的收敛逻辑。
+export interface UndoableOp {
+  undo: () => Promise<void>
+  redo: () => Promise<void>
+}
+
 export interface ActiveSession {
   instance: {
     id: string

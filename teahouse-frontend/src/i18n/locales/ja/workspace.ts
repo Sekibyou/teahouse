@@ -49,8 +49,8 @@ export const jaWorkspace = {
   // 删除确认
   deleteConfirm: {
     title: "削除の確認",
-    message: "\"{{path}}\" を削除しますか？この操作は取り消せません。",
-    messageMany: "選択した {{count}} 件を削除しますか？この操作は取り消せません。",
+    message: "\"{{path}}\" を削除しますか？ごみ箱に移動し、Ctrl+Z で元に戻せます。",
+    messageMany: "選択した {{count}} 件を削除しますか？ごみ箱に移動し、Ctrl+Z で元に戻せます。",
   },
 
   // 右クリックメニュー · クリップボード

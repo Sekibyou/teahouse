@@ -46,6 +46,9 @@ from ..database.workspaces import (
     rename_file_or_dir,
     move_file_or_dir,
     copy_file_or_dir,
+    trash_entry,
+    restore_entry,
+    clear_trash,
     update_floor_count,
     update_instance_name,
     update_summary_index,
@@ -134,6 +137,18 @@ class FileMoveRequest(BaseModel):
 class FileCopyRequest(BaseModel):
     dest_parent: str = ""  # 目标父目录路径，空串 = 实例根
     new_name: str | None = None  # 可选：目标 basename（默认保留源 basename）
+
+
+class FileTrashRequest(BaseModel):
+    path: str  # 要移入回收站的实例内相对路径
+
+
+class FileRestoreRequest(BaseModel):
+    ref: str  # trash_entry 返回的 trash_ref（uuid）
+
+
+class TrashClearRequest(BaseModel):
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +947,97 @@ async def copy_instance_entry(
         {"path": new_path, "tool": "CopyFile", "type": "created", "instance_id": instance_id},
     )
     return {"path": new_path, "status": "created"}
+
+
+# ---------------------------------------------------------------------------
+# Recycle / undo-trash (backend-level staging OUTSIDE the instance dir)
+# ---------------------------------------------------------------------------
+
+
+def _instance_user_dir(instance_dir) -> Path:
+    """Derive the user dir from an instance dir (<user>/instances/<name> → <user>)."""
+    return instance_dir.parent.parent
+
+
+@router.post("/instances/{instance_id}/files/trash")
+async def trash_instance_entry(
+    instance_id: str,
+    body: FileTrashRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Move an instance file/dir into the backend recycle bin (undoable delete)."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    user_dir = _instance_user_dir(instance_dir)
+    try:
+        res = trash_entry(user_dir, instance_dir, instance_id, body.path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not found")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state.broadcast(
+        "file_changed",
+        {"path": body.path, "tool": "TrashFile", "type": "deleted", "instance_id": instance_id},
+    )
+    return {"trash_ref": res["trash_ref"], "original_path": res["original_path"], "status": "trashed"}
+
+
+@router.post("/instances/{instance_id}/files/restore")
+async def restore_instance_entry(
+    instance_id: str,
+    body: FileRestoreRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Restore a trashed entry back to its original instance path."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    user_dir = _instance_user_dir(instance_dir)
+    try:
+        rel_path = restore_entry(user_dir, instance_dir, instance_id, body.ref)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not found")
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=f"target already exists: {e}")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state.broadcast(
+        "file_changed",
+        {"path": rel_path, "tool": "RestoreFile", "type": "created", "instance_id": instance_id},
+    )
+    return {"path": rel_path, "status": "restored"}
+
+
+@router.post("/instances/{instance_id}/trash/clear")
+async def clear_instance_trash(
+    instance_id: str,
+    body: TrashClearRequest,
+    user: UserInfo = Depends(require_user),
+):
+    """Empty this instance's recycle bin (idempotent). No broadcast — the
+    entering frontend does a full refresh anyway."""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    user_dir = _instance_user_dir(instance_dir)
+    clear_trash(user_dir, instance_id)
+    return {"status": "cleared"}
 
 
 class ToolsRunStep(BaseModel):

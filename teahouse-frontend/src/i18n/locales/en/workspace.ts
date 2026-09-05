@@ -49,8 +49,8 @@ export const enWorkspace = {
   // 删除确认
   deleteConfirm: {
     title: "Confirm deletion",
-    message: "Delete \"{{path}}\"? This action cannot be undone.",
-    messageMany: "Delete the {{count}} selected item(s)? This action cannot be undone.",
+    message: "Delete \"{{path}}\"? It moves to trash and can be undone with Ctrl+Z.",
+    messageMany: "Delete the {{count}} selected item(s)? They move to trash and can be undone with Ctrl+Z.",
   },
 
   // Right-click menu · clipboard
