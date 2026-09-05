@@ -319,20 +319,29 @@ def git_branch(instance_dir: Path, action: str, name: Optional[str] = None, star
 
 
 def git_status_porcelain(instance_dir: Path) -> list[dict]:
-    """Parse `git status --porcelain` to get per-file status.
+    """Parse `git status --porcelain -z` to get per-file status.
 
     Returns [{path, status, staged}] where status is one of:
-        M=modified, A=added, D=deleted, R=renamed, ?=untracked
+        M=modified, A=added, D=deleted, ?=untracked
     staged=True if the change is in the index (staged for commit).
+    改名因 --no-renames 降级为 D+A 两行，故不出 R。
+
+    必须用 NUL 分隔的 `-z` 而非默认换行分隔：porcelain 对含空格/引号等
+    特殊字符的路径会套 C 风格引号（如 `"summary (copy)/x.md"`），换行解析
+    只做 strip、不解码引号，会把字面引号带进 path，导致文件树状态标不中而
+    显示成普通灰色。`-z` 输出零转义的原始路径。另加 `--no-renames`：git 默认
+    开 rename 检测，已跟踪文件改名会输出 `旧 -> 新` 或 `-z` 下两条记录，破坏
+    "每条记录一行一个路径"的解析；禁掉后改名降级为干净的 D+A 两行。
     """
-    out = _git_run(["status", "--porcelain"], instance_dir)
+    out = _git_run(["status", "--porcelain", "-z", "--no-renames", "--untracked-files=all"], instance_dir, strip=False)
     entries = []
-    for line in out.split("\n"):
-        if not line.strip():
-            continue
-        # First two chars: XY where X=staged status, Y=working-tree status
-        raw = line[:2]
-        path = line[2:].strip()
+    for tok in out.split("\0"):
+        if not tok:
+            continue  # 尾部或空的 NUL 字段
+        # First two chars: XY where X=staged status, Y=working-tree status,
+        # followed by a literal space then the (zero-escaped) path.
+        raw = tok[:2]
+        path = tok[3:]
         staged = raw[0] != " "
 
         if raw[0] == "?" and raw[1] == "?":
@@ -349,8 +358,6 @@ def git_status_porcelain(instance_dir: Path) -> list[dict]:
             status = "D"
         elif raw[1] == "D":
             status = "D"
-        elif raw[0] == "R":
-            status = "R"
         elif raw[1] == "?":
             status = "?"
         else:
