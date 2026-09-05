@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { useTranslation } from "react-i18next"
+import { useEffect } from "react"
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -10,6 +11,8 @@ export interface ConfirmDialogProps {
   variant?: "default" | "destructive"
   onConfirm: () => void
   onCancel: () => void
+  /** Enter 触发确认（默认关）。用于无输入框的纯确认场景（如删除）。 */
+  confirmOnEnter?: boolean
 }
 
 export function ConfirmDialog({
@@ -21,10 +24,22 @@ export function ConfirmDialog({
   variant = "default",
   onConfirm,
   onCancel,
+  confirmOnEnter = false,
 }: ConfirmDialogProps) {
   const { t } = useTranslation("misc")
   const confirmLabel = confirmText ?? t("common:ok")
   const cancelLabel = cancelText ?? t("common:cancel")
+
+  useEffect(() => {
+    if (!open || !confirmOnEnter) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter") { e.preventDefault(); onConfirm() }
+      else if (e.key === "Escape") { e.preventDefault(); onCancel() }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [open, confirmOnEnter, onConfirm, onCancel])
+
   if (!open) return null
 
   return (

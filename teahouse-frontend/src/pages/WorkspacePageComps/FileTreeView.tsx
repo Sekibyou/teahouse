@@ -7,25 +7,27 @@ import {
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 } from "@/components/ui/context-menu"
-import type { FileTreeNode } from "@/lib/types"
+import type { FileTreeNode, TreeNodeRef, TreeClipboard } from "@/lib/types"
 
 // ---- File tree recursive component ----
 
 export function FileTreeView({
-  nodes, expanded, selectedFile, onToggle, onSelect,
+  nodes, expanded, selectedFile, selectionPaths, onToggle, onRowClick, onSelect,
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
   isDragging = false, dropTargetPath = null, dragSource = null,
-  clipboard = null, cutSource = null, onCopyPath, onCopy, onCut, onPaste,
+  clipboard = null, cutSourcePaths = null, onCopyPath, onCopy, onCut, onPaste,
   dragWasActiveRef, onOpenTreeMenu, menuNodePath,
 }: {
   nodes: FileTreeNode[]
   expanded: Set<string>
   selectedFile: string | null
+  selectionPaths?: Set<string>
   onToggle: (path: string) => void
+  onRowClick?: (node: TreeNodeRef, opts: { ctrl: boolean }) => void
   onSelect: (path: string) => void
   onCreateFile: (parentPath: string) => void
   onCreateFolder: (parentPath: string) => void
-  onDelete: (path: string) => void
+  onDelete: (node: TreeNodeRef) => void
   onRename: (path: string) => void
   onUpload: (parentPath: string) => void
   fileStatuses: Map<string, string>
@@ -34,11 +36,11 @@ export function FileTreeView({
   isDragging?: boolean
   dropTargetPath?: string | null
   dragSource?: string | null
-  clipboard?: { path: string; cut: boolean; type: "file" | "directory"; name: string } | null
-  cutSource?: string | null
+  clipboard?: TreeClipboard
+  cutSourcePaths?: Set<string> | null
   onCopyPath?: (path: string) => void
-  onCopy?: (path: string, type: "file" | "directory", name: string) => void
-  onCut?: (path: string, type: "file" | "directory", name: string) => void
+  onCopy?: (node: TreeNodeRef) => void
+  onCut?: (node: TreeNodeRef) => void
   onPaste?: (targetParent: string) => void
   dragWasActiveRef?: React.MutableRefObject<boolean>
   onOpenTreeMenu?: (node: { path: string; type: "file" | "directory"; name: string }, x: number, y: number) => void
@@ -174,13 +176,13 @@ export function FileTreeView({
               data-path={node.path}
               data-type={node.type}
               className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-3 ${
-                menuNodePath === node.path ? "bg-accent" : selectedFile === node.path ? "bg-accent" : ""
+                menuNodePath === node.path || selectionPaths?.has(node.path) || selectedFile === node.path ? "bg-accent" : ""
               } ${
                 isDragging ? "" : ""
               } ${
                 isDragging && dragSource === node.path ? "opacity-40" : ""
               } ${
-                cutSource === node.path ? "opacity-40" : ""
+                cutSourcePaths?.has(node.path) ? "opacity-40" : ""
               }`}
               style={{ paddingLeft: `${8 + depth * 16}px` }}
               onPointerDown={(e) => onMobileRowPointerDown?.(e, { path: node.path, type: node.type, name: node.name })}
@@ -188,7 +190,7 @@ export function FileTreeView({
               onPointerLeave={cancelMobilePress}
               onPointerCancel={cancelMobilePress}
               onContextMenu={(e) => e.preventDefault()}
-              onClick={() => {
+              onClick={(e) => {
                 // Consume a completed drag's once-set flag so its release can't
                 // toggle/select the node under the release point.  (Cleared by the
                 // click that follows a completed drag; clearDrag is the fallback.)
@@ -196,11 +198,7 @@ export function FileTreeView({
                 // Swallow the click a long-press synthesizes on release — the
                 // menu is already open, don't also toggle/select the row.
                 if (mobilePressConsumedRef.current) { mobilePressConsumedRef.current = false; return }
-                if (node.type === "directory") {
-                  onToggle(node.path)
-                } else {
-                  onSelect(node.path)
-                }
+                onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey })
               }}
             >
               {node.type === "directory" ? (
@@ -245,21 +243,17 @@ export function FileTreeView({
                     data-path={node.path}
                     data-type={node.type}
                     className={`flex items-center gap-1 px-2 cursor-pointer transition-colors group select-none py-1 ${
-                      selectedFile === node.path ? "bg-accent" : ""
+                      selectionPaths?.has(node.path) || selectedFile === node.path ? "bg-accent" : ""
                     } ${
                       isDragging ? "" : "hover:bg-muted/50"
                     } ${
                       isDragging && dragSource === node.path ? "opacity-40" : ""
                     } ${
-                      cutSource === node.path ? "opacity-40" : ""
+                      cutSourcePaths?.has(node.path) ? "opacity-40" : ""
                     }`}
                     style={{ paddingLeft: `${8 + depth * 16}px` }}
-                    onClick={() => {
-                      if (node.type === "directory") {
-                        onToggle(node.path)
-                      } else {
-                        onSelect(node.path)
-                      }
+                    onClick={(e) => {
+                      onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey })
                     }}
                   />
                 }
@@ -316,11 +310,11 @@ export function FileTreeView({
                       <ClipboardCopy className="h-3.5 w-3.5" />
                       {t("clipboard.copyPath")}
                     </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onCopy?.(node.path, node.type, node.name)}>
+                    <ContextMenuItem onClick={() => onCopy?.({ path: node.path, type: node.type, name: node.name })}>
                       <ClipboardCopy className="h-3.5 w-3.5" />
                       {t("clipboard.copy")}
                     </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onCut?.(node.path, node.type, node.name)}>
+                    <ContextMenuItem onClick={() => onCut?.({ path: node.path, type: node.type, name: node.name })}>
                       <Scissors className="h-3.5 w-3.5" />
                       {t("clipboard.cut")}
                     </ContextMenuItem>
@@ -332,7 +326,7 @@ export function FileTreeView({
                     <ContextMenuItem onClick={() => onRename(node.path)}>
                       {t("rename.title")}
                     </ContextMenuItem>
-                    <ContextMenuItem variant="destructive" onClick={() => onDelete(node.path)}>
+                    <ContextMenuItem variant="destructive" onClick={() => onDelete({ path: node.path, type: node.type, name: node.name })}>
                       {t("common:delete")}
                     </ContextMenuItem>
                   </>
@@ -347,7 +341,9 @@ export function FileTreeView({
               nodes={node.children}
               expanded={expanded}
               selectedFile={selectedFile}
+              selectionPaths={selectionPaths}
               onToggle={onToggle}
+              onRowClick={onRowClick}
               onSelect={onSelect}
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
@@ -361,7 +357,7 @@ export function FileTreeView({
               dropTargetPath={dropTargetPath}
               dragSource={dragSource}
               clipboard={clipboard}
-              cutSource={cutSource}
+              cutSourcePaths={cutSourcePaths}
               onCopyPath={onCopyPath}
               onCopy={onCopy}
               onCut={onCut}

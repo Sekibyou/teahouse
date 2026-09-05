@@ -50,6 +50,7 @@ export const enWorkspace = {
   deleteConfirm: {
     title: "Confirm deletion",
     message: "Delete \"{{path}}\"? This action cannot be undone.",
+    messageMany: "Delete the {{count}} selected item(s)? This action cannot be undone.",
   },
 
   // Right-click menu · clipboard
@@ -60,9 +61,11 @@ export const enWorkspace = {
     paste: "Paste",
     copiedPath: "Instance path copied",
     copied: "Copied \"{{name}}\"",
+    copiedMany: "Copied {{count}} item(s)",
     pasted: "Pasted/moved \"{{name}}\"",
     copySuffix: " (copy)",
     cutActive: "Cut \"{{name}}\" — right-click a target to paste",
+    cutActiveMany: "Cut {{count}} item(s) — right-click a target to paste",
   },
   // Drag-and-drop upload status
   dropUpload: {

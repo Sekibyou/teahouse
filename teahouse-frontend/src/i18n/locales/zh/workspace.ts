@@ -50,6 +50,7 @@ export const zhWorkspace = {
   deleteConfirm: {
     title: "确认删除",
     message: "确定删除 \"{{path}}\" 吗？此操作不可撤销。",
+    messageMany: "确定删除选中的 {{count}} 项吗？此操作不可撤销。",
   },
 
   // 右键菜单 · 剪贴板
@@ -60,9 +61,11 @@ export const zhWorkspace = {
     paste: "粘贴",
     copiedPath: "已复制实例内路径",
     copied: "已复制「{{name}}」",
+    copiedMany: "已复制 {{count}} 项",
     pasted: "已粘贴/移动「{{name}}」",
     copySuffix: " (copy)",
     cutActive: "已剪切「{{name}}」，右键目标位置粘贴",
+    cutActiveMany: "已剪切 {{count}} 项，右键目标位置粘贴",
   },
   // 拖放上传状态
   dropUpload: {

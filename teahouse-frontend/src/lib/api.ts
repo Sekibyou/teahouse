@@ -349,6 +349,13 @@ export const instancesApi = {
     )
   },
 
+  copyEntry: async (instanceId: string, path: string, destParent: string, newName?: string) => {
+    return post<{ path: string; status: string }>(
+      `/api/instances/${instanceId}/files/copy?path=${encodeURIComponent(toBackendPath(path))}`,
+      { dest_parent: toBackendPath(destParent), new_name: newName },
+    )
+  },
+
   // Director session memory (.sessions/) — unified for all sessions
   getSessionMemory: async (instanceId: string, sessionId: string = "main", opts?: { limit?: number; offset?: number }) => {
     const params = new URLSearchParams()

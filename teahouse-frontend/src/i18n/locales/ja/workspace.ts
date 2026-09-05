@@ -50,6 +50,7 @@ export const jaWorkspace = {
   deleteConfirm: {
     title: "削除の確認",
     message: "\"{{path}}\" を削除しますか？この操作は取り消せません。",
+    messageMany: "選択した {{count}} 件を削除しますか？この操作は取り消せません。",
   },
 
   // 右クリックメニュー · クリップボード
@@ -60,9 +61,11 @@ export const jaWorkspace = {
     paste: "貼り付け",
     copiedPath: "インスタンス内パスをコピーしました",
     copied: "「{{name}}」をコピーしました",
+    copiedMany: "{{count}} 件をコピーしました",
     pasted: "「{{name}}」を貼り付け/移動しました",
     copySuffix: "_コピー",
     cutActive: "「{{name}}」を切り取りました。貼り付け先を右クリックしてください",
+    cutActiveMany: "{{count}} 件を切り取りました。貼り付け先を右クリックしてください",
   },
   // ドラッグ&ドロップアップロード状態
   dropUpload: {

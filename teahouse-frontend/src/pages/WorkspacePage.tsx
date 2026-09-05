@@ -28,8 +28,9 @@ import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
-import type { FileTreeNode } from "@/lib/types"
+import type { FileTreeNode, TreeNodeRef, TreeClipboard } from "@/lib/types"
 import { applyFileChange } from "@/lib/fileTreeReducer"
+import { collectAllEntries, pruneNestedItems, isEditableTarget } from "@/lib/fileTreeOps"
 import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
 import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
@@ -125,9 +126,15 @@ export function WorkspacePage() {
   const dragWasActiveRef = useRef(false)
 
   // ---- Clipboard for copy / cut / paste (ContextMenu on the file tree) ----
-  // Stores the copied/cut entry. `path` is the frontend root/... form; the
-  // backend-relative path is derived via toBackendPath() at use time.
-  const [clipboard, setClipboard] = useState<{ path: string; cut: boolean; type: "file" | "directory"; name: string } | null>(null)
+  // Multi-entry: `items` may hold several copied/cut paths (multi-select).
+  // Paths are the frontend root/... form; the backend-relative path is derived
+  // via toBackendPath() at use time.
+  const [clipboard, setClipboard] = useState<TreeClipboard>(null)
+  // 树选中集：独立于 selectedFile(正在打开编辑的文件)，可单可多，目录/文件皆可选。
+  const [selection, setSelection] = useState<TreeNodeRef[]>([])
+  const selectionPaths = useMemo(() => new Set(selection.map(s => s.path)), [selection])
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
   // Blank-area right-click menu (root operations). Positioned at the cursor.
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
   // Mobile per-node "⋯" menu (fixed-position, rootMenu-style). Positioned at the icon.
@@ -175,7 +182,7 @@ export function WorkspacePage() {
   const [createName, setCreateName] = useState("")
 
   // Rename / delete
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteTargets, setDeleteTargets] = useState<TreeNodeRef[]>([])
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
 
@@ -267,6 +274,8 @@ export function WorkspacePage() {
     setRootMenu(null)
     setClipboard(null)
     setExternalDrop(null)
+    setSelection([])
+    setDeleteTargets([])
   }, [instId])
 
   // Esc closes the blank-area root context menu / mobile per-node menu.
@@ -324,26 +333,42 @@ export function WorkspacePage() {
     applyLocalStructural({ type: "created", path: fullPath, nodeType: showCreate.type })
   }
 
-  const handleDeleteEntry = async (path: string) => {
-    setDeleteTarget(path)
+  // 右键单节点删除：若该节点已在 selection 内则作用整个 selection，否则收敛单选。
+  const handleDeleteEntry = (node: TreeNodeRef) => {
+    const inSel = selectionRef.current.some(s => s.path === node.path)
+    const targets = inSel ? pruneNestedItems(selectionRef.current) : [node]
+    if (!inSel) setSelection([node])
+    beginDelete(targets)
+  }
+
+  // 打开多选删除确认。targets 传前会先收敛 selection 为这些项。
+  const beginDelete = (targets: TreeNodeRef[]) => {
+    const pruned = pruneNestedItems(targets)
+    if (!pruned.length) return
+    setDeleteTargets(pruned)
   }
 
   const confirmDelete = async () => {
-    if (!instId || !deleteTarget) return
-    const path = deleteTarget
-    setDeleteTarget(null)
-    const res = await instancesApi.deleteEntry(instId, path)
-    if (!res.ok) return
-    if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
-      setSelectedFile(null)
-      setIsImageOpen(false)
-      setImageDataUri(null)
-      setImageMeta(null)
-      setFileContent("")
-      setEditedContent("")
-      setIsDirty(false)
+    if (!instId || !deleteTargets.length) return
+    const targets = deleteTargets
+    setDeleteTargets([])
+    for (const it of pruneNestedItems(targets)) {
+      const path = it.path
+      const res = await instancesApi.deleteEntry(instId, path)
+      if (!res.ok) continue
+      if (selectedFile === path || selectedFile?.startsWith(path + "/")) {
+        setSelectedFile(null)
+        setIsImageOpen(false)
+        setImageDataUri(null)
+        setImageMeta(null)
+        setFileContent("")
+        setEditedContent("")
+        setIsDirty(false)
+      }
+      applyLocalStructural({ type: "deleted", path })
     }
-    applyLocalStructural({ type: "deleted", path })
+    // 清理 selection 里已消失的路径
+    setSelection(prev => prev.filter(s => !pruneNestedItems(targets).some(t => t.path === s.path || s.path.startsWith(t.path + "/"))))
   }
 
   const handleRenameEntry = (path: string) => {
@@ -462,6 +487,7 @@ export function WorkspacePage() {
       setIsDirty(false)
       setEditorView("code")
       setSelectedFile(path)
+      setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
       return
     }
 
@@ -478,6 +504,7 @@ export function WorkspacePage() {
     setIsDirty(false)
     setEditorView("code")
     setSelectedFile(path)
+    setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
   }, [instId])
 
   // Reload the open file from disk (external change). Remounts only when content
@@ -582,27 +609,37 @@ export function WorkspacePage() {
     }
   }, [t])
 
-  const copyEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
-    setClipboard({ path, cut: false, type, name })
-    toast.success(t("clipboard.copied", { name }))
+  const copyEntry = useCallback((items: TreeNodeRef[]) => {
+    const pruned = pruneNestedItems(items)
+    if (!pruned.length) return
+    setClipboard({ items: pruned, cut: false })
+    if (pruned.length === 1) toast.success(t("clipboard.copied", { name: pruned[0].name }))
+    else toast.success(t("clipboard.copiedMany", { count: pruned.length }))
   }, [t])
 
-  const cutEntry = useCallback((path: string, type: "file" | "directory", name: string) => {
-    setClipboard({ path, cut: true, type, name })
-    toast.success(t("clipboard.cutActive", { name }))
+  const cutEntry = useCallback((items: TreeNodeRef[]) => {
+    const pruned = pruneNestedItems(items)
+    if (!pruned.length) return
+    setClipboard({ items: pruned, cut: true })
+    if (pruned.length === 1) toast.success(t("clipboard.cutActive", { name: pruned[0].name }))
+    else toast.success(t("clipboard.cutActiveMany", { count: pruned.length }))
   }, [t])
 
-  // Find a node in the tree by its frontend path, returning its children.
-  const findNodeChildren = useCallback((nodes: FileTreeNode[], path: string): FileTreeNode[] | null => {
-    for (const n of nodes) {
-      if (n.path === path) return n.children ?? []
-      if (n.children) {
-        const r = findNodeChildren(n.children, path)
-        if (r) return r
-      }
-    }
-    return null
-  }, [])
+  // 右键单节点复制/剪切：若该节点已在 selection 内则作用整个 selection，
+  // 否则收敛为单选再作用于该节点（VSCode 右键语义）。
+  const copyFromNode = useCallback((node: TreeNodeRef) => {
+    const inSel = selectionRef.current.some(s => s.path === node.path)
+    const items = inSel ? pruneNestedItems(selectionRef.current) : [node]
+    if (!inSel) setSelection([node])
+    copyEntry(items)
+  }, [copyEntry])
+
+  const cutFromNode = useCallback((node: TreeNodeRef) => {
+    const inSel = selectionRef.current.some(s => s.path === node.path)
+    const items = inSel ? pruneNestedItems(selectionRef.current) : [node]
+    if (!inSel) setSelection([node])
+    cutEntry(items)
+  }, [cutEntry])
 
   // Check whether a frontend path already exists anywhere in the tree.
   const pathExists = useCallback((nodes: FileTreeNode[], path: string): boolean => {
@@ -630,63 +667,59 @@ export function WorkspacePage() {
     }
   }, [fileTree, pathExists, t])
 
-  // Recursively copy a file/dir entry (frontend paths). Used by the non-cut paste.
-  const duplicateEntry = useCallback(async (srcPath: string, destPath: string, type: "file" | "directory"): Promise<boolean> => {
+  // 把一个条目复制进 `targetParent` 父目录；目标名按 uniquePath 去重防覆盖。
+  // 若 targetParent 落在源目录自身内（原地复制自己的目录 → 想产出同级 copy），
+  // 回退到源所在的父目录做 sibling 复制，对齐 VSCode"在自身位置复制"语义。
+  const copyOneInto = useCallback(async (src: TreeNodeRef, targetParent: string): Promise<boolean> => {
     if (!instId) return false
-    if (type === "file") {
-      const contentRes = await instancesApi.readText(instId, srcPath)
-      if (!contentRes.ok) return false
-      await instancesApi.createEntry(instId, destPath, "file")
-      await instancesApi.writeFile(instId, destPath, contentRes.data!.content)
-      return true
-    }
-    // directory
-    await instancesApi.createEntry(instId, destPath, "directory")
-    const kids = findNodeChildren(fileTree, srcPath) ?? []
-    for (const child of kids) {
-      const ok = await duplicateEntry(
-        child.path,
-        `${destPath}/${child.path.split("/").pop()}`,
-        child.type,
-      )
-      if (!ok) return false
-    }
-    return true
-  }, [instId, findNodeChildren, fileTree])
+    const inSelf = targetParent === src.path || targetParent.startsWith(src.path + "/")
+    const realTarget = inSelf ? parentOf(src.path) : targetParent
+    const dest = uniquePath(realTarget, src.name)
+    const res = await instancesApi.copyEntry(instId, src.path, realTarget, dest.split("/").pop())
+    return res.ok
+  }, [instId, uniquePath, parentOf])
 
-  // Paste the clipboard item into `targetParent` ("" = root). For a file paste
-  // target it lands in the file's parent dir; a directory paste goes inside.
+  // Paste the clipboard into `targetParent` ("" = root). cut → move each item
+  // in; copy → duplicate each into the target. Multi-item via iterate.
   const pasteEntry = useCallback(async (targetParent: string) => {
     if (!clipboard || !instId) return
     const clip = clipboard
     const target = targetParent
+    const items = pruneNestedItems(clip.items)
+    if (!items.length) return
 
     if (clip.cut) {
-      if (parentOf(clip.path) === target) return // already there
       // Refuse to move a folder into its own subtree (same rule as drag & drop).
-      if (target === clip.path || target.startsWith(clip.path + "/")) {
-        toast.error(t("common:failed"))
-        return
+      for (const it of items) {
+        if (target === it.path || target.startsWith(it.path + "/")) {
+          toast.error(t("common:failed"))
+          return
+        }
       }
-      const res = await instancesApi.moveEntry(instId, clip.path, target)
-      if (!res.ok) { toast.error(res.error || t("common:failed")); return }
-      // Remap the open file if it is the moved entry or lives under it.
-      if (selectedFile === clip.path || selectedFile?.startsWith(clip.path + "/")) {
-        const base = clip.path.split("/").pop() ?? clip.path
-        setSelectedFile(target ? `${target}/${base}` : base)
+      for (const it of items) {
+        if (parentOf(it.path) === target) continue // already there
+        const res = await instancesApi.moveEntry(instId, it.path, target)
+        if (!res.ok) { toast.error(res.error || t("common:failed")); continue }
+        // Remap the open file if it is the moved entry or lives under it.
+        if (selectedFile === it.path || selectedFile?.startsWith(it.path + "/")) {
+          const base = it.path.split("/").pop() ?? it.path
+          setSelectedFile(target ? `${target}/${base}` : base)
+        }
       }
       setClipboard(null)
+      setSelection(prev => prev.filter(s => !items.some(it => it.path === s.path)))
       await refresh()
-      toast.success(t("clipboard.pasted", { name: clip.name }))
+      toast.success(t("clipboard.pasted", { name: items.map(i => i.name).join(", ") }))
       return
     }
 
-    // copy (non-destructive) — dedupe the destination name
-    const destPath = uniquePath(target, clip.name)
-    const ok = await duplicateEntry(clip.path, destPath, clip.type)
-    if (ok) { await refresh(); toast.success(t("clipboard.pasted", { name: clip.name })) }
-    else toast.error(t("common:failed"))
-  }, [clipboard, instId, parentOf, selectedFile, uniquePath, duplicateEntry, refresh, t])
+    // copy (non-destructive) — dedupe each destination name.
+    for (const it of items) {
+      await copyOneInto(it, target)
+    }
+    await refresh()
+    toast.success(t("clipboard.pasted", { name: items.map(i => i.name).join(", ") }))
+  }, [clipboard, instId, parentOf, selectedFile, copyOneInto, pruneNestedItems, refresh, t])
 
   // Given a screen point, resolve the drop target directory ("" = root).
   // A file acts as a proxy for its parent directory (landing beside it).
@@ -921,6 +954,80 @@ export function WorkspacePage() {
     })
   }
 
+  // ---- Tree row click (VSCode-like). Single-click selects; Ctrl toggles multi. ----
+  // 单击：单选选中该节点；文件另 openFile 切编辑器。目录保留展开/折叠。
+  // Ctrl+单击：把节点加/减进多选集，不进 openFile/toggle。
+  const toggleSelection = useCallback((node: TreeNodeRef) => {
+    setSelection(prev => {
+      if (prev.some(s => s.path === node.path)) return prev.filter(s => s.path !== node.path)
+      return [...prev, node]
+    })
+  }, [])
+
+  const handleNodeClick = useCallback((node: TreeNodeRef, opts: { ctrl: boolean }) => {
+    if (opts.ctrl) {
+      toggleSelection(node)
+      return
+    }
+    setSelection([node])
+    if (node.type === "file") openFile(node.path)
+    else toggleExpand(node.path)
+  }, [toggleSelection, openFile, toggleExpand])
+
+  // 焦点在编辑器时，把树选中集收敛为"编辑器当前打开的文件"单选（VSCode 语义）。
+  const syncSelectionToOpenFile = useCallback(() => {
+    const openPath = selectedFileRef.current
+    if (!openPath) return
+    setSelection([{ path: openPath, type: "file", name: openPath.split("/").pop() || openPath }])
+  }, [])
+
+  // 键盘粘贴目标锚点：selection 最后一项 → 目录则其内、文件则其父目录；空则 root。
+  const pasteAnchor = useCallback((): string => {
+    const sel = selectionRef.current
+    if (!sel.length) return ROOT
+    const last = sel[sel.length - 1]
+    return last.type === "directory" ? last.path : parentOf(last.path)
+  }, [parentOf])
+
+  // 文件树键盘快捷键（VSCode 式）：Ctrl+A/C/X/V 与 Del/Backspace。
+  // 焦点在编辑器/输入框时让位文本剪贴板，并把树选中集收敛为打开的文件。
+  useEffect(() => {
+    if (!instId) return
+    const handler = (e: KeyboardEvent) => {
+      // 命中那一瞬读 activeElement；可编辑区 → 让位文本剪贴板 + 同步选中。
+      if (isEditableTarget(document.activeElement)) {
+        syncSelectionToOpenFile()
+        return
+      }
+      const mod = e.ctrlKey || e.metaKey
+      const key = e.key.toLowerCase()
+      if (e.key === "Escape") return
+      // Ctrl+S 由上方 effect / Monaco action 处理，这里不抢占。
+      if (mod && key === "s") return
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const sel = selectionRef.current
+        if (sel.length) { e.preventDefault(); beginDelete(sel) }
+        return
+      }
+      if (!mod) return
+      if (key === "a") {
+        e.preventDefault()
+        setSelection(collectAllEntries(fileTreeRef.current))
+      } else if (key === "c") {
+        const sel = pruneNestedItems(selectionRef.current)
+        if (sel.length) { e.preventDefault(); copyEntry(sel) }
+      } else if (key === "x") {
+        const sel = pruneNestedItems(selectionRef.current)
+        if (sel.length) { e.preventDefault(); cutEntry(sel) }
+      } else if (key === "v") {
+        e.preventDefault()
+        pasteEntry(pasteAnchor())
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, syncSelectionToOpenFile, beginDelete])
+
   // Chat panel resize via drag
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -951,11 +1058,11 @@ export function WorkspacePage() {
       onNewFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName(""); setTreeMenu(null) }}
       onUpload={handleMenuUpload}
       onCopyPath={(path) => { copyPathEntry(path); setTreeMenu(null) }}
-      onCopy={(path, type, name) => { copyEntry(path, type, name); setTreeMenu(null) }}
-      onCut={(path, type, name) => { cutEntry(path, type, name); setTreeMenu(null) }}
+      onCopy={(node) => { copyFromNode(node); setTreeMenu(null) }}
+      onCut={(node) => { cutFromNode(node); setTreeMenu(null) }}
       onPaste={(target) => { pasteEntry(target); setTreeMenu(null) }}
       onRename={(path) => { handleRenameEntry(path); setTreeMenu(null) }}
-      onDelete={(path) => { handleDeleteEntry(path); setTreeMenu(null) }}
+      onDelete={(node) => { handleDeleteEntry(node); setTreeMenu(null) }}
       onClose={() => setTreeMenu(null)}
     />
   )
@@ -1152,7 +1259,9 @@ export function WorkspacePage() {
                     nodes={fileTree}
                     expanded={expanded}
                     selectedFile={selectedFile}
+                    selectionPaths={selectionPaths}
                     onToggle={toggleExpand}
+                    onRowClick={handleNodeClick}
                     onSelect={(path) => {
                       setShowFileTree(false)
                       openFile(path)
@@ -1168,10 +1277,10 @@ export function WorkspacePage() {
                     dropTargetPath={externalDrop ? externalDrop.target : dropTargetPath}
                     dragSource={dragInfo?.srcPath ?? null}
                     clipboard={clipboard}
-                    cutSource={clipboard?.cut ? clipboard.path : null}
+                    cutSourcePaths={clipboard?.cut ? new Set(clipboard.items.map(i => i.path)) : null}
                     onCopyPath={copyPathEntry}
-                    onCopy={copyEntry}
-                    onCut={cutEntry}
+                    onCopy={copyFromNode}
+                    onCut={cutFromNode}
                     onPaste={pasteEntry}
                     dragWasActiveRef={dragWasActiveRef}
                     onOpenTreeMenu={(node, x, y) => setTreeMenu({ node, x, y })}
@@ -1223,13 +1332,16 @@ export function WorkspacePage() {
 
         {/* Confirm delete dialog */}
         <ConfirmDialog
-          open={deleteTarget !== null}
+          open={deleteTargets.length > 0}
           title={t("deleteConfirm.title")}
-          message={t("deleteConfirm.message", { path: deleteTarget })}
+          message={deleteTargets.length > 1
+            ? t("deleteConfirm.messageMany", { count: deleteTargets.length })
+            : t("deleteConfirm.message", { path: deleteTargets[0]?.path ?? "" })}
           variant="destructive"
           confirmText={t("common:delete")}
+          confirmOnEnter
           onConfirm={confirmDelete}
-          onCancel={() => setDeleteTarget(null)}
+          onCancel={() => setDeleteTargets([])}
         />
 
         {/* Export 对话框（移动全屏/桌面弹窗统一由 ExportDialog 自治组件渲染） */}
@@ -1336,7 +1448,9 @@ export function WorkspacePage() {
                   nodes={fileTree}
                   expanded={expanded}
                   selectedFile={selectedFile}
+                  selectionPaths={selectionPaths}
                   onToggle={toggleExpand}
+                  onRowClick={handleNodeClick}
                   onSelect={(path) => {
                     openFile(path)
                   }}
@@ -1350,10 +1464,10 @@ export function WorkspacePage() {
                   dropTargetPath={externalDrop ? externalDrop.target : dropTargetPath}
                   dragSource={dragInfo?.srcPath ?? null}
                   clipboard={clipboard}
-                  cutSource={clipboard?.cut ? clipboard.path : null}
+                  cutSourcePaths={clipboard?.cut ? new Set(clipboard.items.map(i => i.path)) : null}
                   onCopyPath={copyPathEntry}
-                  onCopy={copyEntry}
-                  onCut={cutEntry}
+                  onCopy={copyFromNode}
+                  onCut={cutFromNode}
                   onPaste={pasteEntry}
                 />
               )}
@@ -1535,13 +1649,16 @@ export function WorkspacePage() {
 
       {/* Confirm delete dialog */}
       <ConfirmDialog
-        open={deleteTarget !== null}
+        open={deleteTargets.length > 0}
         title={t("deleteConfirm.title")}
-        message={t("deleteConfirm.message", { path: deleteTarget })}
+        message={deleteTargets.length > 1
+          ? t("deleteConfirm.messageMany", { count: deleteTargets.length })
+          : t("deleteConfirm.message", { path: deleteTargets[0]?.path ?? "" })}
         variant="destructive"
         confirmText={t("common:delete")}
+        confirmOnEnter
         onConfirm={confirmDelete}
-        onCancel={() => setDeleteTarget(null)}
+        onCancel={() => setDeleteTargets([])}
       />
 
       <ExportDialog

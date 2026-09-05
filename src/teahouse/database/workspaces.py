@@ -889,6 +889,46 @@ def move_file_or_dir(instance_dir: Path, file_path: str, dest_parent: str) -> st
     return str(target.relative_to(instance_dir.resolve())).replace("\\", "/")
 
 
+def copy_file_or_dir(instance_dir: Path, file_path: str, dest_parent: str, new_name: str | None = None) -> str:
+    """Copy a file/dir into ``dest_parent``, optionally under a new basename.
+
+    When ``new_name`` is given it must be a plain name (no path separators) and
+    is used as the destination basename; otherwise the source basename is kept.
+    Recursively copies directories via copytree, so binary assets are preserved.
+    Returns the new relative path. Raises FileNotFoundError / FileExistsError /
+    ValueError / OSError on failure.
+    """
+    full = _resolve_full(instance_dir, file_path)
+    if not full.exists():
+        raise FileNotFoundError(file_path)
+
+    dest = _resolve_full(instance_dir, dest_parent)
+    if not dest.is_dir():
+        raise ValueError("目标不是目录")
+
+    target_name = full.name
+    if new_name is not None:
+        new_name = new_name.strip()
+        if not new_name or "/" in new_name or "\\" in new_name:
+            raise ValueError("新名称不能为空，且不能包含路径分隔符")
+        target_name = new_name
+
+    # Forbid copying an entry into itself or one of its own descendants.
+    full_res = str(full.resolve())
+    dest_res = str(dest.resolve())
+    if dest_res == full_res or dest_res.startswith(full_res + os.sep):
+        raise ValueError("不能复制到自身或其内部")
+
+    target = dest / target_name
+    if target.exists():
+        raise FileExistsError(str(target))
+    if full.is_dir():
+        shutil.copytree(str(full), str(target))
+    else:
+        shutil.copy2(str(full), str(target))
+    return str(target.relative_to(instance_dir.resolve())).replace("\\", "/")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

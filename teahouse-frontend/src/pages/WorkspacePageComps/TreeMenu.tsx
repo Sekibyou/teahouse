@@ -5,6 +5,7 @@ import {
   Pencil, Plus, Scissors, Trash2, Upload,
 } from "lucide-react"
 import { UploadMenuItem } from "./UploadMenuItem"
+import type { TreeClipboard, TreeNodeRef } from "@/lib/types"
 
 // Parent directory of a frontend path ("" = root).
 function parentOf(path: string) {
@@ -29,16 +30,16 @@ export function TreeMenu({
   onClose,
 }: {
   treeMenu: { node: TreeMenuNode; x: number; y: number }
-  clipboard: { path: string; cut: boolean; type: "file" | "directory"; name: string } | null
+  clipboard: TreeClipboard
   onNewFile: (parentPath: string) => void
   onNewFolder: (parentPath: string) => void
   onUpload: (parentPath: string, file: File) => void
   onCopyPath: (path: string) => void
-  onCopy: (path: string, type: "file" | "directory", name: string) => void
-  onCut: (path: string, type: "file" | "directory", name: string) => void
+  onCopy: (node: TreeNodeRef) => void
+  onCut: (node: TreeNodeRef) => void
   onPaste: (targetParent: string) => void
   onRename: (path: string) => void
-  onDelete: (path: string) => void
+  onDelete: (node: TreeNodeRef) => void
   onClose: () => void
 }) {
   const { t } = useTranslation("workspace")
@@ -122,11 +123,11 @@ export function TreeMenu({
           <ClipboardCopy className="h-4 w-4 shrink-0" />
           {t("clipboard.copyPath")}
         </button>
-        <button className={itemCls} onClick={() => onCopy(node.path, node.type, node.name)}>
+        <button className={itemCls} onClick={() => onCopy(node)}>
           <ClipboardCopy className="h-4 w-4 shrink-0" />
           {t("clipboard.copy")}
         </button>
-        <button className={itemCls} onClick={() => onCut(node.path, node.type, node.name)}>
+        <button className={itemCls} onClick={() => onCut(node)}>
           <Scissors className="h-4 w-4 shrink-0" />
           {t("clipboard.cut")}
         </button>
@@ -143,7 +144,7 @@ export function TreeMenu({
           <Pencil className="h-4 w-4 shrink-0" />
           {t("rename.title")}
         </button>
-        <button className={`${itemCls} text-destructive hover:bg-destructive/10 hover:text-destructive`} onClick={() => onDelete(node.path)}>
+        <button className={`${itemCls} text-destructive hover:bg-destructive/10 hover:text-destructive`} onClick={() => onDelete(node)}>
           <Trash2 className="h-4 w-4 shrink-0" />
           {t("common:delete")}
         </button>

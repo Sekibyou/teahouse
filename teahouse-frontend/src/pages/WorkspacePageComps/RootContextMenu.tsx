@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import { UploadMenuItem } from "./UploadMenuItem"
+import type { TreeClipboard } from "@/lib/types"
 
 export function RootContextMenu({
   x,
@@ -13,7 +14,7 @@ export function RootContextMenu({
 }: {
   x: number
   y: number
-  clipboard: { path: string; cut: boolean; type: "file" | "directory"; name: string } | null
+  clipboard: TreeClipboard
   onNewFile: () => void
   onNewFolder: () => void
   onUpload: (parentPath: string, file: File) => void

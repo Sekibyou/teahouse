@@ -44,6 +44,16 @@ export interface FileTreeNode {
   children?: FileTreeNode[]
 }
 
+// 树条目引用（多选/剪贴板用），携带节点操作所需字段。
+export interface TreeNodeRef {
+  path: string
+  type: "file" | "directory"
+  name: string
+}
+
+// 多条目剪贴板。cut=true 剪切（粘贴后清空），否则复制（可多次粘贴）。
+export type TreeClipboard = { items: TreeNodeRef[]; cut: boolean } | null
+
 export interface ActiveSession {
   instance: {
     id: string
