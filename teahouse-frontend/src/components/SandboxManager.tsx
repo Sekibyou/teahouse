@@ -8,6 +8,7 @@ import { consumeVars } from "@/lib/teahouseVars"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useThemeStore } from "@/stores/themeStore"
+import { useUiScaleStore } from "@/stores/uiScaleStore"
 import { useTranslation } from "react-i18next"
 import i18n from "@/i18n/config"
 
@@ -57,6 +58,13 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
   useEffect(() => {
     sendToSandbox("theme.change", { dark: hostIsDark })
   }, [hostIsDark, sendToSandbox])
+
+  // ---- host font scale → sandbox: relay --ui-scale multiplier so sandbox prose
+  //       can follow (author opts in via theme.css rem/font var; see sandbox-builder) ----
+  const hostScale = useUiScaleStore((s) => s.multiplier)
+  useEffect(() => {
+    sendToSandbox("font-scale", { scale: hostScale })
+  }, [hostScale, sendToSandbox])
 
   // ---- text style rules ----
   const reloadTextStyleRules = useCallback(async () => {
@@ -200,6 +208,10 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
       // sandbox (re)booted — (re)send current host theme so the fresh document gets it
       iframe.contentWindow?.postMessage(
         { _type: "_teahouse_event", _event: "theme.change", _data: { dark: hostIsDark } },
+        "*"
+      )
+      iframe.contentWindow?.postMessage(
+        { _type: "_teahouse_event", _event: "font-scale", _data: { scale: hostScale } },
         "*"
       )
       return
@@ -377,7 +389,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
         _error: err instanceof Error ? err.message : "Unknown error",
       }, "*")
     }
-  }, [instanceId, instanceName, onSend, onOpenDirector, textStyleRules, hostIsDark])
+  }, [instanceId, instanceName, onSend, onOpenDirector, textStyleRules, hostIsDark, hostScale])
 
   useEffect(() => {
     window.addEventListener("message", handleMessage)

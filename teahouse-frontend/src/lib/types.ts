@@ -162,6 +162,7 @@ export interface AppSettings {
   max_retries: number
   max_tool_rounds: number
   max_parse_depth: number
+  ui_scale: string
 }
 
 export interface AvailableModel {

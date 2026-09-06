@@ -4,6 +4,7 @@ import * as Monaco from "monaco-editor"
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
 import { useTranslation } from "react-i18next"
 import i18n from "@/i18n/config"
+import { useUiScaleStore } from "@/stores/uiScaleStore"
 
 // ---- Local Monaco bundle (no CDN) ----
 // Bundle Monaco locally via Vite and hand the instance to @monaco-editor/react,
@@ -441,6 +442,8 @@ export function MonacoEditor({
   const [editorReady, setEditorReady] = useState(false)
   // The editor's own buffer, mirrored only to drive diff decorations.
   const [currentValue, setCurrentValue] = useState(defaultValue)
+  const uiMultiplier = useUiScaleStore((s) => s.multiplier)
+  const scaledFontSize = Math.round(13 * uiMultiplier)
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor
@@ -510,7 +513,10 @@ export function MonacoEditor({
 
   const mergedOptions: Monaco.editor.IStandaloneEditorConstructionOptions = useMemo(() => ({
     minimap: { enabled: minimap },
-    fontSize: 13,
+    // 全局字号缩放 —— @monaco-editor/react 在 options 引用变化时会对已挂载
+    // 实例 updateOptions，故乘数进入 deps 即可实时跟随后台切档。调用方显式
+    // 传入的 options.fontSize 仍可覆盖（...options 在后）。
+    fontSize: scaledFontSize,
     lineNumbers: "on",
     scrollBeyondLastLine: false,
     wordWrap: "on",
@@ -528,7 +534,7 @@ export function MonacoEditor({
       invisibleCharacters: false,
     },
     ...options,
-  }), [minimap, readOnly, options])
+  }), [minimap, readOnly, options, scaledFontSize])
 
   return (
     <div className={className} style={{ height, width: "100%" }}>

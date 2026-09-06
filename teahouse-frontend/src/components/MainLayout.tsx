@@ -13,6 +13,8 @@ import { LoginPage } from "@/pages/LoginPage"
 import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
 import { useNewVersion } from "@/stores/versionStore"
+import { useUiScaleStore } from "@/stores/uiScaleStore"
+import { appSettingsApi } from "@/lib/api"
 
 export function MainLayout() {
   const { t } = useTranslation("misc")
@@ -28,6 +30,22 @@ export function MainLayout() {
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
   const newVersion = useNewVersion()
+  const setScaleId = useUiScaleStore((s) => s.setScaleId)
+  const resetScale = useUiScaleStore((s) => s.reset)
+
+  // 登录后拉取用户字号档并应用到 DOM；未认证（登出）时复位到默认档，
+  // 避免上一账号的字号残留到下一账号/登录页。
+  useEffect(() => {
+    if (!isAuthenticated || isLoading) {
+      resetScale()
+      return
+    }
+    let alive = true
+    appSettingsApi.get().then((res) => {
+      if (alive && res.ok && res.data?.ui_scale) setScaleId(res.data.ui_scale)
+    })
+    return () => { alive = false }
+  }, [isAuthenticated, isLoading, setScaleId, resetScale])
 
   useEffect(() => {
     if (isLoading) return

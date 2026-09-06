@@ -436,6 +436,7 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 | `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
 | `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |
+| `font-scale` | `{ scale: number }` | 宿主在 设置→通用设置 调字号档位时推送（初次挂载 / iframe 重建后也会补推当前值）。`scale` 是宿主 `--ui-scale` 的乘数（<1 缩小、>1 放大，默认为 1）。沙盒**是否跟随由作者决定**：想跟随宿主字号就用 rem / 字号 CSS 变量做基准（见下），不想跟随可无视此事件 |
 
 #### 跟随宿主主题（`theme.change`）
 
@@ -464,6 +465,37 @@ Teahouse.on('theme.change', function(ev) { applyTheme(!!ev.dark); });
 - 事件在**初次挂载 / iframe 重建后**也会补推一次当前主题，所以组件无需自行拉初始值——订阅后 `theme.change` 一定会到。
 - 宿主切主题**不重建 iframe**（只在变更时发一次事件），所以沙盒内 DOM 状态保留，`applyTheme` 原地换肤即可。
 - 让所有组件统一通过 CSS 变量换肤，比每个组件单独监听更省事；若某组件要完全不同的配色，再单独监听 `theme.change`。
+
+#### 跟随宿主字号（`font-scale`）
+
+沙盒同样读不到宿主的 `--ui-scale`。想让正文/面板跟随宿主字号档位，**关键在于实例 CSS 从一开始就用地基字号变量（rem 或 CSS 变量）做基准**，而不是把 px 写死在每个组件里——否则宿主无法强制放大已固定 px 的字号。推荐：抽一个 `--font-scale` 变量并在 `theme.css` 里订阅宿主 `font-scale` 事件回填，让所有用它的字号（含 rem）整体缩放：
+
+```js
+// theme-proxy.js — 跟随宿主字号档位
+Teahouse.on('font-scale', function(ev) {
+  var s = (typeof ev.scale === 'number' && ev.scale > 0) ? ev.scale : 1;
+  document.documentElement.style.setProperty('--font-scale', s);
+});
+```
+
+```css
+/* theme.css —— 正文/面板字号一律经 --font-scale 放大 */
+:root {
+  --font-scale: 1;
+  /* 1rem 基准上乘宿主乘数：宿主调大字号，正文/卡片文本自动跟随 */
+  --text: calc(1rem * var(--font-scale));
+  --text-lg: calc(1.15rem * var(--font-scale));
+  --text-sm: calc(0.875rem * var(--font-scale));
+}
+/* 组件用 rem 或 var(--text*) 设字号，不要裸写 px；字号抽到变量便于全局缩放 */
+.room-text { font-size: var(--text); }
+```
+
+**要点**：
+- `font-scale` 与 `theme.change` 一样在**初次挂载 / iframe 重建后补推一次**，订阅即得当前值，无需自行拉初始。
+- 宿主切字号**不重建 iframe**，沙盒原地改根 CSS 变量即可即时生效。
+- 用 rem 的组件会在浏览器默认 16px 基准上乘 `--font-scale`；若想要**更大范围**的整块缩放（连 rem 的间距也一起），可直接改根 `font-size` 而非只设字号变量，但那样会连布局间距一起放大——通常只想要正文可读性时选字号变量即可。
+- 不跟随也合法：某个 canvas / 特殊组件想固定字号，无视 `font-scale` 事件、维持自己的 px 即可。
 
 ### 流式草稿（`Teahouse.currentDraft`）
 

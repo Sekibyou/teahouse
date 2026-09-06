@@ -41,10 +41,22 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* 字号缩放 —— 档位把 --ui-scale 乘到 rem 上（runtime 由 uiScaleStore 写 :root）。
+     text-* 类只影响字号不影响布局间距，故缩字号不动布局。 */
+  --text-xs: calc(0.75rem * var(--ui-scale));
+  --text-sm: calc(0.875rem * var(--ui-scale));
+  --text-base: calc(1rem * var(--ui-scale));
+  --text-lg: calc(1.125rem * var(--ui-scale));
+  --text-xl: calc(1.25rem * var(--ui-scale));
+  --text-2xl: calc(1.5rem * var(--ui-scale));
+  --text-3xl: calc(1.875rem * var(--ui-scale));
+  --text-4xl: calc(2.25rem * var(--ui-scale));
 }
 
 :root {
   --radius: 0.625rem;
+  --ui-scale: 1;
   --background: oklch(0.97 0.006 85);
   --foreground: oklch(0.24 0.02 55);
   --card: oklch(0.995 0.003 90);
