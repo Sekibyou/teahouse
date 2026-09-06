@@ -30,7 +30,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { FileTreeNode, TreeNodeRef, TreeClipboard, UndoableOp, TrashItem } from "@/lib/types"
 import { applyFileChange } from "@/lib/fileTreeReducer"
-import { collectAllEntries, pruneNestedItems, isEditableTarget } from "@/lib/fileTreeOps"
+import { collectAllEntries, pruneNestedItems } from "@/lib/fileTreeOps"
 import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
 import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
@@ -132,6 +132,9 @@ export function WorkspacePage() {
   const [clipboard, setClipboard] = useState<TreeClipboard>(null)
   // 树选中集：独立于 selectedFile(正在打开编辑的文件)，可单可多，目录/文件皆可选。
   const [selection, setSelection] = useState<TreeNodeRef[]>([])
+  // 文件树容器根：可聚焦门控——树快捷键仅当焦点落在这里才生效，
+  // 其余文本区域（导演对话等只读区）的 Ctrl+C/V 让位原生文本剪贴板。
+  const treeRootRef = useRef<HTMLElement | null>(null)
   const selectionPaths = useMemo(() => new Set(selection.map(s => s.path)), [selection])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
@@ -1166,13 +1169,6 @@ export function WorkspacePage() {
     else toggleExpand(node.path)
   }, [toggleSelection, openFile, toggleExpand])
 
-  // 焦点在编辑器时，把树选中集收敛为"编辑器当前打开的文件"单选（VSCode 语义）。
-  const syncSelectionToOpenFile = useCallback(() => {
-    const openPath = selectedFileRef.current
-    if (!openPath) return
-    setSelection([{ path: openPath, type: "file", name: openPath.split("/").pop() || openPath }])
-  }, [])
-
   // 键盘粘贴目标锚点：selection 最后一项 → 目录则其内、文件则其父目录；空则 root。
   const pasteAnchor = useCallback((): string => {
     const sel = selectionRef.current
@@ -1181,16 +1177,21 @@ export function WorkspacePage() {
     return last.type === "directory" ? last.path : parentOf(last.path)
   }, [parentOf])
 
-  // 文件树键盘快捷键（VSCode 式）：Ctrl+A/C/X/V 与 Del/Backspace。
-  // 焦点在编辑器/输入框时让位文本剪贴板，并把树选中集收敛为打开的文件。
+  // 文件树容器自身可聚焦（tabIndex=-1）。指针按下命中树时把焦点领进树，
+  // 使后续键盘快捷键（Del/方向/Ctrl+A/C/X/V）只作用于文件树、不再抢对话/输出区。
+  const focusTreeRoot = useCallback(() => {
+    treeRootRef.current?.focus()
+  }, [])
+
+  // 文件树键盘快捷键（VSCode 式）：Ctrl+A/C/X/V、Del/Backspace、Ctrl+Z/Y。
+  // 仅当焦点落在文件树容器内才生效（inclusion 门控）。编辑器/输入框/导演对话
+  // 等其它焦点一律让位原生行为——那里不该因"点开文件"而复制成当前文件。
   useEffect(() => {
     if (!instId) return
     const handler = (e: KeyboardEvent) => {
-      // 命中那一瞬读 activeElement；可编辑区 → 让位文本剪贴板 + 同步选中。
-      if (isEditableTarget(document.activeElement)) {
-        syncSelectionToOpenFile()
-        return
-      }
+      const root = treeRootRef.current
+      // 焦点不在文件树容器内 → 完全放行，绝不拦截任何键（含 Esc/Del/Ctrl+C/V）。
+      if (!root || !root.contains(document.activeElement)) return
       const mod = e.ctrlKey || e.metaKey
       const key = e.key.toLowerCase()
       if (e.key === "Escape") return
@@ -1225,7 +1226,7 @@ export function WorkspacePage() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, syncSelectionToOpenFile, beginDelete, runUndo, runRedo])
+  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, beginDelete, runUndo, runRedo])
 
   // Chat panel resize via drag
   const [isDragging, setIsDragging] = useState(false)
@@ -1599,12 +1600,13 @@ export function WorkspacePage() {
             </div>
 
             <div
-              ref={(el) => { if (!isMobile) dragContainerEl.current = el }}
-              className={`flex-1 overflow-auto py-1 select-none relative ${
+              ref={(el) => { if (!isMobile) dragContainerEl.current = el; if (!isMobile) treeRootRef.current = el }}
+              tabIndex={-1}
+              className={`flex-1 overflow-auto py-1 select-none relative focus:outline-none ${
                 ((externalDrop !== null) || dragInfo !== null) && (externalDrop ? externalDrop.target : dropTargetPath) === ROOT
                   ? "ring-2 ring-inset ring-accent" : ""
               }`}
-              onPointerDown={onFileTreePointerDown}
+              onPointerDown={(e) => { onFileTreePointerDown(e); if (e.button === 0) focusTreeRoot() }}
               onContextMenu={(e) => { e.preventDefault(); setRootMenu({ x: e.clientX, y: e.clientY }) }}
               onDragEnter={(e) => { if (isMobile) return; e.preventDefault() }}
               onDragOver={(e) => {
