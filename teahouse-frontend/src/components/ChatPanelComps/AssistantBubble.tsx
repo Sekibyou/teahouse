@@ -5,10 +5,32 @@ import {
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import type { Components } from "react-markdown"
+import { isMermaidLanguage, MermaidDiagram } from "@/components/MermaidDiagram"
 import type { RichMessage } from "./types"
 import { formatBlockArgs } from "./utils"
 import { TodoWriteResult } from "./TodoWriteResult"
 import { useTranslation } from "react-i18next"
+
+// chat 文本块同样支持 ```mermaid 图表：识别 language-mermaid 的 code 块渲染为
+// 图表；fenced 代码块会被 react-markdown 包进 <pre>，pre 覆盖识别 mermaid 时
+// 透出 code 覆盖的结果（图表本体），不套代码框。其余代码块走默认样式。
+const markdownComponents: Components = {
+  code({ className, children }) {
+    if (isMermaidLanguage(className)) {
+      return <MermaidDiagram code={String(children).replace(/\n$/, "")} />
+    }
+    return <code className={className}>{children}</code>
+  },
+  pre({ node, children }) {
+    const codeNode = node?.children?.[0]
+    const className = (
+      codeNode as { properties?: { className?: unknown } } | undefined
+    )?.properties?.className
+    if (isMermaidLanguage(className)) return <>{children}</>
+    return <pre>{children}</pre>
+  },
+}
 
 // ---- Assistant message bubble with thinking block ----
 // memo + 自定义浅比较：消息对象引用不变或 isLatest 不变时跳过重渲染，
@@ -63,7 +85,7 @@ export const AssistantBubble = memo(function AssistantBubble({
             if (block.type === "text" && block.text) {
               return (
                 <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-base prose dark:prose-invert prose-chat max-w-none break-words">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                     {block.text!}
                   </ReactMarkdown>
                 </div>

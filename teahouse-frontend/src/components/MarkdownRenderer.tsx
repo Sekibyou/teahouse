@@ -1,8 +1,8 @@
 import { Fragment, type ReactNode } from "react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { useThemeStore } from "@/stores/themeStore"
+import { isMermaidLanguage, MermaidDiagram } from "./MermaidDiagram"
 
 // ---- 占位符着色 ----
 // 预览模式下给 teahouse 占位符语法加颜色，与 Monaco 编辑器 token 颜色对齐：
@@ -205,92 +205,10 @@ function highlightChildren(children: ReactNode, placeholders: Map<string, Placeh
   return children
 }
 
-// ---- Mermaid 图表渲染 ----
-// 独立组件：从代码块提取图表源码，经 mermaid 异步渲染为 SVG 后注入 DOM。
-// mermaid 体积大，改为按需动态 import，首次出现图表时才加载，避免拖慢首屏。
-// 每个图表用递增 id 保证唯一；主题跟随全局 dark 模式，切换时重渲染。
-// 渲染结果用 (isDark, code) 作 key 存储，避免陈旧结果在输入/主题变化时闪现。
-
-type Mermaid = typeof import("mermaid").default
-
-let mermaidMod: Promise<Mermaid> | null = null
-function loadMermaid(): Promise<Mermaid> {
-  mermaidMod ??= import("mermaid").then((m) => m.default)
-  return mermaidMod
-}
-
-let initializedTheme: "default" | "dark" | null = null
-function ensureMermaid(m: Mermaid, theme: "default" | "dark") {
-  if (initializedTheme === theme) return
-  m.initialize({
-    startOnLoad: false,
-    theme,
-    securityLevel: "strict",
-  })
-  initializedTheme = theme
-}
-
-function mermaidKey(isDark: boolean, code: string) {
-  return `${isDark ? "dark" : "light"} ${code}`
-}
-
-let mermaidSeq = 0
-
-function MermaidDiagram({ code }: { code: string }) {
-  const isDark = useThemeStore((s) => s.isDark)
-  const [rendered, setRendered] = useState<{ key: string; svg: string } | null>(null)
-  const [error, setError] = useState<{ key: string; message: string } | null>(null)
-
-  const currentKey = mermaidKey(isDark, code)
-
-  useEffect(() => {
-    let cancelled = false
-    const theme = isDark ? "dark" : "default"
-    const key = mermaidKey(isDark, code)
-    const id = `teahouse-mermaid-${++mermaidSeq}`
-    loadMermaid()
-      .then((m) => {
-        if (cancelled) return
-        ensureMermaid(m, theme)
-        return m.render(id, code)
-      })
-      .then((result) => {
-        if (cancelled || !result) return
-        setRendered({ key, svg: result.svg })
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError({ key, message: e instanceof Error ? e.message : String(e) })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [code, isDark])
-
-  if (error && error.key === currentKey) {
-    return (
-      <div className="my-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-        <div className="mb-1 font-medium text-destructive">Mermaid 图表渲染失败</div>
-        <pre className="overflow-auto whitespace-pre-wrap text-xs text-destructive/80">{error.message}</pre>
-        <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{code}</pre>
-      </div>
-    )
-  }
-
-  if (rendered && rendered.key === currentKey) {
-    return (
-      <div
-        className="my-4 flex justify-center overflow-x-auto"
-        dangerouslySetInnerHTML={{ __html: rendered.svg }}
-      />
-    )
-  }
-
-  return <div className="my-4 py-4 text-center text-sm text-muted-foreground">正在渲染图表…</div>
-}
-
 // ---- Markdown 渲染器 ----
 // 工作区「预览」模式用的渲染器：GFM 语法 + ```mermaid 代码块转结构图。
 // 不启用 rehype-raw，原始 HTML 按文本转义，天然规避 XSS。
+// mermaid 渲染逻辑见 ./MermaidDiagram（聊天气泡共用）。
 
 export function MarkdownRenderer({ content }: { content: string }) {
   const { text, placeholders } = useMemo(() => protectPlaceholders(content), [content])
@@ -317,8 +235,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
     blockquote: wrap("blockquote"),
     a: wrap("a"),
     code({ className, children }) {
-      const match = /language-(\w+)/.exec(className || "")
-      if (match && match[1].toLowerCase() === "mermaid") {
+      if (isMermaidLanguage(className)) {
         return <MermaidDiagram code={String(children).replace(/\n$/, "")} />
       }
       // fenced / 行内代码文本里的占位符也着色
@@ -331,8 +248,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       const className = (
         codeNode as { properties?: { className?: unknown } } | undefined
       )?.properties?.className
-      const isMermaid = Array.isArray(className) && className.includes("language-mermaid")
-      if (isMermaid) return <>{children}</>
+      if (isMermaidLanguage(className)) return <>{children}</>
       return <pre>{children}</pre>
     },
   }
