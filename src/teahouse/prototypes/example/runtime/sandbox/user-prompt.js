@@ -40,12 +40,12 @@
     var title = document.createElement('div');
     title.textContent = '欢迎来到灰石镇';
     title.style.cssText =
-      'font-size:16px;font-weight:700;margin-bottom:6px;';
+      'font-size:calc(16px * var(--font-scale));font-weight:700;margin-bottom:6px;';
 
     var hint = document.createElement('div');
     hint.textContent = '首次进入，请为自己取一个名字（冒险者代号）。';
     hint.style.cssText =
-      'font-size:12.5px;color:var(--panel-text-soft);line-height:1.7;margin-bottom:16px;';
+      'font-size:calc(12.5px * var(--font-scale));color:var(--panel-text-soft);line-height:1.7;margin-bottom:16px;';
 
     var input = document.createElement('input');
     input.type = 'text';
@@ -56,7 +56,7 @@
       'width:100%;box-sizing:border-box;height:38px;padding:0 12px;' +
       'border-radius:10px;border:1px solid var(--control-border);' +
       'background:var(--control-bg);color:var(--panel-text);outline:none;' +
-      'font-size:13px;margin-bottom:16px;';
+      'font-size:calc(13px * var(--font-scale));margin-bottom:16px;';
 
     var submit = document.createElement('button');
     submit.type = 'button';
@@ -64,7 +64,7 @@
     submit.style.cssText =
       'width:100%;height:38px;border:none;border-radius:10px;' +
       'background:var(--accent-fill);color:var(--accent-filled-text);' +
-      'font-size:13px;font-weight:700;cursor:pointer;' +
+      'font-size:calc(13px * var(--font-scale));font-weight:700;cursor:pointer;' +
       'transition:opacity 0.2s;';
     submit.addEventListener('mouseenter', function() { submit.style.opacity = '0.88'; });
     submit.addEventListener('mouseleave', function() { submit.style.opacity = '1'; });

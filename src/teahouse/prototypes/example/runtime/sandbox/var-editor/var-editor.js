@@ -49,7 +49,7 @@
     'display:flex;align-items:center;justify-content:center;' +
     'background:var(--fab-bg);color:var(--panel-text);' +
     'border:1px solid var(--panel-border);' +
-    'backdrop-filter:blur(8px);cursor:pointer;font-size:16px;' +
+    'backdrop-filter:blur(8px);cursor:pointer;font-size:calc(16px * var(--font-scale));' +
     'box-shadow:0 6px 20px rgba(0,0,0,0.45);' +
     'transition:transform 0.2s,border-color 0.2s,background 0.25s,color 0.25s;' +
     'user-select:none;';
@@ -80,17 +80,17 @@
     /* 标题 */
     '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;' +
     'border-bottom:1px solid var(--panel-border);">' +
-    '<span style="flex:1;font-size:13px;font-weight:700;letter-spacing:0.05em;">变量修改器</span>' +
-    '<span id="var-editor-hint" style="font-size:10px;color:var(--panel-text-dim);">读档中…</span>' +
+    '<span style="flex:1;font-size:calc(13px * var(--font-scale));font-weight:700;letter-spacing:0.05em;">变量修改器</span>' +
+    '<span id="var-editor-hint" style="font-size:calc(10px * var(--font-scale));color:var(--panel-text-dim);">读档中…</span>' +
     '</div>' +
     /* Tab 头 */
     '<div id="var-editor-tabs" style="display:flex;padding:6px 10px 0;gap:6px;">' +
     '<button type="button" data-tab="1" class="ve-tab" style="' +
     'flex:1;height:30px;border:none;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;' +
-    'cursor:pointer;font-size:12px;background:transparent;">重要变量</button>' +
+    'cursor:pointer;font-size:calc(12px * var(--font-scale));background:transparent;">重要变量</button>' +
     '<button type="button" data-tab="2" class="ve-tab" style="' +
     'flex:1;height:30px;border:none;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;' +
-    'cursor:pointer;font-size:12px;background:transparent;">所有变量</button>' +
+    'cursor:pointer;font-size:calc(12px * var(--font-scale));background:transparent;">所有变量</button>' +
     '</div>' +
     /* Tab 内容容器 */
     '<div id="var-editor-body" style="flex:1;min-height:180px;max-height:44vh;overflow-y:auto;padding:10px;"></div>' +
@@ -175,8 +175,8 @@
     if (importantList.length === 0) {
       bodyBox.innerHTML =
         '<div style="padding:18px 10px;text-align:center;">' +
-        '<div style="color:var(--panel-text-soft);font-size:12.5px;margin-bottom:6px;">还没有重要变量</div>' +
-        '<div style="color:var(--panel-text-dim);font-size:11px;">去「所有变量」勾选，就会出现在这里</div>' +
+        '<div style="color:var(--panel-text-soft);font-size:calc(12.5px * var(--font-scale));margin-bottom:6px;">还没有重要变量</div>' +
+        '<div style="color:var(--panel-text-dim);font-size:calc(11px * var(--font-scale));">去「所有变量」勾选，就会出现在这里</div>' +
         '</div>';
       return;
     }
@@ -193,15 +193,15 @@
         html +=
           '<div class="ve-row" data-name="' + esc(name) + '" style="' +
           'display:flex;align-items:center;gap:6px;padding:7px 4px;border-bottom:1px solid var(--panel-border);">' +
-          '<div style="flex:none;width:88px;font-size:11.5px;color:var(--panel-text-soft);' +
+          '<div style="flex:none;width:88px;font-size:calc(11.5px * var(--font-scale));color:var(--panel-text-soft);' +
           'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;" title="' + esc(name) + '">' +
           esc(name) + '</div>' +
           '<input type="text" value="' + esc(editText) + '" placeholder="' + esc(curText) + '" class="th-ip" style="' +
           'border:1px solid ' + (isDirty ? 'var(--danger)' : 'var(--control-border)') + ';' +
           (isDirty ? 'border-color:var(--danger);' : '') + '">' +
-          (isDirty ? '<span style="color:var(--danger);font-size:10px;flex:none;">改</span>' : '') +
+          (isDirty ? '<span style="color:var(--danger);font-size:calc(10px * var(--font-scale));flex:none;">改</span>' : '') +
           '<button type="button" class="ve-unpin th-icon" title="取消重要" style="' +
-          'font-size:14px;color:var(--warn);">&#9733;</button>' +
+          'font-size:calc(14px * var(--font-scale));color:var(--warn);">&#9733;</button>' +
           '</div>';
       })(importantList[j]);
     }
@@ -221,7 +221,7 @@
           if (!badge) {
             var sp = document.createElement('span');
             sp.className = 've-badge';
-            sp.style.cssText = 'color:var(--danger);font-size:10px;flex:none;';
+            sp.style.cssText = 'color:var(--danger);font-size:calc(10px * var(--font-scale));flex:none;';
             sp.textContent = '改';
             inp.parentNode.insertBefore(sp, inp.nextSibling);
           }
@@ -246,14 +246,14 @@
 
   function renderAll() {
     if (allVars.length === 0) {
-      bodyBox.innerHTML = '<div style="padding:18px 10px;color:var(--panel-text-dim);font-size:12px;text-align:center;">暂无变量</div>';
+      bodyBox.innerHTML = '<div style="padding:18px 10px;color:var(--panel-text-dim);font-size:calc(12px * var(--font-scale));text-align:center;">暂无变量</div>';
       return;
     }
     var html =
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-      '<span style="flex:1;font-size:10.5px;color:var(--panel-text-dim);">点击星标 = 加入重要变量</span>' +
+      '<span style="flex:1;font-size:calc(10.5px * var(--font-scale));color:var(--panel-text-dim);">点击星标 = 加入重要变量</span>' +
       '<button type="button" id="ve-refresh" class="th-btn-ghost" style="' +
-      'flex:none;height:24px;padding:0 10px;font-size:11px;border-radius:6px;">刷新</button>' +
+      'flex:none;height:24px;padding:0 10px;font-size:calc(11px * var(--font-scale));border-radius:6px;">刷新</button>' +
       '</div>';
     for (var i = 0; i < allVars.length; i++) {
       (function(item) {
@@ -265,12 +265,12 @@
           'border-bottom:1px solid var(--panel-border);' +
           (isImp ? 'background:var(--accent-soft);' : '') + '">' +
           '<button type="button" class="ve-star th-icon" title="' + (isImp ? '取消重要' : '标记重要') + '" style="' +
-          'font-size:16px;padding:2px;' +
+          'font-size:calc(16px * var(--font-scale));padding:2px;' +
           'color:' + (isImp ? 'var(--warn)' : 'var(--panel-text-dim)') + ';">' +
           (isImp ? '&#9733;' : '&#9734;') + '</button>' +
-          '<span style="flex:none;width:92px;font-size:11.5px;color:' + (isImp ? 'var(--accent-text)' : 'var(--panel-text-soft)') + ';' +
+          '<span style="flex:none;width:92px;font-size:calc(11.5px * var(--font-scale));color:' + (isImp ? 'var(--accent-text)' : 'var(--panel-text-soft)') + ';' +
           'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(item.name) + '">' + esc(item.name) + '</span>' +
-          '<span style="flex:1;font-size:11px;color:var(--panel-text-dim);' +
+          '<span style="flex:1;font-size:calc(11px * var(--font-scale));color:var(--panel-text-dim);' +
           'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right;" title="' + esc(disp) + '">' +
           esc(disp) + '</span>' +
           '</div>';

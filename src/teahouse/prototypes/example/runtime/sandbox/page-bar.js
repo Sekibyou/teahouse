@@ -51,7 +51,7 @@
     'display:flex;align-items:center;justify-content:center;' +
     'background:var(--fab-bg);color:var(--panel-text);' +
     'border:1px solid var(--panel-border);' +
-    'backdrop-filter:blur(8px);cursor:pointer;font-size:16px;' +
+    'backdrop-filter:blur(8px);cursor:pointer;font-size:calc(16px * var(--font-scale));' +
     'box-shadow:0 6px 20px rgba(0,0,0,0.45);' +
     'transition:transform 0.2s,border-color 0.2s,background 0.25s,color 0.25s;' +
     'user-select:none;';
@@ -63,7 +63,7 @@
     'position:absolute;top:-4px;right:-4px;' +
     'min-width:18px;height:18px;padding:0 4px;border-radius:9px;' +
     'background:var(--accent-fill);color:var(--accent-filled-text);' +
-    'font-size:10px;line-height:18px;font-weight:700;' +
+    'font-size:calc(10px * var(--font-scale));line-height:18px;font-weight:700;' +
     'display:none;align-items:center;justify-content:center;' +
     'font-variant-numeric:tabular-nums;white-space:nowrap;';
   fab.appendChild(miniCount);
@@ -86,13 +86,13 @@
     '<div style="display:flex;align-items:center;gap:6px;padding:10px 12px;' +
     'border-bottom:1px solid var(--panel-border);">' +
     '<button type="button" id="fab-prev" title="上一章" class="th-btn-ghost" style="' +
-    'width:34px;height:34px;flex:none;border-radius:50%;font-size:12px;' +
+    'width:34px;height:34px;flex:none;border-radius:50%;font-size:calc(12px * var(--font-scale));' +
     'display:flex;align-items:center;justify-content:center;padding:0;line-height:1;">&#9664;</button>' +
     '<button type="button" id="fab-count" title="当前章节进度" class="th-btn-ghost" style="' +
-    'flex:1;height:34px;border-radius:17px;font-size:13px;' +
+    'flex:1;height:34px;border-radius:17px;font-size:calc(13px * var(--font-scale));' +
     'font-variant-numeric:tabular-nums;letter-spacing:0.04em;">0/0</button>' +
     '<button type="button" id="fab-next" title="下一章" class="th-btn-ghost" style="' +
-    'width:34px;height:34px;flex:none;border-radius:50%;font-size:12px;' +
+    'width:34px;height:34px;flex:none;border-radius:50%;font-size:calc(12px * var(--font-scale));' +
     'display:flex;align-items:center;justify-content:center;padding:0;line-height:1;">&#9654;</button>' +
     '</div>' +
     /* 目录列表 */
@@ -101,9 +101,9 @@
     /* 操作行 */
     '<div style="display:flex;align-items:center;gap:4px;padding:8px 10px;">' +
     '<button type="button" id="fab-latest" title="回最新章节" class="th-btn" style="' +
-    'flex:1;height:30px;font-size:12px;">回最新</button>' +
+    'flex:1;height:30px;font-size:calc(12px * var(--font-scale));">回最新</button>' +
     '<button type="button" id="fab-top" title="回顶部" class="th-btn-ghost" style="' +
-    'flex:1;height:30px;font-size:12px;">回顶部</button>' +
+    'flex:1;height:30px;font-size:calc(12px * var(--font-scale));">回顶部</button>' +
     '<label id="fab-autolabel" title="新章节落盘时是否自动跳转" class="th-switch" style="' +
     'flex:1.2;height:30px;display:flex;align-items:center;justify-content:center;gap:6px;' +
     'border-radius:8px;user-select:none;">' +
@@ -183,7 +183,7 @@
   function renderMenu() {
     var st = getState();
     if (!st.floors || st.floors.length === 0) {
-      listBox.innerHTML = '<div style="padding:10px;color:var(--panel-text-dim);font-size:12px;text-align:center;">暂无章节</div>';
+      listBox.innerHTML = '<div style="padding:10px;color:var(--panel-text-dim);font-size:calc(12px * var(--font-scale));text-align:center;">暂无章节</div>';
       return;
     }
     var maxNum = st.floors[st.floors.length - 1].num;
@@ -194,13 +194,13 @@
         var isCurrent = item.num === currentNum;
         var isLatest = item.num === maxNum;
         var badge = '';
-        if (isCurrent) badge = '<span style="color:var(--accent);font-size:10px;">阅读中</span>';
-        else if (isLatest) badge = '<span style="color:var(--success);font-size:10px;">最新</span>';
-        else if (item.draft) badge = '<span style="color:var(--warn);font-size:10px;">草稿</span>';
+        if (isCurrent) badge = '<span style="color:var(--accent);font-size:calc(10px * var(--font-scale));">阅读中</span>';
+        else if (isLatest) badge = '<span style="color:var(--success);font-size:calc(10px * var(--font-scale));">最新</span>';
+        else if (item.draft) badge = '<span style="color:var(--warn);font-size:calc(10px * var(--font-scale));">草稿</span>';
         html +=
           '<div class="fab-item" data-index="' + i + '" style="' +
           'display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;' +
-          'cursor:pointer;font-size:12.5px;' +
+          'cursor:pointer;font-size:calc(12.5px * var(--font-scale));' +
           (isCurrent ? 'background:var(--accent-soft);color:var(--panel-text);' : 'color:var(--panel-text-soft);') +
           '"><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
           esc(chapterName(item)) + '</span>' + badge + '</div>';

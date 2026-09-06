@@ -136,7 +136,7 @@
   var optHeadTitle = document.createElement('span');
   optHeadTitle.textContent = '文末选项';
   optHeadTitle.style.cssText =
-    'flex:1;font-size:12px;font-weight:700;color:var(--panel-text-soft);' +
+    'flex:1;font-size:calc(12px * var(--font-scale));font-weight:700;color:var(--panel-text-soft);' +
     'letter-spacing:0.05em;user-select:none;';
 
   var optFoldBtn = document.createElement('button');
@@ -147,7 +147,7 @@
   optFoldBtn.style.cssText =
     'flex:none;width:24px;height:24px;border:none;border-radius:50%;' +
     'background:transparent;color:var(--panel-text-dim);cursor:pointer;' +
-    'font-size:12px;line-height:1;transition:background 0.15s,color 0.15s,' +
+    'font-size:calc(12px * var(--font-scale));line-height:1;transition:background 0.15s,color 0.15s,' +
     'transform 0.2s;';
 
   optHead.appendChild(optHeadTitle);
@@ -169,7 +169,7 @@
     'display:none;align-items:center;gap:6px;height:34px;padding:0 14px;' +
     'border-radius:999px;background:var(--input-bg);color:var(--panel-text);' +
     'border:1px solid var(--panel-border);cursor:pointer;' +
-    'box-shadow:0 6px 20px rgba(0,0,0,0.4);font-size:12.5px;font-weight:600;' +
+    'box-shadow:0 6px 20px rgba(0,0,0,0.4);font-size:calc(12.5px * var(--font-scale));font-weight:600;' +
     'user-select:none;margin-left:auto;';
   optChip.addEventListener('mouseenter', function() { optChip.style.borderColor = 'var(--border-strong)'; });
   optChip.addEventListener('mouseleave', function() { optChip.style.borderColor = 'var(--panel-border)'; });
@@ -201,13 +201,13 @@
     'flex:none;height:32px;padding:0 10px;border-radius:20px;' +
     'display:flex;align-items:center;gap:5px;' +
     'background:transparent;border:1px solid var(--panel-border);' +
-    'font-size:12px;font-weight:600;cursor:pointer;user-select:none;' +
+    'font-size:calc(12px * var(--font-scale));font-weight:600;cursor:pointer;user-select:none;' +
     'transition:background 0.2s,border-color 0.2s,color 0.2s;';
 
   var modeLabel = document.createElement('span');
   var modeArrow = document.createElement('span');
   modeArrow.textContent = '\u25BE';
-  modeArrow.style.cssText = 'font-size:9px;opacity:0.8;';
+  modeArrow.style.cssText = 'font-size:calc(9px * var(--font-scale));opacity:0.8;';
   modeBtn.appendChild(modeLabel);
   modeBtn.appendChild(modeArrow);
 
@@ -220,7 +220,7 @@
     'flex:none;height:24px;padding:0 8px;border-radius:999px;' +
     'display:inline-flex;align-items:center;gap:3px;' +
     'background:var(--control-bg);border:1px solid var(--panel-border);' +
-    'font-size:10.5px;font-weight:700;cursor:pointer;user-select:none;' +
+    'font-size:calc(10.5px * var(--font-scale));font-weight:700;cursor:pointer;user-select:none;' +
     'color:var(--text-dim);line-height:1;' +
     'transition:background 0.2s,border-color 0.2s,color 0.2s;';
 
@@ -234,7 +234,7 @@
   input.style.cssText =
     'flex:1;min-width:0;height:auto;border:none;background:transparent;' +
     'line-height:1;color:var(--panel-text);outline:none;' +
-    'caret-color:var(--accent);font-size:13px;';
+    'caret-color:var(--accent);font-size:calc(13px * var(--font-scale));';
 
   var sendBtn = document.createElement('button');
   sendBtn.id = 'teahouse-input-send';
@@ -278,7 +278,7 @@
   status.id = 'teahouse-input-status';
   status.textContent = '';
   status.style.cssText =
-    'text-align:center;color:var(--panel-text-dim);font-size:11px;' +
+    'text-align:center;color:var(--panel-text-dim);font-size:calc(11px * var(--font-scale));' +
     'margin-top:6px;letter-spacing:0.08em;min-height:16px;';
 
   /* 上拉菜单 */
@@ -291,7 +291,7 @@
     'border:1px solid var(--panel-border);border-radius:12px;' +
     'box-shadow:var(--shadow-panel);' +
     'display:none;overflow:hidden;' +
-    'font-size:12.5px;';
+    'font-size:calc(12.5px * var(--font-scale));';
 
   function menuItemHtml(key, m) {
     var active = (currentMode === key);
@@ -303,7 +303,7 @@
       'transition:background 0.15s;">' +
       '<span style="width:8px;height:8px;border-radius:50%;background:' + m.dot + ';flex:none;"></span>' +
       '<span style="flex:1;">' + m.label + '</span>' +
-      (active ? '<span style="font-size:10px;">&#10003;</span>' : '') +
+      (active ? '<span style="font-size:calc(10px * var(--font-scale));">&#10003;</span>' : '') +
       '</div>';
   }
 
@@ -656,7 +656,7 @@
           'width:100%;height:auto;min-height:34px;padding:7px 12px;' +
           'border:1px solid transparent;border-radius:10px;' +
           'background:transparent;color:var(--panel-text);cursor:pointer;' +
-          'font-size:12.5px;line-height:1.5;text-align:left;' +
+          'font-size:calc(12.5px * var(--font-scale));line-height:1.5;text-align:left;' +
           'white-space:normal;word-break:break-word;' +
           'transition:background 0.15s,border-color 0.15s;';
         btn.innerHTML = optHighlight(text);
