@@ -337,3 +337,15 @@
   margin: 0 auto;
   display: block;
 }
+
+/* ---- README / markdown 详情渲染区：跟随全局字号 ----
+   typography 插件把 .prose-sm/.prose 容器字号写成固定 rem（0.875/1rem），
+   不吃 --ui-scale；容器内标题/段落全用 em 相对容器，故只要覆写容器
+   font-size 乘上 --ui-scale，内部整段就随全局字号档位缩放。放非分层位置
+   以压过插件的 utilities 层。 */
+.prose-sm {
+  font-size: calc(0.875rem * var(--ui-scale));
+}
+.prose:not(.prose-sm, .prose-base, .prose-lg, .prose-xl) {
+  font-size: calc(1rem * var(--ui-scale));
+}
