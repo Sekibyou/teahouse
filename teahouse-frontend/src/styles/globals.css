@@ -317,3 +317,11 @@
 }
 
 
+
+/* ---- mermaid 缩略图：等比缩到容器宽，不溢出、可整图预览 ---- */
+.teahouse-mermaid-thumb svg {
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  display: block;
+}
