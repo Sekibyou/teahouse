@@ -1,3 +1,4 @@
+import { type ReactNode } from "react"
 import type { PayloadMessage } from "@/utils/payloadView"
 
 interface PayloadViewerProps {
@@ -19,6 +20,49 @@ function roleBadgeClass(role: string): string {
   if (r === "user") return "bg-muted text-foreground border border-border"
   if (r === "tool") return "bg-muted text-muted-foreground border border-border"
   return "bg-muted text-muted-foreground border border-border"
+}
+
+// 逐字符扫描，把 `${...}` 与 `{{...}}` 占位符（括号深度配平，内嵌不提前截断）
+// 包成标红 span。payload 里残留占位符通常意味着解析失败，需重点标注——无需
+// 细分语法、不做 markdown 解析，仅标红即可。与 MarkdownRenderer 的 scanBrace 语义一致。
+function highlightPlaceholders(text: string): ReactNode[] {
+  if (!text) return [text]
+  const out: ReactNode[] = []
+  let last = 0
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const starts = (text[i] === "$" && text[i + 1] === "{") || (text[i] === "{" && text[i + 1] === "{")
+    if (starts) {
+      let depth = 0
+      let end = i
+      while (end < n) {
+        if (text[end] === "{") depth++
+        else if (text[end] === "}") {
+          depth--
+          if (depth === 0) {
+            end++
+            break
+          }
+        }
+        end++
+      }
+      if (depth === 0) {
+        if (i > last) out.push(text.slice(last, i))
+        out.push(
+          <span key={i} className="text-red-600 dark:text-red-400 font-medium">
+            {text.slice(i, end)}
+          </span>,
+        )
+        last = end
+        i = end
+        continue
+      }
+    }
+    i++
+  }
+  if (last < text.length) out.push(text.slice(last))
+  return out
 }
 
 export function PayloadViewer({ messages, meta }: PayloadViewerProps) {
@@ -44,7 +88,7 @@ export function PayloadViewer({ messages, meta }: PayloadViewerProps) {
               <span className="text-xs text-muted-foreground">#{i}</span>
             </div>
             <div className="px-3 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words">
-              {m.content}
+              {highlightPlaceholders(m.content)}
             </div>
           </div>
         ))}
