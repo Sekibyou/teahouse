@@ -633,7 +633,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                 {tab === "commit" && (
                   <div className={`h-full overflow-hidden ${isMobile ? "flex flex-col" : "flex"}`}>
                     {/* Left: uncommitted files */}
-                    <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? "" : "border-r border-border"}`}>
+                    <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? "min-h-0" : "border-r border-border"}`}>
                       <div className="flex-1 overflow-auto p-4">
                         <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
                           <FileText className="h-3.5 w-3.5" />
@@ -672,8 +672,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                       </div>
                     </div>
 
-                    {/* Right: commit form + recent commits */}
-                    <div className={`shrink-0 flex flex-col ${isMobile ? "flex-1 border-t border-border" : "w-96"}`}>
+                    {/* Right: commit form (mobile: recent commits hidden → form sits at bottom, natural height) */}
+                    <div className={`flex flex-col ${isMobile ? "border-t border-border" : "shrink-0 w-96"}`}>
                       {/* Commit form */}
                       <div className="p-4 border-b border-border space-y-3 shrink-0">
                         <div className="flex gap-2">
@@ -767,45 +767,47 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                         </div>
                       </div>
 
-                      {/* Recent commits */}
-                      <div className="flex-1 overflow-auto p-3">
-                        <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
-                          <History className="h-3.5 w-3.5" />
-                          {t("commit.recentTitle")}
-                        </h4>
-                        {commits.length === 0 ? (
-                          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                            {t("commit.empty")}
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {commits.map((c, idx) => {
-                              const { type } = commitTypeLabel(c.message)
-                              return (
-                                <div
-                                  key={c.hash}
-                                  className={`rounded-lg border p-3 text-xs space-y-1.5 transition-colors hover:bg-muted/20 ${
-                                    idx === 0 ? "border-primary/30 bg-primary/5" : "border-border"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-1.5">
-                                    <CommitTypeIcon type={type} />
-                                    <span className="font-mono text-[10px] text-muted-foreground">{c.hash}</span>
-                                    {idx === 0 && (
-                                      <span className="text-[9px] bg-primary/10 text-primary px-1 rounded ml-auto">{t("commit.latest")}</span>
-                                    )}
+                      {/* Recent commits — desktop only (mobile shows commit history via the branch-graph tab) */}
+                      {!isMobile && (
+                        <div className="flex-1 overflow-auto p-3">
+                          <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
+                            <History className="h-3.5 w-3.5" />
+                            {t("commit.recentTitle")}
+                          </h4>
+                          {commits.length === 0 ? (
+                            <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                              {t("commit.empty")}
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {commits.map((c, idx) => {
+                                const { type } = commitTypeLabel(c.message)
+                                return (
+                                  <div
+                                    key={c.hash}
+                                    className={`rounded-lg border p-3 text-xs space-y-1.5 transition-colors hover:bg-muted/20 ${
+                                      idx === 0 ? "border-primary/30 bg-primary/5" : "border-border"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <CommitTypeIcon type={type} />
+                                      <span className="font-mono text-[10px] text-muted-foreground">{c.hash}</span>
+                                      {idx === 0 && (
+                                        <span className="text-[9px] bg-primary/10 text-primary px-1 rounded ml-auto">{t("commit.latest")}</span>
+                                      )}
+                                    </div>
+                                    <p className="leading-relaxed">{c.message}</p>
+                                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                                      <span>{c.author}</span>
+                                      <span>{c.date?.slice(0, 10)}</span>
+                                    </div>
                                   </div>
-                                  <p className="leading-relaxed">{c.message}</p>
-                                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                                    <span>{c.author}</span>
-                                    <span>{c.date?.slice(0, 10)}</span>
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
