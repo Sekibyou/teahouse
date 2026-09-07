@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useEffect, useRef } from "react"
 import { useThemeStore } from "@/stores/themeStore"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 
 // ---- Mermaid 图表渲染（MarkdownRenderer 与聊天气泡共用的纯渲染件）----
 // 从代码块提取图表源码，经 mermaid 异步渲染为 SVG 后注入 DOM。
@@ -114,6 +115,10 @@ function MermaidFullscreen({ svg, onClose }: { svg: string; onClose: () => void 
     fit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 系统返回键（桌面浏览器返回 / 移动端返回手势）关闭全屏查看器。
+  // MermaidFullscreen 只在 open 时挂载，此 hook 以其常开 true 等效“open”。
+  useDialogBackClose(true, onClose)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
