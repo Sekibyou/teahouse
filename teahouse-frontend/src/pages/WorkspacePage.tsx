@@ -572,6 +572,9 @@ export function WorkspacePage() {
   const readScrollRef = useRef<Record<string, { preview: number; payload: number }>>({})
   const previewScrollElRef = useRef<HTMLDivElement | null>(null)
   const payloadScrollElRef = useRef<HTMLDivElement | null>(null)
+  // 中间面板（标签栏+按钮栏+Monaco/阅读器）根容器：ESC 关标签的门控边界——
+  // 焦点落在此容器内才响应，落在文件树/导演栏/对话框(modal)时放行。
+  const editorPanelRef = useRef<HTMLDivElement | null>(null)
 
   // 阅读视图切换/换文件后，恢复当前激活文件的阅读滚动位置（容器从 hidden 变可见需等 DOM
   // 布置完再 scroll；内容渲染是异步的，故再 rAF 一层兜底）。code↔read 切换保留；切文件时
@@ -705,6 +708,25 @@ export function WorkspacePage() {
       [path]: { ...prev[path], edited: value, dirty: value !== prev[path].content },
     } : prev))
   }, [])
+
+  // ESC 关闭当前文件标签——快捷键绑定在"编辑器栏整块"（中间面板：标签栏+按钮栏+Monaco/
+  // 阅读器）而非仅 Monaco 内部，故阅读/代码/标签栏任意处聚焦均生效。门控：焦点落在此面板
+  // 容器内才响应；文件树/导演栏/对话框(modal 在面板之外)聚焦时放行，避免误关标签或与
+  // 对话框自身 ESC 语义冲突。桌面端有该面板，移动端无 Monaco/标签栏故不适用。
+  useEffect(() => {
+    if (isMobile) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return
+      const panel = editorPanelRef.current
+      // 焦点不在编辑器面板内（或根本没有激活文件/标签）→ 放行
+      if (!panel || !panel.contains(document.activeElement)) return
+      if (!selectedFileRef.current) return
+      e.preventDefault()
+      closeTab(selectedFileRef.current)
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [isMobile, closeTab])
 
   // Load a file (content + git HEAD) then open it. Loads first so Monaco mounts
   // once with the correct defaultValue and a clean undo stack.
@@ -1891,7 +1913,12 @@ export function WorkspacePage() {
           </aside>
 
           {/* Middle panel — Editor */}
-          <div className="flex-1 flex flex-col bg-background min-w-0">
+          <div
+            ref={(el) => { editorPanelRef.current = el }}
+            className="flex-1 flex flex-col bg-background min-w-0"
+            tabIndex={-1}
+            onPointerDown={(e) => { if (e.target === e.currentTarget) editorPanelRef.current?.focus() }}
+          >
             {selectedFile ? (
               <>
                 {/* 标签栏（仅桌面端）：已打开的多个文件，点击切换激活，× 关闭 */}
