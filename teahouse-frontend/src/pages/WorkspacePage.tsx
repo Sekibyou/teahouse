@@ -97,8 +97,19 @@ export function WorkspacePage() {
   const [isDirty, setIsDirty] = useState(false)
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
   const [editorEpoch, setEditorEpoch] = useState(0)
-  // .md 文件可在代码编辑器与 Markdown 预览间切换；payload JSON 可在代码与「Payload 阅读」间切换
+  // .md 文件可在代码与「Markdown 阅读」间切换；payload JSON 可在代码与「Payload 阅读」间切换。
+  // 是否启用阅读模式（读视图）由 localStorage 布尔持久化：开→切文件时受支持的文件直接进阅读
+  // 视图；关→点任何文件都进代码编辑、阅读入口隐藏。
   const [editorView, setEditorView] = useState<"code" | "preview" | "payload">("code")
+  // 「阅读模式」持久化为 localStorage 布尔：开→切到受支持文件时自动进阅读视图；关→进代码编辑。
+  // 无独立开关——点「阅读」进入即置 true，点「查看源码」回代码即置 false。仅需读，故用 ref。
+  const readModeRef = useRef<boolean>(
+    (() => { try { return localStorage.getItem("teahouse_editor_read_mode") === "true" } catch { return false } })(),
+  )
+  const persistReadMode = useCallback((on: boolean) => {
+    readModeRef.current = on
+    try { localStorage.setItem("teahouse_editor_read_mode", String(on)) } catch { /* ignore */ }
+  }, [])
   // payload JSON 解析结果（命中 messages[{role,content}] 才非空，决定是否显示「Payload 阅读」按钮）
   const [payloadMessages, setPayloadMessages] = useState<PayloadMessage[] | null>(null)
   const [payloadMeta, setPayloadMeta] = useState<Array<[string, string]>>([])
@@ -204,10 +215,12 @@ export function WorkspacePage() {
 
   const instId = activeInstance?.id
 
-  // 当前文件是否为 Markdown（决定是否显示预览切换）
+  // 当前文件是否为 Markdown（决定是否显示阅读切换）
   const isMarkdown = !!selectedFile?.endsWith(".md")
   // 当前文件内容是否能解析出 payload messages（决定是否显示「Payload 阅读」切换）
   const isPayloadFile = payloadMessages !== null
+  // 当前文件受阅读模式支持（md 必有；payload 需能解析出 messages）
+  const supportsRead = isMarkdown || isPayloadFile
 
   // 图片扩展名判定——此类文件不进入文本编辑器，改为在工作区直接渲染 <img>
   const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
@@ -588,7 +601,10 @@ export function WorkspacePage() {
     const parsed = tryParsePayload(fileRes.data!.content)
     setPayloadMessages(parsed ? parsed.messages : null)
     setPayloadMeta(parsed ? parsed.meta : [])
-    setEditorView("code")
+    // 阅读模式开启且本文件受支持（.md 必有；payload 需能解析出 messages）→ 直接进阅读视图；
+    // 否则进代码编辑。
+    const readCapable = path.toLowerCase().endsWith(".md") || parsed !== null
+    setEditorView(readModeRef.current && readCapable ? (path.toLowerCase().endsWith(".md") ? "preview" : "payload") : "code")
     setSelectedFile(path)
     setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
   }, [instId])
@@ -1388,30 +1404,30 @@ export function WorkspacePage() {
                 {selectedFile && !isImageOpen && (
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
-                    {isMarkdown && (
+                    {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
+                    {supportsRead && (editorView === "code" ? (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
+                        onClick={() => { persistReadMode(true); setEditorView(isMarkdown ? "preview" : "payload") }}
                         className="gap-1"
-                        title={editorView === "code" ? t("previewMarkdown") : t("backToCodeEdit")}
+                        title={isMarkdown ? t("mdRead") : t("payload")}
                       >
-                        {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                        {editorView === "code" ? t("preview") : t("code")}
+                        {isMarkdown ? <Eye className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
+                        {isMarkdown ? t("mdRead") : t("payload")}
                       </Button>
-                    )}
-                    {isPayloadFile && (
+                    ) : (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => setEditorView((v) => (v === "code" ? "payload" : "code"))}
+                        onClick={() => { persistReadMode(false); setEditorView("code") }}
                         className="gap-1"
-                        title={editorView === "code" ? t("payload") : t("code")}
+                        title={t("viewSource")}
                       >
-                        {editorView === "code" ? <BookOpen className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                        {editorView === "code" ? t("payload") : t("code")}
+                        <Code2 className="h-3 w-3" />
+                        {t("viewSource")}
                       </Button>
-                    )}
+                    ))}
                     <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                       {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                       {t("common:save")}
@@ -1727,30 +1743,30 @@ export function WorkspacePage() {
                       <>
                         {isDirty && !saveToast && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
                         {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">{t("savedToDisk")}</span>}
-                        {isMarkdown && (
+                        {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
+                        {supportsRead && (editorView === "code" ? (
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => setEditorView((v) => (v === "code" ? "preview" : "code"))}
+                            onClick={() => { persistReadMode(true); setEditorView(isMarkdown ? "preview" : "payload") }}
                             className="gap-1"
-                            title={editorView === "code" ? t("previewMarkdown") : t("backToCodeEdit")}
+                            title={isMarkdown ? t("mdRead") : t("payload")}
                           >
-                            {editorView === "code" ? <Eye className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                            {editorView === "code" ? t("preview") : t("code")}
+                            {isMarkdown ? <Eye className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
+                            {isMarkdown ? t("mdRead") : t("payload")}
                           </Button>
-                        )}
-                        {isPayloadFile && (
+                        ) : (
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => setEditorView((v) => (v === "code" ? "payload" : "code"))}
+                            onClick={() => { persistReadMode(false); setEditorView("code") }}
                             className="gap-1"
-                            title={editorView === "code" ? t("payload") : t("code")}
+                            title={t("viewSource")}
                           >
-                            {editorView === "code" ? <BookOpen className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
-                            {editorView === "code" ? t("payload") : t("code")}
+                            <Code2 className="h-3 w-3" />
+                            {t("viewSource")}
                           </Button>
-                        )}
+                        ))}
                         <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                           {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                           {t("common:save")}
