@@ -18,6 +18,7 @@ export const enWorkspace = {
   mdRead: "Markdown reader",
   payload: "Payload reader",
   viewSource: "View source",
+  currentFile: "Current file:",
   image: "Image",
   // 标签页关闭
   closeTab: {

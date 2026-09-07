@@ -18,6 +18,7 @@ export const zhWorkspace = {
   mdRead: "Markdown 阅读",
   payload: "Payload 阅读",
   viewSource: "查看源码",
+  currentFile: "当前文件：",
   image: "图片",
   // 标签页关闭
   closeTab: {

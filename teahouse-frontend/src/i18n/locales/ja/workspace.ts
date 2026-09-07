@@ -18,6 +18,7 @@ export const jaWorkspace = {
   mdRead: "Markdown 閲覧",
   payload: "ペイロード閲覧",
   viewSource: "ソースを表示",
+  currentFile: "現在のファイル：",
   image: "画像",
   // 标签页关闭
   closeTab: {

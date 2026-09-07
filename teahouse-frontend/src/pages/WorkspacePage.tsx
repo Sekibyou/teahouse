@@ -1949,7 +1949,16 @@ export function WorkspacePage() {
                     </span>
                   )}
                   {!isImageOpen && (
-                    <div className="flex items-center gap-2 shrink-0 ml-auto">
+                    <>
+                      <button
+                        onClick={() => copyPathEntry(selectedFile)}
+                        className="min-w-0 flex-1 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors text-left cursor-pointer"
+                        title={t("clipboard.copyPath") + ": " + toBackendPath(selectedFile)}
+                      >
+                        <span className="shrink-0 font-medium">{t("currentFile")}</span>
+                        <span className="truncate font-mono text-muted-foreground/90">{toBackendPath(selectedFile)}</span>
+                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
                       {isDirty && !saveToast && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
                       {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">{t("savedToDisk")}</span>}
                       {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
@@ -1981,6 +1990,7 @@ export function WorkspacePage() {
                         {t("common:save")}
                       </Button>
                     </div>
+                    </>
                   )}
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
