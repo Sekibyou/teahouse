@@ -80,6 +80,7 @@ export function WorkspacePage() {
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | "files" | null>(null)
   useDialogBackClose(fullscreenPanel === "director", () => setFullscreenPanel(null))
+  useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null))
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem("theme")
     return saved ? saved === "dark" : true
