@@ -442,6 +442,9 @@ export function MonacoEditor({
   const [editorReady, setEditorReady] = useState(false)
   // The editor's own buffer, mirrored only to drive diff decorations.
   const [currentValue, setCurrentValue] = useState(defaultValue)
+  // 记录已播种的 path：在复用实例/换 model 场景下，path 变化时用 defaultValue 重播种
+  // 缓冲（非受控 defaultValue 只在 mount 读），避免 diff 装饰拿到上一个文件的旧内容。
+  const lastPathRef = useRef<string | null>(null)
   const uiMultiplier = useUiScaleStore((s) => s.multiplier)
   const scaledFontSize = Math.round(13 * uiMultiplier)
 
@@ -482,6 +485,23 @@ export function MonacoEditor({
     })
     return () => disposable.dispose()
   }, [onSave])
+
+  // Seed the buffer with the current file's defaultValue when the edited path
+  // changes (non-controlled defaultValue is only read at mount). Under the current
+  // parent it remounts per file (key change) so this only guards future reuse of a
+  // single editor instance; on the initial mount defaultValue is already seeded, so
+  // we record the path without re-seeding to avoid resetting the undo stack.
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || !editorReady) return
+    if (path === lastPathRef.current) return
+    const firstSeed = lastPathRef.current === null
+    lastPathRef.current = path ?? null
+    if (!firstSeed) {
+      editor.setValue(defaultValue)
+      setCurrentValue(defaultValue)
+    }
+  }, [path, defaultValue, editorReady])
 
   // Apply diff decorations
   useEffect(() => {

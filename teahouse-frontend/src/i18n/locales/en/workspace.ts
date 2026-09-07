@@ -19,6 +19,12 @@ export const enWorkspace = {
   payload: "Payload reader",
   viewSource: "View source",
   image: "Image",
+  // 标签页关闭
+  closeTab: {
+    discardTitle: "Discard unsaved changes",
+    discardMessage: "\"{{path}}\" has unsaved changes. Close and discard them?",
+    discard: "Discard & close",
+  },
   selectFileMobileHint: "Tap the file button in the top-left to select a file",
   selectFileDesktopHint: "Select a file from the left to edit",
   ctrlSHint: "Ctrl+S to save",

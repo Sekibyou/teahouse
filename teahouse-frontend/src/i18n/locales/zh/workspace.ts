@@ -19,6 +19,12 @@ export const zhWorkspace = {
   payload: "Payload 阅读",
   viewSource: "查看源码",
   image: "图片",
+  // 标签页关闭
+  closeTab: {
+    discardTitle: "丢弃未保存更改",
+    discardMessage: "\"{{path}}\" 有未保存的更改。确定关闭并丢弃吗？",
+    discard: "丢弃并关闭",
+  },
   selectFileMobileHint: "点击左上角文件按钮选择文件",
   selectFileDesktopHint: "从左侧选择文件进行编辑",
   ctrlSHint: "Ctrl+S 保存",

@@ -19,6 +19,12 @@ export const jaWorkspace = {
   payload: "ペイロード閲覧",
   viewSource: "ソースを表示",
   image: "画像",
+  // 标签页关闭
+  closeTab: {
+    discardTitle: "未保存の変更を破棄",
+    discardMessage: "「{{path}}」に未保存の変更があります。閉じて破棄しますか？",
+    discard: "破棄して閉じる",
+  },
   selectFileMobileHint: "左上のファイルボタンをタップしてファイルを選択",
   selectFileDesktopHint: "左側からファイルを選択して編集",
   ctrlSHint: "Ctrl+S で保存",

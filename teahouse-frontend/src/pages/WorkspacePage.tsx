@@ -34,6 +34,7 @@ import type { FileTreeNode, TreeNodeRef, TreeClipboard, UndoableOp, TrashItem } 
 import { applyFileChange } from "@/lib/fileTreeReducer"
 import { collectAllEntries, pruneNestedItems } from "@/lib/fileTreeOps"
 import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
+import { EditorTabs } from "./WorkspacePageComps/EditorTabs"
 import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
 import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
@@ -42,6 +43,20 @@ import { TreeMenu } from "./WorkspacePageComps/TreeMenu"
 import { ExportDialog, type ExportDialogHandle } from "./WorkspacePageComps/ExportDialog"
 
 // Monaco Editor theme follows system dark mode — handled by MonacoEditor component
+
+// 编辑器标签页中单个已打开文件的 per-path 状态。key = 前端 path(root/...)。
+export interface TabEntry {
+  content: string                 // 磁盘基线（用于脏判定/保存后刷新）
+  edited: string                  // 缓冲（Monaco/textarea 当前内容）
+  dirty: boolean                  // 脏标记：edited !== content
+  gitHead: string                 // git HEAD（diff 用；图片/新文件为 ""）
+  view: "code" | "preview" | "payload"  // 该文件当前阅读视图（切文件各标签自持）
+  isImage: boolean                // 图片预览文件（不经文本编辑）
+  imageUri?: string | null        // 图片 data URI（切走/切回保留预览）
+  imageMeta?: { w: number; h: number } | null
+  payloadMessages: PayloadMessage[] | null
+  payloadMeta: [string, string][]
+}
 
 export function WorkspacePage() {
   const { t } = useTranslation("workspace")
@@ -88,19 +103,18 @@ export function WorkspacePage() {
     setFileTree(next)
   }, [])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // 编辑器标签页机制：同一时刻只有一个激活文件（selectedFile），但可打开多个标签
+  // （openTabs 记录打开顺序，selectedFile = 当前激活下标对应用户打开中的那个）。每个已打开
+  // 文件的内容/脏标记/阅读视图等全部 per-path 存进 tabStore（切走保留、切回不丢）。
+  // key 统一用前端 path（root/...）。selectedFile 独立保留为激活 path，读写走 tabStore[selectedFile]。
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [isImageOpen, setIsImageOpen] = useState(false)
-  const [imageDataUri, setImageDataUri] = useState<string | null>(null)
-  const [imageMeta, setImageMeta] = useState<{ w: number; h: number } | null>(null)
-  const [fileContent, setFileContent] = useState("")
-  const [editedContent, setEditedContent] = useState("")
-  const [isDirty, setIsDirty] = useState(false)
+  const [openTabs, setOpenTabs] = useState<string[]>([])
+  // 待确认关闭的脏标签（关闭脏标签需确认，禁止原生 confirm）。非脏标签直接关无需弹窗。
+  const [closePending, setClosePending] = useState<string | null>(null)
+  const [tabStore, setTabStore] = useState<Record<string, TabEntry>>({})
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
-  const [editorEpoch, setEditorEpoch] = useState(0)
-  // .md 文件可在代码与「Markdown 阅读」间切换；payload JSON 可在代码与「Payload 阅读」间切换。
-  // 是否启用阅读模式（读视图）由 localStorage 布尔持久化：开→切文件时受支持的文件直接进阅读
-  // 视图；关→点任何文件都进代码编辑、阅读入口隐藏。
-  const [editorView, setEditorView] = useState<"code" | "preview" | "payload">("code")
+  const [selectedFileVersion, setSelectedFileVersion] = useState(0)
+
   // 「阅读模式」持久化为 localStorage 布尔：开→切到受支持文件时自动进阅读视图；关→进代码编辑。
   // 无独立开关——点「阅读」进入即置 true，点「查看源码」回代码即置 false。仅需读，故用 ref。
   const readModeRef = useRef<boolean>(
@@ -110,9 +124,6 @@ export function WorkspacePage() {
     readModeRef.current = on
     try { localStorage.setItem("teahouse_editor_read_mode", String(on)) } catch { /* ignore */ }
   }, [])
-  // payload JSON 解析结果（命中 messages[{role,content}] 才非空，决定是否显示「Payload 阅读」按钮）
-  const [payloadMessages, setPayloadMessages] = useState<PayloadMessage[] | null>(null)
-  const [payloadMeta, setPayloadMeta] = useState<Array<[string, string]>>([])
   const [isLoading, setIsLoading] = useState(true)
   const initialLoadRef = useRef(true)
   // 文件加载/重载请求序号，丢弃过期响应（快速连点不同文件防串号）
@@ -215,6 +226,20 @@ export function WorkspacePage() {
 
   const instId = activeInstance?.id
 
+  // 激活文件（selectedFile）的 per-path 条目。无激活文件时为 undefined。
+  const activeEntry: TabEntry | undefined = selectedFile ? tabStore[selectedFile] : undefined
+  // 以下便捷取读仅供渲染/动作栏沿用旧名（守卫保证只在 selectedFile 非空分支使用）。
+  // isImageOpen：当前激活是否为图片预览
+  const isImageOpen = !!activeEntry?.isImage
+  const editorView = activeEntry?.view ?? "code"
+  const editedContent = activeEntry?.edited ?? ""
+  const isDirty = !!activeEntry?.dirty
+  const imageDataUri = activeEntry?.imageUri ?? null
+  const imageMeta = activeEntry?.imageMeta ?? null
+  const gitHeadContent = activeEntry?.gitHead ?? null
+  const payloadMessages = activeEntry?.payloadMessages ?? null
+  const payloadMeta = activeEntry?.payloadMeta ?? []
+
   // 当前文件是否为 Markdown（决定是否显示阅读切换）
   const isMarkdown = !!selectedFile?.endsWith(".md")
   // 当前文件内容是否能解析出 payload messages（决定是否显示「Payload 阅读」切换）
@@ -279,25 +304,16 @@ export function WorkspacePage() {
     }
   }, [loadFileTree])
 
-  // Diff content from git HEAD (null = new file → treat as empty for diff)
-  const [gitHeadContent, setGitHeadContent] = useState<string | null>(null)
-
   // File content is loaded by `openFile` (load-first + key remount). Reset the
   // editor state whenever the instance changes. Entering an instance also clears
   // its recycle bin (backend) + the undo/redo stacks (frontend) — undo lives
   // only for the current active session (single frontend link).
   useEffect(() => {
     setSelectedFile(null)
-    setIsImageOpen(false)
-    setImageDataUri(null)
-    setImageMeta(null)
-    setFileContent("")
-    setEditedContent("")
-    setGitHeadContent("")
-    setIsDirty(false)
-    setPayloadMessages(null)
-    setPayloadMeta([])
-    setEditorView("code")
+    setOpenTabs([])
+    setClosePending(null)
+    setTabStore({})
+    setSelectedFileVersion(0)
     setRootMenu(null)
     setClipboard(null)
     setExternalDrop(null)
@@ -331,7 +347,7 @@ export function WorkspacePage() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [isDirty, selectedFile, editedContent, instId])
+  }, [isDirty, selectedFile, instId])
 
   // Apply a structural change from a local operation optimistically to the tree.
   // Falls back to a full reload when the reducer can't reconcile (missing parent
@@ -341,14 +357,23 @@ export function WorkspacePage() {
   // refresh. Git status is refetched here (one source of truth for the op).
   const handleSave = async () => {
     if (!instId || selectedFile === null) return
+    const path = selectedFile
+    const entry = tabStore[path]
+    if (!entry) return
     setIsSaving(true)
-    const res = await instancesApi.writeFile(instId, selectedFile, editedContent)
+    const res = await instancesApi.writeFile(instId, path, entry.edited)
     if (res.ok) {
-      setFileContent(editedContent)
-      setIsDirty(false)
-      const parsed = tryParsePayload(editedContent)
-      setPayloadMessages(parsed ? parsed.messages : null)
-      setPayloadMeta(parsed ? parsed.meta : [])
+      const parsed = tryParsePayload(entry.edited)
+      setTabStore((prev) => (prev[path] ? {
+        ...prev,
+        [path]: {
+          ...prev[path],
+          content: entry.edited,
+          dirty: false,
+          payloadMessages: parsed ? parsed.messages : null,
+          payloadMeta: parsed ? parsed.meta : [],
+        },
+      } : prev))
       if (instId) useGitStore.getState().fetchGitStatus(instId)
       showSaveToast()
     }
@@ -456,30 +481,20 @@ export function WorkspacePage() {
     if (!res.ok) return
     const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : ""
     const newPath = parent ? `${parent}/${newName}` : newName
-    // Remap the open file if it is the renamed entry or lives under a renamed directory
-    if (selectedFile === oldPath || selectedFile?.startsWith(oldPath + "/")) {
-      setSelectedFile(
-        selectedFile === oldPath ? newPath : newPath + selectedFile!.slice(oldPath.length),
-      )
-    }
+    // Remap any open tab under the renamed entry / directory to the new path.
+    remapOpenTabPaths(oldPath, newPath)
     applyLocalStructural({ type: "moved", path: newPath, prevPath: oldPath })
     pushUndo({
       undo: async () => {
         const rr = await instancesApi.renameEntry(instId!, newPath, oldPath.split("/").pop()!)
         if (!rr.ok) return
-        if (selectedFileRef.current === newPath || selectedFileRef.current?.startsWith(newPath + "/")) {
-          const cur = selectedFileRef.current
-          setSelectedFile(cur === newPath ? oldPath : oldPath + cur.slice(newPath.length))
-        }
+        remapOpenTabPaths(newPath, oldPath)
         await refresh()
       },
       redo: async () => {
         const rr = await instancesApi.renameEntry(instId!, oldPath, newName)
         if (!rr.ok) return
-        if (selectedFileRef.current === oldPath || selectedFileRef.current?.startsWith(oldPath + "/")) {
-          const cur = selectedFileRef.current
-          setSelectedFile(cur === oldPath ? newPath : newPath + cur.slice(oldPath.length))
-        }
+        remapOpenTabPaths(oldPath, newPath)
         await refresh()
       },
     })
@@ -544,27 +559,166 @@ export function WorkspacePage() {
   // Keep a ref for latest selectedFile so callbacks always have current value
   const selectedFileRef = useRef(selectedFile)
   selectedFileRef.current = selectedFile
+  // Mirror openTabs order so removeTab/closeTab closures can compute the active
+  // fallback synchronously outside a setState updater.
+  const openTabsRef = useRef(openTabs)
+  openTabsRef.current = openTabs
+  // Mirror the active entry so closures (SSE / async reloads) read latest without deps.
+  const tabStoreRef = useRef(tabStore)
+  tabStoreRef.current = tabStore
+  // 桌面阅读视图（Markdown preview / Payload）滚动位置，按 path + 视图类型记忆。
+  // Monaco 代码视图走 key 全量重挂、天然单文件无需记忆；此处只管同文件 code↔read 切换时
+  // display:none→重显导致的 scrollTop 归零问题。
+  const readScrollRef = useRef<Record<string, { preview: number; payload: number }>>({})
+  const previewScrollElRef = useRef<HTMLDivElement | null>(null)
+  const payloadScrollElRef = useRef<HTMLDivElement | null>(null)
 
-  // Keep a ref for isDirty so SSE callback can check without depending on state
-  const isDirtyRef = useRef(isDirty)
-  isDirtyRef.current = isDirty
+  // 阅读视图切换/换文件后，恢复当前激活文件的阅读滚动位置（容器从 hidden 变可见需等 DOM
+  // 布置完再 scroll；内容渲染是异步的，故再 rAF 一层兜底）。code↔read 切换保留；切文件时
+  // key 重挂容器 scrollTop 归零，读到的是上次为该 path 存的旧值，这里一并恢复。
+  useLayoutEffect(() => {
+    if (!selectedFile) return
+    if (editorView === "preview" && previewScrollElRef.current) {
+      const saved = readScrollRef.current[selectedFile]?.preview ?? 0
+      if (saved > 0) {
+        requestAnimationFrame(() => {
+          if (previewScrollElRef.current) previewScrollElRef.current.scrollTop = saved
+        })
+      }
+    } else if (editorView === "payload" && payloadScrollElRef.current) {
+      const saved = readScrollRef.current[selectedFile]?.payload ?? 0
+      if (saved > 0) {
+        requestAnimationFrame(() => {
+          if (payloadScrollElRef.current) payloadScrollElRef.current.scrollTop = saved
+        })
+      }
+    }
+  }, [selectedFile, editorView, isMarkdown, isPayloadFile])
 
-  // Keep refs for the loaded baseline + git HEAD so async reloads can compare
-  // against current state without taking a dependency on them.
-  const fileContentRef = useRef(fileContent)
-  fileContentRef.current = fileContent
-  const gitHeadContentRef = useRef(gitHeadContent)
-  gitHeadContentRef.current = gitHeadContent
-  const imageDataUriRef = useRef(imageDataUri)
-  imageDataUriRef.current = imageDataUri
+  // Keep a ref for the active file's dirty flag so SSE callback can check without
+  // depending on state. Syncs whenever the active path or its entry changes.
+  const isDirtyRef = useRef(false)
+  isDirtyRef.current = !!activeEntry?.dirty
+
+  // Keep refs for the active loaded baseline + git HEAD + image URI so async
+  // reloads can compare against current state without taking a dependency on
+  // them (the active entry may change mid-flight).
+  const fileContentRef = useRef("")
+  fileContentRef.current = activeEntry?.content ?? ""
+  const gitHeadContentRef = useRef<string | null>(null)
+  gitHeadContentRef.current = activeEntry?.gitHead ?? null
+  const imageDataUriRef = useRef<string | null>(null)
+  imageDataUriRef.current = activeEntry?.imageUri ?? null
+
+  // 激活某个 path：若已在 openTabs 则仅切换激活，否则追加为打开顺序尾部的新标签。
+  // 首次打开时外部已构造好 entry 并写入 tabStore（调用方 setTabStore 后调此函数）。
+  const activateTab = useCallback((path: string) => {
+    setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
+    setSelectedFile(path)
+    setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
+  }, [])
+
+  // 用新 entry 打开并激活一个 path（覆盖/初始化该 path 的 tabStore 条目）。
+  const openTab = useCallback((path: string, entry: TabEntry) => {
+    setTabStore((prev) => ({ ...prev, [path]: entry }))
+    activateTab(path)
+  }, [activateTab])
+
+  // 强制移除某标签（ConfirmDialog 确认丢弃脏内容后 / 干净标签关闭 / 文件被删）。
+  const removeTab = useCallback((path: string) => {
+    const wasActive = selectedFileRef.current === path
+    // 关闭的是激活标签 → 关闭后激活右邻（无右邻则左邻）；关唯一标签 → 回空态。
+    if (wasActive) {
+      const list = openTabsRef.current
+      const idx = list.indexOf(path)
+      const rest = list.filter((p) => p !== path)
+      const fallback = rest[idx] ?? rest[idx - 1] ?? null
+      setSelectedFile(fallback)
+      if (fallback) setSelection([{ path: fallback, type: "file", name: fallback.split("/").pop() || fallback }])
+      else setSelection([])
+    }
+    setTabStore((prev) => {
+      if (!(path in prev)) return prev
+      const next = { ...prev }
+      delete next[path]
+      return next
+    })
+    setOpenTabs((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : prev))
+  }, [])
+
+  // 关闭 path 对应的标签。脏标签 → 记入 closePending 交由 ConfirmDialog 确认（不直接删，
+  // 保未保存内容）；干净标签直接关闭。
+  const closeTab = useCallback((path: string) => {
+    const entry = tabStoreRef.current[path]
+    if (entry?.dirty) {
+      setClosePending(path)
+      return
+    }
+    removeTab(path)
+  }, [removeTab])
+
+  // ConfirmDialog 确认关闭脏标签后：强制移除 closePending 对应标签。
+  const confirmClosePending = useCallback(() => {
+    if (!closePending) return
+    const path = closePending
+    setClosePending(null)
+    removeTab(path)
+  }, [closePending, removeTab])
+
+  // 把已开标签里所有挂在 oldPath（自身或其目录前缀）下的键迁移到 newPath。
+  // rename/move（含 undo/redo）后调用，让标签/激活/内容状态跟随文件新位置。
+  function remapOpenTabPaths(oldPath: string, newPath: string) {
+    setOpenTabs((prev) => {
+      if (!prev.some((p) => p === oldPath || p.startsWith(oldPath + "/"))) return prev
+      return prev.map((p) => p === oldPath ? newPath : p.startsWith(oldPath + "/") ? newPath + p.slice(oldPath.length) : p)
+    })
+    setTabStore((prev) => {
+      const keys = Object.keys(prev).filter((p) => p === oldPath || p.startsWith(oldPath + "/"))
+      if (!keys.length) return prev
+      const next = { ...prev }
+      for (const k of keys) {
+        const nk = k === oldPath ? newPath : newPath + k.slice(oldPath.length)
+        next[nk] = next[nk] ? { ...next[k], ...next[nk] } : next[k]
+        delete next[k]
+      }
+      return next
+    })
+    if (selectedFileRef.current === oldPath || selectedFileRef.current?.startsWith(oldPath + "/")) {
+      const cur = selectedFileRef.current
+      setSelectedFile(cur === oldPath ? newPath : newPath + cur.slice(oldPath.length))
+    }
+  }
+
+  // 更新激活文件（selectedFile）的阅读视图。桌面/移动「阅读」切换按钮共用。
+  const setActiveView = useCallback((view: TabEntry["view"]) => {
+    const path = selectedFileRef.current
+    if (!path) return
+    setTabStore((prev) => (prev[path] ? { ...prev, [path]: { ...prev[path], view } } : prev))
+  }, [])
+
+  // 更新激活文件（selectedFile）的编辑缓冲 + 脏标记。桌面 Monaco / 移动 textarea onChange 共用。
+  const updateActiveEdited = useCallback((value: string) => {
+    const path = selectedFileRef.current
+    if (!path) return
+    setTabStore((prev) => (prev[path] ? {
+      ...prev,
+      [path]: { ...prev[path], edited: value, dirty: value !== prev[path].content },
+    } : prev))
+  }, [])
 
   // Load a file (content + git HEAD) then open it. Loads first so Monaco mounts
   // once with the correct defaultValue and a clean undo stack.
   const openFile = useCallback(async (path: string) => {
     if (!instId || path === selectedFileRef.current) return
+    // 若该文件的标签已打开（可能带未保存内容/滚动/阅读视图）→ 仅切换激活，不重读覆盖，
+    // 保留其当前编辑状态。
+    if (openTabs.includes(path)) {
+      activateTab(path)
+      return
+    }
     const seq = ++loadSeqRef.current
 
-    // 图片文件走 readAsset 渲染，不经历文本加载/脏标记/编辑器挂载
+    // 图片文件走 readAsset 渲染，不经历文本加载/脏标记/编辑器挂载。
     if (isImageFile(path)) {
       const [assetRes] = await Promise.all([
         instancesApi.readAsset(instId, path),
@@ -572,18 +726,18 @@ export function WorkspacePage() {
       ])
       if (seq !== loadSeqRef.current) return // stale response
       if (!assetRes.ok) return // file gone; keep current selection
-      setIsImageOpen(true)
-      setImageDataUri(`data:${assetRes.data!.mime};base64,${assetRes.data!.data}`)
-      setImageMeta(assetRes.data!.size ? { w: assetRes.data!.size[0], h: assetRes.data!.size[1] } : null)
-      setFileContent("")
-      setEditedContent("")
-      setGitHeadContent("")
-      setIsDirty(false)
-      setPayloadMessages(null)
-      setPayloadMeta([])
-      setEditorView("code")
-      setSelectedFile(path)
-      setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
+      openTab(path, {
+        content: "",
+        edited: "",
+        dirty: false,
+        gitHead: "",
+        view: "code",
+        isImage: true,
+        imageUri: `data:${assetRes.data!.mime};base64,${assetRes.data!.data}`,
+        imageMeta: assetRes.data!.size ? { w: assetRes.data!.size[0], h: assetRes.data!.size[1] } : null,
+        payloadMessages: null,
+        payloadMeta: [],
+      })
       return
     }
 
@@ -593,21 +747,29 @@ export function WorkspacePage() {
     ])
     if (seq !== loadSeqRef.current) return // stale response
     if (!fileRes.ok) return // file gone; keep current selection
-    setIsImageOpen(false)
-    setFileContent(fileRes.data!.content)
-    setEditedContent(fileRes.data!.content)
-    setGitHeadContent(headRes.ok && headRes.data?.content != null ? headRes.data.content : "")
-    setIsDirty(false)
-    const parsed = tryParsePayload(fileRes.data!.content)
-    setPayloadMessages(parsed ? parsed.messages : null)
-    setPayloadMeta(parsed ? parsed.meta : [])
+    const content = fileRes.data!.content
+    const head = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
+    const parsed = tryParsePayload(content)
     // 阅读模式开启且本文件受支持（.md 必有；payload 需能解析出 messages）→ 直接进阅读视图；
     // 否则进代码编辑。
     const readCapable = path.toLowerCase().endsWith(".md") || parsed !== null
-    setEditorView(readModeRef.current && readCapable ? (path.toLowerCase().endsWith(".md") ? "preview" : "payload") : "code")
-    setSelectedFile(path)
-    setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
-  }, [instId])
+    const view: TabEntry["view"] = readModeRef.current && readCapable
+      ? (path.toLowerCase().endsWith(".md") ? "preview" : "payload")
+      : "code"
+    openTab(path, {
+      content,
+      edited: content,
+      dirty: false,
+      gitHead: head,
+      view,
+      isImage: false,
+      imageUri: null,
+      imageMeta: null,
+      payloadMessages: parsed ? parsed.messages : null,
+      payloadMeta: parsed ? parsed.meta : [],
+    })
+  }, [instId, openTabs, activateTab, openTab])
+
 
   // Reload the open file from disk (external change). Remounts only when content
   // or git HEAD actually changed, so unrelated git commits don't reset the editor.
@@ -622,16 +784,15 @@ export function WorkspacePage() {
       const res = await instancesApi.readAsset(instId, path)
       if (seq !== loadSeqRef.current) return
       if (!res.ok) {
-        setSelectedFile(null)
-        setIsImageOpen(false)
-        setImageDataUri(null)
-        setImageMeta(null)
+        removeTab(path) // 资产消失 → 关闭该标签（clean，直接关）
         return
       }
       const nextUri = `data:${res.data!.mime};base64,${res.data!.data}`
       if (nextUri === imageDataUriRef.current) return
-      setImageDataUri(nextUri)
-      setImageMeta(res.data!.size ? { w: res.data!.size[0], h: res.data!.size[1] } : null)
+      setTabStore((prev) => (prev[path] ? {
+        ...prev,
+        [path]: { ...prev[path], imageUri: nextUri, imageMeta: res.data!.size ? { w: res.data!.size[0], h: res.data!.size[1] } : null },
+      } : prev))
       return
     }
 
@@ -641,26 +802,30 @@ export function WorkspacePage() {
     ])
     if (seq !== loadSeqRef.current) return
     if (!fileRes.ok) {
-      setSelectedFile(null)
-      setFileContent("")
-      setEditedContent("")
-      setGitHeadContent("")
-      setIsDirty(false)
+      removeTab(path) // 文件消失 → 关闭该标签（clean，直接关）
       return
     }
     const content = fileRes.data!.content
     const head = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
     if (content === fileContentRef.current && head === gitHeadContentRef.current) return
-    setIsImageOpen(false)
-    setFileContent(content)
-    setEditedContent(content)
-    setGitHeadContent(head)
-    setIsDirty(false)
     const parsed = tryParsePayload(content)
-    setPayloadMessages(parsed ? parsed.messages : null)
-    setPayloadMeta(parsed ? parsed.meta : [])
-    setEditorEpoch((e) => e + 1)
-  }, [instId])
+    setTabStore((prev) => (prev[path] ? {
+      ...prev,
+      [path]: {
+        ...prev[path],
+        content,
+        edited: content,
+        gitHead: head,
+        dirty: false,
+        isImage: false,
+        imageUri: null,
+        imageMeta: null,
+        payloadMessages: parsed ? parsed.messages : null,
+        payloadMeta: parsed ? parsed.meta : [],
+      },
+    } : prev))
+    setSelectedFileVersion((v) => v + 1) // 仅内容变化时自增 → Monaco 按 key 重挂
+  }, [instId, removeTab])
 
   // Unified refresh hook
   const refresh = useWorkspaceRefresh({ instId, loadFileTree })
@@ -734,18 +899,13 @@ export function WorkspacePage() {
   }, [instId])
 
   // 若 path 是被删除/撤销移除的文件（或含其目录），则清空编辑器。
+  // 若 path 是被删除/撤销移除的文件（或含其目录），则关闭对应标签、清空编辑器。
   const closeEditorFor = useCallback((path: string) => {
-    const open = selectedFileRef.current
-    if (open && (open === path || open.startsWith(path + "/"))) {
-      setSelectedFile(null)
-      setIsImageOpen(false)
-      setImageDataUri(null)
-      setImageMeta(null)
-      setFileContent("")
-      setEditedContent("")
-      setIsDirty(false)
-    }
-  }, [])
+    // 收集所有受影响（path 自身或其目录前缀匹配）的已开标签，逐个关闭。
+    const affected = openTabsRef.current.filter((p) => p === path || p.startsWith(path + "/"))
+    if (!affected.length) return
+    affected.forEach((p) => removeTab(p))
+  }, [removeTab])
 
   // 从 selection 剔除 path（撤销后该路径可能已不存在）。
   const dropFromSelection = useCallback((paths: string[]) => {
@@ -774,30 +934,31 @@ export function WorkspacePage() {
     try {
       const res = await instancesApi.moveEntry(instId, srcPath, destParent)
       if (!res.ok) return
-      // Remap the open file if it is the moved entry or lives under the moved entry.
-      if (selectedFile === srcPath || selectedFile?.startsWith(srcPath + "/")) {
-        const base = srcPath.split("/").pop() ?? srcPath
-        setSelectedFile(destParent ? `${destParent}/${base}` : base)
-      }
+      // Remap any open tab under the moved entry / directory to its new location.
+      const base = srcPath.split("/").pop() ?? srcPath
+      const newPath = destParent ? `${destParent}/${base}` : base
+      remapOpenTabPaths(srcPath, newPath)
       await refresh()
       // drag&drop 移动可撤销：undo 移回原父目录。
       const fromParent = parentOf(srcPath)
       pushUndo({
         undo: async () => {
-          const rr = await instancesApi.moveEntry(instId!, srcPath, fromParent)
+          const rr = await instancesApi.moveEntry(instId!, newPath, fromParent)
           if (!rr.ok) return
+          remapOpenTabPaths(newPath, srcPath)
           await refresh()
         },
         redo: async () => {
           const rr = await instancesApi.moveEntry(instId!, srcPath, destParent)
           if (!rr.ok) return
+          remapOpenTabPaths(srcPath, newPath)
           await refresh()
         },
       })
     } finally {
       moveInFlightRef.current = false
     }
-  }, [instId, selectedFile, refresh, parentOf, pushUndo])
+  }, [instId, refresh, parentOf, pushUndo])
 
   // ---- Clipboard operations: copy path / copy / cut / paste ----
   const copyPathEntry = useCallback(async (path: string) => {
@@ -903,21 +1064,22 @@ export function WorkspacePage() {
         const fromParent = parentOf(srcPath)
         const res = await instancesApi.moveEntry(instId, srcPath, target)
         if (!res.ok) { toast.error(res.error || t("common:failed")); continue }
-        // Remap the open file if it is the moved entry or lives under it.
-        if (selectedFile === srcPath || selectedFile?.startsWith(srcPath + "/")) {
-          const base = srcPath.split("/").pop() ?? srcPath
-          setSelectedFile(target ? `${target}/${base}` : base)
-        }
+        // Remap any open tab under the moved entry / directory to its new location.
+        const base = srcPath.split("/").pop() ?? srcPath
+        const newPath = target ? `${target}/${base}` : base
+        remapOpenTabPaths(srcPath, newPath)
         // cut-move undo：移回原父目录。
         pushUndo({
           undo: async () => {
-            const rr = await instancesApi.moveEntry(instId!, srcPath, fromParent)
+            const rr = await instancesApi.moveEntry(instId!, newPath, fromParent)
             if (!rr.ok) return
+            remapOpenTabPaths(newPath, srcPath)
             await refresh()
           },
           redo: async () => {
             const rr = await instancesApi.moveEntry(instId!, srcPath, target)
             if (!rr.ok) return
+            remapOpenTabPaths(srcPath, newPath)
             await refresh()
           },
         })
@@ -1409,7 +1571,7 @@ export function WorkspacePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => { persistReadMode(true); setEditorView(isMarkdown ? "preview" : "payload") }}
+                        onClick={() => { persistReadMode(true); setActiveView(isMarkdown ? "preview" : "payload") }}
                         className="gap-1"
                         title={isMarkdown ? t("mdRead") : t("payload")}
                       >
@@ -1420,7 +1582,7 @@ export function WorkspacePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => { persistReadMode(false); setEditorView("code") }}
+                        onClick={() => { persistReadMode(false); setActiveView("code") }}
                         className="gap-1"
                         title={t("viewSource")}
                       >
@@ -1464,7 +1626,7 @@ export function WorkspacePage() {
                   <textarea
                     className="flex-1 w-full resize-none bg-background text-foreground p-4 font-mono text-sm outline-none border-0"
                     value={editedContent}
-                    onChange={(e) => { setEditedContent(e.target.value); setIsDirty(e.target.value !== fileContent) }}
+                    onChange={(e) => updateActiveEdited(e.target.value)}
                     spellCheck={false}
                   />
                 )
@@ -1732,48 +1894,57 @@ export function WorkspacePage() {
           <div className="flex-1 flex flex-col bg-background min-w-0">
             {selectedFile ? (
               <>
-                <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-                  <span className="text-sm text-muted-foreground truncate">{selectedFile}</span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isImageOpen ? (
-                      <span className="text-xs text-muted-foreground">
-                        {imageMeta ? `${imageMeta.w} × ${imageMeta.h}` : t("image")}
-                      </span>
-                    ) : (
-                      <>
-                        {isDirty && !saveToast && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
-                        {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">{t("savedToDisk")}</span>}
-                        {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
-                        {supportsRead && (editorView === "code" ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => { persistReadMode(true); setEditorView(isMarkdown ? "preview" : "payload") }}
-                            className="gap-1"
-                            title={isMarkdown ? t("mdRead") : t("payload")}
-                          >
-                            {isMarkdown ? <Eye className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
-                            {isMarkdown ? t("mdRead") : t("payload")}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => { persistReadMode(false); setEditorView("code") }}
-                            className="gap-1"
-                            title={t("viewSource")}
-                          >
-                            <Code2 className="h-3 w-3" />
-                            {t("viewSource")}
-                          </Button>
-                        ))}
-                        <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
-                          {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                          {t("common:save")}
+                {/* 标签栏（仅桌面端）：已打开的多个文件，点击切换激活，× 关闭 */}
+                <EditorTabs
+                  tabs={openTabs}
+                  activePath={selectedFile}
+                  entries={tabStore}
+                  onActivate={(index) => {
+                    const p = openTabs[index]
+                    if (p) { setSelectedFile(p); setSelection([{ path: p, type: "file", name: p.split("/").pop() || p }]) }
+                  }}
+                  onClose={(index) => closeTab(openTabs[index])}
+                />
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+                  {isImageOpen && (
+                    <span className="text-xs text-muted-foreground">
+                      {imageMeta ? `${imageMeta.w} × ${imageMeta.h}` : t("image")}
+                    </span>
+                  )}
+                  {!isImageOpen && (
+                    <div className="flex items-center gap-2 shrink-0 ml-auto">
+                      {isDirty && !saveToast && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
+                      {saveToast && <span ref={saveToastRef} className="text-xs text-green-500">{t("savedToDisk")}</span>}
+                      {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
+                      {supportsRead && (editorView === "code" ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => { persistReadMode(true); setActiveView(isMarkdown ? "preview" : "payload") }}
+                          className="gap-1"
+                          title={isMarkdown ? t("mdRead") : t("payload")}
+                        >
+                          {isMarkdown ? <Eye className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
+                          {isMarkdown ? t("mdRead") : t("payload")}
                         </Button>
-                      </>
-                    )}
-                  </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => { persistReadMode(false); setActiveView("code") }}
+                          className="gap-1"
+                          title={t("viewSource")}
+                        >
+                          <Code2 className="h-3 w-3" />
+                          {t("viewSource")}
+                        </Button>
+                      ))}
+                      <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
+                        {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                        {t("common:save")}
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1 w-full overflow-hidden">
                   {/* 图片预览 */}
@@ -1789,12 +1960,12 @@ export function WorkspacePage() {
                   {/* 代码编辑器常驻挂载，预览时用 CSS 隐藏以保留撤销栈与光标 */}
                   <div className={isImageOpen ? "hidden" : editorView === "code" ? "h-full" : "hidden"}>
                     <MonacoEditor
-                      key={`${selectedFile}#${editorEpoch}`}
+                      key={`${selectedFile}#${selectedFileVersion}`}
                       path={selectedFile}
-                      defaultValue={fileContent}
+                      defaultValue={editedContent}
                       original={gitHeadContent ?? ""}
                       onSave={handleSave}
-                      onChange={(val) => { setEditedContent(val); setIsDirty(val !== fileContent) }}
+                      onChange={(val) => updateActiveEdited(val)}
                       language={
                         selectedFile?.endsWith(".ts") || selectedFile?.endsWith(".tsx") ? "typescript" :
                         selectedFile?.endsWith(".js") ? "javascript" :
@@ -1808,12 +1979,32 @@ export function WorkspacePage() {
                     />
                   </div>
                   {isMarkdown && (
-                    <div className={`h-full overflow-auto ${editorView === "preview" ? "" : "hidden"}`}>
+                    <div
+                      ref={editorView === "preview" ? previewScrollElRef : undefined}
+                      onScroll={() => {
+                        const el = previewScrollElRef.current
+                        const p = selectedFileRef.current
+                        if (el && p) {
+                          readScrollRef.current[p] = { ...(readScrollRef.current[p] ?? { preview: 0, payload: 0 }), preview: el.scrollTop }
+                        }
+                      }}
+                      className={`h-full overflow-auto ${editorView === "preview" ? "" : "hidden"}`}
+                    >
                       <MarkdownRenderer content={editedContent} />
                     </div>
                   )}
                   {isPayloadFile && (
-                    <div className={`h-full overflow-auto ${editorView === "payload" ? "" : "hidden"}`}>
+                    <div
+                      ref={editorView === "payload" ? payloadScrollElRef : undefined}
+                      onScroll={() => {
+                        const el = payloadScrollElRef.current
+                        const p = selectedFileRef.current
+                        if (el && p) {
+                          readScrollRef.current[p] = { ...(readScrollRef.current[p] ?? { preview: 0, payload: 0 }), payload: el.scrollTop }
+                        }
+                      }}
+                      className={`h-full overflow-auto ${editorView === "payload" ? "" : "hidden"}`}
+                    >
                       <PayloadViewer messages={payloadMessages!} meta={payloadMeta} />
                     </div>
                   )}
@@ -1938,6 +2129,18 @@ export function WorkspacePage() {
         instId={instId}
         isMobile={isMobile}
         onSaved={showSaveToast}
+      />
+
+      {/* 关闭脏标签确认（禁止原生 confirm） */}
+      <ConfirmDialog
+        open={closePending !== null}
+        title={t("closeTab.discardTitle")}
+        message={closePending ? t("closeTab.discardMessage", { path: closePending }) : ""}
+        variant="destructive"
+        confirmText={t("closeTab.discard")}
+        confirmOnEnter
+        onConfirm={confirmClosePending}
+        onCancel={() => setClosePending(null)}
       />
 
       {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
