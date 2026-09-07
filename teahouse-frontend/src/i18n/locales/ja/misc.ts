@@ -187,5 +187,8 @@ export const jaMisc = {
     thinking: "思考中...",
     interrupted: "中断しました",
     waiting: "待機中...",
+    mermaidPending: "図表を生成中、完成後に表示されます…",
+    copy: "コピー",
+    copied: "コピーしました",
   },
 }

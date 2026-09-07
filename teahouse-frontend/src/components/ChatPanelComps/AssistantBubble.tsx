@@ -1,12 +1,12 @@
-import { useState, memo } from "react"
+import { useState, memo, useEffect, useRef, type ReactNode } from "react"
 import {
   Loader2, ChevronDown, ChevronRight, Brain, Terminal,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Copy, Check,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { Components } from "react-markdown"
-import { isMermaidLanguage, MermaidDiagram } from "@/components/MermaidDiagram"
+import { isMermaidLanguage, MermaidDiagram, isPendingMermaidLanguage, MermaidPending, maskUnclosedMermaidTail } from "@/components/MermaidDiagram"
 import type { RichMessage } from "./types"
 import { formatBlockArgs } from "./utils"
 import { TodoWriteResult } from "./TodoWriteResult"
@@ -15,20 +15,84 @@ import { useTranslation } from "react-i18next"
 // chat 文本块同样支持 ```mermaid 图表：识别 language-mermaid 的 code 块渲染为
 // 图表；fenced 代码块会被 react-markdown 包进 <pre>，pre 覆盖识别 mermaid 时
 // 透出 code 覆盖的结果（图表本体），不套代码框。其余代码块走默认样式。
+// 流式中间态：围栏未闭合的残缺 mermaid 由 maskUnclosedMermaidTail 替换成哨兵
+// （language-teahouse-mermaid-pending），此处渲染占位标记而非跑真实渲染。
+
+// 给单个 fenced 代码块 / mermaid / 生成中占位 挂一个「复制源码」按钮（hover 显示）。
+// 源码取自 react-markdown hast 树里 pre > code 的文本子节点，流式重渲染时稳定。
+function codeBlockSource(codeNode: unknown): string | null {
+  const c = codeNode as { children?: { type?: string; value?: string }[] } | undefined
+  const txt = (c?.children ?? [])
+    .filter((k) => k.type === "text")
+    .map((k) => k.value ?? "")
+    .join("")
+  return txt ? txt : null
+}
+
+// 拼出复制到剪贴板的最终文本。普通代码块只复制代码本体；mermaid 必须带 ```mermaid
+// 围栏边界，否则粘贴进 .md 后是裸行、渲染不成图。
+function copyPayload(codeNode: unknown, className?: unknown): string | null {
+  const inner = codeBlockSource(codeNode)
+  if (inner == null) return null
+  if (isMermaidLanguage(className)) return "```mermaid\n" + inner + "\n```\n"
+  return inner
+}
+
+function CopySource({ source }: { source: string }) {
+  const { t } = useTranslation("misc")
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<number | null>(null)
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current) }, [])
+  const onCopy = () => {
+    navigator.clipboard?.writeText(source)
+    setCopied(true)
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setCopied(false), 1600)
+  }
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title={copied ? t("assistant.copied") : t("assistant.copy")}
+      className="absolute right-1.5 top-1.5 z-[1] flex h-6 items-center gap-1 rounded-md bg-muted/80 px-1.5 text-xs text-muted-foreground opacity-0 backdrop-blur-sm transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+    >
+      {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+      {copied ? t("assistant.copied") : t("assistant.copy")}
+    </button>
+  )
+}
+
+// relative 壳：无源码时（空代码）直接透出内容，不占位。
+function FencedShell({ source, visual }: { source: string | null; visual: ReactNode }) {
+  if (source == null) return <>{visual}</>
+  return (
+    <div className="group relative">
+      {visual}
+      <CopySource source={source} />
+    </div>
+  )
+}
+
 const markdownComponents: Components = {
   code({ className, children }) {
     if (isMermaidLanguage(className)) {
       return <MermaidDiagram code={String(children).replace(/\n$/, "")} />
     }
+    if (isPendingMermaidLanguage(className)) {
+      return <MermaidPending />
+    }
     return <code className={className}>{children}</code>
   },
   pre({ node, children }) {
     const codeNode = node?.children?.[0]
-    const className = (
-      codeNode as { properties?: { className?: unknown } } | undefined
-    )?.properties?.className
-    if (isMermaidLanguage(className)) return <>{children}</>
-    return <pre>{children}</pre>
+    const cls = (codeNode as { properties?: { className?: unknown } } | undefined)?.properties?.className
+    const source = copyPayload(codeNode, cls)
+    // mermaid / pending：code 覆盖已透出成品（图/占位），pre 不再包 <pre>，直接透出。
+    // 其余 fenced 代码块：包回 <pre> 维持样式与滚动。
+    const visual = isMermaidLanguage(cls) || isPendingMermaidLanguage(cls)
+      ? children
+      : <pre>{children}</pre>
+    return <FencedShell source={source} visual={visual} />
   },
 }
 
@@ -86,7 +150,7 @@ export const AssistantBubble = memo(function AssistantBubble({
               return (
                 <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-base prose dark:prose-invert prose-chat max-w-none break-words">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {block.text!}
+                    {maskUnclosedMermaidTail(block.text!) ?? block.text!}
                   </ReactMarkdown>
                 </div>
               )

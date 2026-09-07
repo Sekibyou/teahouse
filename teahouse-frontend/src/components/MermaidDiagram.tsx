@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useEffect, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { useThemeStore } from "@/stores/themeStore"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 
@@ -41,6 +42,74 @@ export function isMermaidLanguage(className?: unknown): boolean {
   if (typeof className === "string") return /(?:^|\s)language-mermaid(?:\s|$)/.test(className)
   if (Array.isArray(className)) return className.includes("language-mermaid")
   return false
+}
+
+// ---- 流式 mermaid 的「未闭合围栏」兜底 ----
+// LLM 是流式输出正文的：围栏一旦以 ```mermaid 开头、收尾的 ``` 还没敲完前，
+// react-markdown 会把「其后到文档末尾的一切」吞进同一个 mermaid code 节点。
+// 于是每个 chunk 都在对一段「残缺图源码 + 后续杂文本」跑真实渲染 → 报错/抖动/残留报错。
+// 处理：把这段「尾部未闭合 mermaid」替换成固定哨兵，真实图表留到围栏闭合（内容完整）再渲。
+
+// 哨兵语言：区别于真实 mermaid，仅表示「图仍在生成、未完整」。
+const PENDING_LANG = "teahouse-mermaid-pending"
+
+export function isPendingMermaidLanguage(className?: unknown): boolean {
+  const marker = `language-${PENDING_LANG}`
+  if (typeof className === "string") return className.split(/\s+/).includes(marker)
+  if (Array.isArray(className)) return className.includes(marker)
+  return false
+}
+
+// 逐行扫围栏；若扫描结束时仍落在某个未闭合的 ```mermaid 围栏内，返回该围栏
+// 开头行在 lines 里的下标，否则返回 -1。兼容 ``` 与 ~~~ 两种围栏。
+function findUnclosedMermaidFence(text: string): number {
+  const lines = text.split("\n")
+  let inFence = false
+  let fenceChar = ""
+  let openIdx = -1
+  let lang = ""
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (!inFence) {
+      const m = /^\s*(```|~~~)\s*(.*)$/.exec(line)
+      if (!m) continue
+      inFence = true
+      fenceChar = m[1]
+      openIdx = i
+      lang = (m[2] || "").trim().split(/\s+/)[0] || ""
+      continue
+    }
+    // 闭合围栏需同字符、≥3 个、只含空白或类名后缀。
+    if (new RegExp(`^\\s*${fenceChar === "```" ? "`{3,}" : "~{3,}"}\\s*`).test(line)) {
+      inFence = false
+      fenceChar = ""
+      openIdx = -1
+      lang = ""
+    }
+  }
+  return inFence && lang === "mermaid" ? openIdx : -1
+}
+
+// 主入口：文本尾部落在未闭合 ```mermaid 内 → 返回把该尾段替换成哨兵后的文本，
+// 否则返回 null（无需 mask）。
+export function maskUnclosedMermaidTail(text: string): string | null {
+  const openIdx = findUnclosedMermaidFence(text)
+  if (openIdx < 0) return null
+  const lines = text.split("\n")
+  const prefix = lines.slice(0, openIdx).join("\n").replace(/\s+$/, "")
+  // 哨兵内容固定写死（闭合对、空体），不随流式 chunk 变化 → 占位标记稳定不抖。
+  const marker = `${prefix ? prefix + "\n\n" : ""}\`\`\`${PENDING_LANG}\n\`\`\`\n`
+  return marker
+}
+
+// 占位标记：未完整图表期间的稳定静态提示，不做 mermaid 渲染。
+export function MermaidPending() {
+  const { t } = useTranslation("misc")
+  return (
+    <div className="my-2 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+      {t("assistant.mermaidPending")}
+    </div>
+  )
 }
 
 let mermaidSeq = 0

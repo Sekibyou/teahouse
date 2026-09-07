@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from "react"
 import { useMemo } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { isMermaidLanguage, MermaidDiagram } from "./MermaidDiagram"
+import { isMermaidLanguage, MermaidDiagram, isPendingMermaidLanguage, MermaidPending, maskUnclosedMermaidTail } from "./MermaidDiagram"
 
 // ---- 占位符着色 ----
 // 预览模式下给 teahouse 占位符语法加颜色，与 Monaco 编辑器 token 颜色对齐：
@@ -238,6 +238,9 @@ export function MarkdownRenderer({ content }: { content: string }) {
       if (isMermaidLanguage(className)) {
         return <MermaidDiagram code={String(children).replace(/\n$/, "")} />
       }
+      if (isPendingMermaidLanguage(className)) {
+        return <MermaidPending />
+      }
       // fenced / 行内代码文本里的占位符也着色
       return <code className={className}>{highlightChildren(children, placeholders)}</code>
     },
@@ -249,6 +252,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
         codeNode as { properties?: { className?: unknown } } | undefined
       )?.properties?.className
       if (isMermaidLanguage(className)) return <>{children}</>
+      if (isPendingMermaidLanguage(className)) return <>{children}</>
       return <pre>{children}</pre>
     },
   }
@@ -256,7 +260,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
   return (
     <div className="prose dark:prose-invert max-w-none px-6 py-4">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {text}
+        {maskUnclosedMermaidTail(text) ?? text}
       </ReactMarkdown>
     </div>
   )
