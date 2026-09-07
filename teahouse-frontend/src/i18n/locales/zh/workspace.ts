@@ -19,6 +19,7 @@ export const zhWorkspace = {
   backToCodeEdit: "返回代码编辑",
   preview: "预览",
   code: "代码",
+  payload: "Payload 阅读",
   image: "图片",
   selectFileMobileHint: "点击左上角文件按钮选择文件",
   selectFileDesktopHint: "从左侧选择文件进行编辑",

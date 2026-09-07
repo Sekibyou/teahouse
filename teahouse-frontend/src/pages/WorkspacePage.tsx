@@ -3,12 +3,14 @@ import { useTranslation } from "react-i18next"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
+import { PayloadViewer } from "@/components/PayloadViewer"
+import { tryParsePayload, type PayloadMessage } from "@/utils/payloadView"
 import {
   File, Folder, Loader2,
   Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
   FolderTree, Menu, X, Gamepad2, Wrench,
-  Eye, Code2,
+  Eye, Code2, BookOpen,
 } from "lucide-react"
 import { useCurrentLang, useLangStore } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
@@ -95,8 +97,11 @@ export function WorkspacePage() {
   const [isDirty, setIsDirty] = useState(false)
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
   const [editorEpoch, setEditorEpoch] = useState(0)
-  // .md 文件可在代码编辑器与 Markdown 预览间切换
-  const [editorView, setEditorView] = useState<"code" | "preview">("code")
+  // .md 文件可在代码编辑器与 Markdown 预览间切换；payload JSON 可在代码与「Payload 阅读」间切换
+  const [editorView, setEditorView] = useState<"code" | "preview" | "payload">("code")
+  // payload JSON 解析结果（命中 messages[{role,content}] 才非空，决定是否显示「Payload 阅读」按钮）
+  const [payloadMessages, setPayloadMessages] = useState<PayloadMessage[] | null>(null)
+  const [payloadMeta, setPayloadMeta] = useState<Array<[string, string]>>([])
   const [isLoading, setIsLoading] = useState(true)
   const initialLoadRef = useRef(true)
   // 文件加载/重载请求序号，丢弃过期响应（快速连点不同文件防串号）
@@ -201,6 +206,8 @@ export function WorkspacePage() {
 
   // 当前文件是否为 Markdown（决定是否显示预览切换）
   const isMarkdown = !!selectedFile?.endsWith(".md")
+  // 当前文件内容是否能解析出 payload messages（决定是否显示「Payload 阅读」切换）
+  const isPayloadFile = payloadMessages !== null
 
   // 图片扩展名判定——此类文件不进入文本编辑器，改为在工作区直接渲染 <img>
   const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
@@ -275,6 +282,8 @@ export function WorkspacePage() {
     setEditedContent("")
     setGitHeadContent("")
     setIsDirty(false)
+    setPayloadMessages(null)
+    setPayloadMeta([])
     setEditorView("code")
     setRootMenu(null)
     setClipboard(null)
@@ -324,6 +333,9 @@ export function WorkspacePage() {
     if (res.ok) {
       setFileContent(editedContent)
       setIsDirty(false)
+      const parsed = tryParsePayload(editedContent)
+      setPayloadMessages(parsed ? parsed.messages : null)
+      setPayloadMeta(parsed ? parsed.meta : [])
       if (instId) useGitStore.getState().fetchGitStatus(instId)
       showSaveToast()
     }
@@ -554,6 +566,8 @@ export function WorkspacePage() {
       setEditedContent("")
       setGitHeadContent("")
       setIsDirty(false)
+      setPayloadMessages(null)
+      setPayloadMeta([])
       setEditorView("code")
       setSelectedFile(path)
       setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
@@ -571,6 +585,9 @@ export function WorkspacePage() {
     setEditedContent(fileRes.data!.content)
     setGitHeadContent(headRes.ok && headRes.data?.content != null ? headRes.data.content : "")
     setIsDirty(false)
+    const parsed = tryParsePayload(fileRes.data!.content)
+    setPayloadMessages(parsed ? parsed.messages : null)
+    setPayloadMeta(parsed ? parsed.meta : [])
     setEditorView("code")
     setSelectedFile(path)
     setSelection([{ path, type: "file", name: path.split("/").pop() || path }])
@@ -623,6 +640,9 @@ export function WorkspacePage() {
     setEditedContent(content)
     setGitHeadContent(head)
     setIsDirty(false)
+    const parsed = tryParsePayload(content)
+    setPayloadMessages(parsed ? parsed.messages : null)
+    setPayloadMeta(parsed ? parsed.meta : [])
     setEditorEpoch((e) => e + 1)
   }, [instId])
 
@@ -1380,6 +1400,18 @@ export function WorkspacePage() {
                         {editorView === "code" ? t("preview") : t("code")}
                       </Button>
                     )}
+                    {isPayloadFile && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditorView((v) => (v === "code" ? "payload" : "code"))}
+                        className="gap-1"
+                        title={editorView === "code" ? t("payload") : t("code")}
+                      >
+                        {editorView === "code" ? <BookOpen className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
+                        {editorView === "code" ? t("payload") : t("code")}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                       {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                       {t("common:save")}
@@ -1407,6 +1439,10 @@ export function WorkspacePage() {
                 ) : isMarkdown && editorView === "preview" ? (
                   <div className="flex-1 overflow-auto">
                     <MarkdownRenderer content={editedContent} />
+                  </div>
+                ) : isPayloadFile && editorView === "payload" ? (
+                  <div className="flex-1 overflow-auto">
+                    <PayloadViewer messages={payloadMessages!} meta={payloadMeta} />
                   </div>
                 ) : (
                   <textarea
@@ -1703,6 +1739,18 @@ export function WorkspacePage() {
                             {editorView === "code" ? t("preview") : t("code")}
                           </Button>
                         )}
+                        {isPayloadFile && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditorView((v) => (v === "code" ? "payload" : "code"))}
+                            className="gap-1"
+                            title={editorView === "code" ? t("payload") : t("code")}
+                          >
+                            {editorView === "code" ? <BookOpen className="h-3 w-3" /> : <Code2 className="h-3 w-3" />}
+                            {editorView === "code" ? t("payload") : t("code")}
+                          </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={handleSave} disabled={!isDirty || isSaving} className="gap-1">
                           {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                           {t("common:save")}
@@ -1746,6 +1794,11 @@ export function WorkspacePage() {
                   {isMarkdown && (
                     <div className={`h-full overflow-auto ${editorView === "preview" ? "" : "hidden"}`}>
                       <MarkdownRenderer content={editedContent} />
+                    </div>
+                  )}
+                  {isPayloadFile && (
+                    <div className={`h-full overflow-auto ${editorView === "payload" ? "" : "hidden"}`}>
+                      <PayloadViewer messages={payloadMessages!} meta={payloadMeta} />
                     </div>
                   )}
                 </div>

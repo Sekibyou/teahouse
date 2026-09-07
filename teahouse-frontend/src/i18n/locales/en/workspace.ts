@@ -19,6 +19,7 @@ export const enWorkspace = {
   backToCodeEdit: "Back to code editing",
   preview: "Preview",
   code: "Code",
+  payload: "Payload reader",
   image: "Image",
   selectFileMobileHint: "Tap the file button in the top-left to select a file",
   selectFileDesktopHint: "Select a file from the left to edit",

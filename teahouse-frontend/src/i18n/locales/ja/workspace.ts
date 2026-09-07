@@ -19,6 +19,7 @@ export const jaWorkspace = {
   backToCodeEdit: "コード編集に戻る",
   preview: "プレビュー",
   code: "コード",
+  payload: "ペイロード閲覧",
   image: "画像",
   selectFileMobileHint: "左上のファイルボタンをタップしてファイルを選択",
   selectFileDesktopHint: "左側からファイルを選択して編集",
