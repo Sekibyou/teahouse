@@ -203,9 +203,9 @@ export function ChatHeader({
 
   // ── 桌面端：完整头部 ────────────────────────────────────────────────────
   return (
-    <div className="p-3 border-b border-border shrink-0 space-y-2">
-      {/* Row 1: 导演 + 内联收起按钮 + 插件/模型信息 */}
-      <div className="flex items-center justify-between">
+    <div className="shrink-0">
+      {/* Row 1: 导演 + 内联收起按钮 + 信息区 */}
+      <div className="flex items-center justify-between px-3 pt-2 pb-1 bg-muted/20">
         <div className="flex items-center gap-1.5">
           <h3 className="text-sm font-semibold">{t("directorTitle")}</h3>
           {onClosePanel && (
@@ -218,7 +218,7 @@ export function ChatHeader({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             className="flex items-center gap-1 hover:text-foreground transition-colors"
             onClick={onCycleReasoningEffort}
@@ -240,68 +240,46 @@ export function ChatHeader({
           >
             {t("directorColon")}<span className="text-foreground font-medium">{slotModels.director || t("unset")}</span>
           </button>
-          <button
-            className="flex items-center gap-1 hover:text-foreground transition-colors"
-            onClick={() => onOpenSettings("slots")}
-            title={t("openSettingsSlots")}
-          >
-            {t("writerColon")}<span className="text-foreground font-medium">{slotModels.writer || t("unset")}</span>
-          </button>
+          <div className="flex items-center gap-1.5 border-l border-border pl-3">
+            <span>{t("autoCommit")}</span>
+            <Switch checked={autoApproveCommit} onCheckedChange={onAutoApproveChange} />
+          </div>
         </div>
       </div>
-      {/* Session strip: main + child sub-sessions. Click to switch the panel. */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {sessionList.map((s) => {
-          const active = s.session_id === activeSid
-          const hasNew = !!newMsgMap[s.session_id]
-          const isMain = s.session_id === MAIN_SID
-          const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
-          return (
+      {/* 会话标签栏：仿文件编辑器标签——激活强调色、贴底、仅上方圆角。加号紧跟最右标签，刷新钉最右 */}
+      <div className="flex items-end gap-1.5 px-2 border-b border-border bg-muted/20">
+        <div className="flex items-end gap-1.5 flex-1 min-w-0 overflow-x-auto">
+          {sessionList.map((s) => {
+            const active = s.session_id === activeSid
+            const hasNew = !!newMsgMap[s.session_id]
+            const isMain = s.session_id === MAIN_SID
+            const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+            return (
+              <div key={s.session_id} className="relative shrink-0 flex items-end">
+                <button
+                  onClick={() => onSwitchSession(s.session_id)}
+                  className={`flex items-center px-2.5 text-xs rounded-t-md h-6 select-none whitespace-nowrap transition-colors ${
+                    active ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {label}
+                </button>
+                {/* 有新消息 → 右上角小圆圈 */}
+                {hasNew && !active && (
+                  <span className="absolute -top-1 right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
+                )}
+              </div>
+            )
+          })}
+          {!instId ? null : (
             <button
-              key={s.session_id}
-              onClick={() => onSwitchSession(s.session_id)}
-              className={`relative px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                active ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground border-border hover:bg-accent"
-              }`}
+              className="shrink-0 self-end mb-1.5 ml-0.5 px-1.5 rounded-md h-5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center"
+              onClick={onCreateSession}
+              title={t("newSubSessionTitle")}
             >
-              {label}
-              {/* 有新消息 → 右上角小圆圈 */}
-              {hasNew && !active && (
-                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
-              )}
+              <Plus className="h-3 w-3" />
             </button>
-          )
-        })}
-        {!instId ? null : (
-          <button
-            className="ml-auto px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
-            onClick={onCreateSession}
-            title={t("newSubSessionTitle")}
-          >
-            <Plus className="h-3 w-3" />
-          </button>
-        )}
-        {!instId ? null : (
-          <button
-            className="px-2 py-0.5 rounded text-[10px] border border-dashed text-muted-foreground hover:text-foreground transition-colors"
-            onClick={onRefreshSessionList}
-            title={t("refreshSessionListTitle")}
-          >
-            {t("refresh")}
-          </button>
-        )}
-      </div>
-      {/* Row 2: auto-commit switch (git 触发器已移到文件树底部栏) */}
-      <div className="flex items-center justify-end">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[10px] text-muted-foreground">{t("autoCommit")}</span>
-          <Switch
-            checked={autoApproveCommit}
-            onCheckedChange={onAutoApproveChange}
-          />
-          <span className="text-[10px] text-muted-foreground w-5 text-right">
-            {autoApproveCommit ? t("on") : t("off")}
-          </span>
+          )}
         </div>
       </div>
     </div>
