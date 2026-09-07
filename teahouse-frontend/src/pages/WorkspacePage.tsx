@@ -50,7 +50,6 @@ export interface TabEntry {
   edited: string                  // 缓冲（Monaco/textarea 当前内容）
   dirty: boolean                  // 脏标记：edited !== content
   gitHead: string                 // git HEAD（diff 用；图片/新文件为 ""）
-  view: "code" | "preview" | "payload"  // 该文件当前阅读视图（切文件各标签自持）
   isImage: boolean                // 图片预览文件（不经文本编辑）
   imageUri?: string | null        // 图片 data URI（切走/切回保留预览）
   imageMeta?: { w: number; h: number } | null
@@ -115,13 +114,15 @@ export function WorkspacePage() {
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
   const [selectedFileVersion, setSelectedFileVersion] = useState(0)
 
-  // 「阅读模式」持久化为 localStorage 布尔：开→切到受支持文件时自动进阅读视图；关→进代码编辑。
-  // 无独立开关——点「阅读」进入即置 true，点「查看源码」回代码即置 false。仅需读，故用 ref。
-  const readModeRef = useRef<boolean>(
-    (() => { try { return localStorage.getItem("teahouse_editor_read_mode") === "true" } catch { return false } })(),
-  )
+  // 「阅读模式」持久化为 localStorage 布尔：开→受支持文件进阅读视图；关→进代码编辑。
+  // 无独立开关——点「阅读」置 true、点「查看源码」置 false。此为全局渲染权威：
+  // 渲染模式(readMode/editorView)统一由它实时派生、不 per-tab 固化——切入标签页时读的是
+  // 当前最新值(用户切源码后，其它已开文件切回也显示源码)。state 使切换触发重渲染。
+  const [readMode, setReadMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("teahouse_editor_read_mode") === "true" } catch { return false }
+  })
   const persistReadMode = useCallback((on: boolean) => {
-    readModeRef.current = on
+    setReadMode(on)
     try { localStorage.setItem("teahouse_editor_read_mode", String(on)) } catch { /* ignore */ }
   }, [])
   const [isLoading, setIsLoading] = useState(true)
@@ -231,7 +232,6 @@ export function WorkspacePage() {
   // 以下便捷取读仅供渲染/动作栏沿用旧名（守卫保证只在 selectedFile 非空分支使用）。
   // isImageOpen：当前激活是否为图片预览
   const isImageOpen = !!activeEntry?.isImage
-  const editorView = activeEntry?.view ?? "code"
   const editedContent = activeEntry?.edited ?? ""
   const isDirty = !!activeEntry?.dirty
   const imageDataUri = activeEntry?.imageUri ?? null
@@ -246,6 +246,13 @@ export function WorkspacePage() {
   const isPayloadFile = payloadMessages !== null
   // 当前文件受阅读模式支持（md 必有；payload 需能解析出 messages）
   const supportsRead = isMarkdown || isPayloadFile
+  // 当前激活文件的渲染模式：全局阅读偏好(readMode)实时派生，不 per-tab 固化——切入标签页读
+  // 的是当前最新值。开阅读→受支持文件进对应阅读视图；关阅读(查看源码)→一律代码编辑。
+  const editorView: "code" | "preview" | "payload" = readMode && isMarkdown
+    ? "preview"
+    : readMode && isPayloadFile
+      ? "payload"
+      : "code"
 
   // 图片扩展名判定——此类文件不进入文本编辑器，改为在工作区直接渲染 <img>
   const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
@@ -692,13 +699,6 @@ export function WorkspacePage() {
     }
   }
 
-  // 更新激活文件（selectedFile）的阅读视图。桌面/移动「阅读」切换按钮共用。
-  const setActiveView = useCallback((view: TabEntry["view"]) => {
-    const path = selectedFileRef.current
-    if (!path) return
-    setTabStore((prev) => (prev[path] ? { ...prev, [path]: { ...prev[path], view } } : prev))
-  }, [])
-
   // 更新激活文件（selectedFile）的编辑缓冲 + 脏标记。桌面 Monaco / 移动 textarea onChange 共用。
   const updateActiveEdited = useCallback((value: string) => {
     const path = selectedFileRef.current
@@ -753,7 +753,6 @@ export function WorkspacePage() {
         edited: "",
         dirty: false,
         gitHead: "",
-        view: "code",
         isImage: true,
         imageUri: `data:${assetRes.data!.mime};base64,${assetRes.data!.data}`,
         imageMeta: assetRes.data!.size ? { w: assetRes.data!.size[0], h: assetRes.data!.size[1] } : null,
@@ -772,18 +771,12 @@ export function WorkspacePage() {
     const content = fileRes.data!.content
     const head = headRes.ok && headRes.data?.content != null ? headRes.data.content : ""
     const parsed = tryParsePayload(content)
-    // 阅读模式开启且本文件受支持（.md 必有；payload 需能解析出 messages）→ 直接进阅读视图；
-    // 否则进代码编辑。
-    const readCapable = path.toLowerCase().endsWith(".md") || parsed !== null
-    const view: TabEntry["view"] = readModeRef.current && readCapable
-      ? (path.toLowerCase().endsWith(".md") ? "preview" : "payload")
-      : "code"
+    // 渲染模式(阅读/代码)由全局 readMode 在渲染期实时派生，不在打开时固化到 entry。
     openTab(path, {
       content,
       edited: content,
       dirty: false,
       gitHead: head,
-      view,
       isImage: false,
       imageUri: null,
       imageMeta: null,
@@ -1593,7 +1586,7 @@ export function WorkspacePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => { persistReadMode(true); setActiveView(isMarkdown ? "preview" : "payload") }}
+                        onClick={() => persistReadMode(true)}
                         className="gap-1"
                         title={isMarkdown ? t("mdRead") : t("payload")}
                       >
@@ -1604,7 +1597,7 @@ export function WorkspacePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => { persistReadMode(false); setActiveView("code") }}
+                        onClick={() => persistReadMode(false)}
                         className="gap-1"
                         title={t("viewSource")}
                       >
@@ -1947,7 +1940,7 @@ export function WorkspacePage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => { persistReadMode(true); setActiveView(isMarkdown ? "preview" : "payload") }}
+                          onClick={() => persistReadMode(true)}
                           className="gap-1"
                           title={isMarkdown ? t("mdRead") : t("payload")}
                         >
@@ -1958,7 +1951,7 @@ export function WorkspacePage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => { persistReadMode(false); setActiveView("code") }}
+                          onClick={() => persistReadMode(false)}
                           className="gap-1"
                           title={t("viewSource")}
                         >
