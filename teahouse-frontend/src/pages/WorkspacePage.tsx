@@ -2000,6 +2000,7 @@ export function WorkspacePage() {
                       key={`${selectedFile}#${selectedFileVersion}`}
                       path={selectedFile}
                       defaultValue={editedContent}
+                      onOpenPath={(p) => openFile(toFrontendPath(p))}
                       original={gitHeadContent ?? ""}
                       onSave={handleSave}
                       onChange={(val) => updateActiveEdited(val)}

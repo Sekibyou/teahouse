@@ -5,6 +5,7 @@ import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
 import { useTranslation } from "react-i18next"
 import i18n from "@/i18n/config"
 import { useUiScaleStore } from "@/stores/uiScaleStore"
+import { scanBrace, findPlaceholderStart, findClickTargetAtColumn } from "@/lib/placeholderPath"
 
 // ---- Local Monaco bundle (no CDN) ----
 // Bundle Monaco locally via Vite and hand the instance to @monaco-editor/react,
@@ -55,27 +56,6 @@ class TeahouseState implements Monaco.languages.IState {
   }
 }
 
-// Count `{` / `}` from `start` until depth returns to 0. Mirrors the engine's
-// `_match_brace_group`: every single brace counts, so a `{{...}}` inside a
-// `${...}` increments/decrements by two and can't prematurely close it.
-function scanBrace(line: string, start: number): { end: number; depth: number } {
-  let depth = 0
-  let end = start
-  while (end < line.length) {
-    const ch = line[end]
-    if (ch === "{") depth++
-    else if (ch === "}") {
-      depth--
-      if (depth === 0) {
-        end++
-        break
-      }
-    }
-    end++
-  }
-  return { end, depth }
-}
-
 // Classify the inner text of a `${...}` placeholder. `closed` is true when the
 // matching `}` was found on the same line (single-line placeholder).
 function classifyPlaceholder(inner: string, closed: boolean): string {
@@ -91,17 +71,6 @@ function classifyPlaceholder(inner: string, closed: boolean): string {
     }
   }
   return "keyword.teahouse"
-}
-
-// Earliest `${` or `{{` opener at or after `from`, or -1 if none. A single `{`
-// does not start a placeholder, so it is skipped as plain text.
-function findPlaceholderStart(line: string, from: number): number {
-  for (let j = from; j < line.length - 1; j++) {
-    const a = line[j]
-    const b = line[j + 1]
-    if ((a === "$" && b === "{") || (a === "{" && b === "{")) return j
-  }
-  return -1
 }
 
 function tokenize(line: string, state: Monaco.languages.IState): Monaco.languages.ILineTokens {
@@ -187,6 +156,23 @@ function tokenize(line: string, state: Monaco.languages.IState): Monaco.language
 Monaco.languages.setTokensProvider("teahouse", {
   getInitialState: () => new TeahouseState(false, 0, ""),
   tokenize,
+})
+
+// Hover 提示：指针悬停在可跳的 {{path}} 文件引用上时提示 Ctrl+Click 跳转。
+// 语言级 provider(模块级注册一次，随 model 切换自适配)。仅在独立 {{...}} 且能解析出目标
+// path 时返回内容；命中即给 0-based start/end 换算成 Monaco Range(start 取 col=start+1)。
+Monaco.languages.registerHoverProvider("teahouse", {
+  provideHover(model, position) {
+    const line = model.getLineContent(position.lineNumber)
+    const hit = findClickTargetAtColumn(line, position.column)
+    if (!hit) return null
+    const { start, end, path } = hit
+    const range = new Monaco.Range(position.lineNumber, start + 1, position.lineNumber, end)
+    return {
+      range,
+      contents: [{ value: `${i18n.t("misc:monaco.ctrlClickOpen")}${path}` }],
+    }
+  },
 })
 
 // ---- Theme helpers ----
@@ -383,9 +369,8 @@ function computeLineDecorations(original: string, modified: string): Monaco.edit
         range: { startLineNumber: ln, startColumn: 1, endLineNumber: ln, endColumn: 1 },
         options: {
           isWholeLine: true,
-          className: type === "deleted" ? "monaco-diff-deleted-line"
-            : type === "added" ? "monaco-diff-added-line"
-            : "monaco-diff-modified-line",
+          // 只有 gutter 行标竖条，不做整行半透明高亮——整行背景会与
+          // 光标行高亮(lineHighlightBackground)冲突，视觉噪。
           glyphMarginClassName: type === "deleted" ? "monaco-diff-glyph-deleted"
             : type === "added" ? "monaco-diff-glyph-added"
             : "monaco-diff-glyph-modified",
@@ -416,6 +401,8 @@ export interface MonacoEditorProps {
   onMount?: (editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => void
   /** Called when Ctrl+S is pressed inside the editor */
   onSave?: () => void
+  /** Ctrl/Cmd+Click 落在 {{path}} 占位符上时回调，携带目标路径(未加 root/ 前缀)。 */
+  onOpenPath?: (path: string) => void
   minimap?: boolean
   readOnly?: boolean
   className?: string
@@ -431,6 +418,7 @@ export function MonacoEditor({
   options = {},
   onMount,
   onSave,
+  onOpenPath,
   minimap = false,
   readOnly = false,
   className,
@@ -445,6 +433,16 @@ export function MonacoEditor({
   // 记录已播种的 path：在复用实例/换 model 场景下，path 变化时用 defaultValue 重播种
   // 缓冲（非受控 defaultValue 只在 mount 读），避免 diff 装饰拿到上一个文件的旧内容。
   const lastPathRef = useRef<string | null>(null)
+  // Ctrl+Click 跳转回调镜像：handleMount 只在首次挂载注册一次监听，读取需走 ref 避免闭包陈旧。
+  const onOpenPathRef = useRef(onOpenPath)
+  onOpenPathRef.current = onOpenPath
+  // Ctrl+Hover 手型提示：跟踪全局 ctrl/meta 按住态 + 当前指针悬停的可跳占位符 range，
+  // 二者同时满足时用一个 decoration(inlineClassName .ph-open-pointer) 让 Monaco 文本变手型。
+  const ctrlHeldRef = useRef(false)
+  const hoverLinkRef = useRef<{ lineNumber: number; start: number; end: number } | null>(null)
+  const linkHoverDecoRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
+  // 由 handleMount 赋值；供组件级全局 ctrl 监听在 ctrl 态变化时重算手型 decoration。
+  const updateLinkHoverRef = useRef<() => void>(() => {})
   const uiMultiplier = useUiScaleStore((s) => s.multiplier)
   const scaledFontSize = Math.round(13 * uiMultiplier)
 
@@ -453,6 +451,61 @@ export function MonacoEditor({
     monacoRef.current = monaco
     defineThemes(monaco)
     monaco.editor.setTheme(isDarkMode() ? DARK_THEME : LIGHT_THEME)
+
+    // Ctrl/Cmd+Click 落在可跳 {{path}} 上 → 打开目标文件。仅命中时 preventDefault，避免
+    // Monaco 默认的 ctrl+click 加副光标/动选区；未命中则保留原生多光标语义。
+    editor.onMouseDown((e: Monaco.editor.IEditorMouseEvent) => {
+      if (!e.event.ctrlKey && !e.event.metaKey) return
+      if (e.event.leftButton !== true) return
+      const model = editor.getModel()
+      if (!model || model.getLanguageId() !== "teahouse") return
+      // 仅文本内容目标可命中；空白/行号/gutter 无 position 自然跳过。
+      const t = e.target
+      const pos = (t as { position?: Monaco.IPosition })?.position
+      if (!pos) return
+      const line = model.getLineContent(pos.lineNumber)
+      const hit = findClickTargetAtColumn(line, pos.column)
+      if (hit) {
+        e.event.preventDefault()
+        e.event.stopPropagation()
+        onOpenPathRef.current?.(hit.path)
+      }
+    })
+
+    // Ctrl+Hover 手型：鼠标移动时更新"悬停占位符 range"，并按 ctrl 态应用/清除手型 decoration。
+    const updateLinkHover = () => {
+      const editor = editorRef.current
+      if (!editor) return
+      if (!linkHoverDecoRef.current) {
+        linkHoverDecoRef.current = editor.createDecorationsCollection()
+      }
+      const h = hoverLinkRef.current
+      if (h && ctrlHeldRef.current) {
+        linkHoverDecoRef.current.set([{
+          range: new Monaco.Range(h.lineNumber, h.start + 1, h.lineNumber, h.end),
+          options: { inlineClassName: "ph-open-pointer" },
+        }])
+      } else {
+        linkHoverDecoRef.current.clear()
+      }
+    }
+    updateLinkHoverRef.current = updateLinkHover
+    editor.onMouseMove((e: Monaco.editor.IEditorMouseEvent) => {
+      const model = editor.getModel()
+      const t = e.target
+      const pos = (t as { position?: Monaco.IPosition })?.position
+      if (!model || model.getLanguageId() !== "teahouse" || !pos) {
+        hoverLinkRef.current = null
+        updateLinkHover()
+        return
+      }
+      const line = model.getLineContent(pos.lineNumber)
+      const hit = findClickTargetAtColumn(line, pos.column)
+      hoverLinkRef.current = hit
+        ? { lineNumber: pos.lineNumber, start: hit.start, end: hit.end }
+        : null
+      updateLinkHover()
+    })
 
     setEditorReady(true)
     onMount?.(editor, monaco)
@@ -485,6 +538,31 @@ export function MonacoEditor({
     })
     return () => disposable.dispose()
   }, [onSave])
+
+  // 全局 ctrl/meta 按住态跟踪：ctrl 态变化时重算手型 decoration。窗口失焦兜底清掉按住态。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !ctrlHeldRef.current) {
+        ctrlHeldRef.current = true
+        updateLinkHoverRef.current()
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey && ctrlHeldRef.current) {
+        ctrlHeldRef.current = false
+        updateLinkHoverRef.current()
+      }
+    }
+    const onBlur = () => { if (ctrlHeldRef.current) { ctrlHeldRef.current = false; updateLinkHoverRef.current() } }
+    document.addEventListener("keydown", onKeyDown)
+    document.addEventListener("keyup", onKeyUp)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      document.removeEventListener("keyup", onKeyUp)
+      window.removeEventListener("blur", onBlur)
+    }
+  }, [])
 
   // Seed the buffer with the current file's defaultValue when the edited path
   // changes (non-controlled defaultValue is only read at mount). Under the current

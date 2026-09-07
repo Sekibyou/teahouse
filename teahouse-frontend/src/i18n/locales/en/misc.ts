@@ -97,6 +97,7 @@ export const enMisc = {
     deletedLine: "Deleted line",
     addedLine: "Added line",
     modifiedLine: "Modified line",
+    ctrlClickOpen: "Ctrl+Click to open: ",
   },
   slot: {
     model: "Model",

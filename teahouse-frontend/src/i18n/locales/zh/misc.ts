@@ -98,6 +98,7 @@ export const zhMisc = {
     deletedLine: "删除行",
     addedLine: "新增行",
     modifiedLine: "修改行",
+    ctrlClickOpen: "Ctrl+Click 跳转: ",
   },
   slot: {
     model: "模型",

@@ -97,6 +97,7 @@ export const jaMisc = {
     deletedLine: "削除行",
     addedLine: "追加行",
     modifiedLine: "変更行",
+    ctrlClickOpen: "Ctrl+Click で開く: ",
   },
   slot: {
     model: "モデル",

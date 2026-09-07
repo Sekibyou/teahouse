@@ -227,17 +227,6 @@
     box-shadow: none !important;
   }
 
-  /* Line background — tinted highlight for changed lines */
-  .monaco-diff-added-line {
-    background: color-mix(in oklch, var(--primary) 8%, transparent);
-  }
-  .monaco-diff-modified-line {
-    background: color-mix(in oklch, #f59e0b 8%, transparent);
-  }
-  .monaco-diff-deleted-line {
-    background: color-mix(in oklch, #ef4444 6%, transparent);
-  }
-
   /* Glyph margin (gutter) markers — narrow bar that sits in the gutter area */
   .monaco-diff-glyph-added {
     background: #22c55e;
@@ -259,6 +248,16 @@
     margin-left: 3px;
     border-radius: 1px;
     min-height: 14px;
+  }
+
+  /* ---- Ctrl+Hover 可跳占位符手型提示 ---- */
+  /* 阅读视图(直接挂 span) 与 Monaco 文本(inlineClassName，span 在 .monaco-editor 内)共用。
+     仅当 Ctrl/Cmd 按下且悬停在可跳 {{path}} 上时由 JS 动态加上，平时无该 class。 */
+  .ph-open-pointer {
+    cursor: pointer;
+  }
+  .monaco-editor .ph-open-pointer {
+    cursor: pointer;
   }
 }
 

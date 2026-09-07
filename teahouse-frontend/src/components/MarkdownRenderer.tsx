@@ -1,8 +1,10 @@
 import { Fragment, type ReactNode } from "react"
-import { useMemo } from "react"
+import { useMemo, useRef, useEffect } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { isMermaidLanguage, MermaidDiagram, isPendingMermaidLanguage, MermaidPending, maskUnclosedMermaidTail } from "./MermaidDiagram"
+import { scanBrace, resolvePlaceholderPath } from "@/lib/placeholderPath"
+import i18n from "@/i18n/config"
 
 // ---- 占位符着色 ----
 // 预览模式下给 teahouse 占位符语法加颜色，与 Monaco 编辑器 token 颜色对齐：
@@ -23,26 +25,6 @@ const PH_CLASS: Record<string, string> = {
   string: "text-orange-600 dark:text-orange-400",
 }
 
-// 数 `{`/`}` 直到深度回到 0，返回 (闭合后的下标, 剩余深度)。与引擎
-// `_match_brace_group` 语义一致：每个单花括号都计数，内嵌 `{{切片}}` 不会提前截断。
-function scanBrace(text: string, start: number): { end: number; depth: number } {
-  let depth = 0
-  let end = start
-  while (end < text.length) {
-    const ch = text[end]
-    if (ch === "{") depth++
-    else if (ch === "}") {
-      depth--
-      if (depth === 0) {
-        end++
-        break
-      }
-    }
-    end++
-  }
-  return { end, depth }
-}
-
 // inner = `${` 与匹配 `}` 之间的文本；closed = 本段内已闭合。
 function phKind(inner: string, closed: boolean): keyof typeof PH_CLASS {
   const s = inner.trim()
@@ -55,25 +37,6 @@ function phKind(inner: string, closed: boolean): keyof typeof PH_CLASS {
 }
 
 type Placeholder = { original: string; kind: keyof typeof PH_CLASS }
-
-// 从 {{...}} 占位符 inner 解析"目标文件路径"。支持 {{path}} 与 {{path|切片}}：路径取
-// `|` 前、含 `:`(行段/glob)时裁到根文件段。仅返回像普通相对路径的引用(不含 glob:/
-// @包 等通配/跨实例)，否则返回 null(不可跳转)。
-function resolvePlaceholderPath(original: string): string | null {
-  // original 形如 `{{...}}`，剥掉两端花括号
-  const inner = original.slice(2, -2)
-  let p = inner
-  const pipe = p.indexOf("|")
-  if (pipe >= 0) p = p.slice(0, pipe)
-  const colon = p.indexOf(":")
-  if (colon >= 0) p = p.slice(0, colon)
-  p = p.trim()
-  // 空 / glob 模式 / @包引用 / 含空白 等非普通路径一律不可跳
-  if (!p || p.includes("*") || p.startsWith("@") || p.includes("?") || /\s/.test(p)) return null
-  // 必须是像文件的引用：至少含一个扩展名或斜杠，避免把纯文本误当路径
-  if (!/[./]/.test(p)) return null
-  return p
-}
 
 // 令牌用私用区字符包裹，markdown 不会折叠、正文几乎不可能撞车。
 const TOKEN_PREFIX = ""
@@ -168,8 +131,8 @@ function highlightText(text: string, placeholders: Map<string, Placeholder>): Re
           out.push(
             <span
               key={i}
-              className={`${PH_CLASS[ph.kind]} whitespace-pre-wrap${target ? " cursor-pointer underline decoration-dotted underline-offset-2 hover:opacity-80" : ""}`}
-              {...(target ? { "data-src-path": target } : {})}
+              className={`${PH_CLASS[ph.kind]} whitespace-pre-wrap`}
+              {...(target ? { "data-src-path": target, title: `${i18n.t("misc:monaco.ctrlClickOpen")}${target}` } : {})}
             >
               {ph.original}
             </span>,
@@ -243,6 +206,37 @@ export function MarkdownRenderer({ content, onOpenPath }: {
 }) {
   const { text, placeholders } = useMemo(() => protectPlaceholders(content), [content])
 
+  // ---- Ctrl+Hover 手型提示（仅按住 Ctrl/Cmd 且悬停在可跳 {{path}} 上才变 pointer）----
+  // 纯 CSS 感知不到修饰键，故跟踪全局 ctrl 态 + 当前悬停的可跳元素，用 classList 动态加/去
+  // ph-open-pointer。DOM 直操作避免因逐帧悬停触发 React 重渲染。
+  const ctrlHeldRef = useRef(false)
+  const hoverElRef = useRef<HTMLElement | null>(null)
+  const applyPointer = () => {
+    const el = hoverElRef.current
+    if (!el) return
+    el.classList.toggle("ph-open-pointer", ctrlHeldRef.current)
+  }
+  useEffect(() => {
+    const sync = () => { ctrlHeldRef.current = false; applyPointer() }
+    const onKeyDown = (e: KeyboardEvent) => {
+      const held = e.ctrlKey || e.metaKey
+      if (held && !ctrlHeldRef.current) { ctrlHeldRef.current = true; applyPointer() }
+      // keyup 单独在下方处理；此处只需上沿
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey && ctrlHeldRef.current) { ctrlHeldRef.current = false; applyPointer() }
+    }
+    // 窗口失焦兜底清掉按住态，避免卡在手型
+    window.addEventListener("blur", sync)
+    document.addEventListener("keydown", onKeyDown)
+    document.addEventListener("keyup", onKeyUp)
+    return () => {
+      window.removeEventListener("blur", sync)
+      document.removeEventListener("keydown", onKeyDown)
+      document.removeEventListener("keyup", onKeyUp)
+    }
+  }, [])
+
   // 覆盖承载文本的元素，把字符串 children 里的占位符着色；其余（嵌套节点）透传。
   const wrap = (Tag: "p" | "li" | "td" | "th" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "strong" | "em" | "blockquote" | "a") =>
     function TextWrap({ children }: { children?: ReactNode }) {
@@ -292,8 +286,24 @@ export function MarkdownRenderer({ content, onOpenPath }: {
       className="prose dark:prose-invert max-w-none px-6 py-4"
       onClickCapture={(e) => {
         if (!onOpenPath) return
+        // 与 Monaco 统一：Ctrl/Cmd+Click 才跳转，普通单击保留文本选中，不劫持。
+        if (!e.ctrlKey && !e.metaKey) return
         const el = (e.target as HTMLElement).closest?.("[data-src-path]") as HTMLElement | null
         if (el?.dataset.srcPath) onOpenPath(el.dataset.srcPath)
+      }}
+      onMouseOver={(e) => {
+        const el = (e.target as HTMLElement).closest?.("[data-src-path]") as HTMLElement | null
+        hoverElRef.current = el
+        applyPointer()
+      }}
+      onMouseOut={(e) => {
+        // 指针离开可跳元素时清掉悬停态(用 relatedTarget 判断是否仍在同元素上)
+        const next = (e as React.MouseEvent).relatedTarget as HTMLElement | null
+        const stillOn = next && next.closest?.("[data-src-path]")
+        if (!stillOn) {
+          hoverElRef.current?.classList.remove("ph-open-pointer")
+          hoverElRef.current = null
+        }
       }}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
