@@ -731,7 +731,21 @@ export function WorkspacePage() {
   // Load a file (content + git HEAD) then open it. Loads first so Monaco mounts
   // once with the correct defaultValue and a clean undo stack.
   const openFile = useCallback(async (path: string) => {
-    if (!instId || path === selectedFileRef.current) return
+    if (!instId) return
+    // 打开/激活即确保父目录链展开，树高亮可见（占位符跳转或深层打开时目标目录可能未展开）。
+    setExpanded(prev => {
+      let changed = false
+      const next = new Set(prev)
+      let dir = parentOf(path)
+      while (dir) {
+        if (!next.has(dir)) { next.add(dir); changed = true }
+        const i = dir.lastIndexOf("/")
+        if (i < 0) break
+        dir = dir.slice(0, i)
+      }
+      return changed ? next : prev
+    })
+    if (path === selectedFileRef.current) return
     // 若该文件的标签已打开（可能带未保存内容/滚动/阅读视图）→ 仅切换激活，不重读覆盖，
     // 保留其当前编辑状态。
     if (openTabs.includes(path)) {
@@ -783,7 +797,7 @@ export function WorkspacePage() {
       payloadMessages: parsed ? parsed.messages : null,
       payloadMeta: parsed ? parsed.meta : [],
     })
-  }, [instId, openTabs, activateTab, openTab])
+  }, [instId, parentOf, openTabs, activateTab, openTab])
 
 
   // Reload the open file from disk (external change). Remounts only when content
@@ -1631,7 +1645,10 @@ export function WorkspacePage() {
                   </div>
                 ) : isMarkdown && editorView === "preview" ? (
                   <div className="flex-1 overflow-auto">
-                    <MarkdownRenderer content={editedContent} />
+                    <MarkdownRenderer
+                      content={editedContent}
+                      onOpenPath={(p) => openFile(toFrontendPath(p))}
+                    />
                   </div>
                 ) : isPayloadFile && editorView === "payload" ? (
                   <div className="flex-1 overflow-auto">
@@ -2010,7 +2027,10 @@ export function WorkspacePage() {
                       }}
                       className={`h-full overflow-auto ${editorView === "preview" ? "" : "hidden"}`}
                     >
-                      <MarkdownRenderer content={editedContent} />
+                      <MarkdownRenderer
+                        content={editedContent}
+                        onOpenPath={(p) => openFile(toFrontendPath(p))}
+                      />
                     </div>
                   )}
                   {isPayloadFile && (

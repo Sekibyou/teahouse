@@ -56,6 +56,25 @@ function phKind(inner: string, closed: boolean): keyof typeof PH_CLASS {
 
 type Placeholder = { original: string; kind: keyof typeof PH_CLASS }
 
+// 从 {{...}} 占位符 inner 解析"目标文件路径"。支持 {{path}} 与 {{path|切片}}：路径取
+// `|` 前、含 `:`(行段/glob)时裁到根文件段。仅返回像普通相对路径的引用(不含 glob:/
+// @包 等通配/跨实例)，否则返回 null(不可跳转)。
+function resolvePlaceholderPath(original: string): string | null {
+  // original 形如 `{{...}}`，剥掉两端花括号
+  const inner = original.slice(2, -2)
+  let p = inner
+  const pipe = p.indexOf("|")
+  if (pipe >= 0) p = p.slice(0, pipe)
+  const colon = p.indexOf(":")
+  if (colon >= 0) p = p.slice(0, colon)
+  p = p.trim()
+  // 空 / glob 模式 / @包引用 / 含空白 等非普通路径一律不可跳
+  if (!p || p.includes("*") || p.startsWith("@") || p.includes("?") || /\s/.test(p)) return null
+  // 必须是像文件的引用：至少含一个扩展名或斜杠，避免把纯文本误当路径
+  if (!/[./]/.test(p)) return null
+  return p
+}
+
 // 令牌用私用区字符包裹，markdown 不会折叠、正文几乎不可能撞车。
 const TOKEN_PREFIX = ""
 const TOKEN_SUFFIX = ""
@@ -143,8 +162,15 @@ function highlightText(text: string, placeholders: Map<string, Placeholder>): Re
         const ph = placeholders.get(token)
         if (ph) {
           if (i > last) out.push(text.slice(last, i))
+          // 正文里的 {{path}} 文件引用占位符：附 data-src-path 供外层点击跳转(仅正文，
+          // fenced 代码块不经过本 map 分支故不可点)。
+          const target = ph.kind === "string" ? resolvePlaceholderPath(ph.original) : null
           out.push(
-            <span key={i} className={`${PH_CLASS[ph.kind]} whitespace-pre-wrap`}>
+            <span
+              key={i}
+              className={`${PH_CLASS[ph.kind]} whitespace-pre-wrap${target ? " cursor-pointer underline decoration-dotted underline-offset-2 hover:opacity-80" : ""}`}
+              {...(target ? { "data-src-path": target } : {})}
+            >
               {ph.original}
             </span>,
           )
@@ -210,7 +236,11 @@ function highlightChildren(children: ReactNode, placeholders: Map<string, Placeh
 // 不启用 rehype-raw，原始 HTML 按文本转义，天然规避 XSS。
 // mermaid 渲染逻辑见 ./MermaidDiagram（聊天气泡共用）。
 
-export function MarkdownRenderer({ content }: { content: string }) {
+export function MarkdownRenderer({ content, onOpenPath }: {
+  content: string
+  /** 点击正文里的 {{path}} 占位符(文件引用)时回调，携带解析出的目标路径(未加 root/ 前缀)。 */
+  onOpenPath?: (path: string) => void
+}) {
   const { text, placeholders } = useMemo(() => protectPlaceholders(content), [content])
 
   // 覆盖承载文本的元素，把字符串 children 里的占位符着色；其余（嵌套节点）透传。
@@ -258,7 +288,14 @@ export function MarkdownRenderer({ content }: { content: string }) {
   }
 
   return (
-    <div className="prose dark:prose-invert max-w-none px-6 py-4">
+    <div
+      className="prose dark:prose-invert max-w-none px-6 py-4"
+      onClickCapture={(e) => {
+        if (!onOpenPath) return
+        const el = (e.target as HTMLElement).closest?.("[data-src-path]") as HTMLElement | null
+        if (el?.dataset.srcPath) onOpenPath(el.dataset.srcPath)
+      }}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {maskUnclosedMermaidTail(text) ?? text}
       </ReactMarkdown>
