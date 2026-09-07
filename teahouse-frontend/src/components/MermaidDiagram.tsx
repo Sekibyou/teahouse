@@ -28,6 +28,9 @@ function ensureMermaid(m: Mermaid, theme: "default" | "dark") {
     startOnLoad: false,
     theme,
     securityLevel: "strict",
+    // 渲染失败时不画 mermaid 内建的炸弹 error 图（会往临时 body 节点塞
+    // "Syntax error in text" 残留、难看），而是抛错走我们的 .catch 显示干净报错框。
+    suppressErrorRendering: true,
   })
   initializedTheme = theme
 }
