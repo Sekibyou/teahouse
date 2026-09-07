@@ -16,32 +16,36 @@ interface EditorTabsProps {
 export function EditorTabs({ tabs, activePath, entries, onActivate, onClose }: EditorTabsProps) {
   if (!tabs.length) return null
   return (
-    <div className="h-9 shrink-0 flex items-stretch overflow-x-auto border-b border-border bg-muted/20">
+    <div className="h-10 shrink-0 flex items-end overflow-x-auto border-b border-border bg-muted/20 px-2">
       {tabs.map((path, i) => {
         const entry = entries[path]
         const active = path === activePath
         const name = path.split("/").pop() || path
+        // 相邻两标签都是未激活时,它们之间才放一根淡短竖线做区分;激活标签两侧不出线(等同被覆盖)
+        const showDivider = i > 0 && !active && !(tabs[i - 1] === activePath)
         return (
-          <div
-            key={path}
-            role="tab"
-            aria-selected={active}
-            onClick={() => onActivate(i)}
-            className={`group flex items-center gap-1.5 px-3 text-sm cursor-pointer select-none whitespace-nowrap border-r border-border shrink-0 ${
-              active ? "bg-background text-foreground font-medium" : "text-muted-foreground hover:bg-muted/40"
-            }`}
-            title={path}
-          >
-            {entry?.isImage ? <Image className="h-3.5 w-3.5 shrink-0 opacity-70" /> : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
-            <span className="max-w-[200px] truncate">{name}</span>
-            {entry?.dirty && <span className="h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />}
-            <button
-              onClick={(e) => { e.stopPropagation(); onClose(i) }}
-              className="ml-0.5 rounded p-0.5 shrink-0 text-muted-foreground/50 hover:bg-muted hover:text-foreground"
-              aria-label="Close"
+          <div key={path} className="group flex items-center shrink-0">
+            {showDivider && <span className="mx-1 h-3.5 w-px shrink-0 bg-foreground/10 self-center" />}
+            <div
+              role="tab"
+              aria-selected={active}
+              onClick={() => onActivate(i)}
+              className={`flex items-center gap-1.5 px-3 text-sm cursor-pointer select-none whitespace-nowrap rounded-t-md h-8 ${
+                active ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:bg-muted"
+              }`}
+              title={path}
             >
-              <X className="h-3 w-3" />
-            </button>
+              {entry?.isImage ? <Image className="h-3.5 w-3.5 shrink-0 opacity-70" /> : <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />}
+              <span className="max-w-[200px] truncate">{name}</span>
+              {entry?.dirty && <span className="h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />}
+              <button
+                onClick={(e) => { e.stopPropagation(); onClose(i) }}
+                className={`ml-0.5 rounded p-0.5 shrink-0 ${active ? "text-primary-foreground/60 hover:bg-primary-foreground/20 hover:text-primary-foreground" : "text-muted-foreground/50 hover:bg-muted-foreground/15 hover:text-foreground"}`}
+                aria-label="Close"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           </div>
         )
       })}
