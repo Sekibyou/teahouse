@@ -152,7 +152,10 @@ export function FileTreeView({
   return (
     <>
       {nodes
-        .filter(n => n.name !== ".git")
+        // git 报 D(已删除待提交)的节点在磁盘上已不存在(list_file_tree 不含它)，
+        // 文件树里直接不显示——不再残留红色 D 的幽灵行。目录同理：整目录被删时
+        // porcelain 会把其已跟踪子文件逐一报成 D，这里连目录也一并跳过。
+        .filter(n => n.name !== ".git" && fileStatuses.get(n.path) !== "D")
         .map((node) => {
           // 节点自身 git 状态(仅文件命中；目录只有当后端恰好报该目录路径才可能命中)。
           const selfSt = fileStatuses.get(node.path)
