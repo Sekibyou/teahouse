@@ -5,12 +5,10 @@ import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, t
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
-import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { FloorsStats, ContextUsage } from "@/lib/types"
 import { toast } from "sonner"
-import { GitDialog } from "@/components/GitDialog"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
 import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath, pasteNoticeText } from "./ChatPanelComps/utils"
@@ -18,7 +16,7 @@ import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
 
-export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () => void; onClosePanel?: () => void }) {
+export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
   const [messages, setMessages] = useState<RichMessage[]>([])
@@ -1000,28 +998,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
   autoApproveCommitRef.current = autoApproveCommit
   const [approving, setApproving] = useState(false)
 
-  // Git state from unified store
-  const gitStatus = useGitStore((s) => s.gitStatus)
-  const fileStatuses = useGitStore((s) => s.fileStatuses)
-  const [showGitDialog, setShowGitDialog] = useState(false)
-
-  // Refresh git on instance change
-  useEffect(() => {
-    if (instId) {
-      useGitStore.getState().fetchGitStatus(instId)
-    }
-  }, [instId])
-
-  const latestCommitMsg = gitStatus?.recent_commits?.[0]?.message
-  const currentBranch = gitStatus?.current_branch || "main"
-
-  // Compute file change counts
-  const changeCounts = { added: 0, modified: 0, deleted: 0 }
-  for (const st of fileStatuses.values()) {
-    if (st === "A" || st === "?") changeCounts.added++
-    else if (st === "M" || st === "R") changeCounts.modified++
-    else if (st === "D") changeCounts.deleted++
-  }
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [commandIndex, setCommandIndex] = useState(0)
@@ -1628,10 +1604,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
         onRefreshSessionList={refreshSessionList}
         onCreateSession={createSession}
         instId={instId}
-        currentBranch={currentBranch}
-        latestCommitMsg={latestCommitMsg}
-        changeCounts={changeCounts}
-        onOpenGitDialog={() => setShowGitDialog(true)}
         autoApproveCommit={autoApproveCommit}
         onAutoApproveChange={(checked) => {
           setAutoApproveCommit(checked)
@@ -1865,20 +1837,6 @@ export function ChatPanel({ onGitRefresh, onClosePanel }: { onGitRefresh?: () =>
           </div>
         </div>
       )}
-
-      {/* Git Dialog */}
-      <GitDialog
-        instanceId={getActiveInstance()?.id || ""}
-        open={showGitDialog}
-        onClose={() => {
-          setShowGitDialog(false)
-          if (instId) useGitStore.getState().fetchGitStatus(instId)
-        }}
-        onRefresh={() => {
-          if (instId) useGitStore.getState().fetchGitStatus(instId)
-          onGitRefresh?.()
-        }}
-      />
     </div>
   )
 }

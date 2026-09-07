@@ -1,16 +1,10 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { GitBranch as GitBranchIcon, Edit3, ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw } from "lucide-react"
+import { ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { ContextUsageBar } from "./ContextUsageBar"
 import type { FloorsStats, ContextUsage } from "@/lib/types"
-
-interface ChangeCounts {
-  added: number
-  modified: number
-  deleted: number
-}
 
 interface ChatHeaderProps {
   // Slot models
@@ -31,12 +25,6 @@ interface ChatHeaderProps {
   onRefreshSessionList: () => void
   onCreateSession: () => void
   instId: string | undefined
-
-  // Git info
-  currentBranch: string
-  latestCommitMsg: string | undefined
-  changeCounts: ChangeCounts
-  onOpenGitDialog: () => void
 
   // Auto commit
   autoApproveCommit: boolean
@@ -66,10 +54,6 @@ export function ChatHeader({
   onRefreshSessionList,
   onCreateSession,
   instId,
-  currentBranch,
-  latestCommitMsg,
-  changeCounts,
-  onOpenGitDialog,
   autoApproveCommit,
   onAutoApproveChange,
   floorsStats,
@@ -202,26 +186,8 @@ export function ChatHeader({
                     <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.writer || t("unset")}</span>
                   </button>
 
-                  {/* 版本控制 */}
-                  <div className="px-3 pt-2 pb-1 text-[10px] text-muted-foreground border-t border-border">{t("versionControlGroup")}</div>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { onOpenGitDialog(); setMenuOpen(false) }}
-                  >
-                    <GitBranchIcon className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1 text-left font-mono text-xs">{currentBranch}</span>
-                    {changeCounts.deleted > 0 && (
-                      <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">-{changeCounts.deleted}</span>
-                    )}
-                    {changeCounts.modified > 0 && (
-                      <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">~{changeCounts.modified}</span>
-                    )}
-                    {changeCounts.added > 0 && (
-                      <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">+{changeCounts.added}</span>
-                    )}
-                    <Edit3 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  </button>
-                  <div className="flex items-center justify-between px-3 py-2.5 text-sm">
+                  {/* 自动提交（git 触发器已移到文件树底部栏） */}
+                  <div className="flex items-center justify-between px-3 py-2.5 text-sm border-t border-border mt-1">
                     <span className="text-muted-foreground">{t("autoCommit")}</span>
                     <Switch checked={autoApproveCommit} onCheckedChange={onAutoApproveChange} />
                   </div>
@@ -325,39 +291,8 @@ export function ChatHeader({
           </button>
         )}
       </div>
-      {/* Row 2: git info + auto-commit switch */}
-      <div className="flex items-center justify-between">
-        <div
-          className="flex items-center gap-1.5 cursor-pointer hover:bg-muted/50 rounded px-1.5 py-0.5 -ml-1.5 transition-colors flex-1 min-w-0 mr-4"
-          onClick={onOpenGitDialog}
-          title={t("openVersionControl")}
-        >
-          <GitBranchIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
-            {currentBranch}
-          </span>
-          {latestCommitMsg && (
-            <span className="text-[10px] text-muted-foreground truncate">
-              {latestCommitMsg.length > 30 ? latestCommitMsg.slice(0, 30) + "…" : latestCommitMsg}
-            </span>
-          )}
-          {changeCounts.deleted > 0 && (
-            <span className="text-[9px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-              -{changeCounts.deleted}
-            </span>
-          )}
-          {changeCounts.modified > 0 && (
-            <span className="text-[9px] bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-              ~{changeCounts.modified}
-            </span>
-          )}
-          {changeCounts.added > 0 && (
-            <span className="text-[9px] bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1 py-0.5 rounded leading-none shrink-0">
-              +{changeCounts.added}
-            </span>
-          )}
-          <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
-        </div>
+      {/* Row 2: auto-commit switch (git 触发器已移到文件树底部栏) */}
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[10px] text-muted-foreground">{t("autoCommit")}</span>
           <Switch

@@ -39,6 +39,7 @@ import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
 import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
 import { MobileMenuDropdown } from "./WorkspacePageComps/MobileMenuDropdown"
+import { FileTreeGitBar } from "./WorkspacePageComps/FileTreeGitBar"
 import { TreeMenu } from "./WorkspacePageComps/TreeMenu"
 import { ExportDialog, type ExportDialogHandle } from "./WorkspacePageComps/ExportDialog"
 
@@ -284,6 +285,18 @@ export function WorkspacePage() {
     for (const [k, v] of fileStatuses) m.set(toFrontendPath(k), v)
     return m
   }, [fileStatuses])
+
+  // Git derivations for the file-tree bottom Git bar (branch / latest commit / counts)
+  const gitStatus = useGitStore((s) => s.gitStatus)
+  const latestCommitMsg = gitStatus?.recent_commits?.[0]?.message
+  const currentBranch = gitStatus?.current_branch || "main"
+  const changeCounts = { added: 0, modified: 0, deleted: 0 }
+  for (const st of fileStatuses.values()) {
+    if (st === "A" || st === "?") changeCounts.added++
+    else if (st === "M" || st === "R") changeCounts.modified++
+    else if (st === "D") changeCounts.deleted++
+  }
+  const openGit = () => setFullscreenPanel("git")
 
   // Redirect if no active instance
   useEffect(() => {
@@ -1548,7 +1561,6 @@ export function WorkspacePage() {
           <div className="absolute inset-0 z-50 bg-background flex flex-col">
             <div className="flex-1 flex flex-col min-h-0">
               <ChatPanel
-                onGitRefresh={() => refresh()}
                 onClosePanel={() => setFullscreenPanel(null)}
               />
             </div>
@@ -1734,6 +1746,13 @@ export function WorkspacePage() {
                   />
                 )}
               </div>
+              <FileTreeGitBar
+                currentBranch={currentBranch}
+                latestCommitMsg={latestCommitMsg}
+                changeCounts={changeCounts}
+                onClick={openGit}
+                title={t("chat:openVersionControl")}
+              />
             </div>
           </>
         )}
@@ -1920,6 +1939,13 @@ export function WorkspacePage() {
               )}
             </div>
 
+            <FileTreeGitBar
+              currentBranch={currentBranch}
+              latestCommitMsg={latestCommitMsg}
+              changeCounts={changeCounts}
+              onClick={openGit}
+              title={t("chat:openVersionControl")}
+            />
           </aside>
 
           {/* Middle panel — Editor */}
@@ -2099,7 +2125,6 @@ export function WorkspacePage() {
           >
             <div className="flex-1 flex flex-col min-h-0">
               <ChatPanel
-                onGitRefresh={() => refresh()}
                 onClosePanel={() => setChatCollapsed(true)}
               />
             </div>
@@ -2199,6 +2224,16 @@ export function WorkspacePage() {
         <div
           className="fixed inset-0 z-50 cursor-col-resize"
           style={{ userSelect: "none" } as React.CSSProperties}
+        />
+      )}
+
+      {/* Git Dialog (desktop host migrated from ChatPanel) */}
+      {fullscreenPanel === "git" && (
+        <GitDialog
+          instanceId={instId!}
+          open={true}
+          onClose={() => setFullscreenPanel(null)}
+          onRefresh={() => { refresh(); setFullscreenPanel(null) }}
         />
       )}
     </div>
