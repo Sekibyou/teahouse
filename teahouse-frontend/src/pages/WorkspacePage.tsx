@@ -1504,10 +1504,11 @@ export function WorkspacePage() {
       // Apply structural changes to the tree first. modified / unknown / empty
       // path leave the tree untouched (content edits don't change shape).
       const type = evt?.type ? String(evt.type) : "modified"
-      if (type === "__full_reload") {
+      const fullReload = type === "__full_reload"
+      if (fullReload) {
         // Burst mixed structural + content events in a way a single event can't
-        // reconstruct (e.g. mkdir + write) — reload the whole tree as the safe
-        // convergence path. Editor handling below still applies to this path.
+        // reconstruct (e.g. mkdir + write, or Generate's payload + .meta) —
+        // reload the whole tree as the safe convergence path.
         refresh()
       } else if (type !== "modified" && frontendPath) {
         const next = applyFileChange(fileTreeRef.current, {
@@ -1525,6 +1526,14 @@ export function WorkspacePage() {
 
       // Editor handling is orthogonal to tree shape (which was already updated
       // above for structural events):
+      if (fullReload) {
+        // The delivered path is just one of several changed files, so we can't
+        // tell whether the open file is among them — reload it unconditionally
+        // (dirty edits preserved). Without this an open payload JSON stays stale
+        // after a dry-run that rewrites it back-to-back with its .meta.
+        if (selectedFileRef.current && !isDirtyRef.current) reloadOpenFile()
+        return
+      }
       if (!frontendPath) {
         // empty path = the changed file is the currently open one and it's dirty —
         // refresh tree + git, skip the editor so unsaved edits are preserved.
