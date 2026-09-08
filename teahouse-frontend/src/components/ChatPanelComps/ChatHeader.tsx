@@ -140,24 +140,24 @@ export function ChatHeader({
                 <div className="flex items-center justify-between px-3 pb-1">
                   <span className="text-sm font-semibold">{t("sessionGroup")}</span>
                   {instId && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        className="flex items-center justify-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground rounded"
-                        onClick={() => { onCreateSession(); closeMenu() }}
-                        title={t("newSubSessionTitle")}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                      <button
-                        className="flex items-center justify-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground rounded"
-                        onClick={() => { onRefreshSessionList(); closeMenu() }}
-                        title={t("refresh")}
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                      </button>
-                    </div>
+                    <button
+                      className="flex items-center justify-center p-1 text-muted-foreground hover:bg-muted hover:text-foreground rounded"
+                      onClick={() => { onRefreshSessionList(); closeMenu() }}
+                      title={t("refreshSessionListTitle")}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </button>
                   )}
                 </div>
+                {instId && (
+                  <button
+                    className="w-[90%] mx-auto flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm rounded-full bg-primary/15 text-primary font-medium hover:bg-primary/25 mb-3"
+                    onClick={() => { onCreateSession(); closeMenu() }}
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{t("newSubSessionTitle")}</span>
+                  </button>
+                )}
                 {sessionList.map((s) => {
                   const active = s.session_id === activeSid
                   const hasNew = !!newMsgMap[s.session_id]
@@ -166,7 +166,7 @@ export function ChatHeader({
                   return (
                     <button
                       key={s.session_id}
-                      className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm rounded-md ${
+                      className={`w-[90%] mx-auto flex items-center gap-2 px-3 py-2.5 text-sm rounded-md ${
                         active
                           ? "bg-primary text-primary-foreground font-medium"
                           : "text-muted-foreground hover:bg-muted"
@@ -216,11 +216,19 @@ export function ChatHeader({
                   <span className="flex-1 text-left">{t("writerModel")}</span>
                   <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.writer || t("unset")}</span>
                 </button>
-                <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoApproveCommit}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
+                  onClick={() => onAutoApproveChange(!autoApproveCommit)}
+                >
                   <GitCommitHorizontal className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="flex-1 text-left text-muted-foreground">{t("autoCommit")}</span>
-                  <Switch checked={autoApproveCommit} onCheckedChange={onAutoApproveChange} />
-                </div>
+                  <span className="flex-1 text-left">{t("autoCommit")}</span>
+                  <span className="pointer-events-none" aria-hidden>
+                    <Switch checked={autoApproveCommit} />
+                  </span>
+                </button>
               </div>
             </div>
           </>

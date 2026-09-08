@@ -10,6 +10,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery"
 import type { FloorsStats, ContextUsage } from "@/lib/types"
 import { toast } from "sonner"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
+import { FloorSummaryText } from "./ChatPanelComps/FloorSummaryText"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
 import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath, pasteNoticeText } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
@@ -1740,20 +1741,16 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         })()}
       </div>
 
-      {/* 移动端：楼层（左） + 上下文用量条（右），置于输入框上方；桌面端仍在输入框下方 footer */}
+      {/* 移动端：楼层统计+归档总结（完整连续文本）+ 上下文用量（仅 token 数，去盲文条），
+          置于输入框上方；自身无底线，靠一条顶线与消息列表分隔；ChatInput 已
+          hideTopBorder 并收紧顶部 padding，让统计与输入框连成整体 */}
       {isMobile && ((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
         <div className="px-3 py-1 border-t border-border shrink-0">
-          <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground min-w-0">
-            {floorsStats && floorsStats.latest_floor != null ? (
-              <span className="font-mono whitespace-nowrap shrink-0">
-                {t("floorStats")}<span className="text-foreground">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-              </span>
-            ) : (
-              <span />
-            )}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
+            <FloorSummaryText stats={floorsStats} />
             {contextUsage && contextUsage.threshold != null ? (
-              <div className="shrink-0">
-                <ContextUsageBar usage={contextUsage} />
+              <div className="ml-auto shrink-0">
+                <ContextUsageBar usage={contextUsage} noBar />
               </div>
             ) : (
               <span />
@@ -1774,6 +1771,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         onSend={handleSend}
         onStop={handleStop}
         isCompacting={isCompacting}
+        hideTopBorder={isMobile}
         pastes={pastes}
         onAddPaste={(content) => {
           const id = ++pasteIdRef.current
@@ -1826,31 +1824,11 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         }}
       />
 
-      {/* Floor stats footer + context usage（移动端已上移到头部右上角） */}
+      {/* Floor stats footer + context usage（移动端已上移到输入框上方头部） */}
       {!isMobile && ((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
         <div className="px-3 pb-2 shrink-0">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
-            {floorsStats && floorsStats.latest_floor != null && (
-              <div className="flex items-center gap-2 min-w-0">
-                <span>
-                  {t("latestFloor")}<span className="text-foreground font-mono">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-                  {t("ofFloors", { n: floorsStats.total_confirmed })}
-                  {floorsStats.total_drafts > 0 && <span>{t("plusDrafts", { n: floorsStats.total_drafts })}</span>}
-                  {floorsStats.unsummarized > 0 && <span>{t("unsummarized", { n: floorsStats.unsummarized })}</span>}）
-                </span>
-                {floorsStats.last_summary_start != null ? (
-                  <span>
-                    {t("lastSummary")}<span className="text-foreground font-mono">
-                      {floorsStats.last_summary_start === floorsStats.last_summary_end
-                        ? t("lastSummarySingle", { n: floorsStats.last_summary_start })
-                        : t("lastSummaryRange", { a: floorsStats.last_summary_start, b: floorsStats.last_summary_end })}
-                    </span>
-                  </span>
-                ) : (
-                  <span>{t("noSummaryYet")}</span>
-                )}
-              </div>
-            )}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
+            {floorsStats && floorsStats.latest_floor != null && <FloorSummaryText stats={floorsStats} />}
             <div className="ml-auto shrink-0">
               <ContextUsageBar usage={contextUsage} />
             </div>

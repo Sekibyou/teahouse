@@ -59,6 +59,10 @@ interface ChatInputProps {
   commitPreview: string
   onApprove: () => void | Promise<void>
   onReject: () => void | Promise<void>
+
+  // 移动端信息栏紧贴输入框上方时,去掉两者间的顶线,让它们视觉连成整体
+  // (分隔线改由信息栏自身的顶线承担)。
+  hideTopBorder?: boolean
 }
 
 // Paste content longer than this becomes a badge block instead of entering the
@@ -90,6 +94,7 @@ export function ChatInput({
   onAddPaste,
   onRemovePaste,
   onUpdatePaste,
+  hideTopBorder = false,
 }: ChatInputProps) {
   const { t } = useTranslation("misc")
   const isMobile = useIsMobile()
@@ -152,7 +157,11 @@ export function ChatInput({
     if (hasText) e.preventDefault()
   }
   return (
-    <div className={`border-t border-border relative ${expandedInput ? "flex-[0.8] min-h-0 flex flex-col p-3" : "shrink-0 p-3"}`}>
+    <div className={`relative ${expandedInput
+      ? "flex-[0.8] min-h-0 flex flex-col p-3"
+      // hideTopBorder 移动端信息栏紧贴输入框上方：去掉顶线，并收窄顶部 padding，
+      // 让楼层统计与输入框连成整体而非留一片空白断层
+      : (hideTopBorder ? "shrink-0 pt-1.5 px-3 pb-3" : "shrink-0 p-3")}`}>
       {filteredCommands.length > 0 && (
         <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
           {filteredCommands.map((cmd, i) => (
@@ -235,11 +244,12 @@ export function ChatInput({
           )}
           <textarea
             ref={inputRef}
-            className={`flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring ${
-              expandedInput
+            className={`flex-1 rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-1 focus:ring-ring ${
+              isMobile ? "text-sm placeholder:text-xs" : "text-sm"
+            } ${expandedInput
                 ? "min-h-0 resize-y"
                 : "resize-none min-h-[40px] max-h-[120px]"
-            }`}
+              }`}
             rows={1}
             value={isCompacting ? compactingText : input}
             onChange={(e) => onInputChange(e.target.value)}
