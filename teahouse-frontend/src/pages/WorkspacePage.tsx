@@ -1757,14 +1757,14 @@ export function WorkspacePage() {
           onRefresh={() => { refresh(); setFullscreenPanel(null) }}
         />
 
-        {fullscreenPanel === "files" && (
-          <SandboxFileList
-            instanceId={instId}
-            instanceName={activeInstance?.name}
-            variant="fullscreen"
-            onClose={() => setFullscreenPanel(null)}
-          />
-        )}
+        {/* 文件清单全屏面板：常驻渲染以支持移动端进出动画（内部按 open/closing 自管理） */}
+        <SandboxFileList
+          instanceId={instId}
+          instanceName={activeInstance?.name}
+          variant="fullscreen"
+          open={fullscreenPanel === "files"}
+          onClose={() => setFullscreenPanel(null)}
+        />
 
         {/* File tree overlay (half-screen drawer) — only in backstage mode。进出动画对齐导演抽屉 */}
         {(showFileTree || fileTreeClosing) && (

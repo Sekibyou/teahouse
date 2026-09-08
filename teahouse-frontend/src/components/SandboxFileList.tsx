@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from "react"
-import { ChevronLeft } from "lucide-react"
+import { ChevronRight } from "lucide-react"
 import { sandboxSrcApi, floorsApi, type FloorEntry } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useTranslation } from "react-i18next"
 
 interface SandboxFileListProps {
@@ -9,6 +11,8 @@ interface SandboxFileListProps {
   instanceName: string | undefined
   /** details — 宽屏沙盒底部的折叠清单；fullscreen — 窄屏全屏面板（带返回导航栏）。 */
   variant: "details" | "fullscreen"
+  /** fullscreen 由父层常驻渲染、以此控制显隐，支持进出动画（仅移动端生效）。 */
+  open?: boolean
   onClose?: () => void
 }
 
@@ -18,8 +22,28 @@ interface SandboxFileListProps {
  * 宽屏作为沙盒底部折叠调试栏；窄屏底部折叠栏意义不大，改由右上角菜单
  * 触发，以全屏面板展示。
  */
-export function SandboxFileList({ instanceId, instanceName, variant, onClose }: SandboxFileListProps) {
+export function SandboxFileList({ instanceId, instanceName, variant, open = true, onClose }: SandboxFileListProps) {
   const { t } = useTranslation("misc")
+  const isMobile = useIsMobile()
+  // fullscreen 两阶段进出：open 切 false 时先保留 DOM 播从右滑出再真正关闭
+  const [closing, setClosing] = useState(false)
+  const FILE_LIST_ANIM_MS = 220
+  const requestClose = useCallback(() => {
+    if (!onClose) return
+    if (isMobile && variant === "fullscreen") {
+      setClosing((wasClosing) => {
+        if (wasClosing) return true
+        window.setTimeout(() => {
+          setClosing(false)
+          onClose()
+        }, FILE_LIST_ANIM_MS)
+        return true
+      })
+    } else {
+      onClose()
+    }
+  }, [isMobile, variant, onClose])
+  useDialogBackClose(open && variant === "fullscreen", requestClose)
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({})
   const [floors, setFloors] = useState<FloorEntry[]>([])
   const [refresh, setRefresh] = useState(0)
@@ -59,20 +83,29 @@ export function SandboxFileList({ instanceId, instanceName, variant, onClose }: 
   }, [instanceId, refresh])
 
   if (variant === "fullscreen") {
+    // 父层常驻渲染 fullscreen 面板；!open 且非离场动画中才真正不渲染
+    if (!open && !closing) return null
+    const statSub = `sandbox (${Object.keys(sandboxFiles).length}) · floors (${floors.length})`
     return (
-      <div className="absolute inset-0 z-50 bg-background flex flex-col">
-        <div className="relative h-10 border-b border-border flex items-center justify-center shrink-0">
+      <div
+        className={`absolute inset-0 z-50 bg-background flex flex-col ${
+          closing
+            ? "animate-out slide-out-to-right duration-[220ms] fill-mode-forwards"
+            : "animate-in slide-in-from-right duration-[220ms]"
+        }`}
+      >
+        <div className="flex items-center gap-2 px-3 h-11 border-b border-border shrink-0">
+          {/* 左：标题 + 统计副标题 同一行 */}
+          <span className="font-semibold text-base shrink-0">{t("sandboxFileList.fileList")}</span>
+          <span className="text-[10px] text-muted-foreground font-mono truncate min-w-0">{statSub}</span>
+          {/* 右上：折叠（右箭头）关闭 */}
           <button
-            className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
-            onClick={onClose}
+            className="ml-auto p-2 rounded hover:bg-muted text-muted-foreground flex items-center justify-center shrink-0"
+            onClick={requestClose}
             aria-label={t("common:back")}
           >
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronRight className="h-5 w-5" />
           </button>
-          <span className="font-semibold text-sm">{t("sandboxFileList.fileList")}</span>
-          <span className="absolute right-3 text-[10px] text-muted-foreground font-mono">
-            sandbox ({Object.keys(sandboxFiles).length}) | floors ({floors.length})
-          </span>
         </div>
         <div className="flex-1 overflow-auto px-4 py-3 space-y-1 text-sm font-mono">
           <FileListContent sandboxFiles={sandboxFiles} floors={floors} />
