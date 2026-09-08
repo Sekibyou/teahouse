@@ -4,7 +4,7 @@ import {
   GitBranch as GitBranchIcon, GitCommitHorizontal, Loader2,
   CheckCircle2, AlertCircle, X, GitFork,
   History, FileText, FilePlus, FileMinus, FileEdit,
-  Save, Trash2, Pencil, CornerDownRight, Undo2, ChevronLeft,
+  Save, Trash2, Pencil, CornerDownRight, Undo2, ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,7 +71,22 @@ function nextTempName(): string {
 export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
   const { t } = useTranslation("git")
   const isMobile = useIsMobile()
-  useDialogBackClose(open, onClose)
+  // 移动端全屏进出动画：本组件由父层常驻渲染，open 切 false 时先保留 DOM 播从右滑出再隐藏；
+  // 桌面端由父层仅在 open 时挂载（调用处 `&&`），此处直接返回即可，不需动画状态机。
+  const [closing, setClosing] = useState(false)
+  const closeWithExit = useCallback(() => {
+    if (isMobile) {
+      setClosing(true)
+      window.setTimeout(() => {
+        setClosing(false)
+        onClose()
+      }, 220)
+    } else {
+      onClose()
+    }
+  }, [isMobile, onClose])
+  // 系统返回：桌面端直接关；移动端全屏先播离场再关
+  useDialogBackClose(open, closeWithExit)
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -269,7 +284,10 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     }
   }
 
-  if (!open) return null
+  // 渲染：桌面端父层仅在 open 时挂载本组件 → !open 即返回 null；
+  // 移动端父层常驻渲染 → open 与 closing 期间都保留 DOM 以播进出动画。
+  if (!isMobile && !open) return null
+  if (isMobile && !open && !closing) return null
 
   const currentBranch = gitStatus?.current_branch || "main"
   const branches = gitStatus?.branches || []
@@ -289,8 +307,16 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
   return (
     <div
-      className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/50 backdrop-blur-sm flex items-center justify-center"}`}
-      onClick={onClose}
+      className={`fixed inset-0 z-50 ${
+        isMobile
+          ? `bg-background ${
+              closing
+                ? "animate-out slide-out-to-right duration-[220ms] fill-mode-forwards"
+                : "animate-in slide-in-from-right duration-[220ms]"
+            }`
+          : "bg-black/50 backdrop-blur-sm flex items-center justify-center"
+      }`}
+      onClick={closeWithExit}
     >
       <div
         className={`flex flex-col overflow-hidden ${isMobile
@@ -306,23 +332,33 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       >
         {/* Header */}
         {isMobile ? (
-          <div className="relative h-10 border-b border-border flex items-center justify-center shrink-0 z-10">
+          <div className="flex items-center gap-2 px-3 h-11 border-b border-border shrink-0 z-10">
+            {/* 标题（放大）+ 状态（符号+文字）同组靠左 */}
+            <span className="text-base font-semibold shrink-0">{t("title")}</span>
+            {loading && !gitStatus ? (
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {t("status.loading")}
+              </span>
+            ) : hasUncommitted ? (
+              <span className="flex items-center gap-1 text-[10px] text-yellow-500">
+                <AlertCircle className="h-3 w-3" />
+                {t("status.dirty")}
+              </span>
+            ) : gitStatus ? (
+              <span className="flex items-center gap-1 text-[10px] text-green-500">
+                <CheckCircle2 className="h-3 w-3" />
+                {t("status.clean")}
+              </span>
+            ) : null}
+            {/* 折叠关闭按钮靠右 */}
             <button
-              className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
-              onClick={onClose}
-              aria-label={t("aria.back")}
+              className="ml-auto p-2 rounded hover:bg-muted text-muted-foreground flex items-center justify-center shrink-0"
+              onClick={closeWithExit}
+              aria-label={t("aria.collapse")}
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronRight className="h-5 w-5" />
             </button>
-            <span className="font-semibold text-sm">{t("title")}</span>
-            <span className="absolute right-2 flex items-center gap-2">
-              {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-              {hasUncommitted ? (
-                <span className="flex items-center gap-1 text-[10px] text-yellow-500">
-                  <AlertCircle className="h-3 w-3" />
-                </span>
-              ) : (null)}
-            </span>
           </div>
         ) : (
           <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">

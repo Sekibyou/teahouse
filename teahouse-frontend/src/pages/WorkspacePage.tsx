@@ -1706,15 +1706,14 @@ export function WorkspacePage() {
         {/* 底部常驻 tab 栏 */}
         {!inPlay && <MobileTabBar />}
 
-        {/* Fullscreen panels：git / files（导演已并入 tab，不再全屏） */}
-        {fullscreenPanel === "git" && (
-          <GitDialog
-            instanceId={instId!}
-            open={true}
-            onClose={() => setFullscreenPanel(null)}
-            onRefresh={() => { refresh(); setFullscreenPanel(null) }}
-          />
-        )}
+        {/* Fullscreen panels：git / files（导演已并入 tab，不再全屏）。
+            GitDialog 常驻渲染以支持移动端进出动画（内部按 open/closing 自管理显隐） */}
+        <GitDialog
+          instanceId={instId!}
+          open={fullscreenPanel === "git"}
+          onClose={() => setFullscreenPanel(null)}
+          onRefresh={() => { refresh(); setFullscreenPanel(null) }}
+        />
 
         {fullscreenPanel === "files" && (
           <SandboxFileList

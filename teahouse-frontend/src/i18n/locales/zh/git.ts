@@ -2,10 +2,12 @@ export const zhGit = {
   title: "版本控制",
   aria: {
     back: "返回",
+    collapse: "折叠",
   },
   status: {
     dirty: "有未提交变更",
     clean: "干净",
+    loading: "加载中...",
   },
   error: {
     loadStatus: "加载 git 状态失败",

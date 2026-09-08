@@ -2,10 +2,12 @@ export const jaGit = {
   title: "バージョン管理",
   aria: {
     back: "戻る",
+    collapse: "折りたたむ",
   },
   status: {
     dirty: "未コミットの変更あり",
     clean: "クリーン",
+    loading: "読み込み中...",
   },
   error: {
     loadStatus: "git ステータスの読み込みに失敗",

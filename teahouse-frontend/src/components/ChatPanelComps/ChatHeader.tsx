@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw, GitCommitHorizontal } from "lucide-react"
+import { ChevronRight, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw, GitCommitHorizontal } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
@@ -112,7 +112,7 @@ export function ChatHeader({
               onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
               title={t("closePanelMobile")}
             >
-              <ChevronDown className="h-4 w-4" />
+              <ChevronRight className="h-5 w-5" />
             </button>
           ) : (
             <div className="w-8 shrink-0" />

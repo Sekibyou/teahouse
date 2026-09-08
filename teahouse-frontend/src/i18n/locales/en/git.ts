@@ -2,10 +2,12 @@ export const enGit = {
   title: "Version control",
   aria: {
     back: "Back",
+    collapse: "Collapse",
   },
   status: {
     dirty: "Has uncommitted changes",
     clean: "Clean",
+    loading: "Loading...",
   },
   error: {
     loadStatus: "Failed to load git status",
