@@ -11,7 +11,7 @@ import type { Instance } from "@/lib/types"
 // ── Instance skill management ──────────────────────────────────────
 // Lists the user's skill library + which skills this instance has enabled.
 // Enabling copies a library skill into the instance; removing deletes it there.
-export function InstanceSkillsDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+export function InstanceSkillsDialog({ instance, onClose }: { instance: Pick<Instance, "id" | "name">; onClose: () => void }) {
   const { t } = useTranslation("session")
   // 盖在当前真实路由(实例详情路由 /instances/:id 或列表 /)之上 → route 用当前 pathname，便于离开时清理
   useDialogBackClose(true, onClose, { route: useLocation().pathname, kind: "skill_manager" })

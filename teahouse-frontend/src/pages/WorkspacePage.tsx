@@ -13,7 +13,7 @@ import {
   Eye, Code2, BookOpen,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { instancesApi, gitApi, toFrontendPath, toBackendPath, ROOT } from "@/lib/api"
+import { instancesApi, gitApi, toFrontendPath, toBackendPath, ROOT, skillsApi, packagesApi, pluginsApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
 import { useMobileLayoutStore, type MobileTab } from "@/stores/mobileLayoutStore"
@@ -42,6 +42,8 @@ import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
 import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
 import { MobileTabBar } from "./WorkspacePageComps/MobileTabBar"
 import { MobileHome } from "./WorkspacePageComps/MobileHome"
+import { InstanceSkillsDialog } from "./SessionSelectPageComps/InstanceSkillsDialog"
+import { InstancePackagesDialog } from "./SessionSelectPageComps/InstancePackagesDialog"
 import { MobilePlayMenu } from "./WorkspacePageComps/MobilePlayMenu"
 import { FileTreeGitBar } from "./WorkspacePageComps/FileTreeGitBar"
 import { TreeMenu } from "./WorkspacePageComps/TreeMenu"
@@ -326,6 +328,31 @@ export function WorkspacePage() {
   }, [blocker])
 
   const instId = activeInstance?.id
+
+  // 移动端外层「首页」tab 的实例内容快速入口：插件(全局已启用)/ Skill / 提示词包(实例内已装/已启用)。
+  // Skill/提示词包打开实例级管理弹层；插件打开设置「插件」tab。每次切回 home 刷新一次数字。
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false)
+  const [managePackagesOpen, setManagePackagesOpen] = useState(false)
+  const [contentCounts, setContentCounts] = useState<{ plugins: number; skill: number; pkg: number } | null>(null)
+  const [contentCountsLoading, setContentCountsLoading] = useState(false)
+  const loadContentCounts = useCallback(() => {
+    if (!instId || !isMobile) return
+    setContentCounts(null)
+    setContentCountsLoading(true)
+    Promise.all([
+      pluginsApi.list(),
+      packagesApi.listInInstance(instId),
+      skillsApi.listForInstance(instId),
+    ]).then(([plg, pkg, skl]) => {
+      setContentCounts({
+        plugins: plg.ok ? (plg.data?.plugins.filter((p) => p.enabled).length ?? 0) : 0,
+        pkg: pkg.ok ? (pkg.data?.packages.length ?? 0) : 0,
+        skill: skl.ok ? (skl.data?.filter((s) => s.source === "instance" && s.has_skill).length ?? 0) : 0,
+      })
+    }).catch(() => { }).finally(() => setContentCountsLoading(false))
+  }, [instId, isMobile])
+  useEffect(() => { if (mobileTab === "home") loadContentCounts() }, [mobileTab, loadContentCounts])
+
 
   // 激活文件（selectedFile）的 per-path 条目。无激活文件时为 undefined。
   const activeEntry: TabEntry | undefined = selectedFile ? tabStore[selectedFile] : undefined
@@ -1771,6 +1798,11 @@ export function WorkspacePage() {
               onOpenGit={() => { setFullscreenPanel("git") }}
               changeCounts={changeCounts}
               onBackToHome={requestExitConfirm}
+              counts={contentCounts}
+              countsLoading={contentCountsLoading}
+              onOpenPlugins={() => openSettings("plugins")}
+              onOpenSkills={() => setManageSkillsOpen(true)}
+              onOpenPackages={() => setManagePackagesOpen(true)}
             />
           )}
 
@@ -1889,6 +1921,14 @@ export function WorkspacePage() {
           open={fullscreenPanel === "files"}
           onClose={() => setFullscreenPanel(null)}
         />
+
+        {/* 首页快速入口的实例级管理弹层：Skill / 提示词包（关闭后刷新入口数字） */}
+        {manageSkillsOpen && (
+          <InstanceSkillsDialog instance={activeInstance} onClose={() => { setManageSkillsOpen(false); loadContentCounts() }} />
+        )}
+        {managePackagesOpen && (
+          <InstancePackagesDialog instance={activeInstance} onClose={() => { setManagePackagesOpen(false); loadContentCounts() }} />
+        )}
 
         {/* File tree overlay (half-screen drawer) — only in backstage mode。进出动画对齐导演抽屉 */}
         {(showFileTree || fileTreeClosing) && (

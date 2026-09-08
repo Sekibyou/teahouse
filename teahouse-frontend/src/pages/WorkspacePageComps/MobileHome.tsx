@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Play, Minus, Plus, Type, Sun, Moon, Languages, ArrowLeft, FileText, Bot, PenLine, AlertCircle, GitBranch } from "lucide-react"
+import { Play, Minus, Plus, Type, Sun, Moon, Languages, ArrowLeft, FileText, Bot, PenLine, AlertCircle, GitBranch, Puzzle, BookOpen, Package, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SUPPORTED_LANGS, LANG_LABELS, useCurrentLang, useLangStore, type Lang } from "@/i18n/config"
 import { useThemeStore } from "@/stores/themeStore"
@@ -17,6 +17,12 @@ interface MobileHomeProps {
   onOpenGit: () => void
   changeCounts: { added: number; modified: number; deleted: number }
   onBackToHome: () => void
+  /** 实例内容快速入口的数量（插件=全局已启用；Skill/提示词包=实例内已启用）。 */
+  counts: { plugins: number; skill: number; pkg: number } | null
+  countsLoading: boolean
+  onOpenPlugins: () => void
+  onOpenSkills: () => void
+  onOpenPackages: () => void
 }
 
 /** 字号 A−/A+ 步进控件：本地 setScaleId 即时换档(DOM 预览) + debounce 落后端持久化。 */
@@ -77,8 +83,8 @@ function FontScaleControl() {
 }
 
 /** 移动端外层首页 tab：大「进入游玩」按钮 + 快捷设置（字号/主题/语言/模型）+ 返回列表。 */
-export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles, onOpenGit, changeCounts, onBackToHome }: MobileHomeProps) {
-  const { t } = useTranslation(["workspace", "settings", "misc"])
+export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles, onOpenGit, changeCounts, onBackToHome, counts, countsLoading, onOpenPlugins, onOpenSkills, onOpenPackages }: MobileHomeProps) {
+  const { t } = useTranslation(["workspace", "settings", "misc", "session"])
   const { isDark, setTheme } = useThemeStore()
   const currentLang = useCurrentLang()
   const setLang = useLangStore((s) => s.setLang)
@@ -134,6 +140,36 @@ export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles
       </div>
     )
   }
+
+  // 实例内容快速入口行：与版本控制行一致——icon+名在左；右组 = 状态 badge(已启用 N / 无) + 「查看」按钮。
+  const quickRow = (Icon: typeof Bot, label: string, count: number | undefined, onClick: () => void) => (
+    <div className="flex items-center justify-between px-4 gap-3 min-h-[52px]">
+      <div className="flex items-center gap-2 text-sm min-w-0">
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {!countsLoading && (count ?? 0) > 0 && (
+          <span className="text-xs bg-muted/60 text-muted-foreground font-medium px-1.5 py-0.5 rounded leading-none">
+            {t("session:homeQuick.enabled", { n: count })}
+          </span>
+        )}
+        {!countsLoading && (count ?? 0) === 0 && (
+          <span className="text-xs bg-muted/60 text-muted-foreground font-medium px-1.5 py-0.5 rounded leading-none">
+            {t("session:homeQuick.none")}
+          </span>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 gap-1.5 shrink-0 bg-transparent dark:bg-transparent hover:bg-muted hover:text-foreground"
+          onClick={onClick}
+        >
+          {countsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("workspace:homeView")}
+        </Button>
+      </div>
+    </div>
+  )
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-auto px-5 pt-4 space-y-6">
@@ -243,6 +279,11 @@ export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles
               </Button>
             </div>
           </div>
+
+          {/* 实例内容快速入口：插件 / Skill / 提示词包（带数量，点进管理） */}
+          {quickRow(Puzzle, t("session:pluginsShort"), counts?.plugins, onOpenPlugins)}
+          {quickRow(BookOpen, "Skill", counts?.skill, onOpenSkills)}
+          {quickRow(Package, t("session:packagesShort"), counts?.pkg, onOpenPackages)}
         </div>
       </section>
 

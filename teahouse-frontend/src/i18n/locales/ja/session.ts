@@ -78,6 +78,11 @@ export const jaSession = {
   managePackages: "プロンプトパッケージを管理（あなたのパッケージライブラリから有効化）",
   managePackagesShort: "プロンプトパッケージを管理",
   packagesShort: "プロンプトパッケージ",
+  pluginsShort: "プラグイン",
+  homeQuick: {
+    enabled: "有効: {{n}}",
+    none: "なし",
+  },
   instanceNameLabel: "この新しいインスタンスに名前を付けてください",
   instanceNamePh: "インスタンス名",
 

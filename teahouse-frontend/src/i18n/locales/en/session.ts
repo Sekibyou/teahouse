@@ -78,6 +78,11 @@ export const enSession = {
   managePackages: "Manage prompt packages (enable from your package library)",
   managePackagesShort: "Manage prompt packages",
   packagesShort: "Prompt packages",
+  pluginsShort: "Plugins",
+  homeQuick: {
+    enabled: "{{n}} enabled",
+    none: "None",
+  },
   instanceNameLabel: "Give this new instance a name",
   instanceNamePh: "Instance name",
 

@@ -78,6 +78,11 @@ export const zhSession = {
   managePackages: "管理提示词包（从你的包库启用）",
   managePackagesShort: "管理提示词包",
   packagesShort: "提示词包",
+  pluginsShort: "插件",
+  homeQuick: {
+    enabled: "已启用：{{n}}",
+    none: "无",
+  },
   instanceNameLabel: "给这个新实例起个名字",
   instanceNamePh: "实例名称",
 

@@ -8,7 +8,7 @@ import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { packagesApi, type MyPackage, type InstancePackage } from "@/lib/api"
 import type { Instance } from "@/lib/types"
 
-export function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
+export function InstancePackagesDialog({ instance, onClose }: { instance: Pick<Instance, "id" | "name">; onClose: () => void }) {
   const { t } = useTranslation("session")
   useDialogBackClose(true, onClose, { route: useLocation().pathname, kind: "package_manager" })
 
