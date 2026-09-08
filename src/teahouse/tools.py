@@ -665,17 +665,39 @@ async def execute_write(instance_dir: Path, args: dict[str, Any], instance_id: s
 
 
 async def execute_edit(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
-    """Edit a file by exact string replacement. Follows Claude Code harness rules:
-    - old_string must appear exactly once in the file (unless replace_all=True)
+    """Edit a file by exact string replacement, optionally confined to a region.
+
+    Region confinement (mutually exclusive, both optional):
+      - offset/limit: 1-based line range, like Read's line mode.
+      - slice: a {{path|...}} slice expression (same syntax as Read's slice mode);
+        only single-file slices are supported.
+    Without either, the whole file is the region (legacy behavior).
+
+    Follows Claude Code harness rules:
+    - old_string must appear exactly once in the REGION (unless replace_all=True)
     - Must match whitespace exactly
     - Atomic: on failure, file is unchanged
     Set resolve_placeholders=true to resolve {{path}} placeholders in new_string.
     Default is false.
     """
-    path = args["path"]
+    path = args.get("path")
+    slice_expr = args.get("slice")
     old_string = args["old_string"]
     new_string = args["new_string"]
     replace_all = args.get("replace_all", False)
+    offset = args.get("offset")
+    limit = args.get("limit")
+
+    has_line_range = offset is not None or limit is not None
+    if slice_expr is not None and has_line_range:
+        return "Error: slice 与 offset/limit 是两种区域限定方式，二选一。"
+    # slice 自带文件路径且是权威；同时传 path 时忽略它而非报错（导演常误传）。
+    ignored_path = None
+    if slice_expr is not None and path:
+        ignored_path = path
+        path = None
+    if slice_expr is None and not path:
+        return "Error: 缺少 path（或用 slice 指定单文件切片）。"
 
     # Resolve {{path}} placeholders in new_string (only when explicitly requested).
     # File slicing does NOT resolve variables (copy/move primitive).
@@ -685,30 +707,106 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any], instance_id: st
         except Exception as e:
             return f"Error: 占位符解析失败: {e}"
 
+    if slice_expr is not None:
+        try:
+            segs = resolve_slice_spans(str(slice_expr), instance_dir)
+        except Exception as e:
+            return f"Error: 切片解析失败: {e}"
+        if len(segs) != 1:
+            return "Error: slice 区域限定仅支持单文件切片（glob/多文件不适用），请收窄到单个文件。"
+        seg = segs[0]
+        if seg.source.char_start is None or seg.source.char_end is None:
+            return "Error: 切片区域不可定位（内部错误）。"
+        full = _validate_path(instance_dir, seg.source.file_rel)
+        if not full.exists():
+            return f"Error: File not found: {seg.source.file_rel}"
+        content = full.read_text(encoding="utf-8")
+        cs, ce = seg.source.char_start, seg.source.char_end
+        label = (
+            f"{seg.source.file_rel} 第 {seg.source.start_line}–{seg.source.end_line} 行"
+            f"（slice: {slice_expr}）"
+        )
+        if ignored_path:
+            label += f"（已忽略同时传入的 path={ignored_path}，以 slice 为准）"
+        return _apply_edit_in_region(
+            instance_dir, full, content, cs, ce, seg.source.file_rel,
+            old_string, new_string, replace_all, label, instance_id,
+        )
+
     full = _validate_path(instance_dir, path)
     if not full.exists():
         return f"Error: File not found: {path}"
 
     content = full.read_text(encoding="utf-8")
 
-    count = content.count(old_string)
+    if not has_line_range:
+        cs, ce = 0, len(content)
+        label = path
+    else:
+        lines = content.splitlines(keepends=True)
+        total = len(lines)
+        start = int(offset) - 1 if offset is not None else 0
+        if start < 0:
+            return f"Error: offset must be >= 1, got {int(offset)}"
+        if start > total:
+            return f"Error: offset ({int(offset)}) exceeds file length ({total} lines)"
+        if limit is not None and int(limit) < 1:
+            return f"Error: limit must be >= 1, got {int(limit)}"
+        end = start + int(limit) if limit is not None else total
+        end = min(end, total)
+        cs = sum(len(l) for l in lines[:start])
+        ce = sum(len(l) for l in lines[:end])
+        label = f"{path} 第 {start + 1}–{end} 行"
+
+    return _apply_edit_in_region(
+        instance_dir, full, content, cs, ce, path,
+        old_string, new_string, replace_all, label, instance_id,
+    )
+
+
+def _apply_edit_in_region(
+    instance_dir: Path,
+    full: Path,
+    content: str,
+    cs: int,
+    ce: int,
+    rel_path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool,
+    label: str,
+    instance_id: str | None,
+) -> str:
+    """Replace old_string within content[cs:ce] only, write back, broadcast.
+
+    Matches must be fully inside the region — an occurrence straddling a region
+    boundary is neither counted nor replaced.
+    """
+    region = content[cs:ce]
+    count = region.count(old_string)
     if count == 0:
-        return f"Error: old_string not found in {path}. Note that the match must be exact including whitespace and line endings."
+        return (
+            f"Error: old_string not found in {label}. "
+            "Note that the match must be exact including whitespace and line endings, "
+            "and must lie entirely inside the confined region."
+        )
     if count > 1 and not replace_all:
-        return f"Error: old_string appears {count} times in {path}. Must be unique. Set replace_all=true to replace all occurrences, or include more surrounding context."
+        return (
+            f"Error: old_string appears {count} times in {label}. Must be unique within "
+            "the region. Set replace_all=true to replace all occurrences, include more "
+            "surrounding context, or narrow the region."
+        )
 
     if replace_all:
-        new_content = content.replace(old_string, new_string)
-        full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "type": "modified", "instance_id": instance_id or instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
-        return f"Successfully replaced all {count} occurrences in {path}. File state is now up to date in your context — no need to Read it back."
+        new_region = region.replace(old_string, new_string)
     else:
-        new_content = content.replace(old_string, new_string, 1)
-        full.write_text(new_content, encoding="utf-8")
-        state.broadcast("file_changed", {"path": path, "tool": "Edit", "type": "modified", "instance_id": instance_id or instance_dir.name})
-        _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
-        return f"Successfully applied edit to {path}. File state is now up to date in your context — no need to Read it back."
+        new_region = region.replace(old_string, new_string, 1)
+    full.write_text(content[:cs] + new_region + content[ce:], encoding="utf-8")
+    state.broadcast("file_changed", {"path": rel_path, "tool": "Edit", "type": "modified", "instance_id": instance_id or instance_dir.name})
+    _maybe_broadcast_vars_changed(instance_dir, full, "Edit", instance_id)
+    if replace_all:
+        return f"Successfully replaced all {count} occurrences in {label}. File state is now up to date in your context — no need to Read it back."
+    return f"Successfully applied edit to {label}. File state is now up to date in your context — no need to Read it back."
 
 
 async def execute_report(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:

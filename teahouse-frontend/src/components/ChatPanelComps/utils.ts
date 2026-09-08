@@ -162,7 +162,16 @@ export function formatBlockArgs(block: { args?: Record<string, unknown>; name?: 
   const name = block.name || ""
   if (name === "Read") return args.path as string
   if (name === "Write") return args.path as string
-  if (name === "Edit") return args.path as string
+  if (name === "Edit") {
+    const slice = args.slice as string | undefined
+    if (slice) return slice
+    const p = args.path as string
+    const range =
+      args.offset != null || args.limit != null
+        ? `:${args.offset ?? 1}${args.limit != null ? `+${args.limit}` : ""}`
+        : ""
+    return `${p}${range}`
+  }
   if (name === "WriteLine") return args.path as string
   if (name === "Glob") return args.pattern as string
   if (name === "TodoWrite") {

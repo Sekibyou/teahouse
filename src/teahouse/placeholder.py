@@ -1582,6 +1582,8 @@ class SliceSource:
     file_rel: str          # 源文件相对实例根目录的路径（包引用为 packages/<pkg>/<path>）
     start_line: int        # 该段首个字符所在源行号（1-indexed）
     end_line: int          # 该段最后一个字符所在源行号（1-indexed）
+    char_start: int | None = None  # 该段在源文件全文中的起始字符偏移（含）；None=未记录
+    char_end: int | None = None    # 该段在源文件全文中的结束字符偏移（不含）；None=未记录
 
 
 @dataclass(frozen=True)
@@ -1612,7 +1614,8 @@ def _resolve_single_file_segment(
         for i, ln in enumerate(full_lines)
     ]
     # 保证无 trailing-newline 的末行也在展示里（splitlines(keepends=True) 保证）
-    source = SliceSource(file_rel=rel, start_line=1, end_line=len(full_lines) or 1)
+    source = SliceSource(file_rel=rel, start_line=1, end_line=len(full_lines) or 1,
+                         char_start=0, char_end=len(content))
     return SliceSegment(source=source, lines=lines)
 
 
@@ -1689,10 +1692,17 @@ def _resolve_file_lines(raw: str, instance_dir: Path, base_dir: Path | None = No
             SliceLine(text=full_lines[i], line_no=i + 1, partial=False) for i in kept
         ]
         sl = SliceLine(text=full_lines[kept[0]], line_no=kept[0] + 1, partial=False) if kept else None
+        if kept:
+            cs = sum(len(full_lines[i]) for i in range(kept[0]))
+            ce = sum(len(full_lines[i]) for i in range(kept[-1] + 1))
+        else:
+            cs = ce = 0
         source = SliceSource(
             file_rel=rel,
             start_line=(kept[0] + 1) if kept else 1,
             end_line=(kept[-1] + 1) if kept else 1,
+            char_start=cs,
+            char_end=ce,
         )
         return [SliceSegment(source=source, lines=seg_lines)]
 
@@ -1743,10 +1753,14 @@ def _resolve_file_lines(raw: str, instance_dir: Path, base_dir: Path | None = No
         last_idx = seg_lines[-1].line_no
     else:
         first_idx = last_idx = 1
+    # joined 在源文件全文中的起始偏移 = kept 首行之前的全部字符数。
+    joined_start = sum(len(full_lines[i]) for i in range(kept[0])) if kept else 0
     source = SliceSource(
         file_rel=rel,
         start_line=first_idx,
         end_line=last_idx,
+        char_start=joined_start + lo,
+        char_end=joined_start + hi,
     )
     return [SliceSegment(source=source, lines=seg_lines)]
 

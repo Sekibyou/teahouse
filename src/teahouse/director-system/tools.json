@@ -52,19 +52,32 @@
   {
     "name": "Edit",
     "short": "精确字符串替换",
-    "description": "精确字符串替换，支持全局替换",
-    "usage": "对文件执行精确字符串替换。old_string 必须在文件中唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n参数：\n- `path`（必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须完全匹配文件中的内容且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `replace_all`（可选）：是否替换所有匹配项。默认 false（只在 old_string 唯一时替换）。设为 true 则替换所有出现位置\n- `resolve_placeholders`（可选）：是否解析 new_string 中的 {{path}} 占位符。默认 false。设为 true 时可将占位符引用展开为文件内容后替换\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，增加更多上下文行使其唯一",
+    "description": "精确字符串替换，可限定行范围或切片区域，支持全局替换",
+    "usage": "对文件执行精确字符串替换。old_string 必须在**限定区域内**唯一且精确匹配（包括空白字符和换行符），否则操作失败且文件状态不变。替换后文件自动保存。\n\n**区域限定（可选，二选一；都不给 = 整个文件）**：\n- 模式 A —— `offset`/`limit` 按行号锁定：`offset` 起始行（1-based）、`limit` 行数，两者都可单独省略（省略 offset = 从第 1 行起，省略 limit = 到文件末尾）。语义与 Read 的行模式一致。\n- 模式 B —— `slice` 按切片表达式锁定：传一段与 `{{path}}` 切片完全相同的表达式，复用 Read 的整套切片语法（`from=\"A\"|to=\"B\"` 行锚点、`between=\"A\"|and=\"B\"` 串内裁切、`:行号` 范围等），Edit 只在该切片覆盖的字符区域内匹配 old_string。**仅支持单文件切片**（glob/多文件会报错）。**slice 自带文件路径且是权威**：同时传 path 会被忽略（以 slice 为准），但别依赖这一点——**用 slice 时就不要传 path**。\n\n**典型用法**：先 `Read(path=\"a.md\", offset=5, limit=2)` 或 `Read(slice=\"{{a.md|from=\\\"X\\\"|to=\\\"Y\\\"}}\")` 看清那一小段，再用相同的限定做 Edit —— 只要该段内 old_string 唯一即可修改，不必让它在整份文件里唯一。\n\n参数：\n- `path`（模式 A 必填）：文件路径，相对于实例根目录\n- `old_string`（必填）：被替换的精确字符串，必须在限定区域内完全匹配且唯一（除非 replace_all=true）\n- `new_string`（必填）：替换后的字符串\n- `offset`（可选）：区域起始行号，1-based\n- `limit`（可选）：区域行数\n- `slice`（可选）：单文件切片表达式，与 offset/limit 互斥\n- `replace_all`（可选）：是否替换区域内所有匹配项。默认 false（只在 old_string 唯一时替换）\n- `resolve_placeholders`（可选）：是否解析 new_string 中的 {{path}} 占位符。默认 false。设为 true 时可将占位符引用展开为文件内容后替换\n\n最佳实践：\n- 优先使用此工具进行增量修改，而非 Write 覆盖整个文件\n- 如果 old_string 因不够唯一而匹配失败，用 offset/limit 或 slice 收窄区域，或增加更多上下文行使其唯一\n- 匹配必须完整落在限定区域内，跨区域边界的出现既不计入也不替换",
     "parameters": {
       "type": "object",
       "properties": {
         "path": {
-          "type": "string"
+          "type": "string",
+          "description": "模式 A：文件路径（相对实例根目录）。带 slice 时不要传（传了会被忽略）。"
         },
         "old_string": {
           "type": "string"
         },
         "new_string": {
           "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "description": "模式 A：区域起始行号，1-based。"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "模式 A：区域行数。"
+        },
+        "slice": {
+          "type": "string",
+          "description": "模式 B：单文件切片表达式，如 \"{{a.md|from=\\\"X\\\"|to=\\\"Y\\\"}}\"。与 offset/limit 互斥。"
         },
         "replace_all": {
           "type": "boolean"
@@ -74,7 +87,6 @@
         }
       },
       "required": [
-        "path",
         "old_string",
         "new_string"
       ]
