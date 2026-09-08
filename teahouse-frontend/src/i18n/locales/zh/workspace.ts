@@ -23,6 +23,13 @@ export const zhWorkspace = {
   homeGoBack: "返回",
   homePlayExit: "退出游玩",
 
+  // 移动端退出实例确认弹窗
+  confirmExit: {
+    title: "退出实例",
+    message: "要退出当前实例、返回实例列表吗？",
+    confirm: "退出",
+  },
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "文件树",
   menuTitle: "菜单",

@@ -80,6 +80,8 @@ export function WorkspacePage() {
   const [fileTreeClosing, setFileTreeClosing] = useState(false)
   const FILE_TREE_ANIM_MS = 200
   const [showMobileMenu, setShowMobileMenu] = useState(false)
+  // 退出实例确认弹窗（首页「返回实例列表」按钮 + 外层空闲时的系统返回 → 先弹确认再离开）
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false)
   // 游玩中唤出的全屏导演浮层（复用外层常驻 ChatPanel，不退出游玩）
   const [playDirectorOpen, setPlayDirectorOpen] = useState(false)
   // 浮窗从右滑出离场动画：关闭先置 closing 保持渲染播完动画再真正隐藏
@@ -278,6 +280,17 @@ export function WorkspacePage() {
   // at a time (nested with director above), instead of jumping straight home.
   useDialogBackClose(showFileTree, closeFileTree)
   useDialogBackClose(showExportDialog, () => setShowExportDialog(false))
+
+  // 移动端退出实例确认。两条互补守卫共享同一个 exitConfirmOpen，保证任意时刻恰有一个守卫生效：
+  // - dialog 守卫：弹窗打开时系统返回 = 取消关闭弹窗（标准用法）。
+  // - idle 守卫：外层三 tab（home/files/director）空闲、且无任何会被返回关闭的浮层时，此时系统返回
+  //   本会经 Router 直接退出实例 → 改为弹确认。各浮层（Git/files/文件树抽屉/Export/游玩导演浮层等）
+  //   都在自己注册的 useDialogBackClose 层之上、先于本守卫消费返回，互不干扰。
+  const exitGuardIdle = isMobile && !inPlay && !playClosing && !exitConfirmOpen
+    && fullscreenPanel === null && !showFileTree && !showExportDialog
+    && !playDirectorOpen && !showMobileMenu && !treeMenu
+  useDialogBackClose(exitGuardIdle, () => setExitConfirmOpen(true))
+  useDialogBackClose(exitConfirmOpen, () => setExitConfirmOpen(false))
 
   const instId = activeInstance?.id
 
@@ -1598,7 +1611,8 @@ export function WorkspacePage() {
   // Mobile layout
   // ============================================================================
   if (isMobile) {
-    const handleExitToHome = () => { setActiveInstance(null); navigate("/", { replace: true }) }
+    const confirmExitInstance = () => { setExitConfirmOpen(false); setActiveInstance(null); navigate("/", { replace: true }) }
+    const requestExitConfirm = () => setExitConfirmOpen(true)
     return (
       <div className="h-full flex flex-col overflow-hidden bg-background relative">
         {/* ===== 独立全屏游玩层（常驻挂载保 SSE，inPlay 时覆盖外层；从右滑入/滑出） ===== */}
@@ -1648,7 +1662,7 @@ export function WorkspacePage() {
               onOpenFiles={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
               onOpenGit={() => { setFullscreenPanel("git") }}
               changeCounts={changeCounts}
-              onBackToHome={handleExitToHome}
+              onBackToHome={requestExitConfirm}
             />
           )}
 
@@ -1898,6 +1912,18 @@ export function WorkspacePage() {
           instId={instId}
           isMobile={isMobile}
           onSaved={showSaveToast}
+        />
+
+        {/* 移动端退出实例确认（首页「返回实例列表」/ 外层空闲系统返回先弹此窗再离开） */}
+        <ConfirmDialog
+          open={exitConfirmOpen}
+          title={t("confirmExit.title")}
+          message={t("confirmExit.message")}
+          variant="destructive"
+          confirmText={t("confirmExit.confirm")}
+          confirmOnEnter
+          onConfirm={confirmExitInstance}
+          onCancel={() => setExitConfirmOpen(false)}
         />
 
         {dragBadgeEl}

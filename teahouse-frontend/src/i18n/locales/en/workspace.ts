@@ -23,6 +23,13 @@ export const enWorkspace = {
   homeGoBack: "Back",
   homePlayExit: "Exit play",
 
+  // Mobile exit-instance confirmation dialog
+  confirmExit: {
+    title: "Exit instance",
+    message: "Leave this instance and return to the instance list?",
+    confirm: "Exit",
+  },
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "File tree",
   menuTitle: "Menu",

@@ -23,6 +23,13 @@ export const jaWorkspace = {
   homeGoBack: "戻る",
   homePlayExit: "プレイを終了",
 
+  // モバイル版インスタンス終了の確認ダイアログ
+  confirmExit: {
+    title: "インスタンスを終了",
+    message: "このインスタンスを終了し、インスタンス一覧へ戻りますか？",
+    confirm: "終了",
+  },
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "ファイルツリー",
   menuTitle: "メニュー",
