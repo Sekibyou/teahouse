@@ -61,6 +61,12 @@ export const enSession = {
   deleteInstance: {
     title: "Confirm deleting instance",
     message: "Delete instance \"{{name}}\"? This permanently deletes all data of this instance.",
+    done: "Instance deleted",
+  },
+
+  // Instance detail route page
+  detail: {
+    notFound: "Instance not found — it may have been deleted.",
   },
 
   // 详情页

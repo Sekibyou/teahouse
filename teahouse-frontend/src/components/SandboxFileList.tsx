@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from "react"
 import { ChevronRight } from "lucide-react"
 import { sandboxSrcApi, floorsApi, type FloorEntry } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
-import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useTranslation } from "react-i18next"
 
@@ -43,7 +42,6 @@ export function SandboxFileList({ instanceId, instanceName, variant, open = true
       onClose()
     }
   }, [isMobile, variant, onClose])
-  useDialogBackClose(open && variant === "fullscreen", requestClose)
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({})
   const [floors, setFloors] = useState<FloorEntry[]>([])
   const [refresh, setRefresh] = useState(0)

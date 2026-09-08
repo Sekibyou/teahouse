@@ -61,6 +61,12 @@ export const zhSession = {
   deleteInstance: {
     title: "确认删除实例",
     message: "确定要删除实例 \"{{name}}\" 吗？此操作将永久删除该实例的所有数据。",
+    done: "实例已删除",
+  },
+
+  // 实例详情路由页
+  detail: {
+    notFound: "未找到该实例，可能已被删除。",
   },
 
   // 详情页

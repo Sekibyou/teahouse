@@ -28,6 +28,7 @@ export const enWorkspace = {
     title: "Exit instance",
     message: "Leave this instance and return to the instance list?",
     confirm: "Exit",
+    proceed: "Exit anyway",
   },
 
   // 顶部栏 / 编辑器

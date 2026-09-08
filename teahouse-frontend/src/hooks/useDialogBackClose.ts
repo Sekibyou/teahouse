@@ -1,76 +1,43 @@
 import { useEffect, useRef } from "react"
+import { dialogStackStore } from "@/stores/dialogStackStore"
 
 /**
- * 让一个全屏弹窗响应系统的返回键信号（物理返回键 / 手势 / 全面屏扫动）。
+ * 让一个全屏弹窗/抽屉响应系统的返回键信号（物理返回键 / 手势 / 全面屏扫动）。
  *
- * 机制（不改变 URL、不影响 React Router、不卸载组件）：
- * - 弹窗 open 时向浏览器 history 压入一层"假条目"（不带真实 path，Router 无感知）。
- * - 用户触发系统返回 → 浏览器 popstate → 全局单例监听器消费最顶层打开的弹窗，调用其 onClose。
- * - 弹窗本身仍由组件状态 open 控制，这里只做"返回信号 → 关弹窗"的桥接。
+ * 语义已收口到 `dialogStackStore`（见该文件注释）：本 hook 是其 React 薄封装，仅负责
+ * 把"open 时压语义层、卸载/close 时移除"与组件生命周期绑定。
  *
- * 历史栈同步：
- * - 用户返回（popstate）关闭：历史栈已自动回退一层，假条目天然消费，无需补偿。
- * - 用户主动点 X 关闭：用 describe 配对的 history.back() 把假条目弹掉；期间用 suppress
- *   标记让即将到来的 popstate 被忽略，避免 Router 收到把用户再退一页。
+ * @param open   弹窗是否打开。
+ * @param onClose 系统返回要关本弹窗时应执行的动作（播动画后真正改组件 state）。
+ * @param opts   可选语义：
+ *   - route：本弹窗盖在哪个真实路由页之上（"/" 大厅 / "/workspace"）。传了它，导航离开该页前
+ *     `dialogStackStore.clearForRoute(route)` 才能把它连同其假条目一起清掉，杜绝孤儿。
+ *     不传 = route "*"，不参与路由清理（向后兼容旧调用点）。
+ *   - kind/name：语义标签，便于调试与后续复用。
  */
-type Layer = {
-  id: number
-  onClose: () => void
-}
-
-const layers: Layer[] = []
-let layerId = 0
-let installed = false
-// 主动关闭触发的 history.back() 会带来一次 popstate；用计数跳过它
-let suppressNextPop = 0
-
-const DIALOG_STATE_KEY = "__teahouseDialog"
-
-function install() {
-  if (installed) return
-  installed = true
-  window.addEventListener("popstate", onPopstate)
-}
-
-function onPopstate() {
-  if (suppressNextPop > 0) {
-    suppressNextPop--
-    return
-  }
-  const top = layers[layers.length - 1]
-  if (!top) return // 栈空 → 没有弹窗在等返回 → 放行给 Router 正常后退
-  // 消费最顶层弹窗；本次 popstate 已让历史栈回退一层，假条目已消耗
-  layers.pop()!
-  top.onClose()
-}
-
-/** 当前历史栈顶是不是指定弹窗压的假条目（仅当正好是本层时才可安全弹掉） */
-function topIsOwnLayer(id: number): boolean {
-  const s = typeof history.state === "object" && history.state !== null ? history.state : {}
-  return s[DIALOG_STATE_KEY] === id
-}
-
-export function useDialogBackClose(open: boolean, onClose: () => void) {
+export function useDialogBackClose(
+  open: boolean,
+  onClose: () => void,
+  opts?: { route?: string; kind?: string; name?: string },
+) {
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const keyRef = useRef<number | null>(null)
 
   useEffect(() => {
-    install()
     if (!open) return
-
-    const id = ++layerId
-    const layer: Layer = { id, onClose: () => onCloseRef.current() }
-    layers.push(layer)
-    history.pushState({ [DIALOG_STATE_KEY]: id }, "")
-
+    const key = dialogStackStore.getState().pushLayer({
+      kind: opts?.kind ?? "dialog",
+      route: opts?.route ?? "*",
+      name: opts?.name,
+      onClose: () => onCloseRef.current(),
+    })
+    keyRef.current = key
     return () => {
-      const idx = layers.lastIndexOf(layer)
-      if (idx >= 0) layers.splice(idx, 1)
-      // 若本层压的假条目仍在历史栈顶（主动关闭，未被 back 消费），用 back 弹掉
-      if (topIsOwnLayer(id)) {
-        suppressNextPop++
-        history.back()
+      if (keyRef.current != null) {
+        dialogStackStore.getState().removeSelf(keyRef.current)
+        keyRef.current = null
       }
     }
-  }, [open])
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 }

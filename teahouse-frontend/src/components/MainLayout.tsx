@@ -1,5 +1,5 @@
 import { Sun, Moon, LogOut, User, Settings, ArrowLeft, Gamepad2, Wrench, Users, Download } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { useAuth, useAuthActions, isAdminRole } from "@/stores/authStore"
@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
 import { useNewVersion } from "@/stores/versionStore"
 import { useUiScaleStore } from "@/stores/uiScaleStore"
+import { dialogStackStore } from "@/stores/dialogStackStore"
 import { appSettingsApi } from "@/lib/api"
 
 export function MainLayout() {
@@ -50,6 +51,19 @@ export function MainLayout() {
   useEffect(() => {
     if (isLoading) return
   }, [isLoading])
+
+  // 跨真实路由页跳转的安全网：任一真实路由页(大厅"/" / 实例详情 /instances/:id / workspace)挂载的
+  // 语义弹层若没被其来源清掉（如某些卸载路径遗漏），离开该页时兜底 clearForRoute 清掉它压的假条目，
+  // 防孤儿残留导致退穿。
+  const routeRef = useRef(location.pathname)
+  useEffect(() => {
+    const prev = routeRef.current
+    const next = location.pathname
+    routeRef.current = next
+    if (prev === next) return
+    // prev 是真实路由页 → 补清它上面可能残留的层（route 语义与真实 pathname 一致才匹配得上）
+    dialogStackStore.getState().clearForRoute(prev)
+  }, [location.pathname])
 
   if (isLoading) {
     return (
@@ -111,6 +125,7 @@ export function MainLayout() {
                 size="sm"
                 className="gap-1.5 text-xs"
                 onClick={() => {
+                  dialogStackStore.getState().clearForRoute("/workspace")
                   setActiveInstance(null)
                   navigate("/", { replace: true })
                 }}

@@ -28,6 +28,7 @@ export const jaWorkspace = {
     title: "インスタンスを終了",
     message: "このインスタンスを終了し、インスタンス一覧へ戻りますか？",
     confirm: "終了",
+    proceed: "それでも終了",
   },
 
   // 顶部栏 / 编辑器

@@ -32,7 +32,7 @@ export function Bookshelf({
   const [selected, setSelected] = useState<Prototype | null>(null)
   const mobile = useIsMobile()
   const reduced = useReducedMotion()
-  useDialogBackClose(true, onClose)
+  useDialogBackClose(true, onClose, { route: "/", kind: "bookshelf" })
 
   // Render the dialog only while the selected prototype still exists, so a
   // delete while it's open simply dismisses it (no effect / cascading render).
@@ -230,7 +230,7 @@ function PrototypeDetailDialog({
   const [error, setError] = useState("")
   const [creating, setCreating] = useState(false)
   // 详情是书架子层级：系统返回先关详情（回书架），再关书架（回大厅）
-  useDialogBackClose(true, onClose)
+  useDialogBackClose(true, onClose, { route: "/", kind: "prototype_detail" })
 
   // Load README for the selected prototype (dialog remounts per prototype with
   // fresh initial state, so no synchronous reset here).

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
+import { useLocation } from "react-router-dom"
 import { Package, X, Loader2, Trash2, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -9,7 +10,7 @@ import type { Instance } from "@/lib/types"
 
 export function InstancePackagesDialog({ instance, onClose }: { instance: Instance; onClose: () => void }) {
   const { t } = useTranslation("session")
-  useDialogBackClose(true, onClose)
+  useDialogBackClose(true, onClose, { route: useLocation().pathname, kind: "package_manager" })
 
   const [library, setLibrary] = useState<MyPackage[]>([])
   const [enabled, setEnabled] = useState<InstancePackage[]>([])

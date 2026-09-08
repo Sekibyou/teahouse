@@ -86,7 +86,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     }
   }, [isMobile, onClose])
   // 系统返回：桌面端直接关；移动端全屏先播离场再关
-  useDialogBackClose(open, closeWithExit)
+  useDialogBackClose(open, closeWithExit, { route: "/workspace", kind: "git_panel" })
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")

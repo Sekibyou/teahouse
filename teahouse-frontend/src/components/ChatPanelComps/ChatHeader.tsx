@@ -83,7 +83,7 @@ export function ChatHeader({
   }, [])
 
   // 抽屉挂载或打开时系统返回（物理返回键/手势/轻扫）优先收起抽屉
-  useDialogBackClose(menuOpen, closeMenu)
+  useDialogBackClose(menuOpen, closeMenu, { route: "/workspace", kind: "director_menu" })
 
   // ── 移动端：功能收进左上角全高左滑菜单 ─────────────────────────────────
   if (isMobile) {

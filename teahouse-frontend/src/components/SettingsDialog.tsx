@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
+import { useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { Cpu, X, ChevronRight, ChevronDown, Check, Loader2 } from "lucide-react"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
@@ -37,6 +38,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const { t } = useTranslation("settings")
   const isMobile = useIsMobile()
+  const routePath = useLocation().pathname
   // 移动端全屏进出动画：open 切 false 时先保留 DOM 播从右滑出再真正关闭（父层常驻渲染本组件）
   const [closing, setClosing] = useState(false)
   const SETTINGS_ANIM_MS = 220
@@ -55,7 +57,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     }
   }, [isMobile, onClose])
   // 系统返回：移动端先播离场；桌面直接关
-  useDialogBackClose(open, requestClose)
+  useDialogBackClose(open, requestClose, { route: routePath, kind: "settings" })
 
   const { user: currentUser } = useAuth()
   // useMemo 缓存：引用只在 role 变化时变，避免被当作 effect 依赖导致每次渲染都触发

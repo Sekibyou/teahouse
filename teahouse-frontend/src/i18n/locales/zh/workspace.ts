@@ -28,6 +28,7 @@ export const zhWorkspace = {
     title: "退出实例",
     message: "要退出当前实例、返回实例列表吗？",
     confirm: "退出",
+    proceed: "仍要退出",
   },
 
   // 顶部栏 / 编辑器

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useNavigate } from "react-router-dom"
+import { useBlocker, useNavigate } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
 import { PayloadViewer } from "@/components/PayloadViewer"
@@ -30,6 +30,7 @@ import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import { dialogStackStore } from "@/stores/dialogStackStore"
 import type { FileTreeNode, TreeNodeRef, TreeClipboard, UndoableOp, TrashItem } from "@/lib/types"
 import { applyFileChange } from "@/lib/fileTreeReducer"
 import { collectAllEntries, pruneNestedItems } from "@/lib/fileTreeOps"
@@ -80,8 +81,6 @@ export function WorkspacePage() {
   const [fileTreeClosing, setFileTreeClosing] = useState(false)
   const FILE_TREE_ANIM_MS = 200
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  // 退出实例确认弹窗（首页「返回实例列表」按钮 + 外层空闲时的系统返回 → 先弹确认再离开）
-  const [exitConfirmOpen, setExitConfirmOpen] = useState(false)
   // 游玩中唤出的全屏导演浮层（复用外层常驻 ChatPanel，不退出游玩）
   const [playDirectorOpen, setPlayDirectorOpen] = useState(false)
   // 浮窗从右滑出离场动画：关闭先置 closing 保持渲染播完动画再真正隐藏
@@ -92,7 +91,7 @@ export function WorkspacePage() {
   const PLAY_ANIM_MS = 220
   // 导演不再是全屏弹层——已并入外层 director tab。fullscreenPanel 仅剩 git / files。
   const [fullscreenPanel, setFullscreenPanel] = useState<"git" | "files" | null>(null)
-  useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null))
+  useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null), { route: "/workspace", kind: "filelist" })
   const inPlay = useMobileLayoutStore((s) => s.inPlay)
   const mobileTab = useMobileLayoutStore((s) => s.mobileTab)
   const enterPlay = useMobileLayoutStore((s) => s.enterPlay)
@@ -126,10 +125,10 @@ export function WorkspacePage() {
   }, [playDirectorOpen])
   // 游玩中系统返回：导演浮层先收（若开着），否则退出游玩层回外层。由 useDialogBackClose
   // 栈序保证：浮层晚于游玩层压入，返回先弹浮层再弹游玩层。
-  useDialogBackClose(playDirectorOpen, closePlayDirector)
+  useDialogBackClose(playDirectorOpen, closePlayDirector, { route: "/workspace", kind: "play_director" })
   // 移动端系统返回：游玩层→回外层。外层空闲时无弹层压栈，系统返回会天然回退到会话主页
   // （= 退出实例），由 useDialogBackClose 的放行逻辑交给 Router 处理，无需额外压层。
-  useDialogBackClose(inPlay, animateExitPlay)
+  useDialogBackClose(inPlay, animateExitPlay, { route: "/workspace", kind: "play_stage" })
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   // Current tree mirrored into a ref so SSE event handlers (which close over the
@@ -278,19 +277,37 @@ export function WorkspacePage() {
   }, [showFileTree])
   // System back closes the mobile file-tree drawer and the export panel one level
   // at a time (nested with director above), instead of jumping straight home.
-  useDialogBackClose(showFileTree, closeFileTree)
-  useDialogBackClose(showExportDialog, () => setShowExportDialog(false))
+  useDialogBackClose(showFileTree, closeFileTree, { route: "/workspace", kind: "filetree" })
+  useDialogBackClose(showExportDialog, () => setShowExportDialog(false), { route: "/workspace", kind: "export" })
 
-  // 移动端退出实例确认。两条互补守卫共享同一个 exitConfirmOpen，保证任意时刻恰有一个守卫生效：
-  // - dialog 守卫：弹窗打开时系统返回 = 取消关闭弹窗（标准用法）。
-  // - idle 守卫：外层三 tab（home/files/director）空闲、且无任何会被返回关闭的浮层时，此时系统返回
-  //   本会经 Router 直接退出实例 → 改为弹确认。各浮层（Git/files/文件树抽屉/Export/游玩导演浮层等）
-  //   都在自己注册的 useDialogBackClose 层之上、先于本守卫消费返回，互不干扰。
-  const exitGuardIdle = isMobile && !inPlay && !playClosing && !exitConfirmOpen
+  // 系统返回：当游玩层 / 文件树抽屉 / Export 弹窗开着时，分别由各自注册的守卫层先消费返回
+  // （useDialogBackClose 压假条目逐层关闭），不落在本组件兜底处理。它们都不会触发本组件的路由退出。
+
+  // 移动端退出实例确认。改用 react-router useBlocker 在边界导航（从 /workspace 退到别处）上拦截：
+  // 底层任何时刻都只有一条 /workspace → 外部导航会被拦截，无需压假 history 条目，杜绝旧方案压栈/
+  // 回退时序错位导致的漏弹/误直退/残留假条目（同一次翻栈连按多次返回）。用“到底是谁要退出”来决定
+  // 怎么拦。
+  // exitArm：何时需要拦截 = isMobile 时（桌面退出按钮不拦）且不在游玩层、无任何会被返回关闭的浮层
+  //   （inPlay/playClosing 由 exitPlay-abort 纯状态路线处理——见 exitPlay 定义，不在此边界导航上发生；
+  //    其余浮层走 useDialogBackClose 栈序，同样不触发到本边界导航）。
+  // 确认弹窗的显示即 blocker.state === "blocked"：一次边界导航被挂起时弹窗，确认 proceed() 放行 /
+  // 取消 reset() 丢弃（丢弃后 state 回 unblocked，history 栈已退回原位，可再次触发而不会残留）。
+  const exitArm = isMobile && !inPlay && !playClosing
     && fullscreenPanel === null && !showFileTree && !showExportDialog
     && !playDirectorOpen && !showMobileMenu && !treeMenu
-  useDialogBackClose(exitGuardIdle, () => setExitConfirmOpen(true))
-  useDialogBackClose(exitConfirmOpen, () => setExitConfirmOpen(false))
+  const blocker = useBlocker(exitArm)
+  const exitBlocked = blocker.state === "blocked"
+  // 移动端「返回上一级」/「返回实例列表」按钮：退到 history 上一层（从详情进 → 回详情；card 播放进 → 回列表）。
+  // 该 navigate(POP) 会被 exitArm 拦下弹确认，确认 proceed 让它完成、取消 reset 停留。
+  const requestExitConfirm = useCallback(() => navigate(-1), [navigate])
+  // 确认退出：放行被挂起的边界导航。先清掉 /workspace 上可能残留的语义层假条目（防孤儿退穿），
+  // 再放行；放行后本页已切离，此时清 activeInstance 不会触发本页「无实例 → 重定向」多余导航。
+  const proceedExit = useCallback(() => {
+    dialogStackStore.getState().clearForRoute("/workspace")
+    setActiveInstance(null)
+    blocker.proceed?.()
+  }, [setActiveInstance, blocker])
+  const cancelExit = useCallback(() => { blocker.reset?.() }, [blocker])
 
   const instId = activeInstance?.id
 
@@ -1611,8 +1628,6 @@ export function WorkspacePage() {
   // Mobile layout
   // ============================================================================
   if (isMobile) {
-    const confirmExitInstance = () => { setExitConfirmOpen(false); setActiveInstance(null); navigate("/", { replace: true }) }
-    const requestExitConfirm = () => setExitConfirmOpen(true)
     return (
       <div className="h-full flex flex-col overflow-hidden bg-background relative">
         {/* ===== 独立全屏游玩层（常驻挂载保 SSE，inPlay 时覆盖外层；从右滑入/滑出） ===== */}
@@ -1914,16 +1929,16 @@ export function WorkspacePage() {
           onSaved={showSaveToast}
         />
 
-        {/* 移动端退出实例确认（首页「返回实例列表」/ 外层空闲系统返回先弹此窗再离开） */}
+        {/* 移动端退出实例确认：blocker blocked（一次退往实例列表的导航被挂起）→ 弹窗。确认放行/取消丢弃。 */}
         <ConfirmDialog
-          open={exitConfirmOpen}
+          open={exitBlocked}
           title={t("confirmExit.title")}
           message={t("confirmExit.message")}
           variant="destructive"
-          confirmText={t("confirmExit.confirm")}
+          confirmText={t("confirmExit.proceed")}
           confirmOnEnter
-          onConfirm={confirmExitInstance}
-          onCancel={() => setExitConfirmOpen(false)}
+          onConfirm={proceedExit}
+          onCancel={cancelExit}
         />
 
         {dragBadgeEl}

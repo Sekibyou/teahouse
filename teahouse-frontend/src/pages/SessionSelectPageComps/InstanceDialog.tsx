@@ -1,24 +1,23 @@
 import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { motion, useReducedMotion } from "motion/react"
-import { ArrowLeft, Pencil, Hash, Clock, Play, BookOpen, Package, Copy, Trash2, X, Loader2 } from "lucide-react"
+import { Pencil, Hash, Clock, Play, BookOpen, Package, Copy, Trash2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CoverWithFetch } from "@/components/Cover"
 import { renderText } from "@/lib/htmlSanitizer"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
-import { useDialogBackClose } from "@/hooks/useDialogBackClose"
-import { dialogShell } from "@/lib/animations"
 import { formatDateShort } from "./formatDateShort"
 import type { Instance } from "@/lib/types"
 
 // ============================================================================
-// Instance detail dialog — cover + README + continue + rename
+// Instance detail content — cover + README + continue + rename
+// 作为真实路由页(InstanceDetailPage)的正文内容；不含弹层壳/遮罩/useDialogBackClose。
+// 页面进出/返回由路由接管，此处不再压假条目（避免裸假条目夹在真实路由间写坏 react-router 序号）。
 // ============================================================================
 export function InstanceDialog({
   instance, readmeData, readmeLoading, renaming, renameValue, isMobile,
   onRenameValue, onToggleRename, onConfirmRename, actionLoading,
-  onContinue, onDelete, onCopy, onClose, onManageSkills, onManagePackages,
+  onContinue, onDelete, onCopy, onManageSkills, onManagePackages,
 }: {
   instance: Instance
   readmeData: { metadata: Record<string, unknown>; readme: string } | null
@@ -33,23 +32,17 @@ export function InstanceDialog({
   onContinue: () => void
   onDelete: () => void
   onCopy: () => void
-  onClose: () => void
   onManageSkills: () => void
   onManagePackages: () => void
 }) {
   const { t } = useTranslation("session")
   const htmlContent = readmeData?.readme ? renderText(readmeData.readme, []) : ""
-  useDialogBackClose(true, onClose)
-  const reduced = useReducedMotion()
 
-  // Mobile: fullscreen sheet; desktop: centered modal above a dimmed backdrop.
-  const outer = isMobile
-    ? "absolute inset-0 z-50 bg-background flex flex-col overflow-hidden"
-    : "absolute inset-0 z-50 flex items-center justify-center p-4 bg-background/70 backdrop-blur-lg"
-
+  // 容器：作为路由页正文，由外层(InstanceDetailPage)包 h-full 容器；这里只定内容自身的布局形态。
+  // 移动 = 纵向三段占满；桌面 = 分栏占满(去掉 modal 遮罩/圆角/最大尺寸约束)。
   const shell = isMobile
-    ? "flex-1 min-h-0 flex flex-col overflow-hidden"
-    : "bg-background rounded-2xl shadow-2xl border border-border w-[80vw] max-h-[90vh] flex flex-col overflow-hidden relative"
+    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-background"
+    : "flex-1 min-h-0 flex flex-col overflow-hidden bg-background"
 
   useEffect(() => {
     const cssId = "bbcode-animation-css-readme"
@@ -75,33 +68,10 @@ export function InstanceDialog({
   }, [])
 
   return (
-    <motion.div
-      className={outer}
-      onClick={isMobile ? undefined : onClose}
-      initial={reduced ? false : { opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={reduced ? undefined : { opacity: 0, transition: { duration: 0.15 } }}
-    >
-      <motion.div
-        className={shell}
-        onClick={(e) => e.stopPropagation()}
-        variants={reduced ? undefined : dialogShell(isMobile ? "mobile" : "desktop")}
-        initial="hidden"
-        animate="show"
-        exit="exit"
-      >
+    <div className={shell}>
         {isMobile ? (
           /* ===================== 窄屏：纵向三段式 ===================== */
           <>
-            <button
-              className="absolute top-3 left-3 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
-              onClick={onClose}
-              title={t("common:back")}
-              aria-label={t("common:back")}
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-
             {/* Cover band */}
             <div className="relative shrink-0 h-52 w-full overflow-hidden bg-muted">
               <CoverWithFetch
@@ -190,31 +160,21 @@ export function InstanceDialog({
              左侧列 = 图片(高度自适应撑满) + 下方功能区(开始/复制/删除)；
              右侧列 = 标题 + markdown(内部滚动)；两列等高。 */
           <>
-            {/* Close button — top-right */}
-            <button
-              className="absolute top-3 right-10 z-10 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 cursor-pointer"
-              onClick={onClose}
-              title={t("common:close")}
-              aria-label={t("common:close")}
-            >
-              <X className="h-4 w-4" />
-            </button>
-
-            <div className="flex-1 min-h-0 p-5 grid grid-cols-[1fr_2fr] gap-8 min-w-0">
-              {/* 左侧列(1/3)：写死 1fr 宽，图片铺满该列 */}
-              <div className="min-w-0 self-stretch flex flex-col justify-between min-h-0">
-                {/* 图片：宽=左列宽(1/3)，高=宽×4/3 健康比例；Cover 填满容器，img object-cover 居中裁剪不拉伸 */}
-                <div className="shrink-0 w-full aspect-[3/4] overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex-1 min-h-0 p-5 grid grid-cols-[1fr_2fr] grid-rows-1 gap-8 min-w-0">
+              {/* 左侧列(1/3)：写死 1fr 宽；上=封面(占剩余高、超高裁剪) 下=功能区贴底 */}
+              <div className="min-w-0 self-stretch flex flex-col min-h-0">
+                {/* 封面区：flex-1 占据功能区之外的剩余高度；封面铺满该区宽、按宽推导高，
+                    若高于剩余高度则由 overflow-hidden 裁剪而非挤推下方按钮（保证按钮始终可点）。 */}
+                <div className="relative flex-1 min-h-0 overflow-hidden rounded-xl border border-border bg-card">
                   <CoverWithFetch
                     kind="instance"
                     id={instance.id}
                     name={instance.name}
-                    driven="width"
-                    className="h-full w-full"
+                    className="w-full"
                   />
                 </div>
 
-                {/* 功能区：名字+meta + 开始 + 复制/删除，位于图片下方、贴底 */}
+                {/* 功能区：名字+meta + 开始 + 复制/删除，位于封面下方、贴底 */}
                 <div className="mt-4 shrink-0 flex flex-col">
                   {/* 名字 + 改名 */}
                   {renaming ? (
@@ -295,7 +255,6 @@ export function InstanceDialog({
             </div>
           </>
         )}
-      </motion.div>
-    </motion.div>
+    </div>
   )
 }
