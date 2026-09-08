@@ -1613,6 +1613,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         reasoningEffort={currentEffort}
         onCycleReasoningEffort={cycleSessionEffort}
         onClosePanel={onClosePanel}
+        usage={contextUsage}
       />
 
       {/* Messages */}
@@ -1741,20 +1742,13 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         })()}
       </div>
 
-      {/* 移动端：楼层统计+归档总结（完整连续文本）+ 上下文用量（仅 token 数，去盲文条），
-          置于输入框上方；自身无底线，靠一条顶线与消息列表分隔；ChatInput 已
-          hideTopBorder 并收紧顶部 padding，让统计与输入框连成整体 */}
-      {isMobile && ((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
+      {/* 移动端：楼层统计+归档总结（完整连续文本）置于输入框上方；上下文用量已移到
+          ChatHeader 标题行右上角（带盲文进度条）。自身无底线，靠一条顶线与消息列表
+          分隔；ChatInput 已 hideTopBorder 并收紧顶部 padding，让统计与输入框连成整体 */}
+      {isMobile && (floorsStats && floorsStats.latest_floor != null) && (
         <div className="px-3 py-1 border-t border-border shrink-0">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
+          <div className="text-[10px] text-muted-foreground min-w-0">
             <FloorSummaryText stats={floorsStats} />
-            {contextUsage && contextUsage.threshold != null ? (
-              <div className="ml-auto shrink-0">
-                <ContextUsageBar usage={contextUsage} noBar />
-              </div>
-            ) : (
-              <span />
-            )}
           </div>
         </div>
       )}

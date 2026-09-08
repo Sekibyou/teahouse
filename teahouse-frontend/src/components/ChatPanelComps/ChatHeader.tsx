@@ -4,6 +4,8 @@ import { ChevronRight, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, Re
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import type { ContextUsage } from "@/lib/types"
+import { ContextUsageBar } from "./ContextUsageBar"
 
 interface ChatHeaderProps {
   // Slot models
@@ -31,6 +33,9 @@ interface ChatHeaderProps {
 
   // 收起/关闭导演栏（移动端关闭全屏面板，宽屏折叠面板）。可选——不传则不显示。
   onClosePanel?: () => void
+
+  // 移动端标题行右上角的上下文用量（含盲文进度条）。可选——仅移动端渲染在标题行。
+  usage?: ContextUsage | null
 }
 
 const EFFORT_LABEL: Record<string, string> = { none: "effort.none", low: "effort.low", mid: "effort.mid", high: "effort.high", max: "effort.max" }
@@ -55,6 +60,7 @@ export function ChatHeader({
   autoApproveCommit,
   onAutoApproveChange,
   onClosePanel,
+  usage,
 }: ChatHeaderProps) {
   const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
@@ -105,18 +111,27 @@ export function ChatHeader({
             <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
           </button>
 
-          {/* 右上角：仅游玩临时导演栏形态提供关闭钮（关闭即隐藏回游玩）；外层 director tab 页留空 */}
-          {onClosePanel ? (
-            <button
-              className="p-2 rounded hover:bg-muted text-muted-foreground shrink-0 transition-colors"
-              onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
-              title={t("closePanelMobile")}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
-          ) : (
-            <div className="w-8 shrink-0" />
-          )}
+          {/* 右上区域：居中可用区放上下文用量（含盲文进度条），右端为关闭钮 */}
+          <div className="flex items-center min-w-0 flex-1 justify-end">
+            {usage && usage.threshold != null && usage.estimated_tokens != null && (
+              <div className="text-[10px] text-muted-foreground">
+                <ContextUsageBar usage={usage} />
+              </div>
+            )}
+
+            {/* 右上角：仅游玩临时导演栏形态提供关闭钮（关闭即隐藏回游玩）；外层 director tab 页留空 */}
+            {onClosePanel ? (
+              <button
+                className="p-2 -mr-2 rounded hover:bg-muted text-muted-foreground shrink-0 transition-colors"
+                onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
+                title={t("closePanelMobile")}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            ) : (
+              <div className="w-8 shrink-0" />
+            )}
+          </div>
         </div>
 
         {/* 左滑全高菜单（抽屉） */}

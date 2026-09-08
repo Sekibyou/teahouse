@@ -22,7 +22,7 @@ const STATUS_CLASS: Record<string, string> = {
   danger: "text-red-500",
 }
 
-export function ContextUsageBar({ usage, noBar = false }: { usage: ContextUsage | null; noBar?: boolean }) {
+export function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
   if (!usage || usage.threshold == null || usage.estimated_tokens == null) return null
   const est = usage.estimated_tokens
   const threshold = usage.threshold
@@ -32,12 +32,10 @@ export function ContextUsageBar({ usage, noBar = false }: { usage: ContextUsage 
   const barCls = STATUS_CLASS[usage.status ?? "normal"] ?? STATUS_CLASS.normal
   return (
     <span className="font-mono whitespace-nowrap inline-flex items-center gap-1 text-foreground">
-      {!noBar && (
-        <span className="relative leading-none">
-          <span className="text-border">{brailleBar(100)}</span>
-          <span className={`absolute inset-0 ${barCls}`}>{brailleBar(pct)}</span>
-        </span>
-      )}
+      <span className="relative leading-none">
+        <span className="text-border">{brailleBar(100)}</span>
+        <span className={`absolute inset-0 ${barCls}`}>{brailleBar(pct)}</span>
+      </span>
       {estText}/{thText}k tokens
     </span>
   )
