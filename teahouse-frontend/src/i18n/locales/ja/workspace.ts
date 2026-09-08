@@ -9,6 +9,20 @@ export const jaWorkspace = {
   themeToggle: "テーマ切り替え",
   exitToHome: "ホームへ戻る",
 
+  // 移動端末インスタンス内 · 下部3タブ層 / 独立プレイ層
+  mobileHomeTab: "ホーム",
+  mobileFilesTab: "ファイル",
+  mobileDirectorTab: "監督",
+  homeSectionPlayTitle: "ここから物語に入る",
+  homeEnterPlay: "プレイを開始",
+  homeSettingsTitle: "クイック設定",
+  homeFontSize: "文字サイズ",
+  homeView: "表示",
+  homeSectionBackTitle: "インスタンスを終了",
+  homeBackToHome: "インスタンス一覧へ戻る",
+  homeGoBack: "戻る",
+  homePlayExit: "プレイを終了",
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "ファイルツリー",
   menuTitle: "メニュー",

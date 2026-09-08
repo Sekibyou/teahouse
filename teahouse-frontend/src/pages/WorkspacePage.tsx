@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { useNavigate, useOutletContext } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { MonacoEditor } from "@/components/MonacoEditor"
 import { MarkdownRenderer } from "@/components/MarkdownRenderer"
 import { PayloadViewer } from "@/components/PayloadViewer"
@@ -9,17 +9,17 @@ import {
   File, Folder, Loader2,
   Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
-  FolderTree, Menu, X, Gamepad2, Wrench,
+  FolderTree, Menu, X, Gamepad2,
   Eye, Code2, BookOpen,
 } from "lucide-react"
-import { useCurrentLang, useLangStore } from "@/i18n/config"
 import { Button } from "@/components/ui/button"
 import { instancesApi, gitApi, toFrontendPath, toBackendPath, ROOT } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
+import { useMobileLayoutStore } from "@/stores/mobileLayoutStore"
+import { useThemeStore } from "@/stores/themeStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
-import { useAuth, isAdminRole } from "@/stores/authStore"
 import { ChatPanel } from "@/components/ChatPanel"
 import { OutputPanel } from "@/components/OutputPanel"
 import { SandboxFileList } from "@/components/SandboxFileList"
@@ -38,7 +38,9 @@ import { EditorTabs } from "./WorkspacePageComps/EditorTabs"
 import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
 import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
-import { MobileMenuDropdown } from "./WorkspacePageComps/MobileMenuDropdown"
+import { MobileTabBar } from "./WorkspacePageComps/MobileTabBar"
+import { MobileHome } from "./WorkspacePageComps/MobileHome"
+import { MobilePlayMenu } from "./WorkspacePageComps/MobilePlayMenu"
 import { FileTreeGitBar } from "./WorkspacePageComps/FileTreeGitBar"
 import { TreeMenu } from "./WorkspacePageComps/TreeMenu"
 import { ExportDialog, type ExportDialogHandle } from "./WorkspacePageComps/ExportDialog"
@@ -60,8 +62,6 @@ export interface TabEntry {
 
 export function WorkspacePage() {
   const { t } = useTranslation("workspace")
-  const currentLang = useCurrentLang()
-  const setLang = useLangStore((s) => s.setLang)
   const navigate = useNavigate()
   const activeInstance = useSessionStore((s) => s.activeInstance)
   const setActiveInstance = useSessionStore((s) => s.setActiveInstance)
@@ -71,27 +71,22 @@ export function WorkspacePage() {
   const setChatCollapsed = useViewModeStore((s) => s.setChatCollapsed)
   const setChatWidth = useViewModeStore((s) => s.setChatWidth)
   const isMobile = useIsMobile()
-  const { toggleTheme } = useOutletContext<{ isMobile: boolean; toggleTheme: () => void }>()
+  const { isDark, toggleTheme } = useThemeStore()
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
-  const { user: currentUser } = useAuth()
 
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const [fullscreenPanel, setFullscreenPanel] = useState<"director" | "git" | "files" | null>(null)
-  useDialogBackClose(fullscreenPanel === "director", () => setFullscreenPanel(null))
+  // 导演不再是全屏弹层——已并入外层 director tab。fullscreenPanel 仅剩 git / files。
+  const [fullscreenPanel, setFullscreenPanel] = useState<"git" | "files" | null>(null)
   useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null))
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem("theme")
-    return saved ? saved === "dark" : true
-  })
-
-  const handleToggleTheme = () => {
-    setIsDark(!isDark)
-    document.documentElement.classList.toggle("dark", !isDark)
-    localStorage.setItem("theme", isDark ? "light" : "dark")
-    if (toggleTheme) toggleTheme()
-  }
+  const inPlay = useMobileLayoutStore((s) => s.inPlay)
+  const mobileTab = useMobileLayoutStore((s) => s.mobileTab)
+  const enterPlay = useMobileLayoutStore((s) => s.enterPlay)
+  const exitPlay = useMobileLayoutStore((s) => s.exitPlay)
+  // 移动端系统返回：游玩层→回外层。外层空闲时无弹层压栈，系统返回会天然回退到会话主页
+  // （= 退出实例），由 useDialogBackClose 的放行逻辑交给 Router 处理，无需额外压层。
+  useDialogBackClose(inPlay, () => exitPlay())
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   // Current tree mirrored into a ref so SSE event handlers (which close over the
@@ -264,19 +259,23 @@ export function WorkspacePage() {
     return IMAGE_EXTS.some((ext) => lower.endsWith(ext))
   }
 
-  // 进入 workspace 时按视口设置默认模式：移动端默认游玩，宽屏默认后台。
-  // 用 ref 仅在首次挂载（进入）时生效，不随用户后续切换或窗口 resize 覆盖。
+  // 进入 workspace 时设置默认 mode。宽屏保留 play/backstage 互斥切换；移动端已改用
+  // 两层布局（外层三 tab + 独立游玩层），不读 mode，这里仅保证桌面初始合理。
   const defaultModeAppliedRef = useRef(false)
   if (!defaultModeAppliedRef.current) {
     defaultModeAppliedRef.current = true
-    useViewModeStore.getState().setMode(isMobile ? "play" : "backstage")
+    useViewModeStore.getState().setMode("backstage")
   }
 
-  // 沙盒唤起导演栏：移动端切到全屏导演面板，桌面端展开折叠的 ChatPanel。
+  // 沙盒唤起导演栏：桌面端展开折叠的 ChatPanel；移动端切到外层 director tab（若在游玩层先退出）。
   const openDirector = useCallback(() => {
-    if (isMobile) setFullscreenPanel("director")
-    else setChatCollapsed(false)
-  }, [isMobile])
+    if (isMobile) {
+      exitPlay()
+      useMobileLayoutStore.getState().setMobileTab("director")
+    } else {
+      setChatCollapsed(false)
+    }
+  }, [isMobile, exitPlay])
 
   // Git state — file statuses for tree coloring from unified store. The store
   // keys ARE bare backend paths; map them to "root/..." so they match tree nodes.
@@ -1537,63 +1536,57 @@ export function WorkspacePage() {
   // Mobile layout
   // ============================================================================
   if (isMobile) {
-    // 移动端主菜单下拉面板（游玩模式悬浮球 / 后台模式顶部栏最右共用同一份）
-    const mobileMenuDropdown = (
-      <MobileMenuDropdown
-        mode={mode}
-        isDark={isDark}
-        currentLang={currentLang}
-        isAdmin={isAdminRole(currentUser?.role)}
-        onChangeLang={setLang}
-        onToggleTheme={handleToggleTheme}
-        onOpenDirector={() => { setFullscreenPanel("director"); setShowMobileMenu(false) }}
-        onOpenGit={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
-        onOpenFiles={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
-        onOpenUsers={() => { openSettings("users"); setShowMobileMenu(false) }}
-        onOpenSettings={() => { openSettings(); setShowMobileMenu(false) }}
-        onExit={() => { setActiveInstance(null); navigate("/", { replace: true }) }}
-        onClose={() => setShowMobileMenu(false)}
-      />
-    )
+    const handleExitToHome = () => { setActiveInstance(null); navigate("/", { replace: true }) }
     return (
-      <div className="h-full flex flex-col overflow-hidden bg-background">
-        {/* Fullscreen panels */}
-        {fullscreenPanel === "director" && (
-          <div className="absolute inset-0 z-50 bg-background flex flex-col">
-            <div className="flex-1 flex flex-col min-h-0">
-              <ChatPanel
-                onClosePanel={() => setFullscreenPanel(null)}
-              />
-            </div>
-          </div>
-        )}
-
-        {fullscreenPanel === "git" && (
-          <GitDialog
-            instanceId={instId!}
-            open={true}
-            onClose={() => setFullscreenPanel(null)}
-            onRefresh={() => { refresh(); setFullscreenPanel(null) }}
-          />
-        )}
-
-        {fullscreenPanel === "files" && (
-          <SandboxFileList
-            instanceId={instId}
-            instanceName={activeInstance?.name}
-            variant="fullscreen"
-            onClose={() => setFullscreenPanel(null)}
-          />
-        )}
-
-        {/* Main content area */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {mode === "play" ? (
+      <div className="h-full flex flex-col overflow-hidden bg-background relative">
+        {/* ===== 独立全屏游玩层（常驻挂载保 SSE，inPlay 时覆盖外层） ===== */}
+        <div className={`${inPlay ? "absolute inset-0 z-40 flex flex-col bg-background" : "hidden"}`}>
+          <div className="relative flex-1 flex flex-col min-h-0">
             <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} />
-          ) : (
-            /* Backstage mode — textarea editor */
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* 顶部栏始终显示：文件树按钮 + 文件名 + 保存 */}
+            {/* 游玩层悬浮球（常驻，仅保留三项：退出游玩/版本控制/主题） */}
+            {inPlay && (
+              <>
+                <div className="absolute top-3 right-3 z-30">
+                  <button
+                    className="px-3 py-2 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
+                    onClick={() => setShowMobileMenu(!showMobileMenu)}
+                    title={t("menuTitle")}
+                  >
+                    <Gamepad2 className="h-3.5 w-3.5" />
+                    <Menu className="h-3.5 w-3.5" />
+                  </button>
+                  {showMobileMenu && (
+                    <MobilePlayMenu
+                      isDark={isDark}
+                      onExitPlay={() => { exitPlay(); setShowMobileMenu(false) }}
+                      onOpenGit={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
+                      onToggleTheme={() => { toggleTheme(); setShowMobileMenu(false) }}
+                      onClose={() => setShowMobileMenu(false)}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ===== 外层：三 Tab 内容 + 底部常驻栏（inPlay 时隐藏） ===== */}
+        <div className={`${inPlay ? "hidden" : "flex-1 flex flex-col min-h-0 overflow-hidden"}`}>
+          {/* home tab */}
+          {mobileTab === "home" && (
+            <MobileHome
+              instanceName={activeInstance?.name ?? ""}
+              onEnterPlay={enterPlay}
+              onOpenModel={() => openSettings("slots")}
+              onOpenFiles={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
+              onBackToHome={handleExitToHome}
+            />
+          )}
+
+          {/* files tab — 编辑器（文件状态在 WorkspacePage，故挂载即留存） */}
+          {mobileTab === "files" && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* 顶部栏：文件树按钮 + 文件名 + 保存 */}
               <div className="flex items-center gap-2 px-2 h-14 border-b border-border shrink-0">
                 <button
                   className="p-1 rounded hover:bg-muted shrink-0"
@@ -1608,26 +1601,13 @@ export function WorkspacePage() {
                 {selectedFile && !isImageOpen && (
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
-                    {/* 阅读切换：代码态→给进入阅读的按钮（并置阅读模式开）；阅读态→「查看源码」回代码（并置关） */}
                     {supportsRead && (editorView === "code" ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => persistReadMode(true)}
-                        className="gap-1"
-                        title={isMarkdown ? t("mdRead") : t("payload")}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => persistReadMode(true)} className="gap-1" title={isMarkdown ? t("mdRead") : t("payload")}>
                         {isMarkdown ? <Eye className="h-3 w-3" /> : <BookOpen className="h-3 w-3" />}
                         {isMarkdown ? t("mdRead") : t("payload")}
                       </Button>
                     ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => persistReadMode(false)}
-                        className="gap-1"
-                        title={t("viewSource")}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => persistReadMode(false)} className="gap-1" title={t("viewSource")}>
                         <Code2 className="h-3 w-3" />
                         {t("viewSource")}
                       </Button>
@@ -1638,18 +1618,6 @@ export function WorkspacePage() {
                     </Button>
                   </div>
                 )}
-                {/* 后台模式：主菜单并入顶部栏最右侧（悬浮球仅游玩模式显示） */}
-                <div className="relative shrink-0">
-                  <button
-                    className="px-2 py-1 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
-                    onClick={() => setShowMobileMenu(!showMobileMenu)}
-                    title={t("menuTitle")}
-                  >
-                    <Wrench className="h-3.5 w-3.5" />
-                    <Menu className="h-3.5 w-3.5" />
-                  </button>
-                  {showMobileMenu && mobileMenuDropdown}
-                </div>
               </div>
               {selectedFile ? (
                 isImageOpen ? (
@@ -1658,10 +1626,7 @@ export function WorkspacePage() {
                   </div>
                 ) : isMarkdown && editorView === "preview" ? (
                   <div className="flex-1 overflow-auto">
-                    <MarkdownRenderer
-                      content={editedContent}
-                      onOpenPath={(p) => openFile(toFrontendPath(p))}
-                    />
+                    <MarkdownRenderer content={editedContent} onOpenPath={(p) => openFile(toFrontendPath(p))} />
                   </div>
                 ) : isPayloadFile && editorView === "payload" ? (
                   <div className="flex-1 overflow-auto">
@@ -1685,7 +1650,34 @@ export function WorkspacePage() {
               )}
             </div>
           )}
+
+          {/* director tab — ChatPanel 常驻挂载（SSE），非本 tab 时 CSS 隐藏 */}
+          <div className={mobileTab === "director" ? "flex-1 flex flex-col min-h-0" : "hidden"}>
+            <ChatPanel />
+          </div>
         </div>
+
+        {/* 底部常驻 tab 栏 */}
+        {!inPlay && <MobileTabBar />}
+
+        {/* Fullscreen panels：git / files（导演已并入 tab，不再全屏） */}
+        {fullscreenPanel === "git" && (
+          <GitDialog
+            instanceId={instId!}
+            open={true}
+            onClose={() => setFullscreenPanel(null)}
+            onRefresh={() => { refresh(); setFullscreenPanel(null) }}
+          />
+        )}
+
+        {fullscreenPanel === "files" && (
+          <SandboxFileList
+            instanceId={instId}
+            instanceName={activeInstance?.name}
+            variant="fullscreen"
+            onClose={() => setFullscreenPanel(null)}
+          />
+        )}
 
         {/* File tree overlay (half-screen) — only in backstage mode */}
         {showFileTree && (
@@ -1756,21 +1748,6 @@ export function WorkspacePage() {
               />
             </div>
           </>
-        )}
-
-        {/* 右上悬浮球 — 仅游玩模式（后台模式菜单已并入顶部栏） */}
-        {!fullscreenPanel && mode === "play" && (
-          <div className="fixed top-3 right-3 z-30">
-            <button
-              className="px-3 py-2 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center gap-1.5 text-xs font-medium active:scale-95 transition-transform"
-              onClick={() => setShowMobileMenu(!showMobileMenu)}
-            >
-              <Gamepad2 className="h-3.5 w-3.5" />
-              <Menu className="h-3.5 w-3.5" />
-            </button>
-
-            {showMobileMenu && mobileMenuDropdown}
-          </div>
         )}
 
         {/* Create Dialog */}

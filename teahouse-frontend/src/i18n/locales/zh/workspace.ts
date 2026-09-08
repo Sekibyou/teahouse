@@ -9,6 +9,20 @@ export const zhWorkspace = {
   themeToggle: "主题切换",
   exitToHome: "退出到主页",
 
+  // 移动端实例内 · 底部三 Tab 外层 / 独立游玩层
+  mobileHomeTab: "首页",
+  mobileFilesTab: "文件",
+  mobileDirectorTab: "导演",
+  homeSectionPlayTitle: "从这里进入故事",
+  homeEnterPlay: "进入游玩",
+  homeSettingsTitle: "快捷设置",
+  homeFontSize: "字号",
+  homeView: "查看",
+  homeSectionBackTitle: "退出实例",
+  homeBackToHome: "返回实例列表",
+  homeGoBack: "返回",
+  homePlayExit: "退出游玩",
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "文件树",
   menuTitle: "菜单",

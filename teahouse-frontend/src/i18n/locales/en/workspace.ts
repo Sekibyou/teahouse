@@ -9,6 +9,20 @@ export const enWorkspace = {
   themeToggle: "Toggle theme",
   exitToHome: "Exit to home",
 
+  // 移动端实例内 · 底部三 Tab 外层 / 独立游玩层
+  mobileHomeTab: "Home",
+  mobileFilesTab: "Files",
+  mobileDirectorTab: "Director",
+  homeSectionPlayTitle: "Enter the story here",
+  homeEnterPlay: "Enter play",
+  homeSettingsTitle: "Quick settings",
+  homeFontSize: "Font size",
+  homeView: "View",
+  homeSectionBackTitle: "Exit instance",
+  homeBackToHome: "Back to instance list",
+  homeGoBack: "Back",
+  homePlayExit: "Exit play",
+
   // 顶部栏 / 编辑器
   fileTreeTitle: "File tree",
   menuTitle: "Menu",
