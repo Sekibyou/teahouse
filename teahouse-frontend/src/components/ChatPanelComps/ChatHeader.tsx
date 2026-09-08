@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw } from "lucide-react"
+import { ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw, GitCommitHorizontal } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { ContextUsageBar } from "./ContextUsageBar"
 import type { FloorsStats, ContextUsage } from "@/lib/types"
 
@@ -40,6 +41,9 @@ interface ChatHeaderProps {
 
 const EFFORT_LABEL: Record<string, string> = { none: "effort.none", low: "effort.low", mid: "effort.mid", high: "effort.high", max: "effort.max" }
 
+// 抽屉滑动进出动画时长（与下方 Tailwind duration 保持一致）
+const DRAWER_ANIM_MS = 200
+
 export function ChatHeader({
   slotModels,
   enabledPluginCount,
@@ -62,27 +66,65 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
-  const [menuOpen, setMenuOpen] = useState(false)
 
-  // ── 移动端：功能收进右上角菜单 ──────────────────────────────────────────
+  // 抽屉两阶段显隐：menuOpen = 意图（立即反映到标题/返回），renderDrawer = DOM 是否挂载。
+  // 关闭时保留 DOM 一段动画时长播放退场，结束后才真正卸载（closing 用于挂退场类）。
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renderDrawer, setRenderDrawer] = useState(false)
+  const [closing, setClosing] = useState(false)
+
+  const openMenu = useCallback(() => {
+    setMenuOpen(true)
+    setClosing(false)
+    setRenderDrawer(true)
+  }, [])
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false)
+    setClosing(true)
+    window.setTimeout(() => setRenderDrawer(false), DRAWER_ANIM_MS)
+  }, [])
+
+  // 抽屉挂载或打开时系统返回（物理返回键/手势/轻扫）优先收起抽屉
+  useDialogBackClose(menuOpen, closeMenu)
+
+  // ── 移动端：功能收进左上角全高左滑菜单 ─────────────────────────────────
   if (isMobile) {
+    const activeLabel = (() => {
+      const s = sessionList.find((x) => x.session_id === activeSid)
+      if (!s) return null
+      return s.session_id === MAIN_SID
+        ? t("mainSession")
+        : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+    })()
+
     return (
       <div className="p-3 border-b border-border shrink-0">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-0.5 min-w-0">
             {onClosePanel && (
               <button
-                className="p-1 -ml-1 rounded hover:bg-muted text-muted-foreground transition-colors"
-                onClick={onClosePanel}
+                className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors shrink-0"
+                onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
                 title={t("closePanelMobile")}
               >
                 <ChevronDown className="h-4 w-4" />
               </button>
             )}
-            <h3 className="text-sm font-semibold shrink-0">{t("directorTitle")}</h3>
+            {/* 左上标题即抽屉触发器 */}
+            <button
+              className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
+              onClick={() => (menuOpen ? closeMenu() : openMenu())}
+              title={t("moreActions")}
+            >
+              <span className="text-sm font-semibold truncate">
+                {t("directorTitle")}
+                {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
+              </span>
+              <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
           </div>
 
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 shrink-0">
             {((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
                 {floorsStats && floorsStats.latest_floor != null && (
@@ -95,108 +137,115 @@ export function ChatHeader({
                 )}
               </div>
             )}
-
-            <div className="relative shrink-0">
-            <button
-              className="p-2 rounded hover:bg-muted text-muted-foreground transition-colors"
-              onClick={() => setMenuOpen((v) => !v)}
-              title={t("moreActions")}
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[240px] max-h-[70vh] overflow-y-auto">
-                  {/* 会话切换 */}
-                  <div className="px-3 pt-2 pb-1 text-[10px] text-muted-foreground">{t("sessionGroup")}</div>
-                  {sessionList.map((s) => {
-                    const active = s.session_id === activeSid
-                    const hasNew = !!newMsgMap[s.session_id]
-                    const isMain = s.session_id === MAIN_SID
-                    const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
-                    return (
-                      <button
-                        key={s.session_id}
-                        className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted ${
-                          active ? "text-foreground font-medium" : "text-muted-foreground"
-                        }`}
-                        onClick={() => { onSwitchSession(s.session_id); setMenuOpen(false) }}
-                      >
-                        <span className="flex-1 text-left">{label}</span>
-                        {active && <span className="text-[10px] text-primary">{t("current")}</span>}
-                        {hasNew && !active && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />}
-                      </button>
-                    )
-                  })}
-                  <div className="flex border-t border-border mt-1">
-                    {instId && (
-                      <button
-                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs text-muted-foreground hover:bg-muted"
-                        onClick={() => { onCreateSession(); setMenuOpen(false) }}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {t("new")}
-                      </button>
-                    )}
-                    {instId && (
-                      <button
-                        className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs text-muted-foreground hover:bg-muted"
-                        onClick={() => { onRefreshSessionList(); setMenuOpen(false) }}
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        {t("refresh")}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* 模型与配置 */}
-                  <div className="px-3 pt-2 pb-1 text-[10px] text-muted-foreground border-t border-border">{t("modelConfigGroup")}</div>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { onCycleReasoningEffort(); setMenuOpen(false) }}
-                  >
-                    <Cpu className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1 text-left">{t("thinkingStrength")}</span>
-                    <span className="text-xs text-muted-foreground">{t(EFFORT_LABEL[reasoningEffort] ?? reasoningEffort)}</span>
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { onOpenSettings("plugins"); setMenuOpen(false) }}
-                  >
-                    <Puzzle className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1 text-left">{t("plugins")}</span>
-                    <span className="text-xs text-muted-foreground">{enabledPluginCount}</span>
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { onOpenSettings("slots"); setMenuOpen(false) }}
-                  >
-                    <Bot className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1 text-left">{t("directorModel")}</span>
-                    <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.director || t("unset")}</span>
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
-                    onClick={() => { onOpenSettings("slots"); setMenuOpen(false) }}
-                  >
-                    <PenLine className="h-4 w-4 text-muted-foreground" />
-                    <span className="flex-1 text-left">{t("writerModel")}</span>
-                    <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.writer || t("unset")}</span>
-                  </button>
-
-                  {/* 自动提交（git 触发器已移到文件树底部栏） */}
-                  <div className="flex items-center justify-between px-3 py-2.5 text-sm border-t border-border mt-1">
-                    <span className="text-muted-foreground">{t("autoCommit")}</span>
-                    <Switch checked={autoApproveCommit} onCheckedChange={onAutoApproveChange} />
-                  </div>
-                </div>
-              </>
-            )}
-            </div>
           </div>
         </div>
+
+        {/* 左滑全高菜单（抽屉） */}
+        {renderDrawer && (
+          <>
+            <div
+              className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-sm ${
+                closing ? "animate-out fade-out duration-200 fill-mode-forwards" : "animate-in fade-in duration-200"
+              }`}
+              onClick={closeMenu}
+            />
+            <div
+              className={`fixed inset-y-0 left-0 z-50 w-[78%] max-w-sm bg-background border-r border-border shadow-lg flex flex-col ${
+                closing
+                  ? "animate-out slide-out-to-left duration-200 fill-mode-forwards"
+                  : "animate-in slide-in-from-left duration-200"
+              }`}
+            >
+              {/* 上区：会话（向上对齐，过多时可滚动） */}
+              <div className="min-h-0 overflow-y-auto py-2">
+                <div className="flex items-center justify-between px-3 pb-1">
+                  <span className="text-sm font-semibold">{t("sessionGroup")}</span>
+                  {instId && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="flex items-center justify-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground rounded"
+                        onClick={() => { onCreateSession(); closeMenu() }}
+                        title={t("newSubSessionTitle")}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                      <button
+                        className="flex items-center justify-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground rounded"
+                        onClick={() => { onRefreshSessionList(); closeMenu() }}
+                        title={t("refresh")}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {sessionList.map((s) => {
+                  const active = s.session_id === activeSid
+                  const hasNew = !!newMsgMap[s.session_id]
+                  const isMain = s.session_id === MAIN_SID
+                  const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+                  return (
+                    <button
+                      key={s.session_id}
+                      className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm rounded-md ${
+                        active
+                          ? "bg-primary text-primary-foreground font-medium"
+                          : "text-muted-foreground hover:bg-muted"
+                      }`}
+                      onClick={() => { onSwitchSession(s.session_id); closeMenu() }}
+                    >
+                      <span className="flex-1 text-left truncate">{label}</span>
+                      {active && <span className="text-[10px] shrink-0">{t("current")}</span>}
+                      {hasNew && !active && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* 下区：设置（贴底，并入模型/配置/自动提交） */}
+              <div className="border-t border-border px-3 py-2 mt-auto">
+                <div className="pb-1 text-sm font-semibold">{t("modelConfigGroup")}</div>
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
+                  onClick={() => onCycleReasoningEffort()}
+                >
+                  <Cpu className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-left">{t("thinkingStrength")}</span>
+                  <span className="text-xs text-muted-foreground">{t(EFFORT_LABEL[reasoningEffort] ?? reasoningEffort)}</span>
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
+                  onClick={() => onOpenSettings("plugins")}
+                >
+                  <Puzzle className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-left">{t("plugins")}</span>
+                  <span className="text-xs text-muted-foreground">{enabledPluginCount}</span>
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
+                  onClick={() => onOpenSettings("slots")}
+                >
+                  <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-left">{t("directorModel")}</span>
+                  <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.director || t("unset")}</span>
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
+                  onClick={() => onOpenSettings("slots")}
+                >
+                  <PenLine className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-left">{t("writerModel")}</span>
+                  <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.writer || t("unset")}</span>
+                </button>
+                <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm">
+                  <GitCommitHorizontal className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-left text-muted-foreground">{t("autoCommit")}</span>
+                  <Switch checked={autoApproveCommit} onCheckedChange={onAutoApproveChange} />
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     )
   }

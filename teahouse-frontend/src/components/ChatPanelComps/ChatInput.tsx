@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Send, Square, Minimize2, Maximize2, CheckCircle2, Paperclip, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTranslation } from "react-i18next"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 
 interface CommandDef {
   name: string
@@ -91,6 +92,7 @@ export function ChatInput({
   onUpdatePaste,
 }: ChatInputProps) {
   const { t } = useTranslation("misc")
+  const isMobile = useIsMobile()
   const compactingText = t("chatInput.summarizing")
   // Id of the paste block being edited in the popover, or null.
   const [editingPasteId, setEditingPasteId] = useState<number | null>(null)
@@ -220,15 +222,17 @@ export function ChatInput({
             </div>
           )}
         <div className={`flex gap-2 ${expandedInput ? "flex-1 min-h-0" : "items-end"}`}>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
-            onClick={onToggleExpand}
-            title={expandedInput ? t("chatInput.collapseInput") : t("chatInput.expandInput")}
-          >
-            {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </Button>
+          {!isMobile && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
+              onClick={onToggleExpand}
+              title={expandedInput ? t("chatInput.collapseInput") : t("chatInput.expandInput")}
+            >
+              {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          )}
           <textarea
             ref={inputRef}
             className={`flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring ${
