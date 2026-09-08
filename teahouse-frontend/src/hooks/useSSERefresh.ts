@@ -71,6 +71,7 @@ export function useSSERefresh({
   const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastFileEventRef = useRef<Record<string, unknown>>({})
   const burstStructuralRef = useRef(false)
+  const burstCountRef = useRef(0)
   const lastTreeKeyRef = useRef<string>("")
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Latest poll callbacks, read via ref so the interval never has to re-arm
@@ -85,8 +86,20 @@ export function useSSERefresh({
     let stopped = false
 
     // A stable snapshot key for the tree, so identical polls are no-ops.
-    const treeKey = (nodes: FileTreeNode[]): string =>
-      nodes.map((n) => (n.children?.length ? `dir:${n.path}` : `file:${n.path}`)).sort().join("\n")
+    // MUST be recursive: hashing only top-level paths means any file created
+    // inside an existing dir (e.g. temp/generate-*.json) leaves the key
+    // unchanged, so the poll backstop could never catch a dropped event.
+    const treeKey = (nodes: FileTreeNode[]): string => {
+      const parts: string[] = []
+      const walk = (list: FileTreeNode[]) => {
+        for (const n of list) {
+          parts.push(n.children?.length ? `dir:${n.path}` : `file:${n.path}`)
+          if (n.children?.length) walk(n.children)
+        }
+      }
+      walk(nodes)
+      return parts.sort().join("\n")
+    }
 
     const debouncedFileChange = (evt: Record<string, unknown>) => {
       // A burst is a 200ms window of coalesced events. We can only deliver ONE
@@ -98,18 +111,28 @@ export function useSSERefresh({
       // consumer falls back to a full reload.
       const t = evt.type ? String(evt.type) : ""
       if (t === "created" || t === "deleted" || t === "moved") burstStructuralRef.current = true
+      burstCountRef.current += 1
       lastFileEventRef.current = evt
       if (fileTimerRef.current) return
       fileTimerRef.current = setTimeout(() => {
         fileTimerRef.current = null
         const structuralInBurst = burstStructuralRef.current
+        const countInBurst = burstCountRef.current
         burstStructuralRef.current = false
+        burstCountRef.current = 0
         if (instanceId) useGitStore.getState().fetchGitStatus(instanceId)
         const last = lastFileEventRef.current
         const delivered = { ...last }
         // Deliver a synthetic type telling consumers to reload rather than apply
         // a partial update that would drop a structural change from this burst.
-        if (structuralInBurst && (!delivered.type || String(delivered.type) === "modified")) {
+        // Two structural events in one burst are unreconcilable too: e.g.
+        // Generate's dry-run creates the payload JSON and its .meta back-to-back,
+        // so keeping only the last event would silently drop the payload from the
+        // tree until a manual reload.
+        if (
+          structuralInBurst &&
+          (countInBurst > 1 || !delivered.type || String(delivered.type) === "modified")
+        ) {
           delivered.type = "__full_reload"
         }
         onFileChanged(String(delivered.path || ""), delivered)
