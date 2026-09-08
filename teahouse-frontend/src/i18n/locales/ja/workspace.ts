@@ -42,11 +42,16 @@ export const jaWorkspace = {
   viewSource: "ソースを表示",
   currentFile: "現在のファイル：",
   image: "画像",
-  // 标签页关闭
-  closeTab: {
-    discardTitle: "未保存の変更を破棄",
-    discardMessage: "「{{path}}」に未保存の変更があります。閉じて破棄しますか？",
-    discard: "破棄して閉じる",
+  // 未保存の変更があるファイルからの離脱：3択ガード（保存して移動 / 破棄して移動 / キャンセル）
+  dirtyLeave: {
+    save: "保存して移動",
+    discard: "破棄して移動",
+    closeTitle: "ファイルを閉じる",
+    closeMessage: "「{{path}}」に未保存の変更があります。保存して閉じますか、それとも破棄して閉じますか？",
+    switchTitle: "ファイルを切り替え",
+    switchMessage: "「{{path}}」に未保存の変更があります。保存して切り替えますか、それとも破棄して切り替えますか？",
+    exitTitle: "ファイルを離れる",
+    exitMessage: "「{{path}}」に未保存の変更があります。保存して離れますか、それとも破棄して離れますか？",
   },
   selectFileMobileHint: "左上のファイルボタンをタップしてファイルを選択",
   selectFileDesktopHint: "左側からファイルを選択して編集",

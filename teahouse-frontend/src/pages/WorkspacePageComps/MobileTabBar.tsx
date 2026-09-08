@@ -9,8 +9,9 @@ const TABS: { key: MobileTab; icon: typeof Home; labelKey: string }[] = [
   { key: "director", icon: MessageCircle, labelKey: "mobileDirectorTab" },
 ]
 
-/** 移动端实例外层的 QQ 式底部三 Tab 常驻栏：首页 / 文件 / 导演。 */
-export function MobileTabBar() {
+/** 移动端实例外层的 QQ 式底部三 Tab 常驻栏：首页 / 文件 / 导演。
+ *  可选 onTabChange 供父级拦截切换（如脏文件守卫）；缺省直连 store。 */
+export function MobileTabBar({ onTabChange }: { onTabChange?: (tab: MobileTab) => void }) {
   const { t } = useTranslation("workspace")
   const mobileTab = useMobileLayoutStore((s) => s.mobileTab)
   const setMobileTab = useMobileLayoutStore((s) => s.setMobileTab)
@@ -26,7 +27,7 @@ export function MobileTabBar() {
               "flex-1 flex flex-col items-center justify-center gap-0.5 h-14 active:bg-muted transition-colors",
               active ? "text-primary" : "text-muted-foreground"
             )}
-            onClick={() => setMobileTab(key)}
+            onClick={() => (onTabChange ? onTabChange(key) : setMobileTab(key))}
             aria-current={active ? "page" : undefined}
           >
             <Icon className="h-5 w-5" />

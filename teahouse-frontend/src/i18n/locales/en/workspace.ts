@@ -42,11 +42,16 @@ export const enWorkspace = {
   viewSource: "View source",
   currentFile: "Current file:",
   image: "Image",
-  // 标签页关闭
-  closeTab: {
-    discardTitle: "Discard unsaved changes",
-    discardMessage: "\"{{path}}\" has unsaved changes. Close and discard them?",
-    discard: "Discard & close",
+  // Leaving a file with unsaved changes: three-option guard (save & leave / discard & leave / cancel)
+  dirtyLeave: {
+    save: "Save & leave",
+    discard: "Discard & leave",
+    closeTitle: "Close file",
+    closeMessage: "\"{{path}}\" has unsaved changes. Save before closing, or discard them and close?",
+    switchTitle: "Switch file",
+    switchMessage: "\"{{path}}\" has unsaved changes. Save before switching, or discard them and switch?",
+    exitTitle: "Leave file",
+    exitMessage: "\"{{path}}\" has unsaved changes. Save before leaving, or discard them and leave?",
   },
   selectFileMobileHint: "Tap the file button in the top-left to select a file",
   selectFileDesktopHint: "Select a file from the left to edit",

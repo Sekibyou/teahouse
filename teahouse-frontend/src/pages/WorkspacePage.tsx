@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { instancesApi, gitApi, toFrontendPath, toBackendPath, ROOT } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useViewModeStore } from "@/stores/viewModeStore"
-import { useMobileLayoutStore } from "@/stores/mobileLayoutStore"
+import { useMobileLayoutStore, type MobileTab } from "@/stores/mobileLayoutStore"
 import { useThemeStore } from "@/stores/themeStore"
 import { useGitStore } from "@/stores/gitStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
@@ -36,6 +36,7 @@ import { applyFileChange } from "@/lib/fileTreeReducer"
 import { collectAllEntries, pruneNestedItems } from "@/lib/fileTreeOps"
 import { FileTreeView } from "./WorkspacePageComps/FileTreeView"
 import { EditorTabs } from "./WorkspacePageComps/EditorTabs"
+import { SaveDiscardDialog } from "./WorkspacePageComps/SaveDiscardDialog"
 import { CreateDialog } from "./WorkspacePageComps/CreateDialog"
 import { RenameDialog } from "./WorkspacePageComps/RenameDialog"
 import { RootContextMenu } from "./WorkspacePageComps/RootContextMenu"
@@ -147,8 +148,14 @@ export function WorkspacePage() {
   // key 统一用前端 path（root/...）。selectedFile 独立保留为激活 path，读写走 tabStore[selectedFile]。
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [openTabs, setOpenTabs] = useState<string[]>([])
-  // 待确认关闭的脏标签（关闭脏标签需确认，禁止原生 confirm）。非脏标签直接关无需弹窗。
-  const [closePending, setClosePending] = useState<string | null>(null)
+  // 待离开的脏文件守卫（禁止原生 confirm）。打开中的文件带未保存更改时，离开动作
+  // （关标签 / 移动端切文件 / 移动端退出 files 面板）都先经三选项确认：
+  // 保存并离开 / 丢弃并离开 / 取消。kind 区分离开形态，target 记录切/退的具体目标。
+  const [leavePending, setLeavePending] = useState<{
+    path: string
+    kind: "close" | "switch" | "exit"
+    target?: string
+  } | null>(null)
   const [tabStore, setTabStore] = useState<Record<string, TabEntry>>({})
   // 外部刷新当前文件时自增，触发 Monaco 按 key 重挂载（defaultValue 仅在 mount 读取）
   const [selectedFileVersion, setSelectedFileVersion] = useState(0)
@@ -280,34 +287,43 @@ export function WorkspacePage() {
   useDialogBackClose(showFileTree, closeFileTree, { route: "/workspace", kind: "filetree" })
   useDialogBackClose(showExportDialog, () => setShowExportDialog(false), { route: "/workspace", kind: "export" })
 
-  // 系统返回：当游玩层 / 文件树抽屉 / Export 弹窗开着时，分别由各自注册的守卫层先消费返回
-  // （useDialogBackClose 压假条目逐层关闭），不落在本组件兜底处理。它们都不会触发本组件的路由退出。
+  // 系统返回：当游玩层 / 文件树抽屉 / Export / Git / 导演栏抽屉开着时，均由托管(managed)层消费返回——
+  // 这些层经 useDialogBackClose(route:"/workspace") 在移动端登记为 managed：只入内存栈、不压假 history 条目。
+  // 因此关浮层(点 X/点文件/切会话)不会 history.back()，不再制造会被退出确认误拦的假 POP。
 
-  // 移动端退出实例确认。改用 react-router useBlocker 在边界导航（从 /workspace 退到别处）上拦截：
-  // 底层任何时刻都只有一条 /workspace → 外部导航会被拦截，无需压假 history 条目，杜绝旧方案压栈/
-  // 回退时序错位导致的漏弹/误直退/残留假条目（同一次翻栈连按多次返回）。用“到底是谁要退出”来决定
-  // 怎么拦。
-  // exitArm：何时需要拦截 = isMobile 时（桌面退出按钮不拦）且不在游玩层、无任何会被返回关闭的浮层
-  //   （inPlay/playClosing 由 exitPlay-abort 纯状态路线处理——见 exitPlay 定义，不在此边界导航上发生；
-  //    其余浮层走 useDialogBackClose 栈序，同样不触发到本边界导航）。
-  // 确认弹窗的显示即 blocker.state === "blocked"：一次边界导航被挂起时弹窗，确认 proceed() 放行 /
-  // 取消 reset() 丢弃（丢弃后 state 回 unblocked，history 栈已退回原位，可再次触发而不会残留）。
-  const exitArm = isMobile && !inPlay && !playClosing
-    && fullscreenPanel === null && !showFileTree && !showExportDialog
-    && !playDirectorOpen && !showMobileMenu && !treeMenu
-  const blocker = useBlocker(exitArm)
-  const exitBlocked = blocker.state === "blocked"
-  // 移动端「返回上一级」/「返回实例列表」按钮：退到 history 上一层（从详情进 → 回详情；card 播放进 → 回列表）。
-  // 该 navigate(POP) 会被 exitArm 拦下弹确认，确认 proceed 让它完成、取消 reset 停留。
+  // 移动端退出实例确认 —— 单一 useBlocker 状态机（托管设计后浏览器 history 在该页全归 router）。
+  // 系统返回 = 一次真实 POP，被本 blocker 恒拦(仅 isMobile)，按当前托管栈路由：
+  //   - 有 managed 浮层在栈顶 → closeTopManaged()(关一层) + blocker.reset()(丢弃导航、停留)
+  //   - 空闲(栈空) → 弹退出确认；确认 proceed()(放行真实 POP 回上一层) / 取消 reset()(停留)
+  // 只拦 POP：PUSH/REPLACE(如无实例时重定向 navigate("/")) 放行，不误拦程序化跳转。
+  const blocker = useBlocker(({ historyAction }) => historyAction === "POP" && isMobile)
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
+  // blocked 后路由：有浮层 → 关它；栈空 → 弹确认。用 blocker.state 变化驱动，避开 stale 闭包。
+  useEffect(() => {
+    if (blocker.state !== "blocked") { setShowExitConfirm(false); return }
+    const top = dialogStackStore.getState().peekTopManaged()
+    if (top) {
+      dialogStackStore.getState().closeTopManaged()
+      blocker.reset?.()
+    } else {
+      setShowExitConfirm(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocker.state])
+  // 移动端「返回上一级」/「返回实例列表」按钮：触发一次 POP，被 blocker 拦下走同一确认流。
   const requestExitConfirm = useCallback(() => navigate(-1), [navigate])
-  // 确认退出：放行被挂起的边界导航。先清掉 /workspace 上可能残留的语义层假条目（防孤儿退穿），
+  // 确认退出：放行被挂起的真实 POP(回上一层)。先兜底清 workspace 上可能的 legacy 假条目(managed 无假条目无副作用)，
   // 再放行；放行后本页已切离，此时清 activeInstance 不会触发本页「无实例 → 重定向」多余导航。
   const proceedExit = useCallback(() => {
     dialogStackStore.getState().clearForRoute("/workspace")
     setActiveInstance(null)
+    setShowExitConfirm(false)
     blocker.proceed?.()
   }, [setActiveInstance, blocker])
-  const cancelExit = useCallback(() => { blocker.reset?.() }, [blocker])
+  const cancelExit = useCallback(() => {
+    setShowExitConfirm(false)
+    blocker.reset?.()
+  }, [blocker])
 
   const instId = activeInstance?.id
 
@@ -354,6 +370,19 @@ export function WorkspacePage() {
     useViewModeStore.getState().setMode("backstage")
   }
 
+  // 移动端底部 tab 切换守卫：从 files 切到其它 tab、当前文件带未保存更改时先经三选项确认。
+  // 由 MobileTabBar(onTabChange) 与 openDirector 共用，统一不漏。当前 tab 经 store 现读，
+  // 免闭包捕获陈旧值（本函数 identity 稳定，openDirector 可直接复用）。
+  const guardedSwitchTab = useCallback((next: MobileTab) => {
+    const leavingFiles = useMobileLayoutStore.getState().mobileTab === "files" && next !== "files"
+    const cur = selectedFileRef.current
+    if (leavingFiles && cur && isDirtyRef.current) {
+      setLeavePending({ path: cur, kind: "exit", target: next })
+      return
+    }
+    useMobileLayoutStore.getState().setMobileTab(next)
+  }, [])
+
   // 唤起导演栏：桌面端展开折叠的 ChatPanel；移动端若在游玩层→盖全屏导演浮层（不退出游玩），
   // 否则切到外层 director tab。
   const openDirector = useCallback(() => {
@@ -362,12 +391,12 @@ export function WorkspacePage() {
         setOverlayClosing(false)
         setPlayDirectorOpen(true)
       } else {
-        useMobileLayoutStore.getState().setMobileTab("director")
+        guardedSwitchTab("director")
       }
     } else {
       setChatCollapsed(false)
     }
-  }, [isMobile, inPlay])
+  }, [isMobile, inPlay, guardedSwitchTab])
 
   // Git state — file statuses for tree coloring from unified store. The store
   // keys ARE bare backend paths; map them to "root/..." so they match tree nodes.
@@ -423,7 +452,7 @@ export function WorkspacePage() {
   useEffect(() => {
     setSelectedFile(null)
     setOpenTabs([])
-    setClosePending(null)
+    setLeavePending(null)
     setTabStore({})
     setSelectedFileVersion(0)
     setRootMenu(null)
@@ -461,17 +490,13 @@ export function WorkspacePage() {
     return () => window.removeEventListener("keydown", handler)
   }, [isDirty, selectedFile, instId])
 
-  // Apply a structural change from a local operation optimistically to the tree.
-  // Falls back to a full reload when the reducer can't reconcile (missing parent
-  // — e.g. creating under a dir not yet in the tree). The backend echoes a
-  // file_changed back for the same op; because the tree is already converged,
-  // that echo becomes an idempotent no-op in applyFileChange, so we don't double
-  // refresh. Git status is refetched here (one source of truth for the op).
-  const handleSave = async () => {
-    if (!instId || selectedFile === null) return
-    const path = selectedFile
-    const entry = tabStore[path]
-    if (!entry) return
+  // 写盘指定文件（默认当前激活文件）。成功后清脏并刷新 git 状态。
+  const saveFile = async (targetPath?: string) => {
+    if (!instId) return false
+    const path = targetPath ?? selectedFileRef.current
+    if (!path) return false
+    const entry = tabStoreRef.current[path]
+    if (!entry) return false
     setIsSaving(true)
     const res = await instancesApi.writeFile(instId, path, entry.edited)
     if (res.ok) {
@@ -490,7 +515,11 @@ export function WorkspacePage() {
       showSaveToast()
     }
     setIsSaving(false)
+    return res.ok
   }
+
+  // 历史入口名：只保存当前激活文件。
+  const handleSave = () => saveFile()
 
   const handleCreateEntry = async () => {
     if (!instId || !showCreate || !createName.trim()) return
@@ -761,24 +790,64 @@ export function WorkspacePage() {
     setOpenTabs((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : prev))
   }, [])
 
-  // 关闭 path 对应的标签。脏标签 → 记入 closePending 交由 ConfirmDialog 确认（不直接删，
-  // 保未保存内容）；干净标签直接关闭。
+  // 关闭 path 对应的标签。脏标签 → 记入 leavePending(kind=close) 交由三选项守卫确认
+  // （不直接删，保未保存内容）；干净标签直接关闭。
   const closeTab = useCallback((path: string) => {
     const entry = tabStoreRef.current[path]
     if (entry?.dirty) {
-      setClosePending(path)
+      setLeavePending({ path, kind: "close" })
       return
     }
     removeTab(path)
   }, [removeTab])
 
-  // ConfirmDialog 确认关闭脏标签后：强制移除 closePending 对应标签。
-  const confirmClosePending = useCallback(() => {
-    if (!closePending) return
-    const path = closePending
-    setClosePending(null)
-    removeTab(path)
-  }, [closePending, removeTab])
+  // 丢弃某文件的未保存内容：把编辑缓冲还原为磁盘基线（保留标签可再读）。
+  const discardChanges = useCallback((path: string) => {
+    setTabStore((prev) => (prev[path] ? {
+      ...prev,
+      [path]: {
+        ...prev[path],
+        edited: prev[path].content,
+        dirty: false,
+      },
+    } : prev))
+  }, [])
+
+  // 离开确认「取消」：留在当前文件/标签，清守卫。
+  const cancelLeave = useCallback(() => {
+    setLeavePending(null)
+  }, [])
+
+  // 三选项离开的公共收尾：清除守卫并执行真正的离开动作。kind=switch 切激活文件、
+  // kind=exit 切底部 tab、kind=close 关标签（丢弃分支调用方已先把内容还原到基线）。
+  function resolveLeave(path: string, kind: "close" | "switch" | "exit", target: string | undefined) {
+    setLeavePending(null)
+    if (kind === "close") {
+      removeTab(path)
+    } else if (kind === "switch") {
+      if (target && target !== selectedFileRef.current) openFile(target)
+    } else if (kind === "exit") {
+      if (target) useMobileLayoutStore.getState().setMobileTab(target as MobileTab)
+    }
+  }
+
+  // 丢弃并离开：丢弃未保存内容后执行离开。关闭标签本就会移除脏内容，无需先还原；
+  // 切换/退出 files 则还原该文件为磁盘基线、保留标签。
+  const confirmDiscardLeave = () => {
+    if (!leavePending) return
+    const { path, kind, target } = leavePending
+    if (kind === "switch" || kind === "exit") discardChanges(path)
+    resolveLeave(path, kind, target)
+  }
+
+  // 保存并离开：写盘成功后执行离开；写盘失败留在原处不关闭守卫。
+  const confirmSaveLeave = async () => {
+    if (!leavePending) return
+    const { path, kind, target } = leavePending
+    const ok = await saveFile(path)
+    if (!ok) return
+    resolveLeave(path, kind, target)
+  }
 
   // 把已开标签里所有挂在 oldPath（自身或其目录前缀）下的键迁移到 newPath。
   // rename/move（含 undo/redo）后调用，让标签/激活/内容状态跟随文件新位置。
@@ -1624,6 +1693,30 @@ export function WorkspacePage() {
 
   if (!activeInstance) return null
 
+  // 三选项守卫：离开带未保存更改的文件（禁止原生 confirm）。覆盖桌面关标签 / 移动端
+  // 切文件 / 退出 files 面板。kind 决定标题正文文案。
+  const dirtyLeaveDialog = (
+    <SaveDiscardDialog
+      open={leavePending !== null}
+      title={leavePending
+        ? leavePending.kind === "close" ? t("dirtyLeave.closeTitle")
+          : leavePending.kind === "switch" ? t("dirtyLeave.switchTitle")
+            : t("dirtyLeave.exitTitle")
+        : ""}
+      message={leavePending
+        ? leavePending.kind === "close" ? t("dirtyLeave.closeMessage", { path: leavePending.path })
+          : leavePending.kind === "switch" ? t("dirtyLeave.switchMessage", { path: leavePending.path })
+            : t("dirtyLeave.exitMessage", { path: leavePending.path })
+        : ""}
+      saveText={t("dirtyLeave.save")}
+      discardText={t("dirtyLeave.discard")}
+      cancelText={t("common:cancel")}
+      onSave={confirmSaveLeave}
+      onDiscard={confirmDiscardLeave}
+      onCancel={cancelLeave}
+    />
+  )
+
   // ============================================================================
   // Mobile layout
   // ============================================================================
@@ -1777,7 +1870,7 @@ export function WorkspacePage() {
         </div>
 
         {/* 底部常驻 tab 栏 */}
-        {!inPlay && <MobileTabBar />}
+        {!inPlay && <MobileTabBar onTabChange={guardedSwitchTab} />}
 
         {/* Fullscreen panels：git / files（导演已并入 tab，不再全屏）。
             GitDialog 常驻渲染以支持移动端进出动画（内部按 open/closing 自管理显隐） */}
@@ -1841,11 +1934,25 @@ export function WorkspacePage() {
                     selectionPaths={selectionPaths}
                     onToggle={toggleExpand}
                     onRowClick={(node, opts) => {
+                      const isFileOpen = node.type === "file" && !opts.ctrl
+                      // 移动端：当前文件带未保存更改时切另一文件 → 先经三选项守卫（保存/丢弃/取消）。
+                      if (isFileOpen && node.path !== selectedFileRef.current
+                        && selectedFileRef.current && isDirtyRef.current) {
+                        setLeavePending({ path: selectedFileRef.current, kind: "switch", target: node.path })
+                        closeFileTree()
+                        return
+                      }
                       handleNodeClick(node, opts)
                       // 点开文件即收抽屉；点文件夹(展开)与长按(菜单)不收
-                      if (node.type === "file" && !opts.ctrl) closeFileTree()
+                      if (isFileOpen) closeFileTree()
                     }}
                     onSelect={(path) => {
+                      if (path !== selectedFileRef.current
+                        && selectedFileRef.current && isDirtyRef.current) {
+                        setLeavePending({ path: selectedFileRef.current, kind: "switch", target: path })
+                        closeFileTree()
+                        return
+                      }
                       closeFileTree()
                       openFile(path)
                     }}
@@ -1929,9 +2036,12 @@ export function WorkspacePage() {
           onSaved={showSaveToast}
         />
 
-        {/* 移动端退出实例确认：blocker blocked（一次退往实例列表的导航被挂起）→ 弹窗。确认放行/取消丢弃。 */}
+        {/* 三选项守卫：移动端切文件 / 退出 files 面板带未保存更改时。 */}
+        {dirtyLeaveDialog}
+
+        {/* 移动端退出实例确认：空闲时系统返回被 blocker 拦 → 弹窗。确认放行 / 取消停留。 */}
         <ConfirmDialog
-          open={exitBlocked}
+          open={showExitConfirm}
           title={t("confirmExit.title")}
           message={t("confirmExit.message")}
           variant="destructive"
@@ -2329,17 +2439,8 @@ export function WorkspacePage() {
         onSaved={showSaveToast}
       />
 
-      {/* 关闭脏标签确认（禁止原生 confirm） */}
-      <ConfirmDialog
-        open={closePending !== null}
-        title={t("closeTab.discardTitle")}
-        message={closePending ? t("closeTab.discardMessage", { path: closePending }) : ""}
-        variant="destructive"
-        confirmText={t("closeTab.discard")}
-        confirmOnEnter
-        onConfirm={confirmClosePending}
-        onCancel={() => setClosePending(null)}
-      />
+      {/* 三选项守卫：桌面关脏标签 */}
+      {dirtyLeaveDialog}
 
       {/* Drag overlay — prevents iframe from capturing mouse during panel resize */}
       {isDragging && (

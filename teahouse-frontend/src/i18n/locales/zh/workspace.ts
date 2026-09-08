@@ -42,11 +42,16 @@ export const zhWorkspace = {
   viewSource: "查看源码",
   currentFile: "当前文件：",
   image: "图片",
-  // 标签页关闭
-  closeTab: {
-    discardTitle: "丢弃未保存更改",
-    discardMessage: "\"{{path}}\" 有未保存的更改。确定关闭并丢弃吗？",
-    discard: "丢弃并关闭",
+  // 离开带未保存更改的文件：三选项守卫（保存并离开 / 丢弃并离开 / 取消）
+  dirtyLeave: {
+    save: "保存并离开",
+    discard: "丢弃并离开",
+    closeTitle: "关闭文件",
+    closeMessage: "\"{{path}}\" 有未保存的更改。保存后关闭、还是丢弃更改后关闭？",
+    switchTitle: "切换文件",
+    switchMessage: "\"{{path}}\" 有未保存的更改。保存后切换、还是丢弃更改后切换？",
+    exitTitle: "离开文件",
+    exitMessage: "\"{{path}}\" 有未保存的更改。保存后离开、还是丢弃更改后离开？",
   },
   selectFileMobileHint: "点击左上角文件按钮选择文件",
   selectFileDesktopHint: "从左侧选择文件进行编辑",
