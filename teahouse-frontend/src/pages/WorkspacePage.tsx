@@ -77,6 +77,11 @@ export function WorkspacePage() {
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
+  // 游玩中唤出的全屏导演浮层（复用外层常驻 ChatPanel，不退出游玩）
+  const [playDirectorOpen, setPlayDirectorOpen] = useState(false)
+  // 浮窗从右滑出离场动画：关闭先置 closing 保持渲染播完动画再真正隐藏
+  const [overlayClosing, setOverlayClosing] = useState(false)
+  const DIRECTOR_OVERLAY_ANIM_MS = 220
   // 导演不再是全屏弹层——已并入外层 director tab。fullscreenPanel 仅剩 git / files。
   const [fullscreenPanel, setFullscreenPanel] = useState<"git" | "files" | null>(null)
   useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null))
@@ -84,6 +89,22 @@ export function WorkspacePage() {
   const mobileTab = useMobileLayoutStore((s) => s.mobileTab)
   const enterPlay = useMobileLayoutStore((s) => s.enterPlay)
   const exitPlay = useMobileLayoutStore((s) => s.exitPlay)
+  // 关闭游玩导演浮窗：先播从右滑出的离场动画，动画完再真正隐藏（ChatPanel 常驻保 SSE）。
+  const closePlayDirector = useCallback(() => {
+    if (!playDirectorOpen) return
+    // 已在离场动画中则忽略重复触发，避免排队多个 timeout
+    setOverlayClosing((wasClosing) => {
+      if (wasClosing) return true
+      window.setTimeout(() => {
+        setOverlayClosing(false)
+        setPlayDirectorOpen(false)
+      }, DIRECTOR_OVERLAY_ANIM_MS)
+      return true
+    })
+  }, [playDirectorOpen])
+  // 游玩中系统返回：导演浮层先收（若开着），否则退出游玩层回外层。由 useDialogBackClose
+  // 栈序保证：浮层晚于游玩层压入，返回先弹浮层再弹游玩层。
+  useDialogBackClose(playDirectorOpen, closePlayDirector)
   // 移动端系统返回：游玩层→回外层。外层空闲时无弹层压栈，系统返回会天然回退到会话主页
   // （= 退出实例），由 useDialogBackClose 的放行逻辑交给 Router 处理，无需额外压层。
   useDialogBackClose(inPlay, () => exitPlay())
@@ -267,15 +288,20 @@ export function WorkspacePage() {
     useViewModeStore.getState().setMode("backstage")
   }
 
-  // 沙盒唤起导演栏：桌面端展开折叠的 ChatPanel；移动端切到外层 director tab（若在游玩层先退出）。
+  // 唤起导演栏：桌面端展开折叠的 ChatPanel；移动端若在游玩层→盖全屏导演浮层（不退出游玩），
+  // 否则切到外层 director tab。
   const openDirector = useCallback(() => {
     if (isMobile) {
-      exitPlay()
-      useMobileLayoutStore.getState().setMobileTab("director")
+      if (inPlay) {
+        setOverlayClosing(false)
+        setPlayDirectorOpen(true)
+      } else {
+        useMobileLayoutStore.getState().setMobileTab("director")
+      }
     } else {
       setChatCollapsed(false)
     }
-  }, [isMobile, exitPlay])
+  }, [isMobile, inPlay])
 
   // Git state — file statuses for tree coloring from unified store. The store
   // keys ARE bare backend paths; map them to "root/..." so they match tree nodes.
@@ -1559,6 +1585,7 @@ export function WorkspacePage() {
                     <MobilePlayMenu
                       isDark={isDark}
                       onExitPlay={() => { exitPlay(); setShowMobileMenu(false) }}
+                      onOpenDirector={() => { openDirector(); setShowMobileMenu(false) }}
                       onOpenGit={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
                       onToggleTheme={() => { toggleTheme(); setShowMobileMenu(false) }}
                       onClose={() => setShowMobileMenu(false)}
@@ -1570,8 +1597,8 @@ export function WorkspacePage() {
           </div>
         </div>
 
-        {/* ===== 外层：三 Tab 内容 + 底部常驻栏（inPlay 时隐藏） ===== */}
-        <div className={`${inPlay ? "hidden" : "flex-1 flex flex-col min-h-0 overflow-hidden"}`}>
+        {/* ===== 外层：home / files 内容（不含导演 tab——导演 ChatPanel 独立常驻，见下） ===== */}
+        <div className={`${!inPlay && mobileTab !== "director" ? "flex-1 flex flex-col min-h-0 overflow-hidden" : "hidden"}`}>
           {/* home tab */}
           {mobileTab === "home" && (
             <MobileHome
@@ -1650,11 +1677,30 @@ export function WorkspacePage() {
               )}
             </div>
           )}
+        </div>
 
-          {/* director tab — ChatPanel 常驻挂载（SSE），非本 tab 时 CSS 隐藏 */}
-          <div className={mobileTab === "director" ? "flex-1 flex flex-col min-h-0" : "hidden"}>
-            <ChatPanel />
-          </div>
+        {/* ===== 导演 ChatPanel：常驻单实例（保 SSE）。三态——
+            ① 外层 director tab 页：flex 占 content（底部还有 tab 栏），右上角无关闭钮；
+            ② 游玩中唤出的导演栏：全屏覆盖盖在游玩层之上，右上角带关闭钮（关闭即隐藏、保 SSE）。
+               从右侧滑入/滑出（closing 期间保持渲染播完离场）。z-45 介于游玩层(z-40)与设置弹窗(z-50)。
+            ③ 其它：隐藏但保持挂载。 ===== */}
+        <div
+          className={
+            inPlay
+              ? playDirectorOpen || overlayClosing
+                ? overlayClosing
+                  ? "absolute inset-0 z-[45] flex flex-col bg-background animate-out slide-out-to-right duration-[220ms] fill-mode-forwards"
+                  : "absolute inset-0 z-[45] flex flex-col bg-background animate-in slide-in-from-right duration-[220ms]"
+                : "hidden"
+              : mobileTab === "director"
+                ? "flex-1 flex flex-col min-h-0"
+                : "hidden"
+          }
+        >
+          {/* 浮层形态传 onClosePanel → ChatHeader 右上角出关闭钮；外层 director 页不传 → 空白 */}
+          <ChatPanel
+            onClosePanel={inPlay && playDirectorOpen ? closePlayDirector : undefined}
+          />
         </div>
 
         {/* 底部常驻 tab 栏 */}

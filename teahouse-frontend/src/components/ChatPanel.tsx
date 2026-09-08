@@ -1611,8 +1611,6 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         }}
         reasoningEffort={currentEffort}
         onCycleReasoningEffort={cycleSessionEffort}
-        floorsStats={floorsStats}
-        contextUsage={contextUsage}
         onClosePanel={onClosePanel}
       />
 
@@ -1741,6 +1739,28 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           )
         })()}
       </div>
+
+      {/* 移动端：楼层（左） + 上下文用量条（右），置于输入框上方；桌面端仍在输入框下方 footer */}
+      {isMobile && ((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
+        <div className="px-3 py-1 border-t border-border shrink-0">
+          <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground min-w-0">
+            {floorsStats && floorsStats.latest_floor != null ? (
+              <span className="font-mono whitespace-nowrap shrink-0">
+                {t("floorStats")}<span className="text-foreground">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
+              </span>
+            ) : (
+              <span />
+            )}
+            {contextUsage && contextUsage.threshold != null ? (
+              <div className="shrink-0">
+                <ContextUsageBar usage={contextUsage} />
+              </div>
+            ) : (
+              <span />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <ChatInput

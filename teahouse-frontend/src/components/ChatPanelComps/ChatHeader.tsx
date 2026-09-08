@@ -4,8 +4,6 @@ import { ChevronDown, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, Ref
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
-import { ContextUsageBar } from "./ContextUsageBar"
-import type { FloorsStats, ContextUsage } from "@/lib/types"
 
 interface ChatHeaderProps {
   // Slot models
@@ -30,10 +28,6 @@ interface ChatHeaderProps {
   // Auto commit
   autoApproveCommit: boolean
   onAutoApproveChange: (checked: boolean) => void
-
-  // 楼层统计 + 上下文用量（移动端头部右上角精简展示，桌面端仍走底部 footer）
-  floorsStats: FloorsStats | null
-  contextUsage: ContextUsage | null
 
   // 收起/关闭导演栏（移动端关闭全屏面板，宽屏折叠面板）。可选——不传则不显示。
   onClosePanel?: () => void
@@ -60,8 +54,6 @@ export function ChatHeader({
   instId,
   autoApproveCommit,
   onAutoApproveChange,
-  floorsStats,
-  contextUsage,
   onClosePanel,
 }: ChatHeaderProps) {
   const { t } = useTranslation("chat")
@@ -100,44 +92,31 @@ export function ChatHeader({
     return (
       <div className="p-3 border-b border-border shrink-0">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-0.5 min-w-0">
-            {onClosePanel && (
-              <button
-                className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors shrink-0"
-                onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
-                title={t("closePanelMobile")}
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-            )}
-            {/* 左上标题即抽屉触发器 */}
-            <button
-              className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
-              onClick={() => (menuOpen ? closeMenu() : openMenu())}
-              title={t("moreActions")}
-            >
-              <span className="text-sm font-semibold truncate">
-                {t("directorTitle")}
-                {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
-              </span>
-              <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
-            </button>
-          </div>
+          {/* 左上标题即抽屉触发器 */}
+          <button
+            className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
+            onClick={() => (menuOpen ? closeMenu() : openMenu())}
+            title={t("moreActions")}
+          >
+            <span className="text-sm font-semibold truncate">
+              {t("directorTitle")}
+              {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
+            </span>
+            <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
+          </button>
 
-          <div className="flex items-center gap-2 min-w-0 shrink-0">
-            {((floorsStats && floorsStats.latest_floor != null) || (contextUsage && contextUsage.threshold != null)) && (
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
-                {floorsStats && floorsStats.latest_floor != null && (
-                  <span className="font-mono whitespace-nowrap shrink-0">
-                    {t("floorStats")}<span className="text-foreground">{String(floorsStats.latest_floor).padStart(3, '0')}</span>
-                  </span>
-                )}
-                {contextUsage && contextUsage.threshold != null && (
-                  <ContextUsageBar usage={contextUsage} />
-                )}
-              </div>
-            )}
-          </div>
+          {/* 右上角：仅游玩临时导演栏形态提供关闭钮（关闭即隐藏回游玩）；外层 director tab 页留空 */}
+          {onClosePanel ? (
+            <button
+              className="p-2 rounded hover:bg-muted text-muted-foreground shrink-0 transition-colors"
+              onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
+              title={t("closePanelMobile")}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          ) : (
+            <div className="w-8 shrink-0" />
+          )}
         </div>
 
         {/* 左滑全高菜单（抽屉） */}

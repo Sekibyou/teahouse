@@ -1,16 +1,17 @@
 import { useTranslation } from "react-i18next"
-import { GitBranch, Moon, Sun, X } from "lucide-react"
+import { GitBranch, Moon, Sun, X, Bot } from "lucide-react"
 
 interface MobilePlayMenuProps {
   isDark: boolean
   onExitPlay: () => void
+  onOpenDirector: () => void
   onOpenGit: () => void
   onToggleTheme: () => void
   onClose: () => void
 }
 
-/** 游玩层悬浮球的极简菜单：退出游玩 / 版本控制 / 主题切换。 */
-export function MobilePlayMenu({ isDark, onExitPlay, onOpenGit, onToggleTheme, onClose }: MobilePlayMenuProps) {
+/** 游玩层悬浮球的极简菜单：退出游玩 / 导演 / 版本控制 / 主题切换。 */
+export function MobilePlayMenu({ isDark, onExitPlay, onOpenDirector, onOpenGit, onToggleTheme, onClose }: MobilePlayMenuProps) {
   const { t } = useTranslation("workspace")
   return (
     <>
@@ -19,6 +20,10 @@ export function MobilePlayMenu({ isDark, onExitPlay, onOpenGit, onToggleTheme, o
         <button className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted" onClick={onExitPlay}>
           <X className="h-4 w-4" />
           {t("homePlayExit")}
+        </button>
+        <button className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted" onClick={onOpenDirector}>
+          <Bot className="h-4 w-4" />
+          {t("director")}
         </button>
         <button className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted" onClick={onOpenGit}>
           <GitBranch className="h-4 w-4" />
