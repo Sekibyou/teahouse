@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
+import { useLocation } from "react-router-dom"
 import { useThemeStore } from "@/stores/themeStore"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 
@@ -128,6 +129,7 @@ const MIN_MOVE = 4 // 小于此位移视为点击（不触发拖动）
 //   x' = A_F + (x - A_F) * (scale'/scale)，A_F = F 相对 stage 中心的偏移。
 // 真值源收敛在 viewRef，事件回调读它算新值一次性 flush，避免并发手势互相覆盖。
 function MermaidFullscreen({ svg, onClose }: { svg: string; onClose: () => void }) {
+  const { pathname } = useLocation()
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 })
   const viewRef = useRef(view)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -190,7 +192,9 @@ function MermaidFullscreen({ svg, onClose }: { svg: string; onClose: () => void 
 
   // 系统返回键（桌面浏览器返回 / 移动端返回手势）关闭全屏查看器。
   // MermaidFullscreen 只在 open 时挂载，此 hook 以其常开 true 等效“open”。
-  useDialogBackClose(true, onClose)
+  // 动态取当前路由：盖在 /workspace 且 isMobile 时登记为 managed(不压假条目、由该页 useBlocker 关)，
+  // 其余路由走 legacy 假条目——避免在 /workspace 上与退出确认的 useBlocker 互踩闪退。
+  useDialogBackClose(true, onClose, { route: pathname, kind: "mermaid_fullscreen" })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
