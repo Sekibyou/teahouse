@@ -82,6 +82,9 @@ export function WorkspacePage() {
   // 浮窗从右滑出离场动画：关闭先置 closing 保持渲染播完动画再真正隐藏
   const [overlayClosing, setOverlayClosing] = useState(false)
   const DIRECTOR_OVERLAY_ANIM_MS = 220
+  // 游玩层退出动画：先播 slide-out-to-right 再真正 exitPlay（inPlay 驱动 SSE/交互，需等动画完）
+  const [playClosing, setPlayClosing] = useState(false)
+  const PLAY_ANIM_MS = 220
   // 导演不再是全屏弹层——已并入外层 director tab。fullscreenPanel 仅剩 git / files。
   const [fullscreenPanel, setFullscreenPanel] = useState<"git" | "files" | null>(null)
   useDialogBackClose(fullscreenPanel === "files", () => setFullscreenPanel(null))
@@ -89,6 +92,20 @@ export function WorkspacePage() {
   const mobileTab = useMobileLayoutStore((s) => s.mobileTab)
   const enterPlay = useMobileLayoutStore((s) => s.enterPlay)
   const exitPlay = useMobileLayoutStore((s) => s.exitPlay)
+  // 退出游玩：先播离场动画，播完再真正 exitPlay 回外层
+  const animateExitPlay = useCallback(() => {
+    if (!inPlay) return
+    setPlayClosing(true)
+    window.setTimeout(() => {
+      setPlayClosing(false)
+      exitPlay()
+    }, PLAY_ANIM_MS)
+  }, [inPlay, exitPlay])
+  // 进入游玩：立即 inPlay，靠从右 slide-in 入场
+  const animateEnterPlay = useCallback(() => {
+    setPlayClosing(false)
+    enterPlay()
+  }, [enterPlay])
   // 关闭游玩导演浮窗：先播从右滑出的离场动画，动画完再真正隐藏（ChatPanel 常驻保 SSE）。
   const closePlayDirector = useCallback(() => {
     if (!playDirectorOpen) return
@@ -107,7 +124,7 @@ export function WorkspacePage() {
   useDialogBackClose(playDirectorOpen, closePlayDirector)
   // 移动端系统返回：游玩层→回外层。外层空闲时无弹层压栈，系统返回会天然回退到会话主页
   // （= 退出实例），由 useDialogBackClose 的放行逻辑交给 Router 处理，无需额外压层。
-  useDialogBackClose(inPlay, () => exitPlay())
+  useDialogBackClose(inPlay, animateExitPlay)
 
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
   // Current tree mirrored into a ref so SSE event handlers (which close over the
@@ -1565,8 +1582,12 @@ export function WorkspacePage() {
     const handleExitToHome = () => { setActiveInstance(null); navigate("/", { replace: true }) }
     return (
       <div className="h-full flex flex-col overflow-hidden bg-background relative">
-        {/* ===== 独立全屏游玩层（常驻挂载保 SSE，inPlay 时覆盖外层） ===== */}
-        <div className={`${inPlay ? "absolute inset-0 z-40 flex flex-col bg-background" : "hidden"}`}>
+        {/* ===== 独立全屏游玩层（常驻挂载保 SSE，inPlay 时覆盖外层；从右滑入/滑出） ===== */}
+        <div className={`${inPlay || playClosing
+            ? `${playClosing
+                ? "absolute inset-0 z-40 flex flex-col bg-background animate-out slide-out-to-right duration-[220ms] fill-mode-forwards"
+                : "absolute inset-0 z-40 flex flex-col bg-background animate-in slide-in-from-right duration-[220ms]"}`
+            : "hidden"}`}>
           <div className="relative flex-1 flex flex-col min-h-0">
             <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} />
             {/* 游玩层悬浮球（常驻，仅保留三项：退出游玩/版本控制/主题） */}
@@ -1584,7 +1605,7 @@ export function WorkspacePage() {
                   {showMobileMenu && (
                     <MobilePlayMenu
                       isDark={isDark}
-                      onExitPlay={() => { exitPlay(); setShowMobileMenu(false) }}
+                      onExitPlay={() => { animateExitPlay(); setShowMobileMenu(false) }}
                       onOpenDirector={() => { openDirector(); setShowMobileMenu(false) }}
                       onOpenGit={() => { setFullscreenPanel("git"); setShowMobileMenu(false) }}
                       onToggleTheme={() => { toggleTheme(); setShowMobileMenu(false) }}
@@ -1603,9 +1624,11 @@ export function WorkspacePage() {
           {mobileTab === "home" && (
             <MobileHome
               instanceName={activeInstance?.name ?? ""}
-              onEnterPlay={enterPlay}
+              onEnterPlay={animateEnterPlay}
               onOpenModel={() => openSettings("slots")}
               onOpenFiles={() => { setFullscreenPanel("files"); setShowMobileMenu(false) }}
+              onOpenGit={() => { setFullscreenPanel("git") }}
+              changeCounts={changeCounts}
               onBackToHome={handleExitToHome}
             />
           )}

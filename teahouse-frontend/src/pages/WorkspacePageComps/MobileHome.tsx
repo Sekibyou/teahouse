@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Play, Minus, Plus, Type, Sun, Moon, Languages, ArrowLeft, FileText, Bot, PenLine, AlertCircle } from "lucide-react"
+import { Play, Minus, Plus, Type, Sun, Moon, Languages, ArrowLeft, FileText, Bot, PenLine, AlertCircle, GitBranch } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SUPPORTED_LANGS, LANG_LABELS, useCurrentLang, useLangStore, type Lang } from "@/i18n/config"
 import { useThemeStore } from "@/stores/themeStore"
@@ -14,6 +14,8 @@ interface MobileHomeProps {
   onEnterPlay: () => void
   onOpenModel: () => void
   onOpenFiles: () => void
+  onOpenGit: () => void
+  changeCounts: { added: number; modified: number; deleted: number }
   onBackToHome: () => void
 }
 
@@ -75,7 +77,7 @@ function FontScaleControl() {
 }
 
 /** 移动端外层首页 tab：大「进入游玩」按钮 + 快捷设置（字号/主题/语言/模型）+ 返回列表。 */
-export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles, onBackToHome }: MobileHomeProps) {
+export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles, onOpenGit, changeCounts, onBackToHome }: MobileHomeProps) {
   const { t } = useTranslation(["workspace", "settings", "misc"])
   const { isDark, setTheme } = useThemeStore()
   const currentLang = useCurrentLang()
@@ -212,6 +214,35 @@ export function MobileHome({ instanceName, onEnterPlay, onOpenModel, onOpenFiles
           {slotRow("director", Bot, slotModels.director)}
           {/* 正文模型 */}
           {slotRow("writer", PenLine, slotModels.writer)}
+          {/* 版本控制 */}
+          <div className="flex items-center justify-between px-4 gap-3 min-h-[52px]">
+            <div className="flex items-center gap-2 text-sm min-w-0">
+              <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
+              {t("workspace:versionControl")}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1">
+                {changeCounts.deleted > 0 && (
+                  <span className="text-xs bg-red-500/15 text-red-600 dark:text-red-400 font-medium px-1.5 py-0.5 rounded leading-none">
+                    -{changeCounts.deleted}
+                  </span>
+                )}
+                {changeCounts.modified > 0 && (
+                  <span className="text-xs bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 font-medium px-1.5 py-0.5 rounded leading-none">
+                    ~{changeCounts.modified}
+                  </span>
+                )}
+                {changeCounts.added > 0 && (
+                  <span className="text-xs bg-green-500/15 text-green-600 dark:text-green-400 font-medium px-1.5 py-0.5 rounded leading-none">
+                    +{changeCounts.added}
+                  </span>
+                )}
+              </div>
+              <Button variant="outline" size="sm" className="h-9 gap-1.5 bg-transparent dark:bg-transparent hover:bg-muted hover:text-foreground" onClick={onOpenGit}>
+                {t("workspace:homeView")}
+              </Button>
+            </div>
+          </div>
         </div>
       </section>
 
