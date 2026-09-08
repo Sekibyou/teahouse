@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Cpu, X, ChevronLeft, Check, Loader2 } from "lucide-react"
+import { Cpu, X, ChevronRight, ChevronDown, Check, Loader2 } from "lucide-react"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
@@ -37,7 +37,25 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
 
   const { t } = useTranslation("settings")
   const isMobile = useIsMobile()
-  useDialogBackClose(open, onClose)
+  // 移动端全屏进出动画：open 切 false 时先保留 DOM 播从右滑出再真正关闭（父层常驻渲染本组件）
+  const [closing, setClosing] = useState(false)
+  const SETTINGS_ANIM_MS = 220
+  const requestClose = useCallback(() => {
+    if (isMobile) {
+      setClosing((wasClosing) => {
+        if (wasClosing) return true
+        window.setTimeout(() => {
+          setClosing(false)
+          onClose()
+        }, SETTINGS_ANIM_MS)
+        return true
+      })
+    } else {
+      onClose()
+    }
+  }, [isMobile, onClose])
+  // 系统返回：移动端先播离场；桌面直接关
+  useDialogBackClose(open, requestClose)
 
   const { user: currentUser } = useAuth()
   // useMemo 缓存：引用只在 role 变化时变，避免被当作 effect 依赖导致每次渲染都触发
@@ -176,7 +194,9 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
     }
   }, [open, defaultTab, visibleTabs, scrollToSectionWhenStable])
 
-  if (!open) return null
+  // 渲染：移动端父层常驻渲染 → open 与 closing 期间都保留 DOM 以播进出动画；桌面 !open 即返 null。
+  if (!isMobile && !open) return null
+  if (isMobile && !open && !closing) return null
 
   // 各模块内容组件，按顺序堆叠为整张长列表；图标/标题复用侧边栏的 TAB_ITEMS
   const SECTIONS: { key: TabKey; Panel: () => React.JSX.Element }[] = [
@@ -197,8 +217,16 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
   return (
     <>
       <div
-        className={`fixed inset-0 z-50 ${isMobile ? "bg-background" : "bg-black/50 backdrop-blur-sm flex items-center justify-center"}`}
-        onClick={onClose}
+        className={`fixed inset-0 z-50 ${
+          isMobile
+            ? `bg-background ${
+                closing
+                  ? "animate-out slide-out-to-right duration-[220ms] fill-mode-forwards"
+                  : "animate-in slide-in-from-right duration-[220ms]"
+              }`
+            : "bg-black/50 backdrop-blur-sm flex items-center justify-center"
+        }`}
+        onClick={requestClose}
       >
         <div
           className={`flex flex-col overflow-hidden ${isMobile
@@ -214,45 +242,45 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
         >
           {/* Header */}
           {isMobile ? (
-            <div className="relative h-10 border-b border-border flex items-center justify-center shrink-0 z-10">
+            <div className="flex items-center gap-2 px-3 h-11 border-b border-border shrink-0 z-10">
+              {/* 左上：分区菜单触发器 = 当前分区图标 + 「设置」 */}
               <button
-                className="absolute left-2 p-2 rounded hover:bg-muted flex items-center justify-center"
-                onClick={onClose}
+                className="flex items-center gap-2 rounded py-2 -my-1 shrink-0"
+                onClick={() => setTabMenuOpen((v) => !v)}
+                aria-label={t("ariaSwitchTab")}
+              >
+                {(() => { const cur = visibleTabs.find((item) => item.key === activeSection); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
+                <span className="font-semibold text-base">{t("title")}</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </button>
+              {tabMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setTabMenuOpen(false)} />
+                  <div className="fixed left-3 top-[52px] z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[170px] max-h-[70vh] overflow-auto">
+                    {visibleTabs.map(({ key, Icon, label }) => (
+                      <button
+                        key={key}
+                        className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-muted ${
+                          activeSection === key ? "text-primary font-medium" : "text-foreground"
+                        }`}
+                        onClick={() => { scrollToSection(key); setTabMenuOpen(false) }}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">{t(label)}</span>
+                        {activeSection === key && <Check className="h-4 w-4 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {/* 右上：折叠（右箭头）关闭 */}
+              <button
+                className="ml-auto p-2 rounded hover:bg-muted text-muted-foreground flex items-center justify-center shrink-0"
+                onClick={requestClose}
                 aria-label={t("common:back")}
               >
-                <ChevronLeft className="h-5 w-5" />
+                <ChevronRight className="h-5 w-5" />
               </button>
-              <span className="font-semibold text-sm">{t("title")}</span>
-              {/* Right: tab dropdown — 点击只滚动到对应 section */}
-              <div className="absolute right-1">
-                <button
-                  className="p-2 rounded hover:bg-muted flex items-center gap-1 text-sm"
-                  onClick={() => setTabMenuOpen((v) => !v)}
-                  aria-label={t("ariaSwitchTab")}
-                >
-                  {(() => { const cur = visibleTabs.find((item) => item.key === activeSection); return cur ? <cur.Icon className="h-4 w-4" /> : null })()}
-                </button>
-                {tabMenuOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setTabMenuOpen(false)} />
-                    <div className="absolute right-1 top-full mt-1 z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[150px] max-h-[70vh] overflow-auto">
-                      {visibleTabs.map(({ key, Icon, label }) => (
-                        <button
-                          key={key}
-                          className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-muted ${
-                            activeSection === key ? "text-primary font-medium" : "text-foreground"
-                          }`}
-                          onClick={() => { scrollToSection(key); setTabMenuOpen(false) }}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <span className="flex-1">{t(label)}</span>
-                          {activeSection === key && <Check className="h-4 w-4 shrink-0" />}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
