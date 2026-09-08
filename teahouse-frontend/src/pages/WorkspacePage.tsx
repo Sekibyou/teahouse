@@ -76,6 +76,9 @@ export function WorkspacePage() {
 
   // Mobile state
   const [showFileTree, setShowFileTree] = useState(false)
+  // 文件树抽屉两阶段：关闭先播离场动画再真正隐藏（对齐导演抽屉）
+  const [fileTreeClosing, setFileTreeClosing] = useState(false)
+  const FILE_TREE_ANIM_MS = 200
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   // 游玩中唤出的全屏导演浮层（复用外层常驻 ChatPanel，不退出游玩）
   const [playDirectorOpen, setPlayDirectorOpen] = useState(false)
@@ -255,9 +258,25 @@ export function WorkspacePage() {
   // Export prototype / skill / package dialog（自治组件，见 ExportDialog）
   const [showExportDialog, setShowExportDialog] = useState(false)
   const exportDialogRef = useRef<ExportDialogHandle>(null)
+  // 打开/关闭文件树抽屉：关闭先播离场动画再真正隐藏（对齐导演抽屉）
+  const openFileTree = useCallback(() => {
+    setFileTreeClosing(false)
+    setShowFileTree(true)
+  }, [])
+  const closeFileTree = useCallback(() => {
+    if (!showFileTree) return
+    setFileTreeClosing((wasClosing) => {
+      if (wasClosing) return true
+      window.setTimeout(() => {
+        setFileTreeClosing(false)
+        setShowFileTree(false)
+      }, FILE_TREE_ANIM_MS)
+      return true
+    })
+  }, [showFileTree])
   // System back closes the mobile file-tree drawer and the export panel one level
   // at a time (nested with director above), instead of jumping straight home.
-  useDialogBackClose(showFileTree, () => setShowFileTree(false))
+  useDialogBackClose(showFileTree, closeFileTree)
   useDialogBackClose(showExportDialog, () => setShowExportDialog(false))
 
   const instId = activeInstance?.id
@@ -1640,7 +1659,7 @@ export function WorkspacePage() {
               <div className="flex items-center gap-2 px-2 h-14 border-b border-border shrink-0">
                 <button
                   className="p-1 rounded hover:bg-muted shrink-0"
-                  onClick={() => setShowFileTree(true)}
+                  onClick={openFileTree}
                   title={t("fileTreeTitle")}
                 >
                   <FolderTree className="h-5 w-5" />
@@ -1747,11 +1766,24 @@ export function WorkspacePage() {
           />
         )}
 
-        {/* File tree overlay (half-screen) — only in backstage mode */}
-        {showFileTree && (
+        {/* File tree overlay (half-screen drawer) — only in backstage mode。进出动画对齐导演抽屉 */}
+        {(showFileTree || fileTreeClosing) && (
           <>
-            <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setShowFileTree(false)} />
-            <div className="fixed left-0 top-0 bottom-0 w-[75%] max-w-[320px] z-50 bg-background border-r border-border flex flex-col shadow-lg">
+            <div
+              className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-40 ${
+                fileTreeClosing
+                  ? "animate-out fade-out duration-200 fill-mode-forwards"
+                  : "animate-in fade-in duration-200"
+              }`}
+              onClick={closeFileTree}
+            />
+            <div
+              className={`fixed left-0 top-0 bottom-0 w-[78%] max-w-sm z-50 bg-background border-r border-border flex flex-col shadow-lg ${
+                fileTreeClosing
+                  ? "animate-out slide-out-to-left duration-200 fill-mode-forwards"
+                  : "animate-in slide-in-from-left duration-200"
+              }`}
+            >
               <div className="p-3 border-b border-border flex items-center justify-between shrink-0">
                 <span className="text-sm font-semibold truncate" title={activeInstance.name}>
                   {activeInstance.name}
@@ -1760,7 +1792,7 @@ export function WorkspacePage() {
                   <button className="p-1.5 rounded hover:bg-muted" onClick={() => exportDialogRef.current?.open("prototype")} title={t("export.titleBar")}>
                     <Archive className="h-4 w-4" />
                   </button>
-                  <button className="p-1.5 rounded hover:bg-muted" onClick={() => setShowFileTree(false)}>
+                  <button className="p-1.5 rounded hover:bg-muted" onClick={closeFileTree}>
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -1780,9 +1812,13 @@ export function WorkspacePage() {
                     selectedFile={selectedFile}
                     selectionPaths={selectionPaths}
                     onToggle={toggleExpand}
-                    onRowClick={handleNodeClick}
+                    onRowClick={(node, opts) => {
+                      handleNodeClick(node, opts)
+                      // 点开文件即收抽屉；点文件夹(展开)与长按(菜单)不收
+                      if (node.type === "file" && !opts.ctrl) closeFileTree()
+                    }}
                     onSelect={(path) => {
-                      setShowFileTree(false)
+                      closeFileTree()
                       openFile(path)
                     }}
                     onCreateFile={(parentPath) => { setShowCreate({ parentPath, type: "file" }); setCreateName("") }}
