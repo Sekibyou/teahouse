@@ -9,7 +9,7 @@ import {
   File, Folder, Loader2,
   Save, FileText,
   PanelLeftOpen, GripVertical, Archive,
-  FolderTree, Menu, X, Gamepad2,
+  FolderTree, Menu, Gamepad2,
   Eye, Code2, BookOpen,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -1655,18 +1655,20 @@ export function WorkspacePage() {
           {/* files tab — 编辑器（文件状态在 WorkspacePage，故挂载即留存） */}
           {mobileTab === "files" && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              {/* 顶部栏：文件树按钮 + 文件名 + 保存 */}
+              {/* 顶部栏：文件树触发器（icon + 文件名一体）+ 保存 */}
               <div className="flex items-center gap-2 px-2 h-14 border-b border-border shrink-0">
                 <button
-                  className="p-1 rounded hover:bg-muted shrink-0"
+                  className="flex items-center gap-2 min-w-0 flex-1 rounded px-1.5 py-1.5 hover:bg-muted"
                   onClick={openFileTree}
                   title={t("fileTreeTitle")}
                 >
-                  <FolderTree className="h-5 w-5" />
+                  <FolderTree className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <span className="text-sm truncate">
+                    {selectedFile
+                      ? <span className="text-foreground font-mono">{selectedFile}</span>
+                      : <span className="text-muted-foreground">{t("noFileSelected")}</span>}
+                  </span>
                 </button>
-                <span className="flex-1 text-sm text-muted-foreground truncate">
-                  {selectedFile ?? t("noFileSelected")}
-                </span>
                 {selectedFile && !isImageOpen && (
                   <div className="flex items-center gap-2 shrink-0">
                     {isDirty && <span className="text-xs text-orange-500">{t("unsaved")}</span>}
@@ -1791,9 +1793,6 @@ export function WorkspacePage() {
                 <div className="flex items-center gap-1 shrink-0">
                   <button className="p-1.5 rounded hover:bg-muted" onClick={() => exportDialogRef.current?.open("prototype")} title={t("export.titleBar")}>
                     <Archive className="h-4 w-4" />
-                  </button>
-                  <button className="p-1.5 rounded hover:bg-muted" onClick={closeFileTree}>
-                    <X className="h-4 w-4" />
                   </button>
                 </div>
               </div>
