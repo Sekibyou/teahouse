@@ -441,26 +441,32 @@ export function UserManagementPanel() {
           ) : (
             <div className="space-y-2">
               {inviteKeys.map((k) => (
-                <div key={k.id} className="rounded-md border px-3 py-2 flex items-center gap-3">
+                <div key={k.id} className="rounded-md border px-3 py-2 flex items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs truncate">{k.key}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => copyInviteKey(k.id, k.key)}
-                        title={t("inviteKeys.copy")}
-                      >
-                        {copiedId === k.id ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-                      </Button>
-                    </div>
+                    <div className="font-mono text-xs text-foreground break-all leading-snug">{k.key}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
                       {t("inviteKeys.issuedBy")}: {k.issued_by_username || "—"} · {t("inviteKeys.createdAt")}: {new Date(k.created_at).toLocaleString()}
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" className="text-red-500 shrink-0" onClick={() => setRevokeTarget(k)}>
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />{t("inviteKeys.revoke")}
-                  </Button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => copyInviteKey(k.id, k.key)}
+                      title={t("inviteKeys.copy")}
+                    >
+                      {copiedId === k.id ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-red-500 hover:text-red-500"
+                      onClick={() => setRevokeTarget(k)}
+                      title={t("inviteKeys.revoke")}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
