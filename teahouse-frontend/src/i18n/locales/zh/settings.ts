@@ -87,6 +87,9 @@ export const zhSettings = {
 
   // ─── Profiles tab ───
   profile: {
+    slotHint: "新建或保存参数预设后，请到「槽位指定」里为对应槽位指定启用。",
+    createdToast: "参数预设已创建，记得去「槽位指定」指定启用。",
+    savedToast: "参数预设已保存，请到「槽位指定」确认是否已指定启用。",
     create: "创建预设",
     edit: "编辑预设",
     viewBuiltin: "查看内置预设（只读）",
@@ -108,6 +111,9 @@ export const zhSettings = {
 
   // ─── Presets tab ───
   preset: {
+    slotHint: "新建或保存导演提示词预设后，请到「槽位指定」里为导演槽位指定启用。",
+    createdToast: "导演提示词预设已创建，记得去「槽位指定」指定启用。",
+    savedToast: "导演提示词预设已保存，请到「槽位指定」确认是否已指定启用。",
     create: "创建预设",
     edit: "编辑预设",
     viewBuiltin: "查看内置预设（只读）",

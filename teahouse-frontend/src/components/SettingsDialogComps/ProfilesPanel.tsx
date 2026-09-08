@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Plus, Loader2, Pencil, Trash2 } from "lucide-react"
+import { Plus, Loader2, Pencil, Trash2, Info } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -73,11 +74,11 @@ export function ProfilesPanel() {
 
     if (editingProfile) {
       const res = await modelProfilesApi.update(editingProfile.id, payload as Record<string, unknown>)
-      if (res.ok) { setCreateProfileOpen(false); setEditingProfile(null); await loadProfiles() }
+      if (res.ok) { setCreateProfileOpen(false); setEditingProfile(null); await loadProfiles(); toast.success(t("profile.savedToast")) }
       else setProfileFormError(res.error || t("errUpdate"))
     } else {
       const res = await modelProfilesApi.create(payload as ModelProfile & { name: string })
-      if (res.ok) { setCreateProfileOpen(false); await loadProfiles() }
+      if (res.ok) { setCreateProfileOpen(false); await loadProfiles(); toast.success(t("profile.createdToast")) }
       else setProfileFormError(res.error || t("errCreate"))
     }
     setProfileFormSaving(false)
@@ -92,6 +93,10 @@ export function ProfilesPanel() {
 
   return (
     <div className="p-5 space-y-4 h-full flex flex-col">
+      <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{t("profile.slotHint")}</span>
+      </div>
       <div className="flex items-center justify-end">
         {!createProfileOpen && (
           <Button size="sm" variant="outline" onClick={openProfileCreate}>

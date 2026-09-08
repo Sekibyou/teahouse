@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Plus, Loader2, Pencil, Trash2, ChevronDown, ChevronRight, HelpCircle } from "lucide-react"
+import { Plus, Loader2, Pencil, Trash2, ChevronDown, ChevronRight, HelpCircle, Info } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -65,9 +66,11 @@ export function PresetsPanel() {
     }
     setPresetFormSaving(false)
     if (success) {
+      const wasEdit = !!editingPreset
       setCreatePresetOpen(false)
       setEditingPreset(null)
       await loadPresets()
+      toast.success(wasEdit ? t("preset.savedToast") : t("preset.createdToast"))
     }
   }
 
@@ -80,6 +83,10 @@ export function PresetsPanel() {
 
   return (
     <div className="p-5 space-y-4 h-full flex flex-col">
+      <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{t("preset.slotHint")}</span>
+      </div>
       <div className="flex items-center justify-end">
         {!createPresetOpen && (
           <Button size="sm" variant="outline" onClick={openPresetCreate}>

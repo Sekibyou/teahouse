@@ -87,6 +87,9 @@ export const enSettings = {
 
   // ─── Profiles tab ───
   profile: {
+    slotHint: "After creating or saving a parameter preset, assign it to a slot in the “Slot binding” tab to enable it.",
+    createdToast: "Parameter preset created — assign it in the “Slot binding” tab to enable it.",
+    savedToast: "Parameter preset saved — check the “Slot binding” tab to confirm it is enabled.",
     create: "Create preset",
     edit: "Edit preset",
     viewBuiltin: "View built-in presets (read-only)",
@@ -108,6 +111,9 @@ export const enSettings = {
 
   // ─── Presets tab ───
   preset: {
+    slotHint: "After creating or saving a director preset, assign it to the director slot in the “Slot binding” tab to enable it.",
+    createdToast: "Director preset created — assign it in the “Slot binding” tab to enable it.",
+    savedToast: "Director preset saved — check the “Slot binding” tab to confirm it is enabled.",
     create: "Create preset",
     edit: "Edit preset",
     viewBuiltin: "View built-in presets (read-only)",
