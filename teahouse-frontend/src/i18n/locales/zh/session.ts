@@ -101,6 +101,7 @@ export const zhSession = {
     noEnabled: "尚未启用任何 Skill",
     addFrom: "从你的 Skill 库添加",
     libEmpty: "你的 Skill 库还是空的，可先在设置页「Skill 管理」导入，或在实例里导出。",
+    goToSettings: "去设置 · Skill 管理",
     enable: {
       fail: "启用失败",
     },
@@ -119,6 +120,7 @@ export const zhSession = {
     noEnabled: "尚未启用任何提示词包",
     addFrom: "从你的提示词包库添加",
     libEmpty: "你的提示词包库还是空的，可先在设置页「提示词包」导入，或在实例里导出。",
+    goToSettings: "去设置 · 提示词包管理",
     uninstall: "卸载",
     enable: {
       fail: "启用失败",

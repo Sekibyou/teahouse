@@ -101,6 +101,7 @@ export const enSession = {
     noEnabled: "No Skills enabled yet",
     addFrom: "Add from your Skill library",
     libEmpty: "Your Skill library is still empty — import in Settings > \"Skill management\" first, or export from an instance.",
+    goToSettings: "Open Settings · Skill management",
     enable: {
       fail: "Enable failed",
     },
@@ -119,6 +120,7 @@ export const enSession = {
     noEnabled: "No prompt packages enabled yet",
     addFrom: "Add from your prompt package library",
     libEmpty: "Your prompt package library is still empty — import in Settings > \"Prompt packages\" first, or export from an instance.",
+    goToSettings: "Open Settings · Prompt packages",
     uninstall: "Uninstall",
     enable: {
       fail: "Enable failed",

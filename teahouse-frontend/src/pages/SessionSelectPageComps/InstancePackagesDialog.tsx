@@ -1,16 +1,23 @@
 import { useEffect, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useLocation } from "react-router-dom"
-import { Package, X, Loader2, Trash2, Plus } from "lucide-react"
+import { Package, X, Loader2, Trash2, Plus, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
+import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { packagesApi, type MyPackage, type InstancePackage } from "@/lib/api"
 import type { Instance } from "@/lib/types"
 
 export function InstancePackagesDialog({ instance, onClose }: { instance: Pick<Instance, "id" | "name">; onClose: () => void }) {
   const { t } = useTranslation("session")
   useDialogBackClose(true, onClose, { route: useLocation().pathname, kind: "package_manager" })
+
+  // 库空时跳到设置页「提示词包」去导入/管理你的库：先关本弹层，再开全局设置对应 tab。
+  const goToSettings = () => {
+    onClose()
+    useSettingsDialogStore.getState().openSettings("packages")
+  }
 
   const [library, setLibrary] = useState<MyPackage[]>([])
   const [enabled, setEnabled] = useState<InstancePackage[]>([])
@@ -105,8 +112,18 @@ export function InstancePackagesDialog({ instance, onClose }: { instance: Pick<I
             </div>
           )}
 
-          <div className="text-xs font-medium text-muted-foreground pt-3 border-t border-border">
-            {t("pkg.addFrom")}
+          <div className="flex items-center justify-between pt-3 border-t border-border">
+            <div className="text-xs font-medium text-muted-foreground">{t("pkg.addFrom")}</div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5 text-muted-foreground hover:text-foreground"
+              onClick={goToSettings}
+              title={t("pkg.goToSettings")}
+              aria-label={t("pkg.goToSettings")}
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </Button>
           </div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">

@@ -101,6 +101,7 @@ export const jaSession = {
     noEnabled: "Skill はまだ有効化されていません",
     addFrom: "あなたの Skill ライブラリから追加",
     libEmpty: "Skill ライブラリはまだ空です。まず設定ページ「Skill 管理」でインポートするか、インスタンス内でエクスポートしてください。",
+    goToSettings: "設定を開く · Skill 管理",
     enable: {
       fail: "有効化に失敗",
     },
@@ -119,6 +120,7 @@ export const jaSession = {
     noEnabled: "プロンプトパッケージはまだ有効化されていません",
     addFrom: "あなたのプロンプトパッケージライブラリから追加",
     libEmpty: "プロンプトパッケージライブラリはまだ空です。まず設定ページ「プロンプトパッケージ」でインポートするか、インスタンス内でエクスポートしてください。",
+    goToSettings: "設定を開く · プロンプトパッケージ",
     uninstall: "削除",
     enable: {
       fail: "有効化に失敗",
