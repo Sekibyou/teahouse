@@ -22,7 +22,7 @@ const STATUS_CLASS: Record<string, string> = {
   danger: "text-red-500",
 }
 
-export function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
+export function ContextUsageBar({ usage, textFirst = false }: { usage: ContextUsage | null; textFirst?: boolean }) {
   if (!usage || usage.threshold == null || usage.estimated_tokens == null) return null
   const est = usage.estimated_tokens
   const threshold = usage.threshold
@@ -30,13 +30,30 @@ export function ContextUsageBar({ usage }: { usage: ContextUsage | null }) {
   const estText = est >= 1000 ? (est / 1000).toFixed(1) : String(est)
   const thText = (threshold / 1000).toFixed(1)
   const barCls = STATUS_CLASS[usage.status ?? "normal"] ?? STATUS_CLASS.normal
+  const braille = (
+    <span className="relative leading-none">
+      <span className="text-border">{brailleBar(100)}</span>
+      <span className={`absolute inset-0 ${barCls}`}>{brailleBar(pct)}</span>
+    </span>
+  )
+  const text = (
+    <span>
+      {estText}/{thText}k tokens
+    </span>
+  )
   return (
     <span className="font-mono whitespace-nowrap inline-flex items-center gap-1 text-foreground">
-      <span className="relative leading-none">
-        <span className="text-border">{brailleBar(100)}</span>
-        <span className={`absolute inset-0 ${barCls}`}>{brailleBar(pct)}</span>
-      </span>
-      {estText}/{thText}k tokens
+      {textFirst ? (
+        <>
+          {text}
+          {braille}
+        </>
+      ) : (
+        <>
+          {braille}
+          {text}
+        </>
+      )}
     </span>
   )
 }

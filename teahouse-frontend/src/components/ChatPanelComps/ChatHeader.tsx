@@ -98,40 +98,39 @@ export function ChatHeader({
     return (
       <div className="p-3 border-b border-border shrink-0">
         <div className="flex items-center justify-between gap-2">
-          {/* 左上标题即抽屉触发器 */}
-          <button
-            className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
-            onClick={() => (menuOpen ? closeMenu() : openMenu())}
-            title={t("moreActions")}
-          >
-            <span className="text-sm font-semibold truncate">
-              {t("directorTitle")}
-              {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
-            </span>
-            <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
-          </button>
+          {/* 左侧：标题即抽屉触发器 + 上下文用量（文字在左、盲文进度条在右，共用左侧对齐） */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
+              onClick={() => (menuOpen ? closeMenu() : openMenu())}
+              title={t("moreActions")}
+            >
+              <span className="text-sm font-semibold truncate">
+                {t("directorTitle")}
+                {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
+              </span>
+              <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
 
-          {/* 右上区域：居中可用区放上下文用量（含盲文进度条），右端为关闭钮 */}
-          <div className="flex items-center min-w-0 flex-1 justify-end">
             {usage && usage.threshold != null && usage.estimated_tokens != null && (
-              <div className="text-[10px] text-muted-foreground">
-                <ContextUsageBar usage={usage} />
+              <div className="text-[10px] text-muted-foreground shrink-0">
+                <ContextUsageBar usage={usage} textFirst />
               </div>
             )}
-
-            {/* 右上角：仅游玩临时导演栏形态提供关闭钮（关闭即隐藏回游玩）；外层 director tab 页留空 */}
-            {onClosePanel ? (
-              <button
-                className="p-2 -mr-2 rounded hover:bg-muted text-muted-foreground shrink-0 transition-colors"
-                onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
-                title={t("closePanelMobile")}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            ) : (
-              <div className="w-8 shrink-0" />
-            )}
           </div>
+
+          {/* 右上角：仅游玩临时导演栏形态提供关闭钮（关闭即隐藏回游玩）；外层 director tab 页留空 */}
+          {onClosePanel ? (
+            <button
+              className="p-2 -mr-2 rounded hover:bg-muted text-muted-foreground shrink-0 transition-colors"
+              onClick={() => { if (menuOpen) closeMenu(); else onClosePanel() }}
+              title={t("closePanelMobile")}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          ) : (
+            <div className="w-8 shrink-0" />
+          )}
         </div>
 
         {/* 左滑全高菜单（抽屉） */}
