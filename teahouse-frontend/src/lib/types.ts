@@ -139,6 +139,7 @@ export interface ModelProfile {
 export interface SlotBindings {
   director: SlotBinding
   writer: SlotBinding
+  dm: SlotBinding
 }
 
 export interface SlotBinding {

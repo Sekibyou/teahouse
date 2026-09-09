@@ -11,7 +11,7 @@ import { SavedBadge } from "@/components/SavedBadge"
 import { useTranslation } from "react-i18next"
 
 interface SlotCardProps {
-  slotId: "director" | "writer"
+  slotId: "director" | "writer" | "dm"
   label: string
   binding: SlotBinding
   models: LLMModel[]

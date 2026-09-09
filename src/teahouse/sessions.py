@@ -32,6 +32,8 @@ from pathlib import Path
 
 SESSION_DIR = ".sessions"
 MAIN_SESSION_ID = "main"
+# DM（运行时导演）——实例级单例会话，与 main 并列。存在与否由实例的 dm.yaml 决定。
+DM_SESSION_ID = "dm"
 
 
 def resolve_session_path(instance_dir: Path, session_id: str) -> Path:
@@ -108,6 +110,13 @@ def list_sessions(instance_dir: Path) -> list[dict]:
     # Main session is always reported — even if its file doesn't exist yet.
     if MAIN_SESSION_ID not in seen:
         out.insert(0, {"session_id": MAIN_SESSION_ID, "record_count": 0})
+    # DM 单例会话：实例启用 DM（根目录存在 dm.yaml）时始终列出，即使还没聊过——
+    # 否则用户无从在会话栏里找到 DM 控制台入口。
+    if DM_SESSION_ID not in seen and (instance_dir / "dm.yaml").is_file():
+        out.append({
+            "session_id": DM_SESSION_ID,
+            "record_count": _count_records(instance_dir / SESSION_DIR / f"{DM_SESSION_ID}.jsonl"),
+        })
     return out
 
 

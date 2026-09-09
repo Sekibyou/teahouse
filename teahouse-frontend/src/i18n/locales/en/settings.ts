@@ -157,6 +157,7 @@ Besides system, you can seed conversation history for other roles. Pick one of t
   slot: {
     director: "Director model",
     writer: "Writer model",
+    dm: "DM model",
   },
 
   // ─── General settings tab ───

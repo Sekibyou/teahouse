@@ -7,6 +7,9 @@ import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import type { ContextUsage } from "@/lib/types"
 import { ContextUsageBar } from "./ContextUsageBar"
 
+// DM（运行时导演）单例会话 id —— 与后端 sessions.DM_SESSION_ID 保持一致。
+const DM_SID = "dm"
+
 interface ChatHeaderProps {
   // Slot models
   slotModels: Record<string, string | null>
@@ -176,7 +179,12 @@ export function ChatHeader({
                   const active = s.session_id === activeSid
                   const hasNew = !!newMsgMap[s.session_id]
                   const isMain = s.session_id === MAIN_SID
-                  const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+                  const isDm = s.session_id === DM_SID
+                  const label = isMain
+                    ? t("mainSession")
+                    : isDm
+                      ? t("dmConsole")
+                      : t("sessionItem", { sid: s.session_id.replace("session-", "") })
                   return (
                     <button
                       key={s.session_id}
@@ -303,7 +311,12 @@ export function ChatHeader({
             const active = s.session_id === activeSid
             const hasNew = !!newMsgMap[s.session_id]
             const isMain = s.session_id === MAIN_SID
-            const label = isMain ? t("mainSession") : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+            const isDm = s.session_id === DM_SID
+            const label = isMain
+              ? t("mainSession")
+              : isDm
+                ? t("dmConsole")
+                : t("sessionItem", { sid: s.session_id.replace("session-", "") })
             return (
               <div key={s.session_id} className="relative shrink-0 flex items-end">
                 <button

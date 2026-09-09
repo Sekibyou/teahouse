@@ -225,6 +225,7 @@ class ChatRequest(BaseModel):
     tools: bool = False  # Enable tool use (Director tools)
     instance_id: str | None = None  # Required when tools=True
     session_id: str | None = None  # None or "main" = main session; else a child sub-session
+    dm_ooc: bool = False  # DM 会话专用：True = 局外发言（只进会话，不进 dm-output）
 
 
 async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
@@ -532,6 +533,27 @@ def _expand_batch_calls(all_tool_calls: list[dict], instance_dir: Path) -> list[
     return out
 
 
+def _dm_user_note(instance_dir: Path, content: str) -> str:
+    """DM 会话：若本轮输入与 dm-output 最后一条玩家发言一致，附上「已入 output」提示。
+
+    作用是防止 DM 把玩家原话再 Output 一遍。局外（OOC）输入不在 dm-output 里，
+    因此不会被加上该提示。
+    """
+    try:
+        from .dm_output import read_messages, RESERVED_CHARA_USER
+        recs = read_messages(instance_dir)
+        if recs and recs[-1].get("chara") == RESERVED_CHARA_USER and recs[-1].get("content") == content:
+            seq = recs[-1].get("seq")
+            return (
+                f"{content}\n\n"
+                f"[系统] 上面这句玩家发言已写入呈现记录 output（seq={seq}）。"
+                f"不要重复 Output 玩家的话——你只呈现自己（DM / 角色）的发言。"
+            )
+    except Exception:
+        pass
+    return content
+
+
 async def _tool_use_loop(
     client: LLMClient,
     messages: list[dict],
@@ -573,6 +595,7 @@ async def _tool_use_loop(
 
     from . import sessions
     sid = session_id or sessions.MAIN_SESSION_ID
+    is_dm = sid == sessions.DM_SESSION_ID
 
     # Authoritative context comes from the persisted session history; the
     # frontend no longer holds it. We rebuild LLM messages from .sessions/ (full,
@@ -584,7 +607,10 @@ async def _tool_use_loop(
     new_inputs = [m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")]
     if new_inputs:
         # Strip reasoning/blocks markers (frontend may still send them).
-        msg.append({"role": "user", "content": new_inputs[-1]["content"]})
+        _u = new_inputs[-1]["content"]
+        if is_dm:
+            _u = _dm_user_note(instance_dir, _u)
+        msg.append({"role": "user", "content": _u})
 
     # Persist this round's real user input. Preset fake messages / system prompt
     # are injected into `msg` below and never reach persistence.
@@ -611,28 +637,45 @@ async def _tool_use_loop(
         _pending["content"] = ""
         _pending["reasoning"] = ""
 
-    tools = load_tools(user_id=user_id)
-    tools_usage = await load_tools_usage(user_id=user_id)
-
-    # Resolve the director system prompt from the user's prompt preset. Every user
-    # has a built-in preset auto-created and auto-bound to the director slot, so this
-    # is the single, mandatory assembly path — there is no code-level fallback. A
-    # missing/empty preset is an error, never a silent fallback.
     from .routes.settings import _user_max_parse_depth
     parse_depth = await _user_max_parse_depth(user_id)
-    if not user_id:
-        raise HTTPException(status_code=500, detail="Director system prompt requires a user")
-    preset = await ensure_director_preset_binding(user_id)
-    variables = build_template_variables(instance_dir, tools_usage)
-    tool_system, fake_msgs = resolve_preset_template(
-        preset["template_yaml"], variables, instance_dir, max_depth=parse_depth
-    )
+
+    if is_dm:
+        # DM 的提示词来自实例根目录 dm.yaml（不是全局 preset），工具限 DM 白名单。
+        from .director_system import resolve_dm_system
+        from .tools import DM_TOOLS
+        tools = load_tools(user_id=user_id, only=DM_TOOLS)
+        # 执行层同样收窄到 DM 白名单（防御性；模型看不到的工具本就调不到）。
+        enabled_tools = sorted(DM_TOOLS)
+        dm_res = await resolve_dm_system(instance_dir, user_id, max_depth=parse_depth)
+        if dm_res is None:
+            raise HTTPException(
+                status_code=400,
+                detail="DM 未启用：实例根目录缺少 dm.yaml",
+            )
+        tool_system, fake_msgs = dm_res
+    else:
+        tools = load_tools(user_id=user_id)
+        tools_usage = await load_tools_usage(user_id=user_id)
+
+        # Resolve the director system prompt from the user's prompt preset. Every user
+        # has a built-in preset auto-created and auto-bound to the director slot, so this
+        # is the single, mandatory assembly path — there is no code-level fallback. A
+        # missing/empty preset is an error, never a silent fallback.
+        if not user_id:
+            raise HTTPException(status_code=500, detail="Director system prompt requires a user")
+        preset = await ensure_director_preset_binding(user_id)
+        variables = build_template_variables(instance_dir, tools_usage)
+        tool_system, fake_msgs = resolve_preset_template(
+            preset["template_yaml"], variables, instance_dir, max_depth=parse_depth
+        )
     if fake_msgs:
         msg = fake_msgs + msg
 
     # Scoped session framing: when the session has restricted tool access (enabled_tools
-    # is not None), tell the director it is a scoped one-shot task.
-    if enabled_tools is not None:
+    # is not None), tell the director it is a scoped one-shot task. DM sessions also
+    # carry an enabled_tools list (its whitelist) but are NOT one-shot scoped tasks.
+    if enabled_tools is not None and not is_dm:
         allowed = ", ".join(sorted(enabled_tools or []))
         tool_system = (
             f"{tool_system}\n\n"
@@ -948,6 +991,23 @@ async def chat(body: ChatRequest, request: Request):
         if new_inputs:
             loop = SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id)
             raw = new_inputs[-1]["content"]
+            _content = raw.get("manual") if isinstance(raw, dict) else raw
+            # DM 游玩输入（扮演）：先落 dm-output（开新批次）再入队，让气泡立刻可见。
+            # DM 栏的局外输入（dm_ooc=true）只进会话，不进 dm-output。
+            if (
+                sid == _sessions.DM_SESSION_ID
+                and not body.dm_ooc
+                and isinstance(_content, str) and _content.strip()
+            ):
+                try:
+                    from .dm_output import append_user_message, DM_OUTPUT_REL
+                    append_user_message(instance_dir, _content)
+                    state.broadcast("file_changed", {
+                        "path": DM_OUTPUT_REL, "tool": "DM.user", "type": "modified",
+                        "instance_id": body.instance_id,
+                    })
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"写入 dm-output 失败: {e}")
             if isinstance(raw, dict):
                 loop.enqueue(raw.get("manual") or "", raw.get("pastes"))
             else:

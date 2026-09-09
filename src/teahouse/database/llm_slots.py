@@ -1,6 +1,6 @@
 """
 LLM Slot Bindings CRUD — user-level mapping of slot_id → model_id/profile_id/prompt_preset_id.
-Fixed slots: 'director', 'writer'.
+Fixed slots: 'director', 'writer', 'dm'.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Optional
 from ..database.connection import current_timestamp, execute, fetch_one, fetch_all
 
 
-VALID_SLOTS = {"director", "writer"}
+VALID_SLOTS = {"director", "writer", "dm"}
 
 
 async def set_slot_binding(

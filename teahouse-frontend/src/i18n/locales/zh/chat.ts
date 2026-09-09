@@ -1,5 +1,7 @@
 export const zhChat = {
   mainSession: "主会话",
+  dmConsole: "DM",
+  dmOocNotice: "这里发送的内容均视为局外发言",
   subSession: "子会话 {{sid}}",
   sessionGroup: "会话",
   sessionItem: "会话·{{sid}}",

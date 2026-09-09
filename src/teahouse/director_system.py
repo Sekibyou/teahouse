@@ -32,6 +32,7 @@ TEMPLATE_FILES = [
 ]
 
 INSTANCE_TEAHOUSE = "teahouse.md"
+INSTANCE_DM_YAML = "dm.yaml"
 INSTANCE_SKILLS_DIR = "skills"
 
 # Directories excluded entirely from tree display
@@ -434,4 +435,55 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
         if assistant_text:
             fake_messages.append({"role": "assistant", "content": _resolve_msg(assistant_text).strip()})
 
+    return system_prompt, fake_messages
+
+
+# ---------------------------------------------------------------------------
+# DM（运行时导演）—— 实例级提示词
+# ---------------------------------------------------------------------------
+#
+# 导演的提示词是**全局的**（跟随用户的 prompt preset）；DM 的提示词是**实例内唯一**的：
+# 实例根目录的 `dm.yaml`，格式仿导演提示词（system + 可选 messages/user/assistant），
+# 同样支持 `${teahouse.*}`（含 DM 专属的 tools_usage）、`${}` 变量、`{{}}` 切片。
+# 存在该文件即启用 DM（见 ignored/dm-design.md）。
+
+
+def dm_enabled(instance_dir: Path) -> bool:
+    """DM 是否启用 —— 实例根目录存在 dm.yaml。"""
+    return (instance_dir / INSTANCE_DM_YAML).is_file()
+
+
+# 引擎级「呈现契约」——**无条件**追加到 DM 系统提示词末尾（作者 dm.yaml 写不写都生效）。
+# 作者提示词负责人格与风格；这一块负责那条不可协商的机制：玩家只看到 Output。
+_DM_CONTRACT = """
+[系统约定 · 呈现契约]
+玩家在游玩视图**只看到 `Output` 写入的内容**。你这一回合的普通文本（以及思考、工具调用）玩家在游玩视图**看不到**——那是局外说明，只在 DM 控制台可见。
+所以：凡是要让玩家看到的旁白 / 台词 / 骰子结果，**必须调用 `Output(chara, content, kind?)` 呈现**，不要用纯文本代替。一轮可多次调用。
+玩家本轮的扮演发言已由系统自动写入呈现记录（不要重复 Output 玩家的话）。
+只有最新批次能用 `OutputEdit(seq, old_string, new_string)` 修改；更早批次已成历史、不可改。
+""".strip()
+
+
+async def resolve_dm_system(
+    instance_dir: Path,
+    user_id: str | None,
+    max_depth: int = MAX_RESOLVE_DEPTH,
+) -> Optional[tuple[str, list[dict]]]:
+    """组装 DM 的 system prompt。返回 (system_prompt, fake_messages)；未启用 → None。
+
+    工具指南只注入 DM 白名单（`tools.DM_TOOLS`）的 usage，避免把导演的全量工具
+    说明塞进 DM 上下文。末尾**无条件**追加引擎级「呈现契约」（见 `_DM_CONTRACT`）。
+    """
+    p = instance_dir / INSTANCE_DM_YAML
+    if not p.is_file():
+        return None
+    from .tools import load_tools_usage, DM_TOOLS
+
+    yaml_text = p.read_text(encoding="utf-8")
+    tools_usage = await load_tools_usage(user_id=user_id, only=DM_TOOLS)
+    variables = build_template_variables(instance_dir, tools_usage)
+    system_prompt, fake_messages = resolve_preset_template(
+        yaml_text, variables, instance_dir, max_depth=max_depth
+    )
+    system_prompt = (system_prompt.rstrip() + "\n\n" + _DM_CONTRACT).strip()
     return system_prompt, fake_messages

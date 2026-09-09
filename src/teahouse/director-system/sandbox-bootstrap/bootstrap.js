@@ -151,6 +151,11 @@
     // 楼层（正文历史）
     listFloors: function() { return callHost('listFloors', []); },
 
+    // DM 呈现记录（message bubble）—— 与 listFloors 并列的独立线路。
+    // 返回 Promise<{enabled, messages:[{chara, seq, batch, content, kind?}]}>。
+    // enabled = 实例根目录存在 dm.yaml。DM 不走 floors 系统。
+    listMessages: function() { return callHost('listMessages', []); },
+
     // 文件操作
     readText: function(path) { return callHost('readText', [path]); },
     readAsset: function(path) { return callHost('readAsset', [path]); },

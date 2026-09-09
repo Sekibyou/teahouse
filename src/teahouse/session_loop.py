@@ -299,12 +299,15 @@ class SessionLoop:
             client = await self._resolve_client()
             if client is None:
                 _event_log(self.instance_dir, self.session_id, "loop_no_client", {})
+                # 没有可用的模型槽位——必须广播 done，否则前端停在「等待」，
+                # 发送按钮永久禁用（点发送无反应）。
+                self._broadcast_done()
                 break
 
             # ── Pre-flight compact check (85% of max_context) ──
-            # Only for the main session. If we're already close to the limit,
+            # Only for main + DM sessions. If we're already close to the limit,
             # compact before running the tool loop so it doesn't overflow mid-run.
-            if self.session_id == sessions.MAIN_SESSION_ID:
+            if self.session_id in (sessions.MAIN_SESSION_ID, sessions.DM_SESSION_ID):
                 max_ctx = client.config.max_context
                 msgs_for_check = sessions.records_to_context(
                     self.instance_dir, client.api_style, session_id=self.session_id
@@ -322,7 +325,7 @@ class SessionLoop:
             is_manual_compact = any(
                 m[1].strip().startswith("[compact]") for m in msgs
             ) if msgs else False
-            if is_manual_compact and self.session_id == sessions.MAIN_SESSION_ID:
+            if is_manual_compact and self.session_id in (sessions.MAIN_SESSION_ID, sessions.DM_SESSION_ID):
                 _event_log(self.instance_dir, self.session_id, "compact_manual", {})
                 await self._run_compact_task(client)
                 self._broadcast_done()
@@ -487,14 +490,25 @@ class SessionLoop:
         self._broadcast_done()
 
     async def _resolve_client(self):
-        """Resolve the director slot client. Returns None if unconfigured."""
+        """Resolve this session's LLM slot client. Returns None if unconfigured.
+
+        DM sessions use the `dm` slot; if it is unbound, fall back to `director`
+        so a DM-enabled instance still runs out of the box.
+        """
         from .app import _resolve_slot_client
+        from . import sessions
 
         if not self.user_id:
             return None
+        slot = "dm" if self.session_id == sessions.DM_SESSION_ID else "director"
         try:
-            return await _resolve_slot_client(self.user_id, "director")
+            return await _resolve_slot_client(self.user_id, slot)
         except Exception:
+            if slot == "dm":
+                try:
+                    return await _resolve_slot_client(self.user_id, "director")
+                except Exception:
+                    return None
             return None
 
     def _drain_queue(self) -> list[tuple[str, str, int]]:

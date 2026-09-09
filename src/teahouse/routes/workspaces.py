@@ -2100,6 +2100,22 @@ async def get_floors(instance_id: str, user: UserInfo = Depends(require_user)):
     return {"floors": _list_floors(instance_dir)}
 
 
+@router.get("/instances/{instance_id}/dm-output")
+async def get_dm_output(instance_id: str, user: UserInfo = Depends(require_user)):
+    """DM 呈现记录（runtime/dm-output.jsonl）—— 沙盒渲染气泡用。
+
+    `enabled` = 实例根目录存在 dm.yaml（DM 是否启用）。
+    """
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    instance_dir = _resolve_instance_dir(inst)
+    from ..director_system import dm_enabled
+    from ..dm_output import read_messages
+    return {"enabled": dm_enabled(instance_dir), "messages": read_messages(instance_dir)}
+
+
 # ===== Git operations =====
 
 class GitCommitRequest(BaseModel):

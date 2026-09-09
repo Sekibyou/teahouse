@@ -12,7 +12,7 @@ export function SlotsPanel() {
   const isMobile = useIsMobile()
   const { activeSection } = useSettingsDialogContext()
   const isActive = activeSection === "slots"
-  const [slotBindings, setSlotBindings] = useState<SlotBindings>({ director: { model_id: null, profile_id: null, prompt_preset_id: null }, writer: { model_id: null, profile_id: null, prompt_preset_id: null } })
+  const [slotBindings, setSlotBindings] = useState<SlotBindings>({ director: { model_id: null, profile_id: null, prompt_preset_id: null }, writer: { model_id: null, profile_id: null, prompt_preset_id: null }, dm: { model_id: null, profile_id: null, prompt_preset_id: null } })
   const [slotsLoading, setSlotsLoading] = useState(false)
   const [models, setModels] = useState<LLMModel[]>([])
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
@@ -43,7 +43,7 @@ export function SlotsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive])
 
-  const handleSlotChange = (slotId: "director" | "writer") => (binding: SlotBinding) => {
+  const handleSlotChange = (slotId: "director" | "writer" | "dm") => (binding: SlotBinding) => {
     setSlotBindings(prev => ({ ...prev, [slotId]: binding }))
   }
 
@@ -70,6 +70,16 @@ export function SlotsPanel() {
             models={models}
             profiles={profiles}
             onChange={handleSlotChange("writer")}
+            onRefresh={silentLoad}
+          />
+          {/* DM（运行时导演）：提示词来自实例 dm.yaml，故无预设选择器；未绑定时回退 director 槽 */}
+          <SlotCard
+            slotId="dm"
+            label={t("slot.dm")}
+            binding={slotBindings.dm}
+            models={models}
+            profiles={profiles}
+            onChange={handleSlotChange("dm")}
             onRefresh={silentLoad}
           />
         </div>

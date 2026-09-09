@@ -157,6 +157,7 @@ system —— 导演的系统提示词模板，可用三类占位符：
   slot: {
     director: "导演模型",
     writer: "正文模型",
+    dm: "DM 模型",
   },
 
   // ─── General settings tab ───

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { renderText, clearRenderTextCache } from "@/lib/htmlSanitizer"
-import { sandboxSrcApi, floorsApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi, rollApi } from "@/lib/api"
+import { sandboxSrcApi, floorsApi, dmOutputApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi, rollApi } from "@/lib/api"
 import type { ToolsRunStep, SandboxVarEntry } from "@/lib/api"
 import { consumeVars } from "@/lib/teahouseVars"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
@@ -226,6 +226,16 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           if (instanceId) {
             const res = await floorsApi.list(instanceId)
             result = res.ok ? res.data?.floors : []
+          }
+          break
+        }
+        case "listMessages": {
+          // DM 呈现记录（与 listFloors 并列的独立线路）。返回 {enabled, messages}。
+          if (instanceId) {
+            const res = await dmOutputApi.list(instanceId)
+            result = res.ok ? res.data : { enabled: false, messages: [] }
+          } else {
+            result = { enabled: false, messages: [] }
           }
           break
         }

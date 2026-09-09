@@ -157,6 +157,7 @@ system 以外に、他の role の会話履歴をあらかじめ設定できま�
   slot: {
     director: "監督モデル",
     writer: "正文（本文）モデル",
+    dm: "DM モデル",
   },
 
   // ─── General settings tab ───

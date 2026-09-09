@@ -9,6 +9,7 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
   cover.jpg             封面图（可选，根目录取名即被识别）。
   .gitignore            常见 `.sessions/` `temp/`（不入 git）；随实例提交。
   prototype.json        原型包元数据（引擎打包/导入时生成与读取的 JSON，根目录）。
+  dm.yaml               （可选）DM 提示词——存在即启用 DM（跑团/语C/聊天式）。格式见 dm.yaml.example
 
   runtime/              游戏运行时 —— 直接影响游玩的一切
     floors/             floor-N.md（定稿）/ floor-N-draft.md（半正式稿）正文历史

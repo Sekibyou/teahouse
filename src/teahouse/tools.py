@@ -84,22 +84,28 @@ def _raw_tool_to_schema(tool: dict) -> dict:
     }
 
 
-def load_tools(path: Path | None = None, user_id: str | None = None) -> list[dict]:
+def load_tools(path: Path | None = None, user_id: str | None = None, only: set[str] | None = None) -> list[dict]:
     """Load tool schemas from tools.json, returning OpenAI-compatible function-calling format.
 
     Call this once at startup. The result is also stored in the module-level TOOLS variable.
     Includes plugin-provided tools for the given user if plugins are loaded.
+
+    ``only`` (optional) restricts the returned schemas to that name set — used to
+    give the DM a lean, role-specific toolset. When set, plugin tools are omitted
+    (they are director-scoped extensions, not part of the DM's fixed set).
     """
     global TOOLS
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
+    if only is not None:
+        raw = [t for t in raw if t.get("name") in only]
     builtin = [_raw_tool_to_schema(t) for t in raw]
 
     # Merge plugin tools — scoped to the calling user so one user's plugin
     # tools never leak into another user's tool schema. Startup/global loads
     # (no user_id) stay builtin-only; per-director-round loads pass the user.
     try:
-        if user_id:
+        if user_id and only is None:
             from .plugins import get_tool_defs_from_plugins
             plugin_defs = get_tool_defs_from_plugins(user_id)
             plugin_schemas = [_raw_tool_to_schema(t) for t in plugin_defs]
@@ -126,7 +132,7 @@ def load_tools_summary() -> list[dict]:
     ]
 
 
-async def load_tools_usage(path: Path | None = None, user_id: str | None = None) -> str:
+async def load_tools_usage(path: Path | None = None, user_id: str | None = None, only: set[str] | None = None) -> str:
     """Build the natural-language tool usage guide from tools.json.
 
     Each tool's `usage` field is rendered as a markdown section.
@@ -134,9 +140,14 @@ async def load_tools_usage(path: Path | None = None, user_id: str | None = None)
     Includes plugin tool usage guides, resolving `${var:key}` references against
     the plugin's live plugin_data each assembly.
     Returns the combined text for injection into the director's system prompt.
+
+    ``only`` (optional) restricts the guide to that name set — used to build the
+    DM's lean usage guide. Plugin usage guides are omitted when set.
     """
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
+    if only is not None:
+        raw = [t for t in raw if t.get("name") in only]
 
     sections = ["# 工具使用指南\n"]
     for tool in raw:
@@ -151,7 +162,7 @@ async def load_tools_usage(path: Path | None = None, user_id: str | None = None)
     # Append plugin tool usage guides — scoped per user, resolving ${var:...}
     # against the plugin's live data. Only when a user context is present.
     try:
-        if user_id:
+        if user_id and only is None:
             from .plugins import get_tool_defs_from_plugins
             plugin_defs = get_tool_defs_from_plugins(user_id)
             if plugin_defs:
@@ -1598,6 +1609,82 @@ async def execute_generate(
     )
 
 
+async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
+    """Output — 向玩家呈现一条消息（追加到 runtime/dm-output.jsonl 的当前批次）。"""
+    from .dm_output import append_message, DM_OUTPUT_REL, RESERVED_CHARA_USER
+
+    chara = args.get("chara")
+    content = args.get("content")
+    kind = args.get("kind")
+    if not isinstance(chara, str) or not chara.strip():
+        return "Error: 'chara' 必填 —— 发言者（\"user\" 为玩家保留值，勿用）"
+    if chara.strip() == RESERVED_CHARA_USER:
+        return (
+            "Error: 'chara' 不能用保留值 'user' —— 玩家发言由系统自动写入，"
+            "不要重复呈现玩家的话"
+        )
+    if not isinstance(content, str) or content == "":
+        return "Error: 'content' 必填（要呈现的正文）"
+    if kind is not None and not isinstance(kind, str):
+        return "Error: 'kind' 必须是字符串（say / narrate / roll / …）"
+    try:
+        rec = append_message(
+            instance_dir, chara.strip(), content,
+            kind.strip() if isinstance(kind, str) and kind.strip() else None,
+        )
+    except OSError as e:
+        return f"Error: 写入 dm-output 失败: {e}"
+    state.broadcast(
+        "file_changed",
+        {"path": DM_OUTPUT_REL, "tool": "Output", "type": "modified",
+         "instance_id": instance_id or instance_dir.name},
+    )
+    return (
+        f"Output 完成\n"
+        f"  seq={rec['seq']}  batch={rec['batch']}  chara={rec['chara']}\n"
+        f"  （最新批次内可用 OutputEdit 修改）"
+    )
+
+
+async def execute_output_edit(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
+    """OutputEdit — 修改最新批次内某条已呈现的消息。"""
+    from .dm_output import edit_message, DM_OUTPUT_REL
+
+    seq = args.get("seq")
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        return "Error: 'seq' 必填，且为整数（目标消息序号）"
+    new_string = args.get("new_string")
+    if not isinstance(new_string, str):
+        return "Error: 'new_string' 必填，且为字符串"
+    old_string = args.get("old_string")
+    if old_string is not None and not isinstance(old_string, str):
+        return "Error: 'old_string' 必须是字符串（留空 = 整体覆写）"
+
+    ok, err = edit_message(instance_dir, seq, old_string, new_string)
+    if not ok:
+        return f"Error: {err}"
+    state.broadcast(
+        "file_changed",
+        {"path": DM_OUTPUT_REL, "tool": "OutputEdit", "type": "modified",
+         "instance_id": instance_id or instance_dir.name},
+    )
+    return f"OutputEdit 完成：seq={seq}（{'整体覆写' if not old_string else '锚点替换'}）"
+
+
+async def execute_roll(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Roll — 掷骰，返回整数。复用 placeholder._roll（唯一事实源）。"""
+    from .placeholder import _roll
+
+    dice = args.get("dice")
+    if not isinstance(dice, str) or not dice.strip():
+        return "Error: 'dice' 必填 —— 骰子表达式，如 1d6 / 2d6+1 / 4d6k3"
+    try:
+        result = _roll(dice.strip())
+    except ValueError as e:
+        return f"Error: 骰子表达式无效: {e}"
+    return str(result)
+
+
 async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
     """Read a skill's SKILL.md content. Looks in instance skills/ first,
     then falls back to the system teahouse_skills/ directory."""
@@ -2018,7 +2105,7 @@ async def execute_wait(instance_dir: Path, args: dict[str, Any]) -> str:
 # GitCommit is excluded (handled by its own dispatcher branch above).
 _FILE_TOOL_EXECUTORS = {
     "SetRuntimeVar", "Write", "Edit", "Report", "WriteLine", "FileOps",
-    "GitBranch", "GitCheckout",
+    "GitBranch", "GitCheckout", "Output", "OutputEdit",
 }
 
 TOOL_EXECUTORS = {
@@ -2030,6 +2117,9 @@ TOOL_EXECUTORS = {
     "Grep": execute_grep,
     "CheckPackageRefs": execute_check_package_refs,
     "Generate": execute_generate,
+    "Output": execute_output,
+    "OutputEdit": execute_output_edit,
+    "Roll": execute_roll,
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
     "TodoWrite": execute_todo_write,
@@ -2067,6 +2157,20 @@ SUB_SESSION_BASE_TOOLS = {
     "GitDiff",
     "Report",
     "EndSession",
+}
+
+
+# DM（运行时导演）工具白名单 —— 轻量、全权但无子会话能力（见 ignored/dm-design.md）。
+# 读/写/git 存盘/变量/呈现/骰子 + 少量辅助。**不给**：子会话三件套（Start/Send/DeleteSubSession）、
+# Report、EndSession、Generate（正文助手轨）、BatchExecute、FileOps、CheckPackageRefs、
+# GitBranch/GitCheckout（分支切换是元操作，留给导演）。
+DM_TOOLS = {
+    "Read", "Glob", "Grep",
+    "Write", "Edit", "WriteLine",
+    "GitCommit", "GitDiff", "GitStatus", "GitLog",
+    "GetRuntimeVars", "SetRuntimeVar",
+    "Output", "OutputEdit", "Roll",
+    "SkillRead", "TodoWrite", "Wait",
 }
 
 

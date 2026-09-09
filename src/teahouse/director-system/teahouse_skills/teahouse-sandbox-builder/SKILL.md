@@ -1,6 +1,6 @@
 ---
 name: teahouse-sandbox-builder
-description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），包括完整的沙盒 API 参考和最佳实践。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `runtime/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、或"给实例做前端"时触发。
+description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），含完整沙盒 API 参考与最佳实践。**动手前先按模式分流**：小说式 = 正文渲染器 + 翻页器；跑团 / 语C / 聊天式 = 启用 DM（实例根目录建 dm.yaml）+ DM 气泡渲染器（`listMessages()` / `sessionSend('dm',…)`），并禁用正文渲染系统。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `runtime/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、"给实例做前端"，或把实例做成跑团 / 语C / 聊天式时触发。
 ---
 
 # Sandbox Builder Skill
@@ -17,6 +17,28 @@ description: 教导导演如何设计和构建前端沙盒代码（UI 组件、�
 - "让页面看起来像 XX 风格"
 - "给实例做前端"
 - "重新设计沙盒"
+
+## 先选模式：小说式 / 跑团·聊天式
+
+动手前先确定实例属于哪种模式——两者的**渲染系统互斥**，选错了画面会乱。
+
+| | 小说式 | 跑团 / 语C / 聊天式 |
+|---|---|---|
+| 正文来源 | `runtime/floors/floor-N.md`（散文正文） | `runtime/dm-output.jsonl`（DM 呈现的气泡） |
+| 核心组件 | 正文渲染器 + 翻页器 + 输入条 | DM 气泡渲染器 |
+| 谁产出 | 导演组织设定 → `Generate` 产文 → 落 floors | **DM** 运行时扮演 → `Output` 落 dm-output |
+| 启用方式 | 默认 | 实例根目录建 `dm.yaml` 即启用 DM |
+
+### 小说式（默认）
+
+需要：正文渲染器（`teahouse-maintext-renderer.js`）+ 翻页器（`page-bar.js`）+ 生成/输入条。正文经 `listFloors()` + `readText()` + `renderRichText()` 渲染，`Generate` 流式草稿经 `draft.change` 打字机呈现。见下方「步骤 2」。
+
+### 跑团 / 语C / 聊天式
+
+- **启用 DM**：在**实例根目录**写 `dm.yaml`（格式见 `prototypes/example/dm.yaml.example`）。DM 是实例级单例 agent，工具集轻量全权（读 / 写 / git 存盘 / 变量 / `Output` / `Roll`），**不走 floors 系统**。
+- **呈现**：DM 用 `Output(chara, content, kind?)` 把发言写进 `runtime/dm-output.jsonl`；沙盒用 `Teahouse.listMessages()` 读它渲染气泡——这是**与 `listFloors()` 并列的独立线路**。玩家扮演发言用 `Teahouse.sessionSend('dm', text)` 发送（后端自动入 dm-output）。
+- **禁用正文渲染系统**：把 `teahouse-maintext-renderer.js` / `page-bar.js` / `input-bar.js` 移入 `runtime/sandbox/disabled/`（该子目录不被加载），避免与气泡视图打架。
+- **参考实现**：`prototypes/example/runtime/sandbox/disabled/dm-bubbles.js`（移出 `disabled/` 即启用）。
 
 ## 沙盒架构概览
 
@@ -108,6 +130,26 @@ const markdown = await Teahouse.readText(floor.path)
 const html = await Teahouse.renderRichText(markdown)
 container.innerHTML = html
 ```
+
+### DM 呈现（跑团 / 语C / 聊天式）
+
+DM 的呈现记录位于 `runtime/dm-output.jsonl`，**与 `runtime/floors/` 并列、互不干扰**。仅当实例启用 DM（根目录有 `dm.yaml`）时才有内容。
+
+#### `Teahouse.listMessages() → Promise<{enabled, messages}>`
+
+- `enabled`：实例是否启用 DM（根目录存在 `dm.yaml`）。
+- `messages`：`[{chara, seq, batch, content, kind?}]`——`chara` 发言者（`user` 为玩家保留值），`seq` 全局自增，`batch` 批次号（**只有最新批次可改**，历史批次已冻结），`kind` 可选（`say` / `narrate` / `roll` / …）。
+
+```js
+const { enabled, messages } = await Teahouse.listMessages()
+if (enabled) messages.forEach(m => renderBubble(m.chara, m.content, m.kind))
+```
+
+订阅 `output.refresh`（`data.path === 'runtime/dm-output.jsonl'`）重渲染。
+
+#### `Teahouse.sessionSend('dm', text) → void`
+
+玩家**扮演**发言：发给 DM 会话；后端自动把它写入 dm-output（开新批次）再交给 DM。注意区分：**导演栏里的 DM 会话输入框**里打的字是**局外**发言（只进会话、不进 dm-output），与沙盒的扮演输入是两条不同通道。
 
 ### 富文本渲染
 
@@ -564,9 +606,9 @@ Glob runtime/sandbox/**/*     → 查看沙盒目录中的现有文件
 
 确认实例已有哪些 UI 组件。bootstrap 是引擎内置的，不需要也不应该创建。
 
-### 步骤 2：确保正文渲染器存在
+### 步骤 2：确保渲染系统存在（先按模式分流）
 
-如果实例没有正文渲染器，需要创建一个。引擎提供了默认的 `teahouse-maintext-renderer.js` 作为模板。核心职责：
+**小说式**：需要**正文渲染器**。如果实例没有，就创建一个——引擎提供了默认的 `teahouse-maintext-renderer.js` 作为模板。核心职责：
 - 版面管理：`Teahouse._pageState`（floors 数组 + currentIndex）
 - 正文渲染：`listFloors()` + `readText()` + `renderRichText()` → DOM
 - 流式草稿：订阅 `draft.change` 事件实现打字机效果
@@ -576,6 +618,8 @@ Glob runtime/sandbox/**/*     → 查看沙盒目录中的现有文件
 编写时使用普通 function 和 var（兼容旧浏览器，因为 iframe 无 transpiler）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
 
 Write 到 `runtime/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
+
+**跑团 / 语C / 聊天式**：不要正文渲染器，改用 **DM 气泡渲染器**（`listMessages()` + `sessionSend('dm', …)`，见上「DM 呈现」）。同时把 `teahouse-maintext-renderer.js` / `page-bar.js` / `input-bar.js` 移入 `runtime/sandbox/disabled/` 禁用，避免与气泡视图打架；并在实例根目录建 `dm.yaml` 启用 DM。参考实现：`prototypes/example/runtime/sandbox/disabled/dm-bubbles.js`。
 
 ### 步骤 3：编写全局主题 CSS（唯一允许的独立 css）
 

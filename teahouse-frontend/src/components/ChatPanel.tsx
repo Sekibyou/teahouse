@@ -40,6 +40,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   sessionStateRef.current = sessionStateMap
 
   const MAIN_SID = "main"
+  // DM（运行时导演）单例会话 id —— 与后端 sessions.DM_SESSION_ID 保持一致。
+  const DM_SID = "dm"
   const [activeSid, setActiveSid] = useState(MAIN_SID)
 
   // Convenience getter/setter for the currently-viewed session
@@ -1315,6 +1317,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           [{ role: "user", content: "[compact]" }],
           inst.id,
           sid,
+          true,  // [compact] 是元指令，不是扮演发言——绝不能进 dm-output
         )
       } catch {
         patchSessionState(sid, { compacting: false, waiting: false })
@@ -1418,6 +1421,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           [{ role: "user", content }],
           activeInst!.id,
           sid,
+          // DM 控制台：这里输入的一切都视为局外发言（不进 dm-output）。
+          sid === DM_SID,
         )
       } else {
         // Writer path (non-tools): no backend enqueue — content must stay a
@@ -1750,6 +1755,13 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           <div className="text-[10px] text-muted-foreground min-w-0">
             <FloorSummaryText stats={floorsStats} />
           </div>
+        </div>
+      )}
+
+      {/* DM 控制台：常驻提示——DM 栏输入的一切都视为局外发言（只进会话，不进呈现） */}
+      {activeSid === DM_SID && (
+        <div className="px-3 py-1.5 border-t border-border bg-muted/30 shrink-0">
+          <div className="text-xs text-muted-foreground text-center">{t("dmOocNotice")}</div>
         </div>
       )}
 

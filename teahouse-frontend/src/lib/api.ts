@@ -530,7 +530,7 @@ export const chatApi = {
   /** Send a director message: POSTs to /v1/chat which enqueues the message
    *  into the backend session loop. The backend persists it and streams results
    *  via session_event SSE broadcast. */
-  sendDirectorMessage: async (messages: { role: string; content: string | { manual: string; pastes: { id: number; content: string }[] } }[], instanceId: string, sessionId?: string) => {
+  sendDirectorMessage: async (messages: { role: string; content: string | { manual: string; pastes: { id: number; content: string }[] } }[], instanceId: string, sessionId?: string, dmOoc?: boolean) => {
     const token = getAuthToken()
     const response = await fetch(`${getApiBaseUrl()}/v1/chat`, {
       method: "POST",
@@ -544,6 +544,8 @@ export const chatApi = {
         tools: true,
         instance_id: instanceId,
         session_id: sessionId || "main",
+        // DM 栏输入的一切都视为局外发言（只进会话，不进 dm-output）。
+        dm_ooc: !!dmOoc,
       }),
     })
     if (!response.ok) {
@@ -654,6 +656,31 @@ export interface FloorEntry {
 export const floorsApi = {
   list: async (instanceId: string) => {
     return get<{ floors: FloorEntry[] }>(`/api/instances/${instanceId}/floors`)
+  },
+}
+
+// DM 呈现记录（runtime/dm-output.jsonl）—— 与 floors 并列的独立线路，沙盒渲染气泡用。
+export interface DmMessage {
+  /** 发言者。`user` 为玩家保留值；其余任意字符串（角色名 / narrator / dice …） */
+  chara: string
+  /** 全局自增序号 */
+  seq: number
+  /** 批次号。一轮 user + 该轮所有 DM 消息同批；只有最新批次可改 */
+  batch: number
+  content: string
+  /** 可选：say / narrate / roll / …，供沙盒差异化渲染 */
+  kind?: string
+}
+
+export interface DmOutputResult {
+  /** 实例根目录是否存在 dm.yaml（DM 是否启用） */
+  enabled: boolean
+  messages: DmMessage[]
+}
+
+export const dmOutputApi = {
+  list: async (instanceId: string) => {
+    return get<DmOutputResult>(`/api/instances/${instanceId}/dm-output`)
   },
 }
 
