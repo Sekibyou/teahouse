@@ -697,7 +697,7 @@ async def execute_edit(instance_dir: Path, args: dict[str, Any], instance_id: st
         ignored_path = path
         path = None
     if slice_expr is None and not path:
-        return "Error: 缺少 path（或用 slice 指定单文件切片）。"
+        return "Error: 缺少目标文件 —— path 与 slice 二选一必填（本次两者都没给）。"
 
     # Resolve {{path}} placeholders in new_string (only when explicitly requested).
     # File slicing does NOT resolve variables (copy/move primitive).
