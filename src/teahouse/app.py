@@ -533,27 +533,6 @@ def _expand_batch_calls(all_tool_calls: list[dict], instance_dir: Path) -> list[
     return out
 
 
-def _dm_user_note(instance_dir: Path, content: str) -> str:
-    """DM 会话：若本轮输入与 dm-output 最后一条玩家发言一致，附上「已入 output」提示。
-
-    作用是防止 DM 把玩家原话再 Output 一遍。局外（OOC）输入不在 dm-output 里，
-    因此不会被加上该提示。
-    """
-    try:
-        from .dm_output import read_messages, RESERVED_CHARA_USER
-        recs = read_messages(instance_dir)
-        if recs and recs[-1].get("chara") == RESERVED_CHARA_USER and recs[-1].get("content") == content:
-            seq = recs[-1].get("seq")
-            return (
-                f"{content}\n\n"
-                f"[系统] 上面这句玩家发言已写入呈现记录 output（seq={seq}）。"
-                f"不要重复 Output 玩家的话——你只呈现自己（DM / 角色）的发言。"
-            )
-    except Exception:
-        pass
-    return content
-
-
 async def _tool_use_loop(
     client: LLMClient,
     messages: list[dict],
@@ -607,10 +586,7 @@ async def _tool_use_loop(
     new_inputs = [m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str) and m.get("content")]
     if new_inputs:
         # Strip reasoning/blocks markers (frontend may still send them).
-        _u = new_inputs[-1]["content"]
-        if is_dm:
-            _u = _dm_user_note(instance_dir, _u)
-        msg.append({"role": "user", "content": _u})
+        msg.append({"role": "user", "content": new_inputs[-1]["content"]})
 
     # Persist this round's real user input. Preset fake messages / system prompt
     # are injected into `msg` below and never reach persistence.

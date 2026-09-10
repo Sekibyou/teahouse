@@ -16,12 +16,24 @@ DM 的每一轮发言（以及玩家的扮演发言）都追加到这里，作�
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 DM_OUTPUT_REL = "runtime/dm-output.jsonl"
 
 # `user` 为玩家保留值；其余任意字符串（角色名 / narrator / dice …）。
 RESERVED_CHARA_USER = "user"
+
+# 前端「包裹层」前缀（前端 dmWrap.ts 套、这里剥）：一行系统 fence + 一个空行。
+# 形如 `[[TH-SYS presence 3]]` / `[[TH-SYS ooc]]`。仅出现在 session 里；写呈现记录时剥掉，
+# 保证 runtime/dm-output.jsonl 的 content 是纯正文（玩家气泡不含元信息）。
+# ⚠️ 与 teahouse-frontend/src/lib/dmWrap.ts 的格式必须保持一致。
+_WRAP_PREFIX_RE = re.compile(r"^\[\[TH-SYS [^\]\n]*\]\][ \t]*\r?\n\r?\n")
+
+
+def strip_wrap_prefix(text: str) -> str:
+    """剥掉前端包裹层前缀（若有）。无前缀则原样返回。"""
+    return _WRAP_PREFIX_RE.sub("", text, count=1) if isinstance(text, str) else text
 
 
 def dm_output_path(instance_dir: Path) -> Path:
@@ -101,13 +113,16 @@ def append_user_message(instance_dir: Path, content: str) -> dict:
     """玩家**扮演**发言：开新批次并追加（返回新记录）。
 
     开新批次 = 上一批次从此冻结（视为已确认）。DM 栏的局外发言不走这里。
+
+    传入的 content 若带前端包裹层前缀（`[[TH-SYS …]]`），**写盘前先剥掉**——呈现记录
+    里只保留纯正文（前缀只用于 DM 的会话上下文，不该出现在玩家气泡里）。
     """
     records = read_messages(instance_dir)
     rec = {
         "chara": RESERVED_CHARA_USER,
         "seq": max_seq(records) + 1,
         "batch": max_batch(records) + 1,
-        "content": str(content),
+        "content": strip_wrap_prefix(str(content)),
     }
     records.append(rec)
     _write_all(instance_dir, records)

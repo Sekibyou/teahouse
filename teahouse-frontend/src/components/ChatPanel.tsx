@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText } from "lucide-react"
-import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi } from "@/lib/api"
+import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi, dmOutputApi } from "@/lib/api"
+import { wrapDmMessage, parseDmWrap, dmBadgeLabel } from "@/lib/dmWrap"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
@@ -1414,9 +1415,15 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         // Director path: send paste blocks as structured content so the backend
         // can fold/spill them (see SessionLoop._compose_message). No pastes →
         // a plain string, matching the previous envelope.
-        const content = pastes && pastes.length > 0
+        const rawContent = pastes && pastes.length > 0
           ? { manual: text, pastes: pastes.map((p) => ({ id: p.id, content: p.content })) }
           : text
+        // DM 控制台输入 = 局外发言：套上「〔局外发言〕」前缀（随正文落盘 + 喂 DM）。
+        const content = sid === DM_SID
+          ? (typeof rawContent === "string"
+              ? wrapDmMessage(rawContent, { ooc: true })
+              : { ...rawContent, manual: wrapDmMessage(rawContent.manual, { ooc: true }) })
+          : rawContent
         await chatApi.sendDirectorMessage(
           [{ role: "user", content }],
           activeInst!.id,
@@ -1500,14 +1507,27 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     }
   }
 
-  // 沙盒 Teahouse.send() 消息 → 入队列 (no polling, fire-and-forget)
-  const handleSandboxSend = useCallback((msg: string, targetSid?: string) => {
+  // 沙盒 Teahouse.send() / sessionSend('dm', …) → 入队列 (no polling, fire-and-forget)
+  const handleSandboxSend = useCallback(async (msg: string, targetSid?: string) => {
     const sid = targetSid || activeSid
     const inst = getActiveInstance()
     if (!inst) return
     // 与 _doSend 保持一致：发送前进入 waiting，待首个 session_event 转 running 时清掉。
     patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
-    chatApi.sendDirectorMessage([{ role: "user", content: msg }], inst.id, sid).catch(() => {})
+    let content = msg
+    if (sid === DM_SID) {
+      // 扮演发言：套上「〔已入呈现 #N〕」前缀。N = 当前 dm-output 最大 seq + 1
+      // （后端随后会把这条写入 dm-output，分到的正是 N）。
+      let seq = 1
+      try {
+        const res = await dmOutputApi.list(inst.id)
+        seq = res.ok
+          ? (res.data?.messages ?? []).reduce((m, x) => Math.max(m, x.seq || 0), 0) + 1
+          : 1
+      } catch { /* 取不到就退回 1，包裹层仍生效 */ }
+      content = wrapDmMessage(msg, { ooc: false, seq })
+    }
+    chatApi.sendDirectorMessage([{ role: "user", content }], inst.id, sid).catch(() => {})
   }, [activeSid])
 
   // Check sessionStore for pending sandbox messages (polled lightly)
@@ -1695,9 +1715,19 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
                     // below the "generating" indicator — see `queuedMsgs` below.
                     null
                   ) : (
-                    <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
-                      {msg.content}
-                    </div>
+                    (() => {
+                      // DM 包裹层：前缀裁掉，渲染为 badge（#N / #ooc），只显示正文。
+                      const { marker, body } = parseDmWrap(msg.content)
+                      const badge = dmBadgeLabel(marker)
+                      return (
+                        <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
+                          {badge && (
+                            <span className="block mb-1 text-[10px] leading-none font-mono opacity-70">{badge}</span>
+                          )}
+                          {body}
+                        </div>
+                      )
+                    })()
                   )}
                 </div>
               ))}
