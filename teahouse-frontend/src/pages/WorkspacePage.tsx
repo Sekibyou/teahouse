@@ -1643,6 +1643,12 @@ export function WorkspacePage() {
       if (e.key === "Escape") return
       // Ctrl+S 由上方 effect / Monaco action 处理，这里不抢占。
       if (mod && key === "s") return
+      // F2：重命名最后选中项，等价右键菜单「重命名」。
+      if (key === "f2") {
+        const sel = selectionRef.current
+        if (sel.length) { e.preventDefault(); handleRenameEntry(sel[sel.length - 1].path) }
+        return
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         const sel = selectionRef.current
         if (sel.length) { e.preventDefault(); beginDelete(sel) }
@@ -1672,7 +1678,7 @@ export function WorkspacePage() {
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, beginDelete, runUndo, runRedo])
+  }, [instId, pasteAnchor, copyEntry, cutEntry, pasteEntry, beginDelete, runUndo, runRedo, handleRenameEntry])
 
   // Chat panel resize via drag
   const [isDragging, setIsDragging] = useState(false)
