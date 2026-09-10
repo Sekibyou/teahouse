@@ -578,6 +578,28 @@
     }
   },
   {
+    "name": "PruneContext",
+    "short": "主动压缩上下文",
+    "description": "主动卸载历史里过期、不再需要的旧工具内容（大段 Read 结果、Write/Edit 写入的正文入参），换成一行简记，从而缩小上下文、推迟整体压缩。两段式：dry_run（默认）只估算并列出候选，dry_run:false 带 ids 才真正执行。",
+    "usage": "把历史里**过期、不再需要**的旧工具内容卸出上下文，换成一行简记，从而缩小上下文、推迟整体压缩（compact）。\n\n## 什么时候用\n- 上下文偏大（末尾用量提示接近/超过阈值），且历史里堆着大量**旧**的大块工具内容时。\n- 卸哪些由**你**判断——只有你知道什么「曾经有用、现在用不上」：如推进到 40 章后 10 章时读过的设定、正文阶段已不再需要的沙盒 skill / API 参考。\n\n## 两段式用法\n1. **估算（默认）**：调 `PruneContext()`（或 `dry_run: true`）→ 返回候选列表（id / 工具 / 大小）与可省 token。此步**不写盘、零成本**，可反复调。\n2. **执行**：把要卸的候选 id **显式**列进 `ids`，调 `PruneContext(dry_run: false, ids: [...])`。\n\n## 低频原则（重要）\n每次**执行**都会让该点之后的 prompt 缓存失效一次——偶发一次可接受，但**别写两条压两条**。请攒够一批、一次执行。\n\n## 可压缩的内容\n- **结果（result）**：`Read` / `SkillRead` / `Grep` / `Glob` / `GitDiff` / `GitLog` / `GitStatus` / `GetRuntimeVars` / `CheckPackageRefs`。\n- **入参**：`Write` 的 content、`Edit` 的 old_string/new_string、`WriteLine` 的 new_content（写入过的正文在磁盘上，以文件为准）。\n- 只列**本会话较早**的（最后一条用户消息之前）、单块 ≥ 400 字符的内容。\n\n## 注意\n- assistant 正文与用户消息**不会**被列为候选。\n- 被卸掉的内容**仍可从磁盘重读**（Read 原文件 / 重跑工具）——所以这不是破坏性操作；但卸载后你不再直接「看到」它，除非重新读取。\n- 执行后改动的效果在**下一次上下文重建**时生效（本轮已在内存里的上下文不变）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "可选，默认 true：只估算并列出候选（不写盘）。传 false 才真正执行压缩，此时 ids 必填。"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "可选（dry_run:false 时必填）：要压缩的候选 id 数组，形如 \"3:1\"。取自 dry_run 返回的列表，须逐个显式给出。"
+        }
+      }
+    }
+  },
+  {
     "name": "Wait",
     "short": "等待指定毫秒",
     "description": "等待指定的毫秒数后再继续后续操作",

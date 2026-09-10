@@ -353,22 +353,32 @@ def _resolve_text(
 def estimate_usage_text(messages: list[dict], system_prompt: str, max_context: int) -> str:
     """A one-line context-usage report for `${teahouse.usage}`.
 
-    Mirrors the threshold logic of `GET /instances/{id}/context-usage`
-    (`routes/workspaces.py`): `threshold = max_context * POST_COMPACT_RATIO` (0.70).
-    Once over it, escalates to an explicit hint to proactively compact.
+    Two escalation tiers, both naming the `PruneContext` tool (the delivery channel
+    for the proactive-prune trigger — the tool only estimates by default, so
+    pointing at it costs nothing):
+      - `>= PRUNE_HINT_RATIO` (0.50, from compact.py) → advance warning.
+      - `>= POST_COMPACT_RATIO` (0.70) → explicit (auto-compact would fire at the
+        end of the cycle).
+    The hint tier sits BELOW the compact threshold on purpose: user_tail is injected
+    once per round, so the agent needs a round of lead time to act before compact.
     """
-    from .compact import estimate_context_tokens, POST_COMPACT_RATIO
+    from .compact import estimate_context_tokens, POST_COMPACT_RATIO, PRUNE_HINT_RATIO
 
     est = estimate_context_tokens(messages, system_prompt)
     if not max_context:
         return f"上下文用量：约 {est:,} tokens。"
     pct = est / max_context
-    threshold = int(max_context * POST_COMPACT_RATIO)
+    compact_at = int(max_context * POST_COMPACT_RATIO)
     base = f"上下文用量：约 {est:,} tokens / {max_context:,}（{pct:.0%}）。"
-    if est >= threshold:
+    if est >= compact_at:
         return base + (
-            f"已超过压缩阈值（{threshold:,} tokens）。"
-            "请考虑主动清理已过期的工具输出/中间结果，避免触发自动压缩。"
+            f"已达自动压缩阈值（{compact_at:,} tokens），本轮结束可能触发压缩。"
+            "请用 `PruneContext` 卸载过期的旧工具内容（先 dry_run 看候选，确认后带 ids 一次批量执行）。"
+        )
+    if est >= int(max_context * PRUNE_HINT_RATIO):
+        return base + (
+            f"接近自动压缩阈值（{compact_at:,} tokens）。"
+            "可先用 `PruneContext` 提前卸载过期的旧工具内容（先 dry_run 看候选，确认后带 ids 执行），避免触发压缩。"
         )
     return base
 

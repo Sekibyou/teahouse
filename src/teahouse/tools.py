@@ -1013,6 +1013,192 @@ async def execute_delete_sub_session(instance_dir: Path, args: dict[str, Any], s
     return f"Sub-session {target} destroyed and reclaimed."
 
 
+# ---------------------------------------------------------------------------
+# PruneContext — proactive context pruning (see ignored/context-compression-design.md)
+# ---------------------------------------------------------------------------
+#
+# Single tool, two phases: `dry_run` (default) estimates and lists candidates at
+# zero cost; `dry_run=false` + explicit ids applies them in one batch (one prompt-
+# cache invalidation). Replaces stale tool content in the session JSONL with a
+# one-line stub — the "action ledger" structure survives, the detail is unloaded
+# and can be re-read from disk when needed.
+
+# A-class: read-only tool results, regenerable by re-running the tool / re-reading.
+_PRUNE_RESULT_TOOLS = {
+    "Read", "SkillRead", "Grep", "Glob", "GitDiff", "GitLog", "GitStatus",
+    "GetRuntimeVars", "CheckPackageRefs",
+}
+
+# B-class: write tools whose large INPUT fields are a redundant copy of disk state
+# (file-as-state — the written content lives on disk, so the arg copy is pure
+# duplication). Only these fields are stubbed; path/slice/offset/limit stay.
+_PRUNE_ARG_FIELDS = {
+    "Write": ("content",),
+    "Edit": ("old_string", "new_string"),
+    "WriteLine": ("new_content",),
+}
+
+# Content below this size (chars) is not listed — keeps candidates meaningful, and
+# makes pruning idempotent (the stub is far below it, so a pruned block never
+# reappears as a candidate).
+_PRUNE_MIN_CHARS = 400
+
+
+def _prune_digest(args: dict) -> str:
+    """A short, single-line hint of what a pruned tool call was about."""
+    try:
+        s = json.dumps(args, ensure_ascii=False)
+    except (TypeError, ValueError):
+        s = str(args)
+    s = " ".join(s.split())
+    return s if len(s) <= 80 else s[:80] + "…"
+
+
+def _prune_scan(instance_dir: Path, sid: str) -> list[dict]:
+    """List prunable blocks that sit before the last user record.
+
+    Everything after the last real user turn is the current round's work, so it is
+    excluded — only genuinely stale content is offered.
+    """
+    from . import sessions as _sessions
+
+    records, _ = _sessions.load_records(instance_dir, session_id=sid)
+    cut = len(records)
+    for i in range(len(records) - 1, -1, -1):
+        if records[i].get("role") == "user":
+            cut = i
+            break
+
+    out: list[dict] = []
+    for rec in records[:cut]:
+        if rec.get("role") != "assistant":
+            continue
+        order = rec.get("order", 0)
+        for bi, b in enumerate(rec.get("blocks") or []):
+            if not isinstance(b, dict) or b.get("type") != "tool_call":
+                continue
+            name = b.get("name", "")
+            if name in _PRUNE_RESULT_TOOLS:
+                r = b.get("result")
+                if isinstance(r, str) and len(r) >= _PRUNE_MIN_CHARS:
+                    out.append({"id": f"{order}:{bi}", "order": order, "index": bi,
+                                "name": name, "kind": "result", "chars": len(r)})
+            elif name in _PRUNE_ARG_FIELDS:
+                a = b.get("args") or {}
+                total = sum(
+                    len(v) for f in _PRUNE_ARG_FIELDS[name]
+                    if isinstance(v := a.get(f), str)
+                )
+                if total >= _PRUNE_MIN_CHARS:
+                    out.append({"id": f"{order}:{bi}", "order": order, "index": bi,
+                                "name": name, "kind": "args", "chars": total})
+    return out
+
+
+def _prune_transform(targets: dict[int, dict[int, str]], stats: dict[str, int]):
+    """Build the `rewrite_lines` transform for `{record_order: {block_index: kind}}`.
+
+    ``stats`` accumulates the real work done — ``blocks`` (content fields stubbed)
+    and ``chars`` (net chars removed) — so the tool reports what actually changed
+    rather than what was merely requested.
+    """
+    def _stub_args(b: dict) -> None:
+        a = b.get("args")
+        if not isinstance(a, dict):
+            return
+        path = a.get("path") or a.get("slice") or "?"
+        marker = f"[已压缩：内容见磁盘 {path}，以文件为准]"
+        for f in _PRUNE_ARG_FIELDS.get(b.get("name", ""), ()):
+            if isinstance(a.get(f), str) and a[f]:
+                stats["chars"] += len(a[f]) - len(marker)
+                stats["blocks"] += 1
+                a[f] = marker
+
+    def _transform(rec: dict) -> bool:
+        wanted = targets.get(rec.get("order"))
+        if not wanted or rec.get("role") != "assistant":
+            return False
+        blocks = rec.get("blocks")
+        if not isinstance(blocks, list):
+            return False
+        changed = False
+        for bi, kind in wanted.items():
+            if bi >= len(blocks) or not isinstance(blocks[bi], dict):
+                continue
+            b = blocks[bi]
+            if b.get("type") != "tool_call":
+                continue
+            name = b.get("name", "")
+            if kind == "result":
+                r = b.get("result")
+                if isinstance(r, str) and len(r) >= _PRUNE_MIN_CHARS:
+                    stub = (
+                        f"[已卸载 {name}] {_prune_digest(b.get('args') or {})} — "
+                        f"原 {len(r):,} 字符，需要时重新调用该工具。"
+                    )
+                    stats["chars"] += len(r) - len(stub)
+                    stats["blocks"] += 1
+                    b["result"] = stub
+                    changed = True
+            elif kind == "args":
+                before = stats["blocks"]
+                _stub_args(b)
+                changed = changed or stats["blocks"] > before
+        return changed
+    return _transform
+
+
+async def execute_prune_context(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
+    """PruneContext executor — estimate (dry_run, default) or apply an explicit prune."""
+    from . import sessions as _sessions
+
+    sid = session_id or _sessions.MAIN_SESSION_ID
+    candidates = _prune_scan(instance_dir, sid)
+
+    # Anything other than an explicit boolean False estimates only — a malformed
+    # arg can never mutate history.
+    if bool(args.get("dry_run", True)):
+        if not candidates:
+            return "当前没有可压缩的旧工具内容。"
+        total = sum(c["chars"] for c in candidates)
+        lines = [f"可压缩候选 {len(candidates)} 条，合计可省约 {total:,} 字符（≈ {total // 3:,} tokens）。"]
+        for c in candidates:
+            tag = "（入参）" if c["kind"] == "args" else ""
+            lines.append(f"  {c['id']}  {c['name']}  {c['chars']:,} 字符{tag}")
+        ids_txt = ", ".join(f'"{c["id"]}"' for c in candidates)
+        lines.append(f"\n执行：PruneContext(dry_run: false, ids: [{ids_txt}]) —— 只列要卸的 id 即可。")
+        return "\n".join(lines)
+
+    ids = args.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return "Error: dry_run=false 需要显式传入 ids（取自上一步的候选列表）。可先用 dry_run:true 查看候选。"
+
+    by_id = {c["id"]: c for c in candidates}
+    targets: dict[int, dict[int, str]] = {}
+    unknown: list[str] = []
+    for raw in ids:
+        cid = str(raw)
+        c = by_id.get(cid)
+        if c is None:
+            unknown.append(cid)
+            continue
+        targets.setdefault(c["order"], {})[c["index"]] = c["kind"]
+    if not targets:
+        return f"Error: ids 中没有有效候选（无效：{', '.join(unknown)}）。可先用 dry_run:true 重新查看候选。"
+
+    stats = {"blocks": 0, "chars": 0}
+    _sessions.rewrite_lines(instance_dir, sid, _prune_transform(targets, stats))
+    if stats["blocks"] == 0:
+        return "没有实际压缩任何内容（可能已被压缩过，或已不满足阈值）。可先用 dry_run:true 重新查看候选。"
+
+    freed = max(0, stats["chars"])
+    msg = (f"已压缩 {stats['blocks']} 处，释放约 {freed:,} 字符（≈ {freed // 3:,} tokens）。"
+           "改动的效果在下一次上下文重建时生效。")
+    if unknown:
+        msg += f" 无效 id（已跳过）：{', '.join(unknown)}。"
+    return msg
+
+
 async def execute_edit_line(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Edit a file by replacing a range of lines. Use after Read to confirm line numbers.
 
@@ -2138,6 +2324,7 @@ TOOL_EXECUTORS = {
     "StartSubSession": execute_start_sub_session,
     "SendToSubSession": execute_send_to_sub_session,
     "DeleteSubSession": execute_delete_sub_session,
+    "PruneContext": execute_prune_context,
 }
 
 # Sub-session default tool grants. A child session may only call the tools on
@@ -2171,6 +2358,7 @@ DM_TOOLS = {
     "GetRuntimeVars", "SetRuntimeVar",
     "Output", "OutputEdit", "Roll",
     "SkillRead", "TodoWrite", "Wait",
+    "PruneContext",
 }
 
 
@@ -2205,7 +2393,7 @@ async def execute_tool(
                 result = await executor(instance_dir, args, user_id, run_uuid, instance_id)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
-            elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession"):
+            elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession") or name == "PruneContext":
                 result = await executor(instance_dir, args, session_id, instance_id, user_id)
             elif name in _FILE_TOOL_EXECUTORS:
                 result = await executor(instance_dir, args, instance_id)

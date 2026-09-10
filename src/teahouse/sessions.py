@@ -10,7 +10,10 @@ Design:
   see it). Every session also has an optional ``.sessions/<session_id>.meta.json``
   for metadata (enabled_tools, etc.). The main conversation lives at ``main.jsonl``;
   other sessions use ``session-<uuid>.jsonl``.
-- Append-only, never rewritten wholesale — a conversation grows indefinitely.
+- Append-only in normal operation — a conversation grows indefinitely. The one
+  exception is ``rewrite_lines``, which rewrites individual records in place (used
+  by the ``PruneContext`` tool to shrink stale tool content) while preserving the
+  line count and every record's ``order``.
 - Each line is a "record" shaped like the frontend ``RichMessage``:
     user:      {role:"user", content}
     assistant: {role:"assistant", content, reasoning, blocks:[text|tool_call]}
@@ -28,6 +31,7 @@ be lazily recreated on next use.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 SESSION_DIR = ".sessions"
@@ -447,6 +451,46 @@ def truncate(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> None:
     sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
     if sess.exists():
         sess.write_text("", encoding="utf-8")
+
+
+def rewrite_lines(instance_dir: Path, session_id: str, transform) -> int:
+    """Rewrite a session's JSONL in place, transforming selected records.
+
+    ``transform(record) -> bool`` runs on each parsed record; when it returns True
+    the record is re-serialized and written back, otherwise the ORIGINAL line string
+    is preserved verbatim (no incidental byte drift). Unparseable lines stay as-is.
+
+    Line count and every record's ``order`` are preserved — the ``order`` = non-empty
+    line count contract (``_count_records``) and the frontend's ``(order, subRank)``
+    sort both depend on it, so a transform must never add or remove lines. Written
+    atomically (temp file in the same dir + ``os.replace``). Returns records changed.
+    """
+    sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
+    if not sess.exists():
+        return 0
+    out_lines: list[str] = []
+    changed = 0
+    for line in sess.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append(line)
+            continue
+        try:
+            rec = json.loads(stripped)
+        except json.JSONDecodeError:
+            out_lines.append(line)
+            continue
+        if isinstance(rec, dict) and transform(rec):
+            out_lines.append(json.dumps(rec, ensure_ascii=False))
+            changed += 1
+        else:
+            out_lines.append(line)
+    if not changed:
+        return 0
+    tmp = sess.with_suffix(".jsonl.tmp")
+    tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    os.replace(tmp, sess)
+    return changed
 
 
 # -- legacy aliases (kept for backward-compat in routes) --

@@ -65,6 +65,13 @@ COMPACT_SYSTEM_PROMPT = """\
 # "full" mark, so it must stay in sync with session_loop's trigger.
 POST_COMPACT_RATIO = 0.70
 
+# Fraction of max_context at which `${teahouse.usage}` (injected via user_tail)
+# escalates from a plain number to an explicit "prune with PruneContext" hint.
+# Deliberately BELOW POST_COMPACT_RATIO: the hint is injected once per round and
+# not refreshed mid-round, so it needs lead time — warning only at the compact
+# threshold would leave the agent no round to act in before auto-compact fires.
+PRUNE_HINT_RATIO = 0.50
+
 # Single-file / single-input defensive cap in CHARACTERS (~32k chars ≈ 10.7k
 # tokens under the chars/3 estimate). Shared by:
 #   - execute_read: an oversized file is truncated to this many chars and the
