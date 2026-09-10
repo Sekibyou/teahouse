@@ -1558,6 +1558,9 @@ async def export_skill(instance_id: str, skill_name: str, user: UserInfo = Depen
 class SessionCreateRequest(BaseModel):
     enabled_tools: list[str] | None = None  # None → default read-only base set
     reasoning_effort: str | None = None  # optional none|low|mid|high|max
+    # "user" → 用户手动新建的会话：不写 enabled_tools（全权、无 scoped framing，
+    # 权限与提示词都等价主会话）。其余（导演/沙盒）走 enabled_tools 语义。
+    created_from: str | None = None
 
 
 @router.post("/instances/{instance_id}/sessions")
@@ -1571,6 +1574,8 @@ async def create_session(
     ``enabled_tools`` sets the session's tool allow-list. When omitted, the
     read-only baseline (Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession) applies.
     ``reasoning_effort`` (optional) sets the child session's thinking strength.
+    ``created_from="user"``（前端「新增子会话」按钮）相反：不落 enabled_tools，
+    会话全权且不注入 scoped 任务框架，等价主会话——用户建它就是为了并行做事。
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -1582,8 +1587,12 @@ async def create_session(
     from ..reasoning import validate_effort
     from ..sessions import MAIN_SESSION_ID, ensure_meta, resolve_session_path
     session_id = f"session-{uuid.uuid4().hex[:4]}"
-    enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
-    meta = {"enabled_tools": enabled}
+    if body.created_from == "user":
+        enabled = None
+        meta: dict = {"created_from": "user"}
+    else:
+        enabled = sorted(set(body.enabled_tools)) if body.enabled_tools is not None else sorted(SUB_SESSION_BASE_TOOLS)
+        meta = {"enabled_tools": enabled}
     if validate_effort(body.reasoning_effort):
         meta["reasoning_effort"] = validate_effort(body.reasoning_effort)
     ensure_meta(instance_dir, session_id, meta)
@@ -1708,6 +1717,11 @@ async def set_session_permissions(
 
     instance_dir = _resolve_instance_dir(inst)
     meta = ensure_meta(instance_dir, session_id)
+    if meta.get("created_from") == "user":
+        raise HTTPException(
+            status_code=400,
+            detail="This session was created with full access (no tool allow-list to edit)",
+        )
     current = set(meta.get("enabled_tools") or SUB_SESSION_BASE_TOOLS)
     if body.action == "add":
         current |= set(tools)

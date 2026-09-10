@@ -987,10 +987,10 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     }
   }, [instId, sessionList, mergeServerSessions])
 
-  // Manually create a new sub-session.
+  // Manually create a new sub-session（用户并行工作用：全权，等价主会话）。
   const createSession = useCallback(() => {
     if (!instId) return
-    instancesApi.createSession(instId).then(res => {
+    instancesApi.createUserSession(instId).then(res => {
       if (res.ok) {
         toast.success(t("subSessionCreated", { sid: res.data?.session_id }))
       } else {
@@ -1115,7 +1115,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     // 动态参数：permission-add/remove 的可选工具随当前会话 enabled_tools 变化
     dynamicParams?: () => CommandParam[]
   }
-  // 当前激活会话的工具白名单（子会话）；主会话不受限（undefined）
+  // 当前激活会话的工具白名单（受限子会话才有）；undefined = 不受限（主会话 /
+  // 用户新建的全权会话 / DM），此时无权限可增删。
   const activeEnabled = sessionList.find((s) => s.session_id === activeSid)?.enabled_tools
   const COMMANDS: CommandDef[] = useMemo(() => {
     const think: CommandDef = {
@@ -1133,7 +1134,12 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     if (activeSid === MAIN_SID) {
       return [think, { name: "/compact", description: t("compactContext") }, clear]
     }
-    const enabled = new Set(activeEnabled || [])
+    // 全权会话（用户新建 / DM）没有工具白名单，权限增删命令无从谈起，同主会话只留 think/clear。
+    // 用假值判断：SSE 新建条目会把 enabled_tools 落成 null，后端空数组也等价于「不限权」。
+    if (!activeEnabled) {
+      return [think, clear]
+    }
+    const enabled = new Set(activeEnabled)
     return [
       think,
       clear,

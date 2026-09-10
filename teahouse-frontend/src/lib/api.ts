@@ -399,6 +399,15 @@ export const instancesApi = {
     )
   },
 
+  // 用户手动新建的子会话（导演栏「+」）：不给 enabled_tools，全权且无 scoped 任务框架，
+  // 权限与提示词等价主会话。
+  createUserSession: async (instanceId: string) => {
+    return post<{ session_id: string; reasoning_effort?: string }>(
+      `/api/instances/${instanceId}/sessions`,
+      { created_from: "user" },
+    )
+  },
+
   setSessionReasoning: async (instanceId: string, sessionId: string, effort: string) => {
     return post<{ session_id: string; reasoning_effort: string | null; scope: string }>(
       `/api/instances/${instanceId}/sessions/${sessionId}/reasoning`,
