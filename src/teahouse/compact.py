@@ -92,6 +92,14 @@ BIG_INPUT_CHAR_LIMIT = 32_000
 PASTE_SPILL_CHAR_LIMIT = 3000
 
 
+# Flat token allowance charged per image part when estimating context size.
+# Image cost is driven by pixel dimensions, not byte length — so letting the
+# inline base64 fall into the chars/3 heuristic (a 1MB screenshot ≈ 1.3M chars
+# ≈ 440k "tokens") would peg the usage bar and trigger spurious compaction.
+# ~1500 tokens is a reasonable mid-range for a screenshot under the long-edge cap.
+IMAGE_TOKEN_ALLOWANCE = 1500
+
+
 def estimate_context_tokens(
     messages: list[dict], system_prompt: str = ""
 ) -> int:
@@ -101,10 +109,28 @@ def estimate_context_tokens(
     Chinese text averages ~2-3 chars per token; English/code ~4 chars per
     token.  Dividing by 3 is slightly conservative for mixed content (it
     over-estimates), which is the safe direction for a compact threshold.
+
+    Messages carrying a multimodal parts array (attached images) are measured
+    structurally instead: text parts by length, image parts by a flat
+    ``IMAGE_TOKEN_ALLOWANCE`` — never by their base64 bulk.
     """
     total = len(system_prompt) if system_prompt else 0
     for m in messages:
-        total += len(json.dumps(m, ensure_ascii=False))
+        content = m.get("content")
+        if isinstance(content, list):
+            text_chars = 0
+            images = 0
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    text_chars += len(part.get("text") or "")
+                elif part.get("type") in ("image", "image_url"):
+                    images += 1
+            # Pre-multiply the allowance so the //3 below yields it as-is.
+            total += text_chars + images * IMAGE_TOKEN_ALLOWANCE * 3
+        else:
+            total += len(json.dumps(m, ensure_ascii=False))
     return total // 3
 
 

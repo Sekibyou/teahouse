@@ -64,6 +64,12 @@ from ..placeholder import validate_var_name
 # internals. Business-level cleanup (which floors/vars to keep) is not judged here.
 PACK_EXCLUDE_DIRS = {"building", "sessions", ".git", "__pycache__", "node_modules", ".DS_Store", ".sessions"}
 
+# Relative-path prefixes excluded from packing. temp/pasted/ holds user pasted
+# content (long-text spills and attached images); these are transient session
+# scratch and must not leak into a distributed .teabrew. Scoped to the prefix
+# rather than all of temp/, which also carries draft.md and sub-session Reports.
+PACK_EXCLUDE_PATHS = ("temp/pasted",)
+
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +211,10 @@ async def create_prototype_from_instance(
 
     def _is_excluded(rel_path: Path) -> bool:
         # Skip any file whose ancestor path-component is an excluded dir
-        return bool(set(rel_path.parts[:-1]) & PACK_EXCLUDE_DIRS)
+        if set(rel_path.parts[:-1]) & PACK_EXCLUDE_DIRS:
+            return True
+        rel = str(rel_path).replace("\\", "/")
+        return any(rel == p or rel.startswith(p + "/") for p in PACK_EXCLUDE_PATHS)
 
     # Compute content hash from packable files (before adding metadata)
     file_list = sorted(

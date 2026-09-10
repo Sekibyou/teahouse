@@ -669,13 +669,29 @@ async def _tool_use_loop(
     # (written at append_user above), so history never carries the wrapper. Because
     # this sits outside the round loop, mid-loop pending messages are NOT re-wrapped.
     if user_tail_tpl is not None:
+        _max_ctx = getattr(client.config, "max_context", 0) or 0
         for _m in reversed(msg):
-            if _m.get("role") == "user" and isinstance(_m.get("content"), str) and _m.get("content"):
+            if _m.get("role") != "user":
+                continue
+            _c = _m.get("content")
+            if isinstance(_c, str) and _c:
                 _m["content"] = render_user_tail(
                     user_tail_tpl, instance_dir, msg, tool_system,
-                    getattr(client.config, "max_context", 0) or 0, _m["content"],
+                    _max_ctx, _c,
                     max_depth=parse_depth,
                 )
+                break
+            if isinstance(_c, list):
+                # Multimodal user message (attached images) — the text lives in
+                # parts. Wrap the first text part; image parts pass through.
+                for _part in _c:
+                    if _part.get("type") == "text" and _part.get("text"):
+                        _part["text"] = render_user_tail(
+                            user_tail_tpl, instance_dir, msg, tool_system,
+                            _max_ctx, _part["text"],
+                            max_depth=parse_depth,
+                        )
+                        break
                 break
 
     # Resolve effective reasoning effort for this session at run time.
@@ -978,7 +994,8 @@ async def chat(body: ChatRequest, request: Request):
 
         # Extract user content from frontend messages and enqueue.
         # The frontend may send either a plain string content, or — when paste
-        # blocks are present — an object {manual, pastes:[{id, content}]}.
+        # blocks and/or attached images are present — an object
+        # {manual, pastes:[{id, content}], images:[{path, mime}]}.
         new_inputs = [m for m in body.messages if m.get("role") == "user" and m.get("content")]
         if new_inputs:
             loop = SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id)
@@ -1001,7 +1018,7 @@ async def chat(body: ChatRequest, request: Request):
                 except Exception as e:
                     raise HTTPException(status_code=500, detail=f"写入 dm-output 失败: {e}")
             if isinstance(raw, dict):
-                loop.enqueue(raw.get("manual") or "", raw.get("pastes"))
+                loop.enqueue(raw.get("manual") or "", raw.get("pastes"), raw.get("images"))
             else:
                 loop.enqueue(raw)
             return {"queued": True, "session_id": sid, "count": len(new_inputs)}

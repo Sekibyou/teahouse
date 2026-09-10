@@ -1,8 +1,9 @@
-import { useState } from "react"
-import { Send, Square, Minimize2, Maximize2, CheckCircle2, Paperclip, X } from "lucide-react"
+import { useRef, useState } from "react"
+import { Send, Square, Minimize2, Maximize2, CheckCircle2, Paperclip, ImagePlus, X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTranslation } from "react-i18next"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { ImageLightbox } from "./MessageImage"
 
 interface CommandDef {
   name: string
@@ -23,6 +24,16 @@ interface PasteBlock {
   content: string
 }
 
+/** 一条待发送的附件图片。上传完成前 path 为空、uploading 为 true。 */
+export interface PendingImage {
+  id: number
+  path: string
+  mime: string
+  /** 本地对象 URL，仅用于发送前的缩略图预览 */
+  previewUri: string
+  uploading?: boolean
+}
+
 interface ChatInputProps {
   // Input state
   input: string
@@ -37,6 +48,11 @@ interface ChatInputProps {
   onAddPaste: (content: string) => void
   onRemovePaste: (id: number) => void
   onUpdatePaste: (id: number, content: string) => void
+
+  // Attached images (pasted or file-picked), shown as thumbnail chips
+  images: PendingImage[]
+  onAddImages: (files: File[]) => void
+  onRemoveImage: (id: number) => void
 
   // Expand toggle
   expandedInput: boolean
@@ -94,6 +110,9 @@ export function ChatInput({
   onAddPaste,
   onRemovePaste,
   onUpdatePaste,
+  images = [],
+  onAddImages,
+  onRemoveImage,
   hideTopBorder = false,
 }: ChatInputProps) {
   const { t } = useTranslation("misc")
@@ -102,7 +121,11 @@ export function ChatInput({
   // Id of the paste block being edited in the popover, or null.
   const [editingPasteId, setEditingPasteId] = useState<number | null>(null)
   const [draftContent, setDraftContent] = useState("")
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // 尚未发送的附件预览图：点缩略图放大查看
+  const [previewUri, setPreviewUri] = useState<string | null>(null)
   const editing = pastes.find((p) => p.id === editingPasteId) || null
+  const imagesUploading = images.some((img) => img.uploading)
 
   const insertAtCursor = (text: string) => {
     const el = inputRef.current
@@ -118,6 +141,24 @@ export function ChatInput({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData
+    // Images take priority: pasting a screenshot should attach it, not dump
+    // whatever text flavor the clipboard also carries.
+    const imageFiles: File[] = []
+    const dtItems = dt?.items
+    if (dtItems) {
+      for (let i = 0; i < dtItems.length; i++) {
+        const it = dtItems[i]
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+          const f = it.getAsFile()
+          if (f) imageFiles.push(f)
+        }
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      onAddImages(imageFiles)
+      return
+    }
     const text = dt?.getData("text") ?? ""
     if (text) {
       if (text.length > PASTE_BLOCK_THRESHOLD) {
@@ -214,8 +255,8 @@ export function ChatInput({
         </div>
       ) : (
         <div className={`flex flex-col gap-1 ${expandedInput ? "flex-1 min-h-0" : ""}`}>
-          {pastes.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+          {(pastes.length > 0 || images.length > 0) && (
+            <div className="flex flex-wrap items-end gap-1.5">
               {pastes.map((p, i) => (
                 <button
                   key={p.id}
@@ -227,6 +268,39 @@ export function ChatInput({
                   <Paperclip className="h-3 w-3" />
                   {t("chatInput.pasteBadge", { n: i + 1 })}
                 </button>
+              ))}
+              {images.map((img, i) => (
+                <span
+                  key={img.id}
+                  className="relative inline-flex shrink-0 rounded-md border border-primary/40 bg-primary/10 p-0.5"
+                  title={t("chatInput.imageBadge", { n: i + 1 })}
+                >
+                  <img
+                    src={img.previewUri}
+                    alt=""
+                    className="h-12 w-12 cursor-zoom-in rounded object-cover"
+                    onClick={() => setPreviewUri(img.previewUri)}
+                  />
+                  {/* 序号与后端 【图N】 标识对齐，方便在输入里引用 */}
+                  <span className="absolute left-1.5 bottom-1.5 rounded bg-background/85 px-1 text-[10px] leading-tight font-mono text-primary">
+                    {i + 1}
+                  </span>
+                  {img.uploading ? (
+                    // pointer-events-none：上传中也可以点开缩略图查看
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-background/60">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="absolute -right-1.5 -top-1.5 rounded-full bg-destructive text-destructive-foreground p-0.5 shadow"
+                      onClick={() => onRemoveImage(img.id)}
+                      title={t("chatInput.removeImage")}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
               ))}
             </div>
           )}
@@ -242,6 +316,28 @@ export function ChatInput({
               {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </Button>
           )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
+            onClick={() => fileInputRef.current?.click()}
+            title={t("chatInput.attachImage")}
+            disabled={isCompacting}
+          >
+            <ImagePlus className="h-4 w-4" />
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith("image/"))
+              if (files.length) onAddImages(files)
+              e.target.value = ""
+            }}
+          />
           <textarea
             ref={inputRef}
             className={`flex-1 rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-1 focus:ring-ring ${
@@ -263,7 +359,7 @@ export function ChatInput({
             size="icon"
             className="shrink-0 self-end h-10 w-10"
             onClick={isStreaming || isCompacting ? onStop : onSend}
-            disabled={!(isStreaming || isCompacting) && !input.trim() && pastes.length === 0}
+            disabled={!(isStreaming || isCompacting) && ((!input.trim() && pastes.length === 0 && images.length === 0) || imagesUploading)}
             variant={isStreaming || isCompacting ? "destructive" : "default"}
             title={isCompacting ? t("chatInput.stopSummarizing") : isStreaming ? t("chatInput.stopGenerating") : t("chatInput.send")}
           >
@@ -321,6 +417,9 @@ export function ChatInput({
           </div>
         )}
       </div>
+      )}
+      {previewUri && (
+        <ImageLightbox uri={previewUri} alt={t("chatInput.imageBadge", { n: 1 })} onClose={() => setPreviewUri(null)} />
       )}
     </div>
   )

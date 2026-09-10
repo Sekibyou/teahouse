@@ -13,10 +13,61 @@ import { toast } from "sonner"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import { FloorSummaryText } from "./ChatPanelComps/FloorSummaryText"
 import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath, pasteNoticeText } from "./ChatPanelComps/utils"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
+import type { PendingImage } from "./ChatPanelComps/ChatInput"
+import { MessageImage } from "./ChatPanelComps/MessageImage"
+import { PasteNotice } from "./ChatPanelComps/PasteNotice"
+
+// 附件图片长边超过该值就先降采样再上传：图片 token 成本由「边长」决定，与实际
+// 字节数无关，直接传 4K 截图既费带宽也白烧上下文（上传路由另有 20MB 硬上限）。
+const IMAGE_MAX_EDGE = 1568
+
+function randomHex8(): string {
+  return Math.random().toString(16).slice(2, 10).padEnd(8, "0")
+}
+
+function extForMime(mime: string): string {
+  if (mime === "image/jpeg") return "jpg"
+  if (mime === "image/webp") return "webp"
+  if (mime === "image/gif") return "gif"
+  if (mime === "image/avif") return "avif"
+  return "png"
+}
+
+/** 长边超限时用 canvas 重编码缩放；任何一步失败都原样返回，不影响上传。 */
+async function downscaleImage(file: File): Promise<File> {
+  try {
+    if (typeof createImageBitmap !== "function") return file
+    const bitmap = await createImageBitmap(file)
+    const longest = Math.max(bitmap.width, bitmap.height)
+    if (longest <= IMAGE_MAX_EDGE) {
+      bitmap.close?.()
+      return file
+    }
+    const scale = IMAGE_MAX_EDGE / longest
+    const w = Math.max(1, Math.round(bitmap.width * scale))
+    const h = Math.max(1, Math.round(bitmap.height * scale))
+    const canvas = document.createElement("canvas")
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext("2d")
+    if (!ctx) {
+      bitmap.close?.()
+      return file
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close?.()
+    const targetType = file.type === "image/jpeg" ? "image/jpeg" : "image/png"
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, targetType, 0.92))
+    if (!blob) return file
+    return new File([blob], `pasted.${extForMime(blob.type)}`, { type: blob.type })
+  } catch {
+    return file
+  }
+}
 
 export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   const { t } = useTranslation("chat")
@@ -364,7 +415,12 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           const sid = data.session_id
           if (!sid) return
           const order = data.order as number | undefined
-          if (activeSidRef.current === sid && data.content) {
+          const evImages = Array.isArray(data.images) && data.images.length > 0
+            ? (data.images as { path: string; mime: string }[])
+            : undefined
+          // An image-only send has content === "" — gate on images too, or the
+          // bubble would never appear.
+          if (activeSidRef.current === sid && (data.content || evImages)) {
             // Upgrade an existing queued (order,null) bubble, or insert fresh.
             let upgraded = false
             if (typeof order === "number") {
@@ -372,7 +428,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
                 const idx = prev.findIndex(m => m.order === order && m.sub === null && m.status === "queued")
                 if (idx >= 0) {
                   const next = [...prev]
-                  next[idx] = { ...next[idx], status: "done" as MsgStatus }
+                  next[idx] = { ...next[idx], status: "done" as MsgStatus, ...(evImages ? { images: evImages } : {}) }
                   upgraded = true
                   return next
                 }
@@ -385,9 +441,10 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
               // idle). Insert the user bubble at its ordered position.
               const auto = autoMsgKind((data.content as string) || "")
               const userMsg: RichMessage = {
-                id: nextId(), role: "user", content: data.content as string,
+                id: nextId(), role: "user", content: (data.content as string) || "",
                 reasoning: "", status: "done", order: typeof order === "number" ? order : 0,
                 sub: null, subRank: 0,
+                ...(evImages ? { images: evImages } : {}),
                 ...(auto ? autoKindFields(auto) : {}),
               }
               setMessagesFor(sid, (prev) => insertBubbleSorted(prev, userMsg))
@@ -413,18 +470,21 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
           if (instId && data.instance_id !== instId && data.instance_id !== instName) return
           const sid = data.session_id
           if (!sid) return
-          if (activeSidRef.current === sid && data.content) {
+          if (activeSidRef.current === sid && (data.content || (Array.isArray(data.images) && data.images.length > 0))) {
             const order = typeof data.order === "number" ? data.order : 0
             const auto = autoMsgKind((data.content as string) || "")
             const queuedMsg: RichMessage = {
               id: nextId(),
               role: "user",
-              content: data.content as string,
+              content: (data.content as string) || "",
               reasoning: "",
               status: "queued",
               order,
               sub: null,
               subRank: 0,
+              ...(Array.isArray(data.images) && data.images.length > 0
+                ? { images: data.images as { path: string; mime: string }[] }
+                : {}),
               ...(auto ? autoKindFields(auto) : {}),
             }
             setMessagesFor(sid, (prev) => insertBubbleSorted(prev, queuedMsg))
@@ -768,7 +828,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
 
   // Convert a backend session record (already in bubble view, carrying
   // order/sub/subRank) or an in-flight local message into RichMessage shape.
-  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number }): RichMessage {
+  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number; images?: { path: string; mime: string }[] }): RichMessage {
     const order = typeof rec.order === "number" ? rec.order : 0
     const sub: number | "r" | null = rec.sub === undefined || rec.sub === null ? null : (rec.sub === "r" ? "r" : (typeof rec.sub === "number" ? rec.sub : null))
     const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
@@ -784,6 +844,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
       order,
       sub,
       subRank,
+      ...(rec.images && rec.images.length > 0 ? { images: rec.images } : {}),
       ...(auto && rec.role === "user" ? autoKindFields(auto) : {}),
     }
   }
@@ -989,6 +1050,12 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   const pastesRef = useRef(pastes)
   pastesRef.current = pastes
   const pasteIdRef = useRef(0)
+  // Attached images (pasted or file-picked). 上传在「加入时」就完成，落到实例的
+  // temp/pasted/ 下，发送路径只携带 {path, mime} 引用 —— 后端据此重建多模态块。
+  const [images, setImages] = useState<PendingImage[]>([])
+  const imagesRef = useRef(images)
+  imagesRef.current = images
+  const imageIdRef = useRef(0)
   // 大输入框模式：点击按钮后独占「历史记录 + 输入框」总高度的 80%，便于长文本输入
   const [expandedInput, setExpandedInput] = useState(false)
   // 普通模式下输入框自动变高的上限（像素）
@@ -1258,22 +1325,75 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     return () => window.removeEventListener("keydown", handler)
   }, [handleStop])
 
+  // 加入附件图片：立刻上传到实例 temp/pasted/ 下，落定后把占位换成其后端路径。
+  // 序号（数组位置）即导演侧看到的 【图N】 标识，两边一致才能互相引用。
+  const handleAddImages = useCallback((files: File[]) => {
+    if (!instId) {
+      toast.error(t("imageNoInstance"))
+      return
+    }
+    for (const file of files) {
+      const id = ++imageIdRef.current
+      const previewUri = URL.createObjectURL(file)
+      setImages((prev) => [...prev, { id, path: "", mime: file.type, previewUri, uploading: true }])
+      void (async () => {
+        try {
+          const prepared = await downscaleImage(file)
+          const mime = prepared.type || file.type || "image/png"
+          const rel = `temp/pasted/${randomHex8()}.${extForMime(mime)}`
+          const res = await instancesApi.uploadFile(instId, rel, prepared)
+          if (res.ok) {
+            setImages((prev) => prev.map((img) => (img.id === id ? { ...img, path: rel, mime, uploading: false } : img)))
+          } else {
+            URL.revokeObjectURL(previewUri)
+            setImages((prev) => prev.filter((img) => img.id !== id))
+            toast.error(t("imageUploadFailed", { err: res.error || t("unknownError") }))
+          }
+        } catch {
+          URL.revokeObjectURL(previewUri)
+          setImages((prev) => prev.filter((img) => img.id !== id))
+          toast.error(t("imageUploadFailed", { err: t("unknownError") }))
+        }
+      })()
+    }
+  }, [instId, t])
+
+  const handleRemoveImage = useCallback((id: number) => {
+    setImages((prev) => {
+      const target = prev.find((img) => img.id === id)
+      if (target?.previewUri) URL.revokeObjectURL(target.previewUri)
+      return prev.filter((img) => img.id !== id)
+    })
+  }, [])
+
   const handleSend = async (useTools: boolean = true) => {
     const text = input.trim()
     const hasPastes = pastesRef.current.length > 0
-    if (!text && !hasPastes) return
+    const pending = imagesRef.current
+    if (!text && !hasPastes && pending.length === 0) return
+    // 还有图没上传完就发，只会丢图 —— 直接挡住。
+    if (pending.some((img) => img.uploading)) return
 
     setExpandedInput(false)
-    // Capture current pastes, then clear both working states immediately so the
-    // (async) _doSend uses a stable snapshot and the input resets right away.
+    // Capture current pastes/images, then clear both working states immediately so
+    // the (async) _doSend uses a stable snapshot and the input resets right away.
     const p = pastesRef.current
     setPastes([])
+    setImages([])
+    // 延迟回收预览用的对象 URL：立即 revoke 会在状态清空前那一帧把已渲染的
+    // <img> 打成裂图。发送后气泡改走 readAsset，预览 URL 不再需要。
+    const staleUris = pending.map((img) => img.previewUri)
+    setTimeout(() => {
+      for (const uri of staleUris) {
+        if (uri) URL.revokeObjectURL(uri)
+      }
+    }, 1000)
     setInput("")
-    _doSend(text, useTools, undefined, p)
+    _doSend(text, useTools, undefined, p, pending.map(({ path, mime }) => ({ path, mime })))
   }
 
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
-  const _doSend = async (text: string, useTools: boolean, targetSid?: string, pastes?: { id: number; content: string }[]) => {
+  const _doSend = async (text: string, useTools: boolean, targetSid?: string, pastes?: { id: number; content: string }[], images?: { path: string; mime: string }[]) => {
     const sid = targetSid || activeSid
 
     // 命令仅在会话空闲时执行（生成/等待/压缩中禁用）
@@ -1389,7 +1509,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
       return
     }
 
-    if (!text.trim()) return
+    const hasImages = !!(images && images.length > 0)
+    if (!text.trim() && !hasImages) return
 
     const activeInst = getActiveInstance()
     const shouldUseTools = useTools && activeInst !== null
@@ -1412,11 +1533,16 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         // session_user_msg (upgrades to white). The first session_event will
         // transition waiting→running via applyBackendState.
         patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
-        // Director path: send paste blocks as structured content so the backend
-        // can fold/spill them (see SessionLoop._compose_message). No pastes →
-        // a plain string, matching the previous envelope.
-        const rawContent = pastes && pastes.length > 0
-          ? { manual: text, pastes: pastes.map((p) => ({ id: p.id, content: p.content })) }
+        // Director path: send paste blocks / attached images as structured
+        // content so the backend can fold/spill/label them (see
+        // SessionLoop._compose_messages + sessions._user_content_parts).
+        // Neither present → a plain string, matching the previous envelope.
+        const rawContent = (pastes && pastes.length > 0) || hasImages
+          ? {
+              manual: text,
+              pastes: (pastes ?? []).map((p) => ({ id: p.id, content: p.content })),
+              images: images ?? [],
+            }
           : text
         // DM 控制台输入 = 局外发言：套上「〔局外发言〕」前缀（随正文落盘 + 喂 DM）。
         const content = sid === DM_SID
@@ -1433,17 +1559,22 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         )
       } else {
         // Writer path (non-tools): no backend enqueue — content must stay a
-        // plain string. Any paste blocks are concatenated into the text so no
-        // content is dropped.
-        const writerText = pastes && pastes.length > 0
-          ? `${text}\n\n${pastes.map((p) => p.content).join("\n\n")}`
+        // plain string. Paste blocks are concatenated into the text, and
+        // attached images degrade to a path note (this path carries no
+        // multimodal blocks); nothing is silently dropped.
+        const writerText = (pastes && pastes.length > 0) || hasImages
+          ? [
+              text,
+              ...(pastes ?? []).map((p) => p.content),
+              ...(images ?? []).map((img, i) => `【图${i + 1}】(附图片: ${img.path})`),
+            ].filter(Boolean).join("\n\n")
           : text
         // Writer path (non-tools): still uses direct SSE streaming. These local
         // bubbles carry negative orders (a private namespace) so they sort after
         // all backend-ordered (>=0) bubbles and never collide with them.
         writerLocalOrderRef.current -= 2
         const localOrder = writerLocalOrderRef.current
-        const userMsg: RichMessage = { id: nextId(), role: "user", content: writerText, reasoning: "", status: "done", order: localOrder, sub: null, subRank: 0 }
+        const userMsg: RichMessage = { id: nextId(), role: "user", content: writerText, reasoning: "", status: "done", order: localOrder, sub: null, subRank: 0, ...(hasImages ? { images } : {}) }
         const pendingAssistant: RichMessage = { id: nextId(), role: "assistant", content: "", reasoning: "", status: "pending", blocks: [], order: localOrder + 1, sub: null, subRank: 0 }
         setMessagesFor(sid, (prev) => [...prev, userMsg, pendingAssistant])
         const mergedMessages = mergeConsecutiveSameRole([...messages, userMsg, pendingAssistant])
@@ -1666,10 +1797,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
                       isIdle={isIdle}
                     />
                   ) : msg.role === "user" && msg.autoKind === "paste_notice" ? (
-                    <div className="max-w-fit rounded-md px-2.5 py-1 text-[11px] text-muted-foreground/70 bg-muted/40 flex items-center gap-1.5">
-                      <FileText className="h-3 w-3 text-muted-foreground/60" />
-                      <span>{pasteNoticeText(msg.content)}</span>
-                    </div>
+                    <PasteNotice content={msg.content} instanceId={instId} />
                   ) : msg.role === "user" && msg.autoKind === "long_msg" ? (
                     <div className="max-w-[85%] relative rounded-lg px-3 py-2 text-base bg-primary text-primary-foreground">
                       <span className="whitespace-pre-wrap break-words">
@@ -1719,10 +1847,24 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
                       // DM 包裹层：前缀裁掉，渲染为 badge（#N / #ooc），只显示正文。
                       const { marker, body } = parseDmWrap(msg.content)
                       const badge = dmBadgeLabel(marker)
+                      const imgs = msg.images || []
                       return (
                         <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
                           {badge && (
                             <span className="block mb-1 text-[10px] leading-none font-mono opacity-70">{badge}</span>
+                          )}
+                          {imgs.length > 0 && instId && (
+                            <div className="mb-1.5 flex flex-wrap gap-1.5">
+                              {imgs.map((img, i) => (
+                                <MessageImage
+                                  key={`${img.path}-${i}`}
+                                  instanceId={instId}
+                                  path={img.path}
+                                  mime={img.mime}
+                                  index={i + 1}
+                                />
+                              ))}
+                            </div>
                           )}
                           {body}
                         </div>
@@ -1760,9 +1902,26 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         )}
         {queuedMsgs.map((msg) => (
           <div key={msg.id} className="flex justify-end">
-            <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-muted text-muted-foreground flex items-center gap-2">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {msg.content}
+            <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-muted text-muted-foreground">
+              {(msg.images && msg.images.length > 0) && instId && (
+                <div className="mb-1.5 flex flex-wrap gap-1.5">
+                  {msg.images.map((img, i) => (
+                    <MessageImage
+                      key={`${img.path}-${i}`}
+                      instanceId={instId}
+                      path={img.path}
+                      mime={img.mime}
+                      index={i + 1}
+                    />
+                  ))}
+                </div>
+              )}
+              {msg.content && (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {msg.content}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -1815,6 +1974,9 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         }}
         onRemovePaste={(id) => setPastes((prev) => prev.filter((p) => p.id !== id))}
         onUpdatePaste={(id, content) => setPastes((prev) => prev.map((p) => (p.id === id ? { ...p, content } : p)))}
+        images={images}
+        onAddImages={handleAddImages}
+        onRemoveImage={handleRemoveImage}
         filteredCommands={filteredCommands}
         commandIndex={commandIndex}
         onCommandHover={setCommandIndex}

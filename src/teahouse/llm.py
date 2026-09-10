@@ -59,6 +59,20 @@ def normalize_api_url(url: str, api_format: str = "openai") -> str:
 
 # ===== Message preprocessing (from take_out llm_api_adapter.py) =====
 
+def _as_parts(content: Any) -> list[dict]:
+    """Normalize a message content value into a multimodal part list.
+
+    A plain string folds into a single text part — a shape both the Anthropic
+    and OpenAI APIs accept — so merging a string message with a parts message
+    (attached images) can concatenate uniformly.
+    """
+    if isinstance(content, list):
+        return list(content)
+    if content:
+        return [{"type": "text", "text": content}]
+    return []
+
+
 def preprocess_messages(messages: list[dict], api_format: str) -> list[dict]:
     """Merge consecutive same-role messages, ensure first non-system is user."""
     m = messages
@@ -75,9 +89,13 @@ def preprocess_messages(messages: list[dict], api_format: str) -> list[dict]:
             continue
         if merged and merged[-1]["role"] == msg["role"]:
             prev_content = merged[-1].get("content", "")
-            if prev_content is None:
-                prev_content = ""
-            merged[-1]["content"] = prev_content + "\n" + content
+            if isinstance(prev_content, list) or isinstance(content, list):
+                # Multimodal parts (attached images): concatenate part lists.
+                merged[-1]["content"] = _as_parts(prev_content) + _as_parts(content)
+            else:
+                if prev_content is None:
+                    prev_content = ""
+                merged[-1]["content"] = prev_content + "\n" + content
         else:
             merged.append(dict(msg))
     m = merged

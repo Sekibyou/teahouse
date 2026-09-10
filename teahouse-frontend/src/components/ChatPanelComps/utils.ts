@@ -66,11 +66,45 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   return null
 }
 
-/** 从 paste_notice 消息内容里解析前端要展示的徽章文案（落盘时含路径）。 */
-export function pasteNoticeText(content: string): string {
-  const m = content.match(/已被暂存至 (temp\/pasted-[0-9a-f]{8}\.md)/)
-  if (m) return `粘贴内容过长，已被暂存至 ${m[1]}`
-  return "粘贴内容已一并发送"
+export interface PasteNoticeInfo {
+  /** 落盘文件路径（过长时整批暂存）；非 null 时正文要去读这个文件 */
+  spilled: string | null
+  /** 内联在消息里的粘贴块正文，已剥掉 【粘贴N】 标签 */
+  blocks: { n: number; text: string }[]
+}
+
+/**
+ * 解析 paste_notice 记录的两种形态，供徽章文案与「点击查看」面板共用：
+ * - 过长暂存：正文不在记录里，只有一句指向 temp/pasted/<hex8>.md 的提示；
+ * - 内联：整批粘贴正文就在记录里，各块带 【粘贴N】 标签。
+ * 早期记录还没有 【粘贴N】 标签，此时整段作为单块返回，仍可查看。
+ * 文案由调用方按 i18n 拼（这里只返结构化结果）。
+ */
+export function parsePasteNotice(content: string): PasteNoticeInfo {
+  // 新格式落在 temp/pasted/<hex8>.md；旧记录里仍是 temp/pasted-<hex8>.md，两种都认。
+  const spilledMatch = content.match(/(temp\/pasted\/[0-9a-f]{8}\.md|temp\/pasted-[0-9a-f]{8}\.md)/)
+  if (spilledMatch) {
+    return { spilled: spilledMatch[1], blocks: [] }
+  }
+  // 剥掉 "[auto] 用户在本次输入时粘贴了长文本，内容是：" 那行，剩下按 【粘贴N】 切块。
+  const body = content.replace(/^\[auto\][^\n]*\n?/, "").trim()
+  const marks: { n: number; idx: number; len: number }[] = []
+  const re = /【粘贴(\d+)】\n?/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(body)) !== null) {
+    marks.push({ n: Number(m[1]), idx: m.index, len: m[0].length })
+  }
+  const blocks: { n: number; text: string }[] = []
+  for (let i = 0; i < marks.length; i++) {
+    const start = marks[i].idx + marks[i].len
+    const end = i + 1 < marks.length ? marks[i + 1].idx : body.length
+    blocks.push({ n: marks[i].n, text: body.slice(start, end).trim() })
+  }
+  if (blocks.length === 0) {
+    if (!body) return { spilled: null, blocks: [] }
+    return { spilled: null, blocks: [{ n: 1, text: body }] }
+  }
+  return { spilled: null, blocks }
 }
 
 /** 把 autoMsgKind 的结果映射为 RichMessage 上的 autoKind / autoSid 字段。 */export function autoKindFields(auto: NonNullable<ReturnType<typeof autoMsgKind>>) {

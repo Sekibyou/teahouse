@@ -63,6 +63,8 @@ export const jaChat = {
   effortSetSuccess: "{{label}} の思考強度を {{effort}} に設定しました",
   effortSetFail: "思考強度の設定に失敗: {{err}}",
   unknownError: "不明なエラー",
+  imageNoInstance: "インスタンスが未選択のため画像をアップロードできません",
+  imageUploadFailed: "画像のアップロードに失敗しました: {{err}}",
   sessionBusyCommand: "セッションがビジーのためコマンドを実行できません。生成を停止するか完了を待ってください",
   clearedContent: "{{label}} の内容を消去しました",
   noInstanceCompact: "インスタンスが選択されていないため、セッションを圧縮できません",

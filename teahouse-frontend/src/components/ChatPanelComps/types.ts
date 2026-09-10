@@ -39,5 +39,7 @@ export interface RichMessage {
   autoKind?: "interrupt" | "endsession" | "session_done" | "compact" | "auto_continue" | "long_msg" | "paste_notice"
   /** 当 autoKind==="session_done" 时，提取出的子会话 sid（如 "session-<uuid>"） */
   autoSid?: string
+  /** 用户气泡附带的图片（实例内路径，渲染时经 readAsset 取 data URI） */
+  images?: { path: string; mime: string }[]
 }
 

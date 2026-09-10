@@ -153,6 +153,7 @@ def append_user(
     content: str,
     session_id: str = MAIN_SESSION_ID,
     order: int | None = None,
+    images: list[dict] | None = None,
 ) -> int:
     """Persist one real user message and return its ``order``.
 
@@ -160,10 +161,18 @@ def append_user(
     explicitly when a session allocator has already reserved the order (the
     SessionLoop's monotonic watermark), so the persisted order matches the
     order reserved for a queued bubble or in-flight round.
+
+    ``images`` is an optional list of ``{path, mime}`` referencing files under
+    the instance (pasted images live in ``temp/pasted/``). It is stored as a
+    sibling key rather than folded into ``content`` so legacy records stay
+    byte-identical and the JSONL stays human-readable; the multimodal content
+    array is built per-request in ``records_to_context``.
     """
-    if not content:
+    if not content and not images:
         return order if order is not None else next_order(instance_dir, session_id)
-    rec = {"role": "user", "content": content}
+    rec: dict = {"role": "user", "content": content}
+    if images:
+        rec["images"] = images
     if order is not None:
         rec["order"] = order
     return append_record(instance_dir, rec, session_id=session_id)
@@ -289,6 +298,7 @@ def render_records(records: list[dict]) -> list[dict]:
                 "sub": None,
                 "subRank": 0,
                 "content": rec.get("content", ""),
+                "images": rec.get("images") or [],
                 "reasoning": "",
                 "blocks": [],
             })
@@ -383,6 +393,51 @@ def _api_tool_result(b, api_style: str) -> dict:
     return {"role": "tool", "tool_call_id": b_id, "content": result_msg}
 
 
+def _user_content_parts(
+    text: str,
+    images: list[dict],
+    instance_dir: Path,
+    api_style: str,
+) -> list[dict]:
+    """Build a multimodal content array for a user record carrying images.
+
+    Emits the typed text first, then for each image an ``【图N】`` label block
+    followed by the image block itself — the label matches the frontend badge
+    numbering, so a user can say "看图1" and be understood. Block shape is
+    per ``api_style`` (Anthropic ``image/source`` vs OpenAI ``image_url``).
+
+    Reads go through ``read_asset`` (magic-byte MIME detection + traversal
+    guard). A missing/unreadable file degrades to a text placeholder rather
+    than failing the whole round.
+    """
+    parts: list[dict] = []
+    if text:
+        parts.append({"type": "text", "text": text})
+    from .database.workspaces import read_asset
+
+    for i, img in enumerate(images, start=1):
+        path = (img or {}).get("path") or ""
+        mime = (img or {}).get("mime") or ""
+        parts.append({"type": "text", "text": f"【图{i}】"})
+        try:
+            real_mime, b64, _ = read_asset(instance_dir, path)
+        except Exception:
+            parts.append({"type": "text", "text": f"（图片文件缺失: {path}）"})
+            continue
+        mime = real_mime or mime
+        if api_style == "anthropic":
+            parts.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": b64},
+            })
+        else:
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+    return parts
+
+
 def records_to_context(instance_dir: Path, api_style: str, session_id: str = MAIN_SESSION_ID) -> list[dict]:
     """Rebuild LLM-context messages from the full persisted history.
 
@@ -395,7 +450,14 @@ def records_to_context(instance_dir: Path, api_style: str, session_id: str = MAI
     records, _ = load_records(instance_dir, session_id=session_id)
     for rec in records:
         if rec.get("role") == "user":
-            out.append({"role": "user", "content": rec.get("content", "")})
+            images = rec.get("images") or []
+            if images:
+                out.append({
+                    "role": "user",
+                    "content": _user_content_parts(rec.get("content", ""), images, instance_dir, api_style),
+                })
+            else:
+                out.append({"role": "user", "content": rec.get("content", "")})
             continue
         # assistant
         text_parts: list[str] = []

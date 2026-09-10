@@ -63,6 +63,8 @@ export const enChat = {
   effortSetSuccess: "{{label}} thinking strength set to {{effort}}",
   effortSetFail: "Failed to set thinking strength: {{err}}",
   unknownError: "Unknown error",
+  imageNoInstance: "No instance selected — cannot upload the image",
+  imageUploadFailed: "Image upload failed: {{err}}",
   sessionBusyCommand: "Cannot run commands while the session is busy; stop generation or wait for it to finish first",
   clearedContent: "Cleared {{label}} content",
   noInstanceCompact: "No instance selected; cannot compact session",

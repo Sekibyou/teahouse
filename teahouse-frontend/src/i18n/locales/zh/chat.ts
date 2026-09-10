@@ -63,6 +63,8 @@ export const zhChat = {
   effortSetSuccess: "{{label}} 思考强度已设为 {{effort}}",
   effortSetFail: "设置思考强度失败: {{err}}",
   unknownError: "未知错误",
+  imageNoInstance: "未选中实例，无法上传图片",
+  imageUploadFailed: "图片上传失败: {{err}}",
   sessionBusyCommand: "会话忙时无法执行命令，请先停止生成或等待完成",
   clearedContent: "已清除 {{label}} 内容",
   noInstanceCompact: "未选中实例，无法压缩会话",

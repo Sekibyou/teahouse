@@ -89,7 +89,7 @@ class SessionLoop:
         self.session_id = session_id
         self.instance_id = instance_id
         self.user_id = user_id
-        self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str, int, list | None]] = asyncio.Queue()
         self._interrupted = False
         self._interrupt_reason: str | None = None  # "user" | "endsession"
         self._task: asyncio.Task | None = None
@@ -111,7 +111,7 @@ class SessionLoop:
     # Public API
     # ------------------------------------------------------------------
 
-    def enqueue(self, content: str, pastes: list[dict] | None = None) -> None:
+    def enqueue(self, content: str, pastes: list[dict] | None = None, images: list[dict] | None = None) -> None:
         """Push user messages into this session's queue.
 
         The messages are NOT persisted here — they only go into the in-memory
@@ -130,65 +130,85 @@ class SessionLoop:
         file and the notice points at it, so a giant paste cannot flood the next
         generation round's context.
 
+        ``images`` is the frontend's attached-image list — ``{path, mime}`` for
+        files already uploaded to ``temp/pasted/``. They ride on the hand-typed
+        record so they reach the LLM as real multimodal content blocks (see
+        ``sessions._user_content_parts``); when the user typed nothing they get
+        a record of their own.
+
         Internal backend messages (sub-session tasks, [auto]/[director] wake-ups)
-        pass ``content`` only (``pastes`` defaults to None) and are left as-is.
+        pass ``content`` only (``pastes``/``images`` default to None) and are left
+        as-is.
         """
-        if not content and not pastes:
+        if not content and not pastes and not images:
             return
         try:
-            msgs = self._compose_messages(content, pastes)
+            msgs = self._compose_messages(content, pastes, images)
         except Exception:
             # If composing/spilling fails for any reason, fall back to as-is.
-            if content:
-                msgs = [content]
+            if content or images:
+                msgs = [{"content": content, "images": images}]
             else:
                 return
         for msg in msgs:
             queue_id = uuid.uuid4().hex[:12]
             order = self.next_order()
-            _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": msg[:200]})
-            self._broadcast_user_queued(queue_id, msg, order)
-            self._queue.put_nowait((queue_id, msg, order))
+            _event_log(self.instance_dir, self.session_id, "enqueue", {"queue_id": queue_id, "content": msg["content"][:200]})
+            self._broadcast_user_queued(queue_id, msg["content"], order, msg.get("images"))
+            self._queue.put_nowait((queue_id, msg["content"], order, msg.get("images")))
 
-    def _compose_messages(self, content: str, pastes: list[dict] | None) -> list[str]:
+    def _compose_messages(self, content: str, pastes: list[dict] | None, images: list[dict] | None = None) -> list[dict]:
         """Build the message(s) for a user enqueue — paste blocks become a
         separate ``[auto]`` record rather than being merged into the manual text.
 
-        Returns a list in send order:
+        Returns a list of ``{"content": str, "images": list|None}`` in send order:
         - Without pastes: ``[content]``; if content alone exceeds the cap it is
           spilled wholesale (defensive backstop) and ``[spill pointer]`` is returned.
         - With pastes: ``[manual_text]`` (omitted when empty) then an ``[auto]``
           notice carrying either the inline pasted bodies or — when they exceed
           ``PASTE_SPILL_CHAR_LIMIT`` — a pointer to the single spill file.
+
+        Each paste body is prefixed with an ``【粘贴N】`` label (N by array
+        position, matching the frontend badge number) so the director can be
+        told "粘贴1 is what I sent the writer bot, 粘贴2 is what came back" and
+        actually resolve the reference.
+
+        ``images`` attach to the hand-typed record (a label block per image is
+        synthesized later, at context-rebuild time); with no hand-typed text they
+        become a record of their own so they never glue onto the ``[auto]`` notice.
         """
         from .compact import PASTE_SPILL_CHAR_LIMIT, BIG_INPUT_CHAR_LIMIT
         paste_texts = [p.get("content") for p in (pastes or []) if p.get("content")]
         if not paste_texts:
             if len(content) > BIG_INPUT_CHAR_LIMIT:
-                return [self._spill_oversized(content)]
-            return [content]
+                return [{"content": self._spill_oversized(content), "images": None}]
+            if not content and images:
+                return [{"content": "", "images": images}]
+            return [{"content": content, "images": images}]
 
-        out: list[str] = []
-        if content:
-            out.append(content)
+        out: list[dict] = []
+        if content or images:
+            out.append({"content": content, "images": images})
 
-        joined = "\n\n".join(paste_texts)
+        labeled = "\n\n".join(
+            f"【粘贴{i}】\n{t}" for i, t in enumerate(paste_texts, start=1)
+        )
         intro = "用户在本次输入时粘贴了长文本，内容是："
         # Spill once the pasted bodies alone exceed the cap (~3000 chars) — the
         # threshold is about the paste itself, not the notice's total length.
-        if len(joined) <= PASTE_SPILL_CHAR_LIMIT:
-            out.append(f"[auto] {intro}\n\n{joined}")
+        if len(labeled) <= PASTE_SPILL_CHAR_LIMIT:
+            out.append({"content": f"[auto] {intro}\n\n{labeled}", "images": None})
         else:
-            rel = self._spill_pastes(joined)
-            out.append(f"[auto] {intro}\n文本过长，已被暂存至 {rel}，请阅读")
+            rel = self._spill_pastes(labeled)
+            out.append({"content": f"[auto] {intro}\n文本过长，已被暂存至 {rel}，请阅读", "images": None})
         return out
 
     def _spill_pastes(self, body: str) -> str:
-        """Write pasted bodies to ``temp/pasted-<uuid>.md`` and return the relative
+        """Write pasted bodies to ``temp/pasted/<uuid>.md`` and return the relative
         path. Paste-only spill; the manual text stays as its own inline record.
         Broadcasts ``file_changed`` so the frontend tree / director sees the new
         file land (mirrors how Read/Report surface writes)."""
-        rel = f"temp/pasted-{uuid.uuid4().hex[:8]}.md"
+        rel = f"temp/pasted/{uuid.uuid4().hex[:8]}.md"
         full = self.instance_dir / rel
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(body, encoding="utf-8")
@@ -202,7 +222,7 @@ class SessionLoop:
         return rel
 
     def _spill_oversized(self, content: str) -> str:
-        """Write an oversized user message body to ``temp/pasted-<uuid>.md`` and
+        """Write an oversized user message body to ``temp/pasted/<uuid>.md`` and
         return the pointer message that replaces it in the queue. Backstop for
         pasteless messages that alone exceed the cap; the paste path composes its
         own spill inside ``_compose_messages``. Returns the pointer text.
@@ -511,13 +531,14 @@ class SessionLoop:
                     return None
             return None
 
-    def _drain_queue(self) -> list[tuple[str, str, int]]:
+    def _drain_queue(self) -> list[tuple[str, str, int, list | None]]:
         """Pull all pending messages from the queue (non-blocking).
 
-        Returns a list of (queue_id, content, order) tuples — the order was
-        reserved at enqueue time and is used to persist + broadcast the message.
+        Returns a list of (queue_id, content, order, images) tuples — the order
+        was reserved at enqueue time and is used to persist + broadcast the
+        message, and ``images`` (or None) rides along to persistence.
         """
-        msgs: list[tuple[str, str, int]] = []
+        msgs: list[tuple[str, str, int, list | None]] = []
         while not self._queue.empty():
             try:
                 msgs.append(self._queue.get_nowait())
@@ -525,7 +546,7 @@ class SessionLoop:
                 break
         return msgs
 
-    def _drain_and_persist(self) -> list[tuple[str, str, int]]:
+    def _drain_and_persist(self) -> list[tuple[str, str, int, list | None]]:
         """Drain queued user messages, persist them to jsonl, and broadcast the
         queued→done upgrade (grey bubble → white).
 
@@ -534,12 +555,14 @@ class SessionLoop:
         two paths are idempotent (a second call with an empty queue is a no-op).
         """
         msgs = self._drain_queue()
-        for queue_id, content, order in msgs:
-            sessions.append_user(self.instance_dir, content, session_id=self.session_id, order=order)
-            self._broadcast_user_msg(queue_id, content, order)
+        for queue_id, content, order, images in msgs:
+            sessions.append_user(
+                self.instance_dir, content, session_id=self.session_id, order=order, images=images
+            )
+            self._broadcast_user_msg(queue_id, content, order, images)
         return msgs
 
-    def check_pending_user(self) -> list[tuple[str, str, int]] | None:
+    def check_pending_user(self) -> list[tuple[str, str, int, list | None]] | None:
         """Cooperative hook consumed by ``_tool_use_loop`` before each API round.
 
         Drains + persists any user message queued mid-generation, so the message
@@ -568,7 +591,7 @@ class SessionLoop:
             },
         })
 
-    def _broadcast_user_msg(self, queue_id: str | None, content: str, order: int) -> None:
+    def _broadcast_user_msg(self, queue_id: str | None, content: str, order: int, images: list | None = None) -> None:
         """Tell the frontend a user message was persisted to jsonl (upgrade from queued→done)."""
         from .sessions import _count_records
         count = _count_records(
@@ -579,11 +602,12 @@ class SessionLoop:
             "session_id": self.session_id,
             "queue_id": queue_id,
             "content": content,
+            "images": images or [],
             "order": order,
             "count": count,
         })
 
-    def _broadcast_user_queued(self, queue_id: str, content: str, order: int) -> None:
+    def _broadcast_user_queued(self, queue_id: str, content: str, order: int, images: list | None = None) -> None:
         """Tell the frontend a user message is queued in memory (grey bubble, not yet persisted).
 
         ``order`` is reserved at enqueue time from this session's monotonic
@@ -595,5 +619,6 @@ class SessionLoop:
             "session_id": self.session_id,
             "queue_id": queue_id,
             "content": content,
+            "images": images or [],
             "order": order,
         })
