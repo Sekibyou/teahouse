@@ -208,7 +208,7 @@ def _substitute_variable_literals(text: str, var_map: dict) -> str:
 # so arbitrary calls are never executed.
 
 # --- Simple dice roller (RPG-style syntax), adapted from the reference. ---
-# Supported: "1d6", "2d10+5", "4d6k3" (keep highest 3), "4d6d1" (drop lowest 1),
+# Supported: "1d6", "2d10+5", "4d6k3" (keep highest 3), "4d6dl1" (drop lowest 1),
 # "1d6r1" (reroll 1s), "1d6ro1" (reroll once), "1d6e" / "1d6!" (exploding),
 # "1d6p" (penetrating). Returns an int total. Runs only inside the code-block
 # whitelist via WHITELIST_FUNCS["roll"], still getting a plain string constant.
@@ -1326,8 +1326,8 @@ def _resolve_package(raw: str, instance_dir: Path) -> str:
 SKILL_ASSET_PREFIX = "skill:"
 
 
-def _resolve_skill_asset(raw: str, instance_dir: Path) -> str:
-    """Resolve `{{skill:<名>/<路径>}}` against the skill's directory."""
+def _split_skill_ref(raw: str) -> tuple[str, str]:
+    """Split `skill:<名>/<rest>` (or a bare `<名>/<rest>`) into (name, rest)."""
     stripped = raw.strip()
     if stripped.startswith(SKILL_ASSET_PREFIX):
         stripped = stripped[len(SKILL_ASSET_PREFIX):].strip()
@@ -1338,15 +1338,25 @@ def _resolve_skill_asset(raw: str, instance_dir: Path) -> str:
     rest = stripped[slash + 1:].strip()
     if not name or not rest:
         raise PlaceholderError(f"Skill 资产引用不完整: {raw}")
+    return name, rest
 
+
+def _skill_root(instance_dir: Path, name: str) -> Path:
+    """Resolve a skill's directory. System skill first, instance skill as fallback —
+    the same priority SkillRead uses (built-ins are the required conventions)."""
     from .director_system import TEMPLATE_DIR
-    root = TEMPLATE_DIR / "teahouse_skills" / name   # 系统 skill 优先
+    root = TEMPLATE_DIR / "teahouse_skills" / name
     if not root.is_dir():
-        root = instance_dir / "skills" / name        # 实例 skill 兜底
+        root = instance_dir / "skills" / name
     if not root.is_dir():
         raise PlaceholderError(f"Skill 不存在: {name}")
+    return root
 
-    return _resolve_file(rest, instance_dir, base_dir=root)
+
+def _resolve_skill_asset(raw: str, instance_dir: Path) -> str:
+    """Resolve `{{skill:<名>/<路径>}}` against the skill's directory."""
+    name, rest = _split_skill_ref(raw)
+    return _resolve_file(rest, instance_dir, base_dir=_skill_root(instance_dir, name))
 
 
 _NUM_SEGMENT_RE = re.compile(r"(\d+)")
@@ -1823,6 +1833,8 @@ def resolve_slice_spans(
 
     if inner.startswith("glob:"):
         return _resolve_glob_lines(inner[5:].strip(), instance_dir)
+    if inner.startswith(SKILL_ASSET_PREFIX):
+        return _resolve_skill_lines(inner, instance_dir)
     if inner.startswith("@"):
         return _resolve_package_lines(inner, instance_dir)
     return _resolve_file_lines(inner, instance_dir)
@@ -1873,3 +1885,13 @@ def _resolve_package_lines(raw: str, instance_dir: Path) -> list[SliceSegment]:
     if not rest:
         raise PlaceholderError(f"Package path is a directory: {pkg_name}")
     return _resolve_file_lines(rest, instance_dir, base_dir=pkg_root)
+
+
+def _resolve_skill_lines(raw: str, instance_dir: Path) -> list[SliceSegment]:
+    """{{skill:名/rest}} — resolve rest inside the skill dir, tracking source lines.
+
+    Line-tracking twin of `_resolve_skill_asset`; keeps `resolve_slice_spans` in
+    step with `resolve_placeholders` for the skill namespace.
+    """
+    name, rest = _split_skill_ref(raw)
+    return _resolve_file_lines(rest, instance_dir, base_dir=_skill_root(instance_dir, name))

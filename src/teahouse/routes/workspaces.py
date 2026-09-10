@@ -62,7 +62,7 @@ from ..placeholder import validate_var_name
 # Directories never included when packing an instance as a prototype.
 # building/ is the creator's meta-workspace (notes/checklists); the rest are
 # internals. Business-level cleanup (which floors/vars to keep) is not judged here.
-PACK_EXCLUDE_DIRS = {"building", "sessions", ".git", "__pycache__", "node_modules", ".DS_Store", ".sessions"}
+PACK_EXCLUDE_DIRS = {"building", ".git", "__pycache__", "node_modules", ".DS_Store", ".sessions"}
 
 # Relative-path prefixes excluded from packing. temp/pasted/ holds user pasted
 # content (long-text spills and attached images); these are transient session
@@ -204,7 +204,7 @@ async def create_prototype_from_instance(
     """Create a new prototype by packing the instance root.
 
     The whole instance is the prototype source. Internal/meta dirs that must
-    never ship (building/, .git/, sessions/, etc.) are excluded at pack time.
+    never ship (building/, .git/, .sessions/, etc.) are excluded at pack time.
     Business-level cleanup (which floors/vars to keep, generalizing teahouse.md)
     is done manually on the instance before packing — not judged here.
     """
@@ -1177,11 +1177,13 @@ async def cancel_run_tools(
     """Cancel an in-flight sandbox runTool batch by its run_uuid.
 
     Fire-and-forget runTool batches are tracked by run_uuid in run_tool_tracker;
-    this cancels the background task (e.g. a long Generate step). On cancel the
-    current step is interrupted and does NOT flush a half-baked file
-    (CancelledError is a BaseException, so execute_generate's except Exception
-    won't write). The sandbox is notified via a tool_run_cancelled broadcast so
-    its runTool handle rejects promptly instead of waiting for the timeout.
+    this cancels the background task (e.g. a long Generate step). A cancelled
+    Generate **does** flush what it has already produced as a half-baked file —
+    its own `except asyncio.CancelledError` writes via `_finalize_write` before
+    re-raising, matching the "interrupted mid-stream" semantics so the partial
+    draft can be continued. The sandbox is notified via a tool_run_cancelled
+    broadcast so its runTool handle rejects promptly instead of waiting for the
+    timeout.
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)

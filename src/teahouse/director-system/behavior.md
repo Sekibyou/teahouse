@@ -47,13 +47,63 @@
 
 > **语法踩坑**：mermaid 的节点标签/文本里若含特殊字符（如 `@mention`、`#`、括号、方括号等），需把整段标签用双引号包住，如 `["@mention 关键词触发"]`——否则首字符是 `@` 这类符号时 mermaid 词法解析会报 `Expecting ... got 'LINK_ID'`，导致整张图渲染失败（不是渲染器问题）。`<br/>` 在引号内仍有效。
 
+## 切片语法（`{{...}}`）——唯一事实源
+
+`{{...}}` 是**文件切片**：把别的文件的内容**复制/搬运**进来，**不修改内容本身**。它是引擎里唯一"取文件内容"的语法。
+
+**出现在哪**：系统提示词/预设模板组装、Generate 发送给正文模型前，以及 `Write`/`Edit`/`WriteLine` 显式 `resolve_placeholders=true` 时。`Read` 的 `slice` 模式与 `CheckPackageRefs` 校验复用**同一套**语法。
+
+**注意**：`Write`/`Edit`/`WriteLine` 只做 `{{}}` 切片、**不解 `${}` 变量**；喂给 AI 的表面（系统提示词、Generate、DM）才同时替换 `${}` 与展开 `{{}}`。
+
+### 四种取文件的形式
+
+| 形式 | 取自 |
+|---|---|
+| `{{路径}}` | 实例内文件，路径**相对实例根目录**（视为"绝对路径"，必须写全前缀，如 `settings/static_settings/world.md`） |
+| `{{@包名/路径}}` | 提示词包内文件，路径相对 `packages/<包名>/`（见「提示词包」） |
+| `{{skill:名/路径}}` | skill 目录内文件（系统 skill 优先、实例兜底；见「自建 Skill」） |
+| `{{glob:模式}}` / `{{glob:模式:lastN}}` | 按 glob 匹配多个文件（按文件名排序）；`:lastN` 按名字中的数字段降序保留最近 N 个**楼层**（正式稿优先于草稿）。例：`{{glob:runtime/floors/floor-*.md:last10}}` |
+
+### 修饰符（可叠加）
+
+| 修饰 | 作用 |
+|---|---|
+| `:行段` | 行范围，如 `{{a.md:10-30}}` |
+| `\|from="A"` | 从 A 所在**行**开始到文件末尾 |
+| `\|to="B"` | 从文件开头到 B 所在**行**（含该行） |
+| `\|from="A"\|to="B"` | 从 A 行到 B 行（含）——**行级**裁切 |
+| `\|between="A"\|and="B"` | **串内**裁切：A 起点到 B 终点，**结果含 A、B 锚点本身**；可单写一个构成半开区间 |
+
+- 行号范围用 `:` 加在文件名后；修饰符用 `|` 分隔。
+- **锚点必须唯一**：行级锚点（`from`/`to`）按「包含该子串的**行**」计数——0 行命中报 `Anchor not found`、命中多行报 `Anchor appears on multiple lines`（同一行内出现多次不算冲突）。串内锚点（`between`/`and`）按「整个文本里的**出现次数**」计数，须恰好一次——0 次报 `Anchor not found`、多次报 `Anchor appears N times (must be unique)`。
+- **行级 vs 串内**：`from/to` 按「行」裁、切不动一条超长单行的内部；`between/and` 按「子串」裁、直接作用在文本上（同行或跨行皆可），用于 payload 这类"一条超长单行"取局部。
+- 不确定行号时优先用 `from=` / `between=`。
+
+### 失败行为
+
+- **宽松**（系统提示词/预设模板、Generate）：解析不了（文件不存在 / 锚点不唯一 / 语法错）→ **整片原样保留**，不报错（教学示例不炸）。
+- **严格**（`Write`/`Edit`/`WriteLine` 的 `resolve_placeholders=true`、`Read` 的 `slice`）：**显式报错**，绝不把 `{{...}}` 原文写进去 / 回显给你。
+
+### 转义
+
+在开括号前加 `\`，强制保持**字面量**、不解析：
+
+- `\{{path}}` → `{{path}}`
+- `\${name}` → `${name}`
+- `\$ { if...: }` → 不执行的条件块
+- `\\` **不会**被折叠成 `\`——反斜杠只在**紧跟 `{` 或 `$` 时**才被消费掉，其余位置原样保留。所以 `\\{{path}}` 的结果是 `\{{path}}`（第一个 `\` 留下，第二个吃掉、切片得以保持字面量）
+
+反斜杠在解析全部结束后才去掉还原，故多轮交替展开期间也不会被吞。
+
+**必须给"教学示例/要展示的字面 `{{}}`、`${}`"加转义**——否则若恰匹配到真实文件（如 `{{glob:...}}`），会被真的取内容注入提示词（曾因此泄漏楼层正文）。
+
 ## 提示词包（imported packages）
 
 **提示词包是一组被复制进实例的资源，约束力很弱：装进来本身没有任何效果**，你得在自己的组装器/正文里**显式引用**某个文件才生效。包在实例的 `packages/<包名>/` 下，随 git 入库存档。包名即识别符，作者常在名字里带版本号（如 `某人的修仙设定v1.01`），可含空格、点号、中文。包内可能有 README、设定提示词、描写词、UI 脚本/样式、甚至自己的组装器，结构对实例文件夹同构。
 
 **系统提示词已注入「已安装提示词包列表」**（每包 README 前几行 + 顶层目录结构），让你知道有哪些包可用、大致怎么用。**具体用哪个文件、引用多长，全看你的业务判断**——README 说明包的意图；想让全量太长的设定按需注入，可以用行段/锚点或变量分段引用。
 
-- **引用语法**：`{{@包名/路径}}` 引文件内容，等价于普通切片（支持 `:行段`、`|from=".."|to=".."`），但路径相对于 `packages/<包名>/`。例如 `{{@某人的修仙设定v1.01/settings/static_settings/AAA.md}}`。
+- **引用语法**：`{{@包名/路径}}` 引包内文件内容（路径相对于 `packages/<包名>/`，修饰符与普通切片一致，见「切片语法」节）。例如 `{{@某人的修仙设定v1.01/settings/static_settings/AAA.md}}`。
 - **写在哪**：组装器 `settings/assemble.md`、Generate 配置、正文 skill 的 `${  if ...: return ...}` 条件里都可用——想按需引用（如 NSFW 开关、修为分段、场景触发），用变量条件挑包文件片段。
 - **包缺失/路径不存在**：该引用在组装时**原样保留、不报错**（教学示例不炸）。要用它前先用 `CheckPackageRefs` 验证。
 - **UI 资源（js/css）**：不直接进沙盒目录（避免污染"哪些是我们自己写的 vs 引用自包"）。改为编辑 `runtime/sandbox/manifest.md`，每行写一个 `{{@包名/runtime/sandbox/xxx.js}}`（或 `.css`）引用，引擎聚合时把它们同本地 `*.js/*.css` 一起 inline 进沙盒渲染。**想禁用某 UI = 删掉 manifest 里对应行**；真要魔改 = 把包文件复制出来进沙盒改（普通文件，任你改）。
@@ -65,27 +115,30 @@
 
 | 目录 | 性质 | 用途 |
 |---|---|---|
+| `teahouse.md` | 必需 | 实例配置，始终实时注入你的上下文（改它前先 Read 原文再 Edit，见「基本规则」） |
 | `runtime/sandbox/` | 必需 | 沙盒渲染代码（平台注入 bootstrap，实例只写 *.css、其余 *.js） |
 | `runtime/sandbox/disabled/` | 可选 | 沙盒代码禁用区（除本子目录外均启用；移入即禁用，渲染器不读） |
-| `runtime/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿） |
+| `runtime/floors/` | 必需 | 正文历史（floor-N.md 定稿 + floor-N-draft.md 半正式稿，即"草稿"落在这里） |
+| `runtime/runtime_vars.jsonl` | 必需 | 变量工作值（派生、不入 git；权威快照 `runtime_vars_snapshot.jsonl` 入 git） |
 | `runtime/text-style-rules.yaml` | 必需 | 文本样式着色规则 |
 | `settings/dyn_settings/` | 推荐 | 动态设定（关系、所在地、任务进展等可变状态，总结产出，入 git） |
 | `summary/` | 必需 | 汇总流水账 `sum-N-M.md`（导演回溯参考，不进正文 Bot 上下文）+ `index.json`（归档界，后端自动维护） |
 | `generate-config/` | 推荐 | Generate 配置模板（引用 dyn_settings/static_settings 切片，更新跟随总结） |
-| `settings/static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，gitignore，只读引用） |
+| `settings/static_settings/` | 推荐 | 长期静态设定（背景板/修为/势力，随实例入 git，只读引用） |
 | `packages/` | 可选 | 已安装提示词包（随 git 入库；写 `{{@包名/路径}}` 显式引用其内容才生效，见上文「提示词包」） |
-| `temp/` | 推荐 | 临时文件：真草稿（draft-{N}-{V}.md） |
+| `dm.yaml` | 可选 | 存在即启用 DM（跑团/语C/聊天式），实例内唯一 |
+| `temp/` | 推荐 | 临时中间文件（子会话报告、Generate 调试产物、续写补全中间稿；不入 git） |
 
 ## 自建 Skill
 
 导演可以自建 skill（方法论 / 实例专用约定）。**实例自建 skill 放 `skills/<名字>/SKILL.md`**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
 
-**优先级：系统内置 skill 优先于实例 skill**（同名时实例副本不生效）。内置 skill 是引擎约定的**必备参考**（API 手册、语法约定），不该被实例同名 skill 悄悄顶掉；实例 skill 应另起名字，专做某个故事的写作/组织约定。同名冲突时列表里会把内置那条标 `has_instance_copy`。
+**优先级：系统内置 skill 优先于实例 skill**（同名时实例副本不生效）。内置 skill 是引擎约定的**必备参考**（API 手册、语法约定），不该被实例同名 skill 悄悄顶掉；实例 skill 应另起名字，专做某个故事的写作/组织约定。同名冲突时**前端 Skill 列表**会把内置那条标 `has_instance_copy`（该标记只出现在前端列表；注入你上下文的 `${teahouse.available_skills}` 只列生效的那一份，不带此标记）。
 
 - **SKILL.md 格式**：开头 YAML frontmatter 写 `name` + `description`（`description` 兼作触发条件，写清「当用户要求 X 时触发」），正文写方法论 + SOP。
 - **加载机制**：系统提示词只注入每个 skill 的 `name` + `description`（正文不注入），导演用 `SkillRead(name)` 按需读全文。
 - **多文件 skill**：用 `SkillRead(name, file="references/api.md")` 读 skill 目录内的子文件（`file` 默认 `SKILL.md`）。大体积 skill 的惯例是「薄 `SKILL.md` + `references/*.md`」——SKILL.md 保留流程与索引，详细手册拆到 `references/` 下按需加载；`file` 不存在时会回报该 skill 的可用文件清单。
-- **引用 skill 资产**：`{{skill:<skill 名>/<路径>}}` 切片可直接取 skill 目录内的文件（解析顺序与 `SkillRead` 一致：系统优先、实例兜底；支持 `:行段` / `|from=to`）。把内置标准件原样搬进实例而不经过你的上下文，靠 `Write` 显式解析即可：
+- **引用 skill 资产**：`{{skill:<skill 名>/<路径>}}` 切片可直接取 skill 目录内的文件（语法见「切片语法」节）。把内置标准件原样搬进实例而不经过你的上下文，靠 `Write` 显式解析即可：
 
   ```
   Write(path="runtime/sandbox/novel-main.js",
@@ -95,7 +148,7 @@
 
 ## 建议设定格式
 
-设定文件（`settings/`）建议采用带明确起止标记的区块格式（如 XML 风格标签），以配合切片工具的 `from=` / `to=` 锚点按区块精确截取、注入上下文：
+设定文件（`settings/`）建议采用带明确起止标记的区块格式（如 XML 风格标签），以配合切片工具的 `from=` / `to=` 锚点按区块精确截取、注入上下文（切片语法见上节「切片语法」）：
 
 ```yaml
 <游戏规则说明>
