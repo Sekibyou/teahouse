@@ -44,7 +44,7 @@
 
 1. **直接玩**：点击 `开始会话`，切换至 `游玩` 模式，在输入条选「生成下一章」输入要点，即可续写剧情。
 2. **当模板改**：把 `settings/static_settings/`、`settings/dyn_settings/characters.md`、`runtime/floors/` 里的开局换成你自己的世界观与人物，正文生成配置会沿用。
-3. **学对接**：沙盒 `input-bar.js` / `page-bar.js` / `var-editor/` 是引擎工具链（`runTool`、`sessionSend`、`getVars`）的参考实现，前端对接可照此写。
+3. **学对接**：沙盒 `novel-main.js` / `page-bar.js` / `var-editor/` 是引擎工具链（`runTool`、`sessionSend`、`getVars`）的参考实现，前端对接可照此写。
 
 ## 定制起点
 

@@ -13,7 +13,8 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
 
   runtime/              游戏运行时 —— 直接影响游玩的一切
     floors/             floor-N.md（定稿）/ floor-N-draft.md（半正式稿）正文历史
-    sandbox/            UI / 场景脚本 *.js *.css（input-bar.js、page-bar.js、var-editor/ 等组件）
+    sandbox/            UI / 场景脚本 *.js *.css（novel-main.js、page-bar.js、user-prompt.js、
+                        theme-proxy.js、theme.css、var-editor/ 等组件；disabled/ 为禁用区，放进去即不加载）
     assets/             二进制资源（封面/背景/字体/音频等），沙盒 用 readAsset 读
     runtime_vars.jsonl  变量工作值（**不入 git**）：一变量一行 jsonl，SetRuntimeVar 写、GetRuntimeVars 读；
                         派生 = 快照 + 比最后正式楼层更新的楼层里的变量块重放，随时可删可重建
@@ -24,8 +25,8 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
     assemble.md         正文生成组装器（中转承载设定与生成要求，yaml 整文件引用它）
     dyn_settings/       动态设定：随剧情变动的中短期文字状态，入 git，总结产出
     static_settings/    静态设定：长期稳定背景（世界观、模板），入 git，只读引用
-    key-vars.md         作者维护的变量清单示例：正文 AI 需要看到并维护的变量
-    key-vars-withOption-example.md   含「文末选项」变量的完整 key-vars 示例（演示章末产出可选项；不进正文，需开启时照它改 key-vars.md）
+    key-vars.md         作者维护的变量清单：正文 AI 需要看到并维护的变量（默认留空，由作者填写）
+    key-vars.md.example 变量清单的格式示例（不进正文，仅作参考）
 
   generate-config/      正文生成 / 正文补全的配置文件（薄壳，引用 {{settings/assemble.md}}）
     generate.yaml       生成下一章的 Payload 配置
@@ -34,7 +35,7 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
   summary/              总结区
     sum-*.md            总结流水账（导演回溯参考，不进正文 Bot 上下文）
     index.json          归档界索引（summarized_through，由后端 GitCommit 自动维护）
-    summarize-prompt.md 总结子会话任务提示词（被 input-bar 经 readText 读取）
+    summarize-prompt.md 总结子会话任务提示词（被 novel-main.js 经 readText 读取）
 
   skills/               实例自建 Skill（提示词包，同名覆盖系统内置 skill）
   packages/             已安装提示词包（随 git 入库、随原型导出；默认可含 README 与若干设定/描写词/沙盒资源）
@@ -49,18 +50,18 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
 | 文件 | 谁引用它 | 引用方式 |
 |---|---|---|
 | `runtime/sandbox/*.js` 与 `*.css` | 前端沙盒 iframe | `*.js` 追加挂载、`*.css` 注入 `<head>`；bootstrap.js 由引擎注入，勿自建 |
-| `runtime/sandbox/input-bar.js` | 前端（页面挂载） | 底部输入条组件 |
+| `runtime/sandbox/novel-main.js` | 前端（页面挂载） | 正文页主组件：输入条、正文渲染、选项、Generate 派发 |
 | `runtime/sandbox/var-editor/important-vars.json` | `var-editor.js` | readText 读取重要变量清单 |
 | `runtime/floors/floor-N.md` / `floor-N-draft.md` | 前端 + 正文生成 | 文件中间数字排序展示；Generate 落盘草稿、commitDraft 转正 |
 | `runtime/runtime_vars.jsonl` | 引擎 SetRuntimeVar / GetRuntimeVars | 派生工作值（不入 git）：一变量一行 jsonl，草稿落盘即更新 |
 | `runtime/runtime_vars_snapshot.jsonl` | 引擎（转正时写入） | 权威快照（入 git）：转正时刻的完整变量状态 |
 | `runtime/text-style-rules.yaml` | 前端 renderRichText | 符号着色 |
-| `generate-config/generate.yaml` | `runtime/sandbox/input-bar.js` | `source_file` 直接指向；Generate 读它组织正文请求 |
-| `generate-config/continue.yaml` | `runtime/sandbox/input-bar.js` | `CONT_YAML` 常量指向；续写补全 |
+| `generate-config/generate.yaml` | `runtime/sandbox/novel-main.js` | `source_file` 直接指向；Generate 读它组织正文请求 |
+| `generate-config/continue.yaml` | `runtime/sandbox/novel-main.js` | `CONT_YAML` 常量指向；续写补全 |
 | `generate-config/generate.yaml` 与 `continue.yaml` | 二者内部 | `{{settings/assemble.md}}` 整文件引用组装器 |
 | `settings/assemble.md` | 两个 generate-config yaml | `{{settings/assemble.md}}` 展开 |
-| `settings/assemble.md` 内部 | | `{{settings/static_settings/chapter-requirements.md}}`、`{{settings/static_settings/world.md}}`、`{{settings/dyn_settings/characters.md}}`；变量维护（注释内）`{{settings/static_settings/variable-ops.md}}`、`{{settings/key-vars.md}}` |
-| `summary/summarize-prompt.md` | `runtime/sandbox/input-bar.js` | `SUMMARIZE_PROMPT` 常量，经 `Teahouse.readText()` 读取后派发总结子会话 |
+| `settings/assemble.md` 内部 | | `{{settings/static_settings/chapter-requirements.md}}`、`{{settings/static_settings/world.md}}`、`{{settings/dyn_settings/characters.md}}`；变量维护段（受变量 `启用变量维护` 控制）`{{settings/static_settings/variable-ops.md}}`、`{{settings/key-vars.md}}` |
+| `summary/summarize-prompt.md` | `runtime/sandbox/novel-main.js` | `SUMMARIZE_PROMPT` 常量，经 `Teahouse.readText()` 读取后派发总结子会话 |
 | `summary/index.json` | 后端 `GitCommit(type="summary")` | 自动维护归档界；总结子会话 Read 它确认起点 |
 | `teahouse.md` | 引擎 | 始终注入导演系统提示词 |
 

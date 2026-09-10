@@ -1,2 +1,3 @@
 {"_snapshot": {"floor": 0}}
 {"name": "auto_jump_latest", "value": true}
+{"name": "启用变量维护", "value": false}

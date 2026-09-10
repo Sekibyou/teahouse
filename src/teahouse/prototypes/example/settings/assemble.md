@@ -15,14 +15,14 @@ ${@note
 {{settings/static_settings/world.md}}
 ————设定结束————
 
-${@note 
-    ————变量维护要求开始————
-    {{settings/static_settings/variable-ops.md}}
-    {{settings/key-vars.md}}
-    ————变量维护要求结束————
+${@condition 启用变量维护: """
+————变量维护要求开始————
+{{settings/static_settings/variable-ops.md}}
+{{settings/key-vars.md}}
+————变量维护要求结束————
+"""}
 
-    说明：
-    如果要让正文直接维护变量的话，需要移除掉注释，让“说明：”以上的内容作为正文存在；之后的这些内容是注释说明，需要移除或者转为一个单独的note
-    key-vars.md 是作者声明的「正文 AI 需要看到并维护的变量清单」示例，随剧情强相关，按本实例实际变量增删；默认不启用，需要时移除本注释块引用它。
-    若要同时启用「文末选项」（章末给玩家可选项，配合沙盒 input-bar 选项条）：照 `settings/key-vars-withOption-example.md` 的写法把「文末选项」变量行与产出要求并入 key-vars.md，再一并移除本注释块。示例文件本身不进正文，仅作参考。
+${@note 
+    变量维护要求段由变量「启用变量维护」控制：true 时注入（引用 variable-ops.md 与 key-vars.md），
+    默认 false 时整段不注入。启用步骤见 teahouse.md 的「如何启用变量」。
 }

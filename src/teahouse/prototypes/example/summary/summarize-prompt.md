@@ -1,6 +1,6 @@
 # 总结归纳提示词模板
 
-本文件是 input-bar 组件「总结归纳」模式的子会话任务提示词。由 `runtime/sandbox/input-bar.js` 读取，替换 `__USER_REQUEST__` 占位符后派发给总结子会话。
+本文件是 novel-main 组件「总结归纳」模式的子会话任务提示词。由 `runtime/sandbox/novel-main.js` 读取，替换 `__USER_REQUEST__` 占位符后派发给总结子会话。
 
 ---
 
