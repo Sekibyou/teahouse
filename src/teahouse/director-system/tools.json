@@ -333,13 +333,17 @@
   {
     "name": "SkillRead",
     "short": "读取 Skill 教学",
-    "description": "读取 Skill 的完整教学内容和 SOP",
-    "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 teahouse-generate-floor、teahouse-summarize\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。",
+    "description": "读取 Skill 的教学内容与 SOP，可按需读取其子文件（references 等）",
+    "usage": "读取指定 Skill 的 SKILL.md，获得该 Skill 完整的方法论和 SOP。\n\n参数：\n- `name`（必填）：Skill 名称，例如 teahouse-generate-floor、teahouse-summarize\n- `file`（选填）：Skill 目录内的子文件相对路径，默认 SKILL.md。大体积 Skill 会把详细参考（API 手册、事件表、语法细则等）拆到 `references/` 下，由 SKILL.md 在需要处点名——按 SKILL.md 的指引，要用到时再 `SkillRead(name, file=\"references/xxx.md\")` 读取，不要一次性全读。\n\n注意：Skill 的名称和简介已在系统提示词中列出。当需要执行某个 Skill 定义的流程时调用此工具加载完整内容。file 不存在时会回报该 Skill 的可用文件清单。",
     "parameters": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string"
+        },
+        "file": {
+          "type": "string",
+          "description": "Skill 目录内的子文件相对路径（如 references/api.md），默认 SKILL.md"
         }
       },
       "required": [

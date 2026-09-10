@@ -1932,9 +1932,11 @@ async def execute_roll(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
-    """Read a skill's SKILL.md content. Looks in instance skills/ first,
-    then falls back to the system teahouse_skills/ directory."""
+    """Read a skill file. Defaults to SKILL.md; `file` reads a sub-file
+    (e.g. references/api.md) for skills split into a thin SKILL.md + references.
+    Looks in instance skills/ first, then falls back to the system teahouse_skills/."""
     name = args["name"]
+    rel = (args.get("file") or "SKILL.md").strip() or "SKILL.md"
 
     # Instance skills take priority
     instance_skill_dir = instance_dir / "skills" / name
@@ -1948,12 +1950,25 @@ async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
 
     if not skill_dir.is_dir():
         return f"Error: Skill '{name}' 不存在"
-    skill_path = skill_dir / "SKILL.md"
-    if not skill_path.exists():
-        return f"Error: Skill '{name}' 缺少 SKILL.md"
 
-    content = skill_path.read_text(encoding="utf-8")
-    return f"## Skill: {name}\n\n{content.strip()}"
+    # Resolve the requested file inside the skill dir (path traversal protection).
+    skill_root = skill_dir.resolve()
+    target = (skill_dir / rel).resolve()
+    if not str(target).startswith(str(skill_root)):
+        return f"Error: 非法路径: {rel}"
+
+    if not target.is_file():
+        available = sorted(
+            str(p.relative_to(skill_root)).replace("\\", "/")
+            for p in skill_root.rglob("*")
+            if p.is_file()
+        )
+        listing = "\n".join(f"- {f}" for f in available) or "（空）"
+        return f"Error: Skill '{name}' 中不存在文件: {rel}\n可用文件：\n{listing}"
+
+    content = target.read_text(encoding="utf-8")
+    header = f"## Skill: {name}" if rel == "SKILL.md" else f"## Skill: {name} / {rel}"
+    return f"{header}\n\n{content.strip()}"
 
 
 # ---------------------------------------------------------------------------
