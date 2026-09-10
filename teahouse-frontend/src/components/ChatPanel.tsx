@@ -69,7 +69,7 @@ async function downscaleImage(file: File): Promise<File> {
   }
 }
 
-export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
+export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => void; dmOpenNonce?: number }) {
   const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
   const [messages, setMessages] = useState<RichMessage[]>([])
@@ -982,6 +982,22 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     switchSession(target)
   }, [activeSid, lastDirectorSid, sessionList, switchSession])
 
+  // 实例启用 DM（有 dm.yaml）才给出「DM」tab——会话列表里出现 dm 条目即代表启用。
+  const dmAvailable = sessionList.some((s) => s.session_id === DM_SID)
+
+  // 沙盒 Teahouse.openDM() → 宿主经 dmOpenNonce 递增下发请求：切到 DM 标签页。
+  // 需与 openDirector 的「展开导演栏」配合（宿主已同时调用），此处只管面板模式切换。
+  // 用 nonce 而非布尔：连续两次 openDM 都要生效，且不因 ChatPanel 重渲染重复触发。
+  const dmNonceHandledRef = useRef(dmOpenNonce ?? 0)
+  const switchPanelModeRef = useRef(switchPanelMode)
+  switchPanelModeRef.current = switchPanelMode
+  useEffect(() => {
+    if (!dmOpenNonce || dmOpenNonce === dmNonceHandledRef.current) return
+    if (!dmAvailable) return
+    dmNonceHandledRef.current = dmOpenNonce
+    switchPanelModeRef.current("dm")
+  }, [dmOpenNonce, dmAvailable])
+
   /**
    * Merge a freshly-listed set of server sessions into the current list WITHOUT
    * dropping entries a transient backend miss or an in-flight event may have
@@ -1779,7 +1795,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         newMsgMap={newMsgMap}
         onSwitchSession={switchSession}
         // 实例启用 DM（有 dm.yaml）才给出「DM」tab——会话列表里出现 dm 条目即代表启用。
-        dmAvailable={sessionList.some((s) => s.session_id === DM_SID)}
+        dmAvailable={dmAvailable}
         onSwitchPanelMode={switchPanelMode}
         onRefreshSessionList={refreshSessionList}
         onCreateSession={createSession}

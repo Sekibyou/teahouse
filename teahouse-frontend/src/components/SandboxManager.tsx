@@ -33,9 +33,11 @@ interface SandboxManagerProps {
   onSend?: (message: string) => void
   /** 沙盒请求唤起导演栏（被折叠时打开）。纯前端信号，不触发生成。 */
   onOpenDirector?: () => void
+  /** 沙盒请求唤起导演栏并直接切到 DM 标签页。纯前端信号，不触发生成。 */
+  onOpenDM?: () => void
 }
 
-export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirector }: SandboxManagerProps) {
+export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirector, onOpenDM }: SandboxManagerProps) {
   const { t } = useTranslation("misc")
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [textStyleRules, setTextStyleRules] = useState<TextStyleRule[]>([])
@@ -332,6 +334,12 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           result = true
           break
         }
+        case "openDM": {
+          // 沙盒唤起 DM 栏（纯前端，不触发生成）——宿主展开导演栏并切到 DM 标签页。
+          onOpenDM?.()
+          result = true
+          break
+        }
         case "sessionCreate": {
           // { enabled_tools?: string[], reasoning_effort?: string } → creates a child sub-session, returns {session_id}.
           if (instanceId) {
@@ -416,7 +424,7 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
         _error: err instanceof Error ? err.message : "Unknown error",
       }, "*")
     }
-  }, [instanceId, instanceName, onSend, onOpenDirector, textStyleRules, hostIsDark, hostScale])
+  }, [instanceId, instanceName, onSend, onOpenDirector, onOpenDM, textStyleRules, hostIsDark, hostScale])
 
   useEffect(() => {
     window.addEventListener("message", handleMessage)

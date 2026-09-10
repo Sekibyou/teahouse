@@ -89,6 +89,9 @@ export function WorkspacePage() {
   // 浮窗从右滑出离场动画：关闭先置 closing 保持渲染播完动画再真正隐藏
   const [overlayClosing, setOverlayClosing] = useState(false)
   const DIRECTOR_OVERLAY_ANIM_MS = 220
+  // 沙盒 Teahouse.openDM() 请求：递增 nonce 下发给 ChatPanel，令其切到 DM 标签页
+  // （展开导演栏的动作仍复用 openDirector）。
+  const [dmOpenNonce, setDmOpenNonce] = useState(0)
   // 游玩层退出动画：先播 slide-out-to-right 再真正 exitPlay（inPlay 驱动 SSE/交互，需等动画完）
   const [playClosing, setPlayClosing] = useState(false)
   const PLAY_ANIM_MS = 220
@@ -424,6 +427,12 @@ export function WorkspacePage() {
       setChatCollapsed(false)
     }
   }, [isMobile, inPlay, guardedSwitchTab])
+
+  // 唤起 DM 栏：同 openDirector 展开导演栏，并请求 ChatPanel 切到 DM 标签页。
+  const openDM = useCallback(() => {
+    openDirector()
+    setDmOpenNonce((n) => n + 1)
+  }, [openDirector])
 
   // Git state — file statuses for tree coloring from unified store. The store
   // keys ARE bare backend paths; map them to "root/..." so they match tree nodes.
@@ -1766,7 +1775,7 @@ export function WorkspacePage() {
                 : "absolute inset-0 z-40 flex flex-col bg-background animate-in slide-in-from-right duration-[220ms]"}`
             : "hidden"}`}>
           <div className="relative flex-1 flex flex-col min-h-0">
-            <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} />
+            <OutputPanel instanceId={instId} instanceName={activeInstance?.name} onSend={(msg) => useSessionStore.getState().setPendingMessage(msg)} onOpenDirector={openDirector} onOpenDM={openDM} />
             {/* 游玩层悬浮球（常驻，仅保留三项：退出游玩/版本控制/主题） */}
             {inPlay && (
               <>
@@ -1907,6 +1916,7 @@ export function WorkspacePage() {
           {/* 浮层形态传 onClosePanel → ChatHeader 右上角出关闭钮；外层 director 页不传 → 空白 */}
           <ChatPanel
             onClosePanel={inPlay && playDirectorOpen ? closePlayDirector : undefined}
+            dmOpenNonce={dmOpenNonce}
           />
         </div>
 
@@ -2407,6 +2417,7 @@ export function WorkspacePage() {
             <div className="flex-1 flex flex-col min-h-0">
               <ChatPanel
                 onClosePanel={() => setChatCollapsed(true)}
+                dmOpenNonce={dmOpenNonce}
               />
             </div>
           </aside>

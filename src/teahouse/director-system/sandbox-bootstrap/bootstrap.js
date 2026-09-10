@@ -188,6 +188,9 @@
     // 唤起导演栏：当导演栏被折叠/隐藏时，请求宿主将其打开（纯前端，不触发生成）。
     openDirector: function() { callHost('openDirector', []); },
 
+    // 唤起 DM 栏：同 openDirector 打开导演栏，并直接切到「DM」标签页。
+    openDM: function() { callHost('openDM', []); },
+
     // 子会话
     sessionCreate: function(opts) { return callHost('sessionCreate', [opts || {}]); },
     sessionSend: function(session_id, message) {

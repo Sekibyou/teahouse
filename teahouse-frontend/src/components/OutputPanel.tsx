@@ -8,6 +8,8 @@ interface OutputPanelProps {
   onSend?: (message: string) => void
   /** 沙盒唤起导演栏（折叠时打开），透传给 SandboxManager。 */
   onOpenDirector?: () => void
+  /** 沙盒唤起 DM 栏（打开导演栏并切到 DM），透传给 SandboxManager。 */
+  onOpenDM?: () => void
 }
 
 /**
@@ -18,7 +20,7 @@ interface OutputPanelProps {
  * - 宽屏底部提供一个稳定调试栏（文件清单）；窄屏底部折叠栏意义不大，
  *   改由右上角菜单以全屏面板触发，此处不再渲染。
  */
-export function OutputPanel({ instanceId, instanceName, onSend, onOpenDirector }: OutputPanelProps) {
+export function OutputPanel({ instanceId, instanceName, onSend, onOpenDirector, onOpenDM }: OutputPanelProps) {
   const isMobile = useIsMobile()
 
   return (
@@ -29,6 +31,7 @@ export function OutputPanel({ instanceId, instanceName, onSend, onOpenDirector }
           instanceName={instanceName}
           onSend={onSend}
           onOpenDirector={onOpenDirector}
+          onOpenDM={onOpenDM}
         />
       </div>
 
