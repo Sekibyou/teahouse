@@ -383,7 +383,6 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
         }
         case "commitDraft": {
           // 转正：解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交。
-          // 详见 tests/teahouse-commit-draft-api.md (v2)。
           if (!instanceId || typeof _args[0] !== "number") {
             result = { ok: false, error: "commitDraft requires {num}" }
             break

@@ -249,7 +249,7 @@ FileOps move temp/draft-{{N}}.md runtime/floors/floor-{{N}}-draft.md
 
 ## 正文变量块约定（teahouse-vars）
 
-正文可携带变量操作，**由正文 AI 在正文末尾就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、剥离块（记入 `floor-N-meta.json`）并 git 提交。约定源：`tests/teahouse-commit-draft-api.md`（v2）。
+正文可携带变量操作，**由正文 AI 在正文末尾就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、剥离块（记入 `floor-N-meta.json`）并 git 提交。
 
 ```html
 <!-- teahouse-vars: [

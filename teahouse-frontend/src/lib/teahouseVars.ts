@@ -3,8 +3,6 @@
 // 本文件是纯逻辑模块（无 React / 无 API 依赖），可独立测试。宿主 SandboxManager
 // 的 `commitDraft` 复用它：解析块 → 逐条应用 → 给每条标记 msg(consumed/error) →
 // 把块从正文剥离（记入 floor-N-meta.json），正文只保留纯 prose。
-//
-// 约定源：tests/teahouse-commit-draft-api.md (v2)。所有语义须与之保持一致。
 
 // ---- 暴露给正文 bot 的合法类型（硬约束）----
 type VarValue = boolean | string | number | unknown[]

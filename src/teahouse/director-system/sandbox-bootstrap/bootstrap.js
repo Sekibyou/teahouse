@@ -165,7 +165,6 @@
     // 一次性完成：解析正文 teahouse-vars → 应用变量 → 标记 msg 写回 → 改名 → git 提交。
     // 返回 {ok, data|error}，data 含 {num, title, commit_hash, applied, failed, committed_draft}。
     // 已转正且无未消费 action → 幂等返回。二次补解析失败变量 → 再次调用即可。
-    // 约定源：tests/teahouse-commit-draft-api.md (v2)。
     commitDraft: function(num) { return callHost('commitDraft', [num]); },
 
     // ---- 重写 = 回档：git 丢弃所有暂存/未跟踪改动 ----
