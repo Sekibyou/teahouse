@@ -2,7 +2,7 @@
   'use strict';
 
   // ============================================================
-  // dm-bubbles.js — DM 呈现（message bubble）渲染器
+  // dm-main.js — DM 呈现（message bubble）渲染器
   //
   // 渲染源：Teahouse.listMessages() → { enabled, messages: [{chara, seq, batch, content, kind?}] }
   //   - 与 floors 并列的**独立线路**：DM 不走 runtime/floors/。
@@ -107,10 +107,22 @@
       '.th-dm-inputwrap{display:flex;align-items:center;gap:8px;',
       'background:var(--input-bg,rgba(16,16,36,.92));',
       'border:1px solid var(--panel-border,rgba(0,0,0,.12));border-radius:999px;',
-      'padding:3px 5px 3px 14px;',
+      'padding:3px 5px 3px 5px;',
       'box-shadow:0 2px 10px rgba(0,0,0,.12);',
       'transition:border-color .2s,background .25s;}',
       '.th-dm-inputwrap:focus-within{border-color:var(--accent);}',
+
+      // 唤起 DM 栏触发器（仿 novel 输入条左侧模式按钮：胶囊 + 小圆点 + 标签）
+      '.th-dm-open{flex:none;height:26px;padding:0 10px;border-radius:20px;',
+      'display:inline-flex;align-items:center;gap:5px;',
+      'background:transparent;border:1px solid var(--panel-border,rgba(0,0,0,.12));',
+      'color:var(--accent-text,#bcd4ff);',
+      'font-size:calc(12px * var(--font-scale));font-weight:600;line-height:1;',
+      'cursor:pointer;user-select:none;',
+      'transition:background .2s,border-color .2s;}',
+      '.th-dm-open:hover{background:var(--control-bg,rgba(0,0,0,.05));}',
+      '.th-dm-open-dot{width:8px;height:8px;border-radius:50%;flex:none;',
+      'background:var(--accent,#60a5fa);}',
 
       '.th-dm-input{flex:1;min-width:0;height:auto;padding:0;border:none;',
       'background:transparent;color:var(--panel-text,inherit);outline:none;',
@@ -239,12 +251,18 @@
     root.innerHTML =
       '<div class="th-dm-list"><div class="th-dm-inner th-dm-stream"></div></div>' +
       '<div class="th-dm-inputbar"><div class="th-dm-inner th-dm-inputwrap">' +
+      '<button class="th-dm-open" type="button" title="唤起 DM 栏">' +
+      '<span class="th-dm-open-dot"></span>DM</button>' +
       '<input class="th-dm-input" type="text" placeholder="说点什么…" autocomplete="off">' +
       '<button class="th-dm-send" type="button" title="发送">' + SEND_ICON + '</button>' +
       '</div></div>';
     document.body.appendChild(root);
     var input = root.querySelector('.th-dm-input');
     var sendBtn = root.querySelector('.th-dm-send');
+    var openDmBtn = root.querySelector('.th-dm-open');
+    openDmBtn.addEventListener('click', function() {
+      if (window.Teahouse.openDM) window.Teahouse.openDM();
+    });
     function submit() {
       var text = input.value.trim();
       if (!text) return;

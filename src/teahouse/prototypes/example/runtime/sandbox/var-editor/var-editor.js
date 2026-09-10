@@ -355,7 +355,7 @@
   }
   submitBtn.addEventListener('click', submit);
 
-  /* 导演改变量（如选项落盘）后，若面板开着，静默重载 */
+  /* 导演改变量后，若面板开着，静默重载 */
   Teahouse.on('output.refresh', function() {
     if (open) {
       loadAll().then(function() { render(); });

@@ -1,0 +1,20 @@
+## 当前可维护变量清单
+
+```yaml
+- name: user
+  value: ${user}
+  type: ${@type user}
+  note: 玩家主控角色的名字
+- name: user所在地
+  value: ${user所在地}
+  type: ${@type user所在地}
+  note: 主角当前所在地。
+```
+
+## 变动规则
+
+1. 在主角移动之后需要用 `set` 更新变量 `user所在地`。
+
+${@note
+  你可以在yaml块之外用自然语言进行更详细的描述，例如变动条件，变动值一般为多少等等
+}
