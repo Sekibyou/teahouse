@@ -1,6 +1,6 @@
 ---
 name: teahouse-sandbox-builder
-description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），含完整沙盒 API 参考与最佳实践。**动手前先按模式分流**：小说式 = 正文渲染器 + 翻页器；跑团 / 语C / 聊天式 = 启用 DM（实例根目录建 dm.yaml）+ DM 气泡渲染器（`listMessages()` / `sessionSend('dm',…)`），并禁用正文渲染系统。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `runtime/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、"给实例做前端"，或把实例做成跑团 / 语C / 聊天式时触发。
+description: 教导导演如何设计和构建前端沙盒代码（UI 组件、场景脚本、CSS 主题），含沙盒 API 参考与最佳实践。**基础层 bootstrap.js 由平台在组装 iframe 时自动注入，不在 sandbox 文件夹里**——导演只需编写实例 `runtime/sandbox/` 下的 `*.js` / `*.css` 组件，不要创建 bootstrap.js。当用户要求创建自定义界面、设计交互、添加 UI 组件、更改主题样式、"给实例做前端"时触发。（小说式 / 跑团·语C·聊天式 的**模式选择与方法论**见 `teahouse-play-mode` skill；本 skill 只管沙盒代码怎么写。）
 ---
 
 # Sandbox Builder Skill
@@ -18,27 +18,7 @@ description: 教导导演如何设计和构建前端沙盒代码（UI 组件、�
 - "给实例做前端"
 - "重新设计沙盒"
 
-## 先选模式：小说式 / 跑团·聊天式
-
-动手前先确定实例属于哪种模式——两者的**渲染系统互斥**，选错了画面会乱。
-
-| | 小说式 | 跑团 / 语C / 聊天式 |
-|---|---|---|
-| 正文来源 | `runtime/floors/floor-N.md`（散文正文） | `runtime/dm-output.jsonl`（DM 呈现的气泡） |
-| 核心组件 | 正文渲染器 + 翻页器 + 输入条 | DM 气泡渲染器 |
-| 谁产出 | 导演组织设定 → `Generate` 产文 → 落 floors | **DM** 运行时扮演 → `Output` 落 dm-output |
-| 启用方式 | 默认 | 实例根目录建 `dm.yaml` 即启用 DM |
-
-### 小说式（默认）
-
-需要：正文渲染器（`teahouse-maintext-renderer.js`）+ 翻页器（`page-bar.js`）+ 生成/输入条。正文经 `listFloors()` + `readText()` + `renderRichText()` 渲染，`Generate` 流式草稿经 `draft.change` 打字机呈现。见下方「步骤 2」。
-
-### 跑团 / 语C / 聊天式
-
-- **启用 DM**：在**实例根目录**写 `dm.yaml`（格式见 `prototypes/example/dm.yaml.example`）。DM 是实例级单例 agent，工具集轻量全权（读 / 写 / git 存盘 / 变量 / `Output` / `Roll`），**不走 floors 系统**。
-- **呈现**：DM 用 `Output(chara, content, kind?)` 把发言写进 `runtime/dm-output.jsonl`；沙盒用 `Teahouse.listMessages()` 读它渲染气泡——这是**与 `listFloors()` 并列的独立线路**。玩家扮演发言用 `Teahouse.sessionSend('dm', text)` 发送（后端自动入 dm-output）。
-- **禁用正文渲染系统**：把 `teahouse-maintext-renderer.js` / `page-bar.js` / `input-bar.js` 移入 `runtime/sandbox/disabled/`（该子目录不被加载），避免与气泡视图打架。
-- **参考实现**：`prototypes/example/runtime/sandbox/disabled/dm-bubbles.js`（移出 `disabled/` 即启用）。
+**模式选择**（小说式 vs 跑团 / 语C / 聊天式、要不要启用 DM）属 `teahouse-play-mode` skill；本 skill 只负责"沙盒代码本身怎么写"。
 
 ## 沙盒架构概览
 
@@ -51,7 +31,7 @@ Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离�
 
 ### 沙盒目录结构 —— 一个组件 = 一个文件，或一个文件夹
 
-`runtime/sandbox/` **根目录只允许两类条目，每个组件一份，不留多余文件**：
+`runtime/sandbox/` **根目录只允许两类组件条目，每个组件一份，不留多余文件**（另有一个引擎约定的 `manifest.md`，见下）：
 
 | 条目 | 含义 |
 |---|---|
@@ -69,23 +49,25 @@ Teahouse 前端沙盒是一个通过 `<iframe sandbox="allow-scripts">` 隔离�
 
 **注意**：`bootstrap.js` 是引擎内置的，不在实例目录中。不要创建 `bootstrap.js`——即使创建了也会被忽略。
 
+**另有引擎约定文件 `manifest.md`**（`runtime/sandbox/manifest.md`，可选）：它**不是组件**，而是聚合**包内** UI 资源的清单——每行一个 `{{@包名/runtime/sandbox/xxx.js|.css}}` 引用，引擎把被引用的包文件与本地 `*.js`/`*.css` 一起 inline 进沙盒。它自身不被当资源服务（见 `behavior.md`）。仅在使用包（`packages/`）时才涉及，不用包就无需创建。
+
 **正文历史不在 `runtime/sandbox/`**——它位于 `runtime/floors/`。沙盒通过 `Teahouse.readText()` 自行读取楼层文件来渲染正文。
 
 ### 注入规则（由文件名/扩展名决定，无 content_type 概念）
 
-**无限深度扫描 `.js` / `.css`**：不论在根目录还是任意深度的子文件夹，`*.js` 都追加挂载、`*.css` 都注入 `<head>`，不做跨目录排除。`.json` / `.md` / `.txt` 等数据文件**不被当代码注入**，仅作为文件存在（组件用 `readText` 自行读取）。
+**无限深度扫描 `.js` / `.css`**：不论在根目录还是任意深度的子文件夹，`*.js` 都追加挂载、`*.css` 都注入 `<head>`（按相对路径排序）。**唯一的跨目录排除是 `disabled/` 子树**——其中任何文件都不被服务（这是禁用沙盒代码的机制，见「沙盒代码整体禁用」）。`.json` / `.md` / `.txt` 等数据文件**不被当代码注入**，仅作为文件存在（组件用 `readText` 自行读取）。`bootstrap.js`（引擎内置）与 `manifest.md`（聚合清单）也被排除、不当普通资源服务。
 
 ### 脚本执行顺序
 
 srcdoc 中的 `<script>` 标签按出现顺序同步执行：
 
 ```
-<script>引擎内置 bootstrap.js</script>   ← 0. 基础设施：注册 DOMContentLoaded 回调，暴露 window.Teahouse
+<script>引擎内置 bootstrap.js</script>   ← 0. 基础设施：同步创建容器、暴露 window.Teahouse、注册 tool_run/generate_progress 处理
 <script>bridge</script>                  ← 1. 宿主内联的 postMessage 事件桥
-<script>用户 UI 组件 *.js</script>       ← 2. 按文件名排序：正文渲染器、翻页器、按钮等
+<script>用户 UI 组件 *.js</script>       ← 2. 按相对路径排序：正文渲染器、翻页器、按钮等
 ```
 
-**核心要点**：`#teahouse-content` 和 `#teahouse-ui-layer` 两个容器由引擎内置的 bootstrap 在 `DOMContentLoaded` 回调（或 readyState 检查）中创建。用户 `*.js` 应使用 `window.registerUI()` 挂载 fixed 定位元素，`registerUI` 内部有排队机制——如果 UI 层还没创建，它会先把元素放入 `uiQueue`，等容器就绪后再 flush。
+**核心要点**：`#teahouse-content` 和 `#teahouse-ui-layer` 两个容器由引擎内置的 bootstrap **在 `boot()` 里同步创建**（该 `<script>` 位于 `<body>` 内，`document.body` 已存在），后续用户 `*.js` 执行时容器必然已就绪。用户 `*.js` 仍应使用 `window.registerUI()` 挂载 fixed 定位元素——`registerUI` 内部有排队机制兜底（若 UI 层意外未就绪，先把元素放入 `uiQueue`，等容器就绪后再 flush）。
 
 ### 运行时通信模型
 
@@ -106,551 +88,20 @@ FastAPI 后端
 - BBCode 解析（沙盒调用 `Teahouse.renderRichText()` 拿到的是 HTML）
 - 权限控制（文件操作受 JWT 身份限制）
 
-## 沙盒 API 完整参考
+## API 参考（按需读取）
 
-所有 API 通过 `window.Teahouse` 暴露给沙盒代码。
+`window.Teahouse` 的全部 API 拆在 `references/` 下，写代码时按需要读：
 
-### 楼层（正文历史）
-
-正文历史位于 `runtime/floors/`，按楼层数字排序。沙盒通过文件操作接口读取：
-
-#### `Teahouse.listFloors() → Promise<FloorEntry[]>`
-
-获取排序后的楼层清单。每个元素是 `{ num, path, draft }`：`{num}` 为楼层数字，`{path}` 为相对实例根目录的路径（如 `runtime/floors/floor-5.md`），`{draft}` 为 `true` 表示半正式稿 `floor-N-draft.md`（正式稿优先于草稿）。
-
-```js
-const floors = await Teahouse.listFloors()
-const latest = floors.filter(f => f.draft)[floors.length - 1]  // 最近一个半正式稿
-```
-
-要读取某楼层正文、并经宿主渲染为 HTML：
-
-```js
-const markdown = await Teahouse.readText(floor.path)
-const html = await Teahouse.renderRichText(markdown)
-container.innerHTML = html
-```
-
-### DM 呈现（跑团 / 语C / 聊天式）
-
-DM 的呈现记录位于 `runtime/dm-output.jsonl`，**与 `runtime/floors/` 并列、互不干扰**。仅当实例启用 DM（根目录有 `dm.yaml`）时才有内容。
-
-#### `Teahouse.listMessages() → Promise<{enabled, messages}>`
-
-- `enabled`：实例是否启用 DM（根目录存在 `dm.yaml`）。
-- `messages`：`[{chara, seq, batch, content, kind?}]`——`chara` 发言者（`user` 为玩家保留值），`seq` 全局自增，`batch` 批次号（**只有最新批次可改**，历史批次已冻结），`kind` 可选（`say` / `narrate` / `roll` / …）。
-
-```js
-const { enabled, messages } = await Teahouse.listMessages()
-if (enabled) messages.forEach(m => renderBubble(m.chara, m.content, m.kind))
-```
-
-订阅 `output.refresh`（`data.path === 'runtime/dm-output.jsonl'`）重渲染。
-
-#### `Teahouse.sessionSend('dm', text) → void`
-
-玩家**扮演**发言：发给 DM 会话；后端自动把它写入 dm-output（开新批次）再交给 DM。注意区分：**导演栏里的 DM 会话输入框**里打的字是**局外**发言（只进会话、不进 dm-output），与沙盒的扮演输入是两条不同通道。
-
-#### 创作约定：`chara` 与 `kind` 是**开放的**，靠「两处配合」定义
-
-`chara`（谁说）与 `kind`（这是什么类型）引擎都**原样存储、不做校验**——没有固定清单，你写什么就存什么。因此**新增/删除一个发言者或消息类型，必须同时改两处**，缺一不可：
-
-| 改哪 | 作用 |
+| 文件 | 内容 |
 |---|---|
-| ① **实例根目录 `dm.yaml`** | 在提示词里**要求 DM 产出**这些 `chara` / `kind`（如「旁白用 `chara:"narrator"` + `kind:"narrate"`」「掷骰结果用 `kind:"roll"`」）。不改这里，DM 永远产不出你的新类型。 |
-| ② **沙盒渲染器（本 skill 的产物）** | 按 `chara` / `kind` 决定**怎么渲染**（气泡形状、颜色、居中、等宽…）。不改这里，新类型只会按默认样式渲染。 |
-
-- **`chara`**：发言者标识，`user` 是玩家保留值；其余任意字符串（角色名 / `narrator` / `system` / `dice` …）。
-- **`kind`**：消息类型，供渲染差异化。**引擎侧无枚举**——`say` / `narrate` / `roll` 只是**惯例示例**。你可以自造 `whisper`、`scene`、`系统提示` 等任意值；参考渲染器 `dm-bubbles.js` 按 `th-dm-kind-<kind>` 生成 CSS 类，加一条样式即生效。
-- **对齐约定**：`dm.yaml` 里声明 DM 可用哪些 `kind`、每个什么含义；沙盒的渲染分支与之**一一对应**。二者是同一份约定的两个消费者，改一个务必同步另一个。
-
-#### 用户消息的包裹层（只在会话里，**呈现记录里没有**）
-
-玩家发言在**发送前**由前端套了一行**系统前缀**，随正文一起落盘进 `.sessions/dm.jsonl`、一起喂 DM：
-
-| 前缀行 | 含义 |
-|---|---|
-| `[[TH-SYS presence N]]` | 扮演发言（沙盒输入）——已写入 `runtime/dm-output.jsonl`，seq=N |
-| `[[TH-SYS ooc]]` | 局外发言（DM 控制台输入）——不进 dm-output |
-
-格式为 `<前缀行>\n\n<正文>`；约定源 `teahouse-frontend/src/lib/dmWrap.ts`。
-
-**关键：沙盒渲染气泡时无需处理这个前缀**——后端写呈现记录时会剥掉它（`src/teahouse/dm_output.py` 的 `strip_wrap_prefix`），`runtime/dm-output.jsonl` 的 `content` 是纯正文。前缀只为 DM 的**会话上下文**服务；解析它的是**导演栏**（DM 控制台），把前缀裁掉渲染成 badge（`#N` / `#ooc`）。
-
-### 富文本渲染
-
-#### `Teahouse.renderRichText(text) → Promise<string>`
-
-将正文文本交由宿主层解析为 HTML 字符串。解析在宿主层执行（BBCode → 样式着色 → Markdown），沙盒拿到 HTML 后自由组织渲染位置和方式。
-
-```js
-const markdown = await Teahouse.readText(floor.path)
-const html = await Teahouse.renderRichText(markdown)
-container.innerHTML = html
-```
-
-**注意**：BBCode 标签白名单由 `teahouse-sandbox-richtext-render` skill 定义。不要假设沙盒自己能解析 BBCode。
-
-### 文件操作
-
-#### `Teahouse.readText(path) → Promise<string | null>`
-
-读取实例文件的 **UTF-8 文本内容**。path 相对于实例根目录，如 `"settings/static_settings/world.yaml"`、`runtime/floors/floor-001.md`。用于正文、设定、配置等文本文件；**二进制资源（图片/音频/字体）不在此列，用 `readAsset`**。
-
-```js
-const yaml = await Teahouse.readText("settings/static_settings/world.yaml")
-```
-
-#### `Teahouse.readAsset(path) → Promise<string | null>`
-
-读取实例内的**二进制资源**（图片 / GIF / 音频 / 字体等），返回**可直接用作 `src` 的 data URL**（如 `data:image/png;base64,....`）。path 相对于实例根目录，如 `"assets/bg.png"`、`"assets/theme.woff2"`。
-
-```js
-// 图片
-const bg = await Teahouse.readAsset("assets/bg.png")
-img.src = bg
-
-// 字体（@font-face 动态注入）
-const font = await Teahouse.readAsset("assets/px.woff2")
-var face = document.createElement('style')
-face.textContent = "@font-face{font-family:'px';src:url(" + font + ");}"
-document.head.appendChild(face)
-
-// 音频
-var audio = new Audio(await Teahouse.readAsset("assets/bgm.mp3"))
-```
-
-MIME 后端按文件头（magic bytes）探测，任何文件类型都接受，无需按扩展名约定。
-**体积引导**：资产经 base64（约放大 4/3）经 postMessage 传进 iframe 再入 DOM，单文件建议控制在 **10MB 以内**（图片、BGM 都够用）。超大资产会拖慢沙盒渲染甚至卡顿——搭建前**主动提醒用户压缩/分包**，不要自行塞大资源。（后端不设硬门槛，这是创作侧约定。）
-
-#### `Teahouse.writeFile(path, content) → Promise<boolean>`
-
-写入文件内容（覆盖式）。path 相对于实例根目录。
-
-```js
-// 组件包方式：数据写入组件自己的文件夹，写在 .json 上（不被注入、随 git 追踪）
-await Teahouse.writeFile("runtime/sandbox/var-editor/important-vars.json",
-                         JSON.stringify({ important: ["金币", "修为"] }))
-// 读取：
-const prefs = JSON.parse(await Teahouse.readText("runtime/sandbox/var-editor/important-vars.json"))
-```
-
-**权限**：文件操作受 JWT 身份控制，与当前用户权限一致。沙盒可读写实例内任意路径。
-
-### 沙盒变量
-
-#### `Teahouse.setVar(updates) → Promise<{name,value}[]>`
-
-原子合并写入实例变量，落盘到 `runtime/runtime_vars.jsonl`（**文件即状态**，导演中断时仍能恢复）。该文件是**派生的工作值、被 gitignore**；真正入 git 的是转正时冻结的 `runtime/runtime_vars_snapshot.jsonl`。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
-
-```js
-await Teahouse.setVar({
-  user_name: "LowStar",
-  opt_3_1: "opt2"          // 记录玩家在选项块的选择
-})
-```
-
-**写者约定**：变量是**沙盒与导演共享**的（沙盒 `setVar` 写、导演 `SetRuntimeVar` 工具写，落盘同一文件），用于记录"高度精炼的剧情数值 + 界面临时状态"。判断何时该用变量：**频繁变动、追求极短、供程序使用**（金币、选项选择）；较长的文字状态属于 `settings/dyn_settings/` 动态设定，沙盒用 `writeFile` 维护，但注意**不要用 `writeFile` 写正文楼层**（有并发/精确性风险）。沙盒要推进剧情就走 `Teahouse.send()` 告知导演。
-
-#### `Teahouse.getVars(names) → Promise<{name,value}[]>`
-
-按名读取沙盒变量。`names` 为变量名数组，不传则读全部。用于沙盒内重新渲染（如点击后回显选中态、把 `${user}` 替换为实际值）。
-
-```js
-const [user] = await Teahouse.getVars(["user_name"])
-// => [{ name: "user_name", value: "LowStar" }]
-```
-
-> **🚨 空值 / 缺值语义（最容易写错的地方）**
->
-> **你请求的每个名字都会出现在返回数组里；未初始化的名字 `value` 为 `null`。** 变量文件 `runtime/runtime_vars.jsonl` 不存在、或某个变量从未写入，效果完全一样——对应条目返回 `{name, value: null}`。
->
-> **只在你明确传入 `names` 时才保证"每个名字都有"**；不传 `names`（读全部）时，未初始化的变量根本不在，返回的都是已存在的：
->
-> ```js
-> // 假定只写过 name1="陆霜"：
-> getVars(["name1","name2"])       // => [{name:"name1",value:"陆霜"},{name:"name2",value:null}]
-> getVars()                        // => [{name:"name1",value:"陆霜"}]   // 读全部，只有已存在
-> ```
->
-> **因此代码用 `value === null` 判断"未初始化"**，给出回退，不要用 `undefined` 判断（`null` 是稳定值；`undefined` 只在 JSON 序列化边界才出现）。参考范式：
->
-> ```js
-> function resolveNames(markdown) {
->   return Teahouse.getVars(["name1","name2"]).then(function(entries) {
->     var valueMap = {};
->     for (var i = 0; i < entries.length; i++) valueMap[entries[i].name] = entries[i].value;
->     return markdown.replace(/\{\{name(\d+)\}\}/g, function(full, num) {
->       var val = valueMap['name' + num];
->       return (val !== null && val !== '' && val !== undefined)
->         ? val
->         : '未命名';          // 未初始化/空 → 回退
->     });
->   });
-> }
-> ```
->
-> 同理，`setVar` 的返回是"写后全部变量"，也可用它做 `getVars` 的镜像缓存。
-
-#### `Teahouse.roll(expr) → Promise<number>`
-
-按 RPG 骰子语法掷骰并返回 int 总数。**复用后端 placeholder 的同一套 `roll()` 语法（单一事实源）**，与导演代码块 `${ if...: }` 里的 `roll("1d6")` 语义完全一致。异步（经后端往返），需要 `await`：
-
-```js
-const dmg = await Teahouse.roll("2d6+1")
-const loot = await Teahouse.roll("4d6k3")   // 保最高 3 个
-```
-
-支持语法（同导演 `roll()`）：`XdN` + 可选 `kN`(保最高) / `dlN`(丢最低) / `rN`(重掷≤N) / `roN`(重掷一次≤N) / `e`/`!`(爆炸) / `p`(穿透) / 尾随 `+/-` 修正，如 `"1d6"`、`"2d10+5"`、`"4d6k3"`、`"4d6d1"`、`"1d6r1"`、`"1d6!"`。非法表达式 → Promise reject。
-
-#### 变量字面量替换：`Teahouse.replacePlaceholders(text?)`
-
-沙盒默认**不自动**把正文里的 `${name}` 字面量替换为变量值（渲染层须接触原始正文、且要留机会做特效特写，如 `${user_name}` → 正则 → `[rainbow]LowStar[/rainbow]`）。需要统一替换时手动调用：
-
-```js
-// 传 text：只替换这段文本里的 ${name}；返回值是替换后的文本
-Teahouse.replacePlaceholders("你好，${user_name}").then(rendered => ...)
-
-// 不传 text：对整页正文做一次兜底替换（默认 bootstrap 里已调用，可自行关掉）
-Teahouse.replacePlaceholders()
-```
-
-替换是固定字符串替换，仅当某值想"全篇统一变成字面值"时用；要做灵活特效，直接在已替换的文本上做正则特写更灵活。
-
-#### 导演侧读写：`GetRuntimeVars` / `SetRuntimeVar`
-
-导演**既能读也能写**变量（`GetRuntimeVars` 读、`SetRuntimeVar` 写，走同一 `runtime/runtime_vars.jsonl`）。沙盒选择类状态（如 `opt-3-1: opt2`）常作为"文件即状态 + 中断可恢复"的关键：用户点击选项→ `setVar` 即时落盘 → `send()` 通知导演 → 导演 `GetRuntimeVars` 读取续写。即便导演中途中断，变量已落盘，重启后仍可找回。核心变量会注入导演系统提示词（no cache），导演通常无需额外读取。
-
-### 发送消息
-
-#### `Teahouse.send(message) → void`
-
-模拟用户输入，触发导演回合。等价于用户在 ChatPanel 打字 + Enter。
-
-```js
-Teahouse.send("开始第一章")
-```
-
-这是沙盒与导演交互的唯一方式。用户选择选项、点击按钮等场景可用此方法驱动剧情。
-
-#### `Teahouse.openDirector() → void`
-
-**唤起导演栏**：当导演栏被折叠/隐藏（比如玩家全屏游玩、或导演面板被收起）时，请求宿主把导演栏打开。**纯前端信号，不触发生成、不发送任何消息**——只负责把导演栏展开到可见，玩家可看到场景并/或与导演沟通。
-
-```js
-// 需要找导演开子会话/沟通前，先把导演栏唤起，让玩家能看到舞台
-Teahouse.openDirector()
-```
-
-**典型场景**：沙盒某项功能需要调用子会话（`sessionCreate`/`sessionSend`）或与导演对上话，而玩家正全屏游玩、导演栏被折叠。此时在调用子会话或 `send()` **之前**先 `openDirector()`，确保导演栏展开、玩家能看到导演的过程与思考，也能直接打字介入。若导演栏本来就展开着，此调用是空操作（无副作用），可放心调用。
-
-#### `Teahouse.openDM() → void`
-
-**唤起 DM 栏**：行为同 `openDirector()`（展开被折叠的导演栏），并**额外把导演栏切到「DM」标签页**。**纯前端信号，不触发生成、不发送任何消息**。实例未启用 DM（无 `dm.yaml`）时切换被忽略，仅展开导演栏。
-
-```js
-// 需要玩家以 DM 身份发言（局外发言，只进会话不进呈现）前，先把 DM 栏唤起
-Teahouse.openDM()
-```
-
-**典型场景**：沙盒判定此刻该由 DM（跑团主持人/语C 对手戏）出面，而玩家正在全屏游玩。调用后 DM 栏展开并停在 DM 标签页，玩家可直接打字以 DM 身份发言。若已停在 DM 标签页，此调用是空操作。
-
-### 内联工具流水线：`Teahouse.runTool`
-
-#### runTool(steps) → handle (可取消的 thenable)
-
-依次执行一段**内联工具调用数组**（`[{tool, args}, ...]`），走**低延迟、确定的批量路径**，**不经过导演 LLM**。适合开场预设、回合推进、选项点击后的确定性流程：数组内各步（写文件、Generate 产正文、FileOps、GitCommit）由后端直接按序执行。
-
-`steps` 元素形如 `{tool: "Write", args: {...}}`，与导演同名工具一致（同一 `execute_tool` 通道）。**不解析任何占位符**：需要运行时变量时，先用 `getVars()` 取到真实 js 值并在组装 `args` 时拼接，不要指望沙盒侧 `${{...}}` 占位符解析。
-
-**返回一个可取消的 thenable handle**：bootstrap 内部自动管理 `run_uuid` 登记、`tool_run` 事件分拣、完成判定。handle **带 `.then` 可直接 `await`**，同时暴露两个成员：
-
-- `.run_uuid` — 受理后即填充的本批 UUID，可用来主动打断
-- `.cancel()` — 中途打断本批（等效 `Teahouse.cancelRunTool(run_uuid)`）
-
-handle 的 Promise 语义：**在整批完成或失败时 resolve/reject**，UI 无需手动管理 pendingRuns 或订阅 tool_run 事件。
-
-- 成功：`{ok: true, results: [{tool, result, ok}, ...]}` — results 数组按步骤顺序排列
-- 失败：Promise reject，错误信息包含失败步骤和原因
-- 被打断：`cancel()` 后 reject（`runTool 已取消：<run_uuid>`），**不会等 5 分钟超时**
-- 超时保护：5 分钟无响应自动 reject
-
-**中途取消（长 Generate 步骤）**：`runTool` 里若带 `{tool: "Generate", ...}` 这类可能跑很久的步骤，可让玩家随时打断。**已生成的部分会落盘为半成品供续写**（semantics 与"流中失败/中断"一致——`cancel()` 打断的 Generate 会把已累积正文写入目标 path，`-draft.md` 这类即可续写），只是整批 `runTool` 的 handle 会 reject。两种等价写法：
-
-```js
-// 方式 A：用 handle.cancel()，先在回调里暂存 handle
-var h = Teahouse.runTool([{ tool: "Generate", args: {...} }]);
-window.__abortGen = function() { h.cancel(); };   // 某按钮/时机调用
-
-// 方式 B：用 Teahouse.cancelRunTool(run_uuid) 显式传 uuid
-Teahouse.cancelRunTool(h.run_uuid);
-```
-
-```js
-// 开场流水线：产第一楼 + 提交
-var floorNum = 1;
-
-Teahouse.runTool([
-  { tool: "Generate", args: { source_file: "temp/opening.yaml",
-                              path: "runtime/floors/floor-" + floorNum + "-draft.md" }},
-  { tool: "GitCommit", args: { message: "floor-" + floorNum + ": 开场" } },
-]).then(function(result) {
-  console.log("流水线完成", result.results);
-}).catch(function(err) {
-  console.error("流水线失败", err);
-});
-```
-
-与 `Teahouse.send()` 的分工：**要走导演的即兴创意/总结/润色 → `send()`**；**要走确定的批量流程（开场、选项后推进、git 提交）→ `runTool()`**。
-
-**🚫 runTool 禁止用于子会话**：`runTool` 走的是"确定批量执行"通道，**不经过导演 LLM**，天然没有"派发一个独立 agent 干活"的能力。因此**禁止用 runTool 创建、管理、删除子会话**（`StartSubSession` / `SendToSubSession` / `DeleteSubSession` 这三个导演工具在 runTool 里不提供对应语义）。创建和管理子会话一律用 **`Teahouse.sessionCreate` / `sessionSend` / `sessionDestroy`** API（见下一节"子会话"）。对照表：
-
-| 需求 | 用 runTool ❌ | 用 Teahouse 子会话 API ✅ |
-|---|---|---|
-| 想跑一组确定的批处理（开场、选项推进、git 提交、按顺序 Write/Generate） | ✅ 可以，本意就是干这个 | 不必 —— 无谓开一个 agent 太浪费 |
-| 想委派一个**独立 agent** 去做一次性任务（总结、改设定、探索某设定、批量润色） | ❌ runTool 不经过 LLM，给不了独立 agent | `sessionCreate` 建号 → `sessionSend` 投任务 → 等 `session_done` → `sessionDestroy` |
-| 给子会话设工具权限 | ❌ | `sessionCreate({ enabled_tools: [...] })` |
-| 向子会话追加指令 / 催办 | ❌ | `sessionSend(sid, message)` |
-| 得知子会话做完了 | ❌ | 订阅 `Teahouse.on("session_done", fn)` |
-| 回收 / 强停子会话 | ❌ | `sessionDestroy(sid, abort?)` |
-
-一句话：**runTool 是"我自己按计划连做几步"，子会话是"我开一个 agent 替我想/做"**——两者分工别混。子会话相关操作只走 `Teahouse.session*` API。
-
-### 变量生效与转正：`Teahouse.refresh()` / `Teahouse.commitDraft(N)` / 回档 `Teahouse.gitDiscard()`
-
-**核心约定：变量在草稿落盘那一刻即生效，不必等转正。** 实例只有**一类变量、两个文件**：
-
-- `runtime/runtime_vars.jsonl` —— **工作值**（gitignored，派生文件，可随时删除重建）。沙盒 `setVar` 与导演 `SetRuntimeVar` 都写它；一切读取（`getVars`、`${}` 占位符、导演系统提示词）都取自它。
-- `runtime/runtime_vars_snapshot.jsonl` —— **权威快照**（入 git）。只在转正时由后端写入，等于转正那一刻的完整变量状态。
-
-正文里的 `<!-- teahouse-vars: [...] -->` 块**永远保留在正文里**：转正不剥离、不打 `msg` 标记、不产出 `floor-N-meta.json`。后端会在每次读取变量时重放「所有比最后一个正式楼层更新的楼层文件」（即草稿）里的块——所以**草稿一落盘，变量就更新**；改写草稿后重放一次即可，始终幂等。
-
-> **准则：正式楼层不可变。** `runtime/floors/floor-N.md`（定稿）是 git 锁定的历史，**包括其中的变量块在内，一律不要修改**——要改就走回退 / 新建分支（那是分支操作，不是"改"历史）。只有草稿 `floor-N-draft.md` 可以任意修改、重写。
->
-> 引擎**不校验**这一点：若绕过约定直接改了某个旧正式楼层的变量块，该块不会再被重放，快照与正文会**静默不一致**（变量停在旧值，无任何报错）。所以这是一条必须自觉遵守的约束。
->
-> 万一已经发生了（或变量状态明显错乱），导演可调用 **`RepairVars`** 兜底：以 git 历史里最早的变量快照为基底，从零重放所有正式楼层（+ 当前草稿）的变量块，重建变量并重新冻结权威快照。幂等，只动变量、不碰正文。
-
-#### `Teahouse.refresh() → Promise<{ok, data|error}>`
-
-**让后端立即重算变量**并返回 `{vars}`。**凡沙盒里合法地创建 / 修改 / 重写了 `runtime/floors/floor-N-draft.md`（或改了 `runtime_vars.jsonl`）之后，都应当调用一次**——这样依赖变量的界面（选项、状态栏、分支判定）随草稿即时更新，而不是等到转正。
-
-```js
-await Teahouse.refresh()      // 重算并拿到最新变量
-```
-
-> 读变量（`getVars`）的读路径本身也会触发重算，`refresh` 是主动推送一次，让界面在新草稿落盘后立刻对齐。建议在收到 `output.refresh`（`path` 以 `runtime/floors/` 开头）时调用。
-
-#### `Teahouse.commitDraft(N) → Promise<{ok, data|error}>`
-
-草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md`：**后端一次完成**「重算变量（含本楼草稿）→ 冻结快照 → 改名 → git 提交」，沙盒只发一个请求（单向闸门，请求-响应语义）。`data`：
-
-```js
-{ num, path, title, commit_hash,
-  failed: string[],          // 变量块解析/应用失败的说明（可空）
-  committed_draft: bool,     // true=本次新转正；false=已是正式稿（幂等）
-  commit_warning?: string }
-```
-
-分支语义：
-- `floor-N-draft.md` 存在 → 正常转正：变量重算到本楼、快照冻结在 N、文件改名并以 `floor-N: <标题>` 提交。
-- `floor-N.md` 已存在 → **幂等返回**（`committed_draft=false`），不动正文与 git。不再有"二次补解析"分支。
-
-判断「是否有失败」用 `data.failed.length > 0`。**转正不由导演做**：不要 `FileOps move` + `GitCommit`。
-
-**适用**：A 按钮（确认草稿可用）/ input-bar 三态的 `AWAIT_COMMIT`。
-
-#### `Teahouse.gitDiscard() → Promise<{ok, data|error}>`
-
-**重写 = 回档**：git 丢弃所有未提交改动（`git checkout -- .` + `git clean -fd`，连 untracked 的 `floor-N-draft.md` 一并清除）。B 按钮用于"这版草稿不满意，回到上一正式稿状态重新生成"。工作值同时失效，下次读取变量时由快照重建——**存档点之外的临时状态会被回档，这是期望行为**。
-
-> 注意：`refresh` / `commitDraft` / `gitDiscard` 走宿主 `SandboxManager` 桥（`callHost`），非 runTool。它们不经过导演 LLM，无法由导演工具集触发——由沙盒 UI 或沙盒脚本调用。
-
-### 子会话（sub-session）— 一次性导演子任务
-
-适合：一次性的总结、改设定、探索某设定、批量润色。子会话**独立上下文、受限工具**,干完可销毁,**不污染主会话历史**——搭建造型阶段测试子任务不会误伤正在进行的搭建主对话。导演自己也可在子会话里开子 agent 探索。
-
-**沙盒建子会话 ≠ 导演 `StartSubSession`**：沙盒的 `sessionCreate` 只**开一个空档**给你手动操作——它不传任务、不记录调用方、也不自动唤醒你。所以沙盒侧的"自动化委派"必须自己走完三步：**①建号拿 sid → ②注入任务 + 订阅完成信号 → ③等信号处理收尾**。切记子会话完成后**不会通知到沙盒**，靠的是你订阅的 `session_done` 事件——不要假设它自己会回来找你。
-
-```js
-var sid;
-
-// ① 创建子会话 + 设立权限,拿到 sid
-//   enabled_tools 未给 = 默认只读基础集(Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession);
-//   按任务放开权限,例如允许改变量/写 temp 草稿/生成正文:
-Teahouse.sessionCreate({
-  enabled_tools: ["Read", "Glob", "Grep", "GetRuntimeVars", "SetRuntimeVar", "Report", "Generate", "EndSession"]
-}).then(function(created) {
-  // 注意：返回统一为 {ok, data|error}（与 readText 等一致）。成功用 created.ok 判断，
-  //       session_id 在 created.data.session_id。
-  if (!created.ok) throw new Error(created.error)
-  sid = created.data.session_id
-  startTask();          // ② 号建好才注入任务,别在拿到 sid 前发
-  listenDone();         // ③ 同时挂上完成信号监听
-})
-
-// ② 注入任务文字(投进子会话后台循环即开跑);用户可在导演栏切到该会话看思考/工具过程,也能直接打字介入
-function startTask() {
-  Teahouse.sessionSend(sid, "把第 3~5 章总结为《宗门势力》设定,结论写入 Report temp/summary-1.md,完成后用 EndSession")
-}
-
-// ③ 等待完成信号以对接 —— 子会话导演调 EndSession 后触发(只发信号、不销毁会话)
-function listenDone() {
-  Teahouse.on("session_done", function(data) {
-    if (data.session_id !== sid) return
-    Teahouse.sessionDestroy(sid);  // 干完回收;若 mid-run 想强停,传 true
-    // 对接产出:Read 子会话 report 用,或重新拉楼层(它若 Generate 了正文,output.refresh 会推)
-  })
-}
-```
-
-**等待期间不要傻等**：装完"建 → 送 → 挂"之后立即放回控制权,别在 `session_done` 到达前做会与之冲突的事；若子会话产出了正文/文件,宿主会照常推 `output.refresh`,沙盒据此重渲染即可。
-
-API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成败、`res.error` 取错误理由）：
-- `Teahouse.sessionCreate(opts)` → `Promise<{ok, data:{session_id, enabled_tools}, error?}>`,`opts.enabled_tools` 可选(未给=只读基础集:Read/Glob/Grep/SkillRead/GetRuntimeVars/GitLog/GitDiff/GitStatus/Report/EndSession)。只建号、不投任务;成功同步落盘 meta,**创建后即可立即 `sessionSend`,无需等就绪**。
-- `Teahouse.sessionSend(session_id, message)` → `Promise<{ok, data:true, error?}>`,把消息补发给指定子会话(等价于向该会话发一条 user 消息,但隔离上下文);任务与追加指令都走它。
-- `Teahouse.sessionDestroy(session_id, abort?)` → `Promise<{ok, data:true, error?}>`,销毁子会话文件;`abort=true` 额外中止该会话进行中的生成。回收要你主动调,`session_done` 不会销毁。
-- 事件:`Teahouse.on('session_done', fn)` / `Teahouse.on('session_destroyed', fn)`。**注意**:`sessionSend` 成功时返回的是 `{ok:true, data:true}`,不是 `true` 裸布尔——沙盒侧务必用 `res.ok` 判断,不要写 `res === true` 或 `res.ok === undefined` 这类旧假设。
-
-**权限**:子会话只能调用其 `enabled_tools` 列表里的工具,默认禁止一切写正式区(floors/、`settings/dyn_settings/` 等)。想产出玩家可见正文/正式设定时,由具备写权限的主会话或沙盒落到正确目录。子会话拿到的探索结论用 `Report` 写 `temp/*.md`(`temp/` 不纳入 git 版本控制,安全)。
-
-### 事件监听
-
-#### `Teahouse.on(event, callback)` / `Teahouse.off(event, callback)`
-
-订阅/取消订阅事件。callback 接收事件 payload。
-
-### 事件类型
-
-| 事件 | payload | 触发时机 |
-|---|---|---|
-| `output.refresh` | `{ path }` | 导演写/改/移动 `runtime/` 下文件（含 floors、sandbox）后宿主推送 —— **沙盒应重新拉取楼层/文件并重渲染** |
-| `tool_run` | `{ run_uuid, index, tool, result, ok, instance_id }` | `runTool` 后台任务每完成一个步骤广播一条。**bootstrap 内部已封装完成判定**，UI 组件通常不需要直接订阅此事件——使用 `Teahouse.runTool()` 的 Promise/handle 接口即可 |
-| `tool_run_cancelled` | `{ run_uuid, instance_id }` | 某 runTool 批被后端取消（经 `handle.cancel()` / `Teahouse.cancelRunTool(run_uuid)`）时广播。bootstrap 内部据此 reject 对应批，UI 无需手动订阅 |
-| `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
-| `draft.change` | `{ path, text, accumulated_len }` | bootstrap 收到 `generate_progress` 后更新 `currentDraft` 并广播此事件。UI 组件（如正文渲染器）订阅此事件即可实现生成中的打字机效果 |
-| `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
-| `draft.committed` | `{ num, path, title, commit_hash, failed, committed_draft }` | `Teahouse.commitDraft()` 成功转正后宿主广播。**非调用方组件**（page-bar 角标、导演手动转正后 input-bar 切态）订阅它同步状态 |
-| `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
-| `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
-| `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |
-| `font-scale` | `{ scale: number }` | 宿主在 设置→通用设置 调字号档位时推送（初次挂载 / iframe 重建后也会补推当前值）。`scale` 是宿主 `--ui-scale` 的乘数（<1 缩小、>1 放大，默认为 1）。沙盒**是否跟随由作者决定**：想跟随宿主字号就用 rem / 字号 CSS 变量做基准（见下），不想跟随可无视此事件 |
-
-#### 跟随宿主主题（`theme.change`）
-
-沙盒是 `<iframe sandbox="allow-scripts">` 隔离环境，**读不到**宿主 DOM / `localStorage` / CSS class，因此组件要跟随宿主 dark/light，只能订阅宿主主动推送的 `theme.change` 事件。订阅后按 `dark` 切换自己组件的配色（改元素的内联样式、切换 CSS 变量、或注入不同 `<style>` 均可）：
-
-```js
-// 组件.js — 跟随宿主主题
-var root = document.documentElement;   // 或某个容器
-
-function applyTheme(dark) {
-  root.style.setProperty('--bg', dark ? '#0d0d1f' : '#f5f5f7');
-  root.style.setProperty('--fg', dark ? '#eee' : '#222');
-  root.style.setProperty('--panel', dark ? 'rgba(12,12,28,0.94)' : 'rgba(255,255,255,0.92)');
-  root.style.setProperty('--border', dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)');
-  Fab.style.border = dark ? '1px solid rgba(255,255,255,0.16)' : '1px solid rgba(0,0,0,0.16)';
-  // ...
-}
-
-Teahouse.on('theme.change', function(ev) { applyTheme(!!ev.dark); });
-
-// sandbox 端只有一个 host theme，可用 CSS 变量集中换肤：组件里的颜色一律用
-// var(--fg) / var(--bg) / var(--panel) 等，host 一改，全部组件自动跟随。
-```
-
-**要点**：
-- 事件在**初次挂载 / iframe 重建后**也会补推一次当前主题，所以组件无需自行拉初始值——订阅后 `theme.change` 一定会到。
-- 宿主切主题**不重建 iframe**（只在变更时发一次事件），所以沙盒内 DOM 状态保留，`applyTheme` 原地换肤即可。
-- 让所有组件统一通过 CSS 变量换肤，比每个组件单独监听更省事；若某组件要完全不同的配色，再单独监听 `theme.change`。
-
-#### 跟随宿主字号（`font-scale`）
-
-沙盒同样读不到宿主的 `--ui-scale`。想让正文/面板跟随宿主字号档位，**关键在于实例 CSS 从一开始就用地基字号变量（rem 或 CSS 变量）做基准**，而不是把 px 写死在每个组件里——否则宿主无法强制放大已固定 px 的字号。推荐：抽一个 `--font-scale` 变量并在 `theme.css` 里订阅宿主 `font-scale` 事件回填，让所有用它的字号（含 rem）整体缩放：
-
-```js
-// theme-proxy.js — 跟随宿主字号档位
-Teahouse.on('font-scale', function(ev) {
-  var s = (typeof ev.scale === 'number' && ev.scale > 0) ? ev.scale : 1;
-  document.documentElement.style.setProperty('--font-scale', s);
-});
-```
-
-```css
-/* theme.css —— 正文/面板字号一律经 --font-scale 放大 */
-:root {
-  --font-scale: 1;
-  /* 1rem 基准上乘宿主乘数：宿主调大字号，正文/卡片文本自动跟随 */
-  --text: calc(1rem * var(--font-scale));
-  --text-lg: calc(1.15rem * var(--font-scale));
-  --text-sm: calc(0.875rem * var(--font-scale));
-}
-/* 组件用 rem 或 var(--text*) 设字号，不要裸写 px；字号抽到变量便于全局缩放 */
-.room-text { font-size: var(--text); }
-```
-
-**要点**：
-- `font-scale` 与 `theme.change` 一样在**初次挂载 / iframe 重建后补推一次**，订阅即得当前值，无需自行拉初始。
-- 宿主切字号**不重建 iframe**，沙盒原地改根 CSS 变量即可即时生效。
-- 用 rem 的组件会在浏览器默认 16px 基准上乘 `--font-scale`；若想要**更大范围**的整块缩放（连 rem 的间距也一起），可直接改根 `font-size` 而非只设字号变量，但那样会连布局间距一起放大——通常只想要正文可读性时选字号变量即可。
-- 不跟随也合法：某个 canvas / 特殊组件想固定字号，无视 `font-scale` 事件、维持自己的 px 即可。
-
-### 流式草稿（`Teahouse.currentDraft`）
-
-bootstrap 内部集中订阅 `generate_progress`，维护流式草稿缓冲区。UI 组件可以直接读取：
-
-- **`Teahouse.currentDraft`** — `{ path, text, accumulated_len }` 或 `null`。生成中实时更新（delta 追加），生成结束清空
-- **`Teahouse.generationStatus`** — `'idle'` / `'generating'` / `'done'`
-
-正文渲染器可以这样实现打字机效果：
-
-```js
-Teahouse.on("draft.change", function(draft) {
-  // draft = { path, text, accumulated_len }
-  // 用 requestAnimationFrame 节流渲染，避免高频 DOM 操作
-  scheduleRender(draft);
-});
-
-Teahouse.on("generation.status", function(status) {
-  if (status === "done") {
-    // 生成结束，等 output.refresh 触发文件渲染接管
-  }
-});
-```
-
-宿主监听 `file_changed` SSE（导演工具调用广播），当变更路径位于 `runtime/` 下时向沙盒推送 `output.refresh`。沙盒借此在导演每次写正文/改代码后自动刷新。
-
-**⚠️ `_teahouse_event` 事件桥单一所有权**：宿主在 srcdoc 顶部注入的 bridge 是 `_teahouse_event`（含 `generate_progress`、`output.refresh`）的**唯一**转发入口，它已监听 `window message` 并 `_emit`。bootstrap 内部订阅 `generate_progress` 和 `tool_run` 维护 currentDraft 和 runTool 封装。用户代码不应再直接监听 `generate_progress` 或自行管理 `tool_run` 完成判定，应使用 `Teahouse.runTool()` Promise 和 `draft.change` 事件。
-
-**Generate 流式**：生成进行中**不落盘**，仅把每个正文 chunk 作为增量 `delta` 立即广播 `generate_progress`（携带 `run_uuid`、`path`）。**结束/用户取消（runTool 打断或导演 ESC）/报错才一次性落盘 + 广播 `file_changed`，且广播一条 `done:true` 带全文 `accumulated_text` 的校准消息**（取消也算"中断"，**已生成的正文同样落半成品供续写**，不会丢内容）。bootstrap 据此：
-- 开始 generate → `generationStatus = 'generating'`，`currentDraft` 建立，`draft.change` 广播
-- 每个 delta → 追加到 `currentDraft.text`，`draft.change` 广播 → 正文渲染器 rAF 节流刷新
-- 结束 → `currentDraft = null`，`generationStatus = 'done'`，等 `file_changed` → `output.refresh` → 文件渲染接管
-
-### UI 组件管理
-
-#### `window.registerUI(label, element)`（bootstrap 提供）
-
-注册一个 UI 组件到 `#teahouse-ui-layer`。如果 label 已存在，旧组件会被移除。未就绪时自动排队，就绪后挂载。
-
-```js
-var bar = document.createElement("div")
-bar.id = "my-statusbar"
-window.registerUI("statusbar", bar)
-```
-
-**重要**：不要直接 `getElementById('teahouse-ui-layer').appendChild()`，这会因 DOM 未就绪而静默失败。
-
-### 容器约定
-
-沙盒 DOM 中有两个由 bootstrap 创建的容器：
-
-| 容器 ID | 用途 | CSS class |
-|---|---|---|
-| `#teahouse-content` | 主体内容区（正文、章节等） | `teahouse-content` |
-| `#teahouse-ui-layer` | UI 覆盖层（fixed 定位组件） | `teahouse-ui-layer` |
-
-`#teahouse-ui-layer` 是 `position: fixed; inset: 0; pointer-events: none; z-index: 100`，其直接子元素会设为 `pointer-events: auto`。UI 组件应作为其直接子元素，且自己设置 `position: fixed` 定位。
+| `references/core-api.md` | 楼层 `listFloors` · 富文本 `renderRichText` · 文件 `readText`/`readAsset`/`writeFile` · 发送消息 `send`/`openDirector`/`openDM` · UI `registerUI` · 容器约定 |
+| `references/vars-api.md` | 变量 `setVar`/`getVars`/`roll`/`replacePlaceholders`（含空值语义）· 变量生效与转正 `refresh`/`commitDraft`/`gitDiscard`、正式楼层不可变 |
+| `references/events.md` | `on`/`off` + 事件类型表 · 跟随宿主主题 `theme.change` · 跟随宿主字号 `font-scale` · 流式草稿 `currentDraft` |
+| `references/subsessions.md` | 子会话 `sessionCreate`/`sessionSend`/`sessionDestroy` + `session_done` 完整流程与权限 |
+| `references/run-tool.md` | `runTool(steps)` 内联工具流水线 + 与 `Teahouse.session*` 的分工对照表 |
+| `references/dm-api.md` | DM 呈现 `listMessages` · `sessionSend('dm')` · `chara`/`kind` 两处配合约定 · 用户消息包裹层 |
+
+读法：`SkillRead(name="teahouse-sandbox-builder", file="references/core-api.md")`。
 
 ## SOP
 
@@ -664,18 +115,18 @@ Glob runtime/sandbox/**/*     → 查看沙盒目录中的现有文件
 
 ### 步骤 2：确保渲染系统存在（先按模式分流）
 
-**小说式**：需要**正文渲染器**。如果实例没有，就创建一个——引擎提供了默认的 `teahouse-maintext-renderer.js` 作为模板。核心职责：
+**小说式**：需要**正文渲染器**。若要自己写，参考平台标准件 `novel-main.js`（正文渲染器 + 翻页器 + 输入条合体，见 `teahouse-play-mode` skill 的 `assets/novel-main.js`，可 `SkillRead` 读全文吸收）。核心职责：
 - 版面管理：`Teahouse._pageState`（floors 数组 + currentIndex）
 - 正文渲染：`listFloors()` + `readText()` + `renderRichText()` → DOM
 - 流式草稿：订阅 `draft.change` 事件实现打字机效果
 - 翻页：`goToPage(index)` / `renderCurrent()`
 - `output.refresh` 精准刷新
 
-编写时使用普通 function 和 var（兼容旧浏览器，因为 iframe 无 transpiler）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
+编写时建议参考标准件的写法（其正文渲染器 / 输入条用 `var` + 普通 `function`，见 `assets/novel-main.js`）。整段代码包裹在 IIFE `(function() { ... })()` 中避免全局变量污染。
 
-Write 到 `runtime/sandbox/teahouse-maintext-renderer.js`，前端自动重建 iframe。
+Write 到 `runtime/sandbox/novel-main.js`，前端自动重建 iframe。
 
-**跑团 / 语C / 聊天式**：不要正文渲染器，改用 **DM 气泡渲染器**（`listMessages()` + `sessionSend('dm', …)`，见上「DM 呈现」）。同时把 `teahouse-maintext-renderer.js` / `page-bar.js` / `input-bar.js` 移入 `runtime/sandbox/disabled/` 禁用，避免与气泡视图打架；并在实例根目录建 `dm.yaml` 启用 DM。参考实现：`prototypes/example/runtime/sandbox/disabled/dm-bubbles.js`。
+**跑团 / 语C / 聊天式**：不要正文渲染器，改用 **DM 气泡渲染器**（`listMessages()` + `sessionSend('dm', …)`，见 `references/dm-api.md`）。同时把正文侧组件（`novel-main.js` / `page-bar.js` 等）移入 `runtime/sandbox/disabled/` 禁用，避免与气泡视图打架；并在实例根目录建 `dm.yaml` 启用 DM（组织方式见 `teahouse-play-mode`）。参考实现：`teahouse-play-mode` skill 的 `assets/dm-main.js`。
 
 ### 步骤 3：编写全局主题 CSS（唯一允许的独立 css）
 
@@ -700,6 +151,7 @@ Write 到 `runtime/sandbox/teahouse-maintext-renderer.js`，前端自动重建 i
 | `th-ip` | 输入框（圆角 + 边框 + `:focus` 高亮环） |
 | `th-chip` / `th-chip-plain` | 角标/小徽章（主色柔和底 or 中性底） |
 | `th-icon` | 图标/星标按钮（透明底 + hover 垫底），配合 `th-icon-stroke`（正常）/ `th-icon-dim`（弱）控制颜色 |
+| `th-switch` | 开关（`<label class="th-switch"><input type="checkbox"><span class="th-switch-track"></span>文字</label>`） |
 
 尺寸可用内联 `style` 微调（如 `height:30px;font-size:12px`），但**颜色/圆角/hover/禁用交给类**，不要在组件里重写。按钮想换语义色（比如"危险操作"要红色）就叠一个改 `background` 的内联或再加语义色类。
 
@@ -709,7 +161,7 @@ Write 到 `runtime/sandbox/teahouse-maintext-renderer.js`，前端自动重建 i
 - 实心底 + 其上文字：`--success-fill`+`--success-filled-text` / `--danger-fill`+`--danger-filled-text`
 - 场景：红=脏/未提交/危险（`--danger`）、黄=星标/警示（`--warn`）、绿=最新/成功（`--success`）。当前已应用到 var-editor（脏值与星标）、page-bar（最新/草稿角标）。
 
-**层级速记变量**：`--text-strong/--text/--text-soft/--text-dim`（前景强弱）、`--bg/--bg-elevated/--panel`（底面层级）、`--border/--border-strong`（分隔线）。写组件时按"几级文本/几级底"选，不用记具体 rgba。
+**层级速记变量**：`--text-strong/--text/--text-soft/--text-dim`（前景强弱）、`--bg/--bg-elevated/--panel`（底面层级）、`--border/--border-strong`（分隔线）。写组件时按"几级文本/几级底"选，不用记具体 rgba。z 轴另有三档：`--z-trigger`(400) < `--z-bar`(450) < `--z-panel`(500)，悬浮球/常数工具条/弹窗各归其位，别硬写数值。
 
 多个全局 css 文件**叠加生效**。但**组件的局部样式不写独立 css**——一律内嵌进该组件自己的 js（`style.cssText` 或 JS 注入 `<style>`），保持"一个组件一个文件"的自包含。
 
@@ -748,7 +200,7 @@ UI 组件是固定定位的悬浮元素。模式：
 
 ### 步骤 5（可选）：编写用户输入组件
 
-沙盒可通过 `Teahouse.send()` 发送用户消息给导演。自定义输入框、选项按钮、快捷指令参照实例现有 `input-bar.js` 模式。
+沙盒可通过 `Teahouse.send()` 发送用户消息给导演。自定义输入框、选项按钮、快捷指令参照标准件 `novel-main.js` 内联的输入条模式（`teahouse-play-mode` skill 的 `assets/novel-main.js`）；一次性初始化遮罩类组件的轻量范式可参考 example 原型的 `user-prompt.js`。
 
 ### 步骤 6：部署和迭代
 
@@ -756,7 +208,7 @@ UI 组件是固定定位的悬浮元素。模式：
 
 先创建文件，再 Write 到 `runtime/sandbox/`：
 
-1. **teahouse-maintext-renderer.js**：正文渲染器（最先执行，建立 _pageState 和渲染逻辑）
+1. **novel-main.js**（小说式）：正文渲染器（最先执行，建立 _pageState 和渲染逻辑）
 2. **theme.css**（可选）：全局主题样式——唯一允许的独立 css，换肤入口
 3. **其余组件**：简单组件写 `*.js`；带数据的组件开同名文件夹（`组名/组名.js` + `组名/数据.json`）
 
@@ -770,25 +222,25 @@ UI 组件是固定定位的悬浮元素。模式：
 如需临时禁用沙盒（让游玩模式退化为纯文本渲染），把 `runtime/sandbox/` 下的代码**移动到 `runtime/sandbox/disabled/`**：
 
 ```
-FileOps move runtime/sandbox/teahouse-maintext-renderer.js runtime/sandbox/disabled/teahouse-maintext-renderer.js
+FileOps move runtime/sandbox/novel-main.js runtime/sandbox/disabled/novel-main.js
 ```
 
 `runtime/sandbox/disabled/` 内的文件渲染器**不读取**（除 `disabled/` 外均启用），故移入即从沙盒移除、但仍保留在该子目录（git 追踪、可恢复）；需要恢复时移回 `runtime/sandbox/`。只服务沙盒代码，正文楼层无此需求。
 
 ## 最佳实践
 
-1. **使用 var 和普通 function**：iframe 无 transpiler，不识别 const/let/箭头函数
+1. **语法：ES6+ 完全可用**。沙盒 iframe 直接跑在现代 WebView 上（Chromium 内核），`const`/`let`、箭头函数、模板字符串、`class`、解构、`async`/`await`、可选链 `?.`、空值合并 `??`、BigInt 等**均已实测通过**，想用就用。平台标准件（`novel-main.js` / `dm-main.js`）沿用 `var` + 普通 `function` 是**既有风格**、不是技术限制。
 2. **IIFE 包裹每个文件**：避免全局变量污染
 3. **组件样式内嵌 js**（`style.cssText` / JS 注入 `<style>`）：组件不写独立 css，不拆辅助 js —— 一个组件 = 一个自包含 js 文件，或一个组件包文件夹
 4. **一个组件一个入口**：简单组件就一个 `foo.js`；要配数据就开同名文件夹（`foo/foo.js` + `foo/*.json`），根目录不留散文件
-5. **共享状态通过 `window.Teahouse` 暴露**：`window.Teahouse._colorState`、`window.Teahouse._pageState` 等
-6. **跨组件通信通过事件**：`window.Teahouse._emit('color.change', data)` + `window.Teahouse.on('color.change', callback)`
+5. **共享状态通过 `window.Teahouse` 暴露**：标准件的 `window.Teahouse._pageState`（floors + currentIndex，见 `novel-main.js`）即此模式；自定义组件可照此挂自己的状态键（如 `window.Teahouse._myState`）
+6. **跨组件通信通过事件**：自定义事件走同一套系统——`window.Teahouse._emit('myevent', data)` + `window.Teahouse.on('myevent', callback)`（`color.change` 只是命名示例，引擎无内置该事件）
 7. **正文渲染靠 `listFloors()` + `readText()` + `renderRichText()`**：不要假设正文会被推送进来
-8. **fixed 定位的 UI 组件 z-index 分层次**：topbar ~200、UI 层 ~100、panel ~200、input ~300
-9. **不要在沙盒内写 ES6+ 语法**：`let`、`const`、`=>`、模板字符串、async/await 都不安全（用 var + 普通 function + Promise 链）
+8. **fixed 定位的 UI 组件用 `theme.css` 的 z 层级变量**：`--z-trigger`（悬浮球/齿轮等打开弹窗的按钮，400）< `--z-bar`（底部输入条等常驻工具条，450）< `--z-panel`（弹窗面板，500），见 `theme.css`；不要硬写自己的 z-index 数值
+9. **改标准件就顺着它的风格写**：编辑 `novel-main.js` / `dm-main.js` 这类既有文件时按原风格（`var` + 普通 `function`），新写的文件随你选——但别在同一文件里两种风格交替
 10. **CSS 中用 `rgba()` 而非 `oklch()`**：iframe 内没有 Tailwind 的 oklch polyfill
 11. **先 Read 后 Edit**：修改现有沙盒代码前先读取当前内容
-12. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`，因 DOM 未就绪会静默丢失
+12. **ui_js 必须通过 `window.registerUI(label, element)` 挂载 UI 元素**：不要直接 `appendChild`——只有挂进 `#teahouse-ui-layer` 才落到 UI 覆盖层（层级/指针事件），且 `registerUI` 会按 label 去重（同名旧组件自动移除）并兜底排队
 13. **共享状态挂载到 `window.Teahouse` 并带事件通知**：状态变更方 `_emit`，订阅方 `on`
 14. **runTool 用 handle 接口，不要手动管理 tool_run**：`Teahouse.runTool(steps).then(...)` 自动完成判定；长 Generate 步骤要用 `handle.cancel()` / `Teahouse.cancelRunTool(run_uuid)` 让玩家可打断
 15. **流式生成用 `draft.change` 事件，不要直接监听 `generate_progress`**：bootstrap 已集中处理
@@ -804,4 +256,4 @@ FileOps move runtime/sandbox/teahouse-maintext-renderer.js runtime/sandbox/disab
 - **正文楼层在 `runtime/floors/`**：沙盒要渲染正文就读那里，别把正文代码放 sandbox
 - **组件数据放组件文件夹，不进根目录**：`foo/foo.js` + `foo/*.json`；`.json` 不被注入，用 `writeFile`/`readText` 自读写，随 git 追踪、导出随包
 - **数据文件是 `.json` 时不被当代码注入，安全**：但**别在组件文件夹放 `*.js`/`*.css` 之外的其他可执行东西**——无限深度扫描下，任何深度的 `.js`/`.css` 都会被注入进 srcdoc
-- **不确定时参考 sandbox 实例**：`data/lowstar/instances/sandbox/` 下有完整的 UI 组件参考
+- **不确定时参考标准件**：`teahouse-play-mode` skill 的 `assets/novel-main.js` 与 `assets/dm-main.js` 是平台维护的完整实现，`SkillRead` 可读全文；`prototypes/example/` 原型另有 `page-bar.js`（悬浮翻页球）、`theme-proxy.js`（主题/字号跟随）、`user-prompt.js`（一次性用户名弹窗）、`var-editor/`（变量面板，组件包范式）可作小件参考

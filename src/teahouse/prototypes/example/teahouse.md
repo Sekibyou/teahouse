@@ -26,10 +26,9 @@
 
 | Skill | 触发场景 | 用途 |
 |---|---|---|
-| `teahouse-generate-floor` | 用户要求「写下一章 / 继续写作 / 生成正文」 | 生成正文楼层的完整流程：上下文准备 + Generate 工具使用 |
+| `teahouse-play-mode` | 搭实例 / 组织设定 / 做跑团·语C·聊天式 / 设计总结 | 把设定、正文生成、总结设计成一套可运转的结构：小说式与 DM 式两种形态的构建方法论 + 平台内置沙盒件 |
+| `teahouse-syntax` | 变量·条件·骰子语法、BBCode 特效、着色规则 | 两套内容语法参考：`${}` 表达式 与 富文本渲染（BBCode 白名单、`text-style-rules.yaml` 管理） |
 | `teahouse-sandbox-builder` | 用户要求创建/修改沙盒代码、UI 组件、CSS 主题 | 设计构建前端沙盒（UI 组件、场景脚本、CSS 主题），含沙盒 API 参考与最佳实践 |
-| `teahouse-sandbox-richtext-render` | 需要输出 BBCode 特效、管理符号着色规则 | 前端沙盒富文本渲染能力：BBCode 标签白名单、文本样式着色规则管理 |
-| `teahouse-summarize` | 用户要求总结，或满足总结触发条件（建议每 7 层一次） | 总结流程：上下文压缩、设定更新、变量更新、流水账落盘 |
 | `teahouse-export-prototype` | 用户要求将实例导出为原型 / 打包原型 | 把当前实例就地整理为可导出的原型包 |
 
-> 注：以上五个 skill 由引擎内置提供（不在实例 `skills/` 目录），撰写正文 / 改沙盒 / 总结 / 导出前记得先 `SkillRead` 加载对应方法论。
+> 注：以上四个 skill 由引擎内置提供（不在实例 `skills/` 目录），搭实例 / 查语法 / 改沙盒 / 导出前记得先 `SkillRead` 加载对应方法论。

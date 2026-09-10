@@ -20,7 +20,7 @@
 # kind（消息类型）：当前生效 `say` / `narrate` / `roll`（见下方 system 内说明）。可自行
 #   增加或删减，但 kind 由「本文件（要求 DM 产出哪些）」与「沙盒渲染器（怎么渲染）」**两处
 #   共同约定**——改一处务必同步另一处，否则新 kind 只会按默认气泡渲染。详见
-#   teahouse-sandbox-builder skill 的「创作约定」。
+#   teahouse-sandbox-builder skill 的 references/dm-api.md。
 
 system: |
   你是这个世界的 DM（主持人 / 对手戏演员）。玩家在游玩视图的每一句发言都是

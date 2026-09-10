@@ -6,7 +6,7 @@
 
 你的任务是执行一次「总结归纳」流程，把用户指定的楼层范围压缩归档。
 
-【第一步 · 必须先加载技能】先用 SkillRead 读取 teahouse-summarize，严格按其中 SOP 执行总结。这是本任务的唯一方法依据。
+【第一步 · 方法论依据】本文件所列流程即本次总结的 SOP，严格按它执行。若需总结设计的方法论背景，可用 SkillRead 读取 teahouse-play-mode 的 `references/summarize.md` 作参考；本任务的具体规范以本文件为准。
 
 【进度记录】请使用 TodoWrite 工具维护任务清单，逐步记录总结进度（读归档界 / 读楼层 / 更新设定与变量 / 写流水账 / git 提交），让用户能实时看到你做到哪一步。
 
@@ -14,7 +14,7 @@
 『__USER_REQUEST__』
 以上是用户的原始要求。请以它为准：解析其中的总结范围（例如「最近10章」「71~79章」「总结到第80章」等），确定要覆盖的楼层编号区间。若原始要求未指明明确起点，先 Read summary/index.json 读归档界 summarized_through（上次已总结到的结束楼层），以此为起点顺延。
 
-【执行流程 · 严格按 skill SOP】
+【执行流程 · 严格按上述 SOP】
 1) Read summary/index.json 确认归档界与已有流水账；
 2) Read 本次待总结的全部楼层（runtime/floors/floor-N.md）；
 3) 把对后续剧情有持续影响的信息沉淀进 settings/dyn_settings/ 的动态设定文件，并更新变量（GetRuntimeVars / SetRuntimeVar）；

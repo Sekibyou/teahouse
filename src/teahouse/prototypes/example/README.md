@@ -28,7 +28,7 @@
 | ➕ 生成下一章 | 输入本章要点 → 自动落盘新楼层 |
 | 🔁 重写本章 | 输入要点 → 检查 git 存档后覆写当前章 |
 | ✂️ 续写补全 | 针对草稿中断处自动补全并合并成完整章节 |
-| 🧹 总结归纳 | 派发子会话，按 `teahouse-summarize` skill 压缩归档 |
+| 🧹 总结归纳 | 派发子会话，按 `summary/summarize-prompt.md` 压缩归档 |
 
 ### 沙盒演示组件
 
@@ -36,9 +36,9 @@
 - **变量修改器**（齿轮）：查看/修改全部运行时变量，可把重要变量置顶并批量提交
 - **正文渲染**：BBCode 特效、符号着色（书名号/引号）、Markdown 排版、亮暗主题跟随
 
-### 五个内置 Skill
+### 四个内置 Skill
 
-正文生成、沙盒搭建、富文本渲染、总结归纳、导出原型——均已在 `teahouse.md` 中配置好写故事所需的完整方法论。
+`teahouse-play-mode`（组织实例：小说式 / DM 式 / 总结设计）、`teahouse-syntax`（`${}` 表达式 + 富文本渲染）、`teahouse-sandbox-builder`（沙盒 API 与 UI 组件）、`teahouse-export-prototype`（导出原型）——均已在 `teahouse.md` 中配置好写故事所需的完整方法论。
 
 ## 怎么用
 

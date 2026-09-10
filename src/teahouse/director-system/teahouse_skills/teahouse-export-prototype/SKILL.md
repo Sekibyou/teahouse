@@ -29,15 +29,17 @@ description: 教导导演如何把当前实例就地整理为一个可导出的�
 
 ## 导出就是这么做的
 
-1. **就地试玩定型**：实例本身就是可游玩/可试玩的（`output/floors` + `output/sandbox` 实时渲染）。先跑几个楼层、验证沙盒和设定，直到满意。
+1. **就地试玩定型**：实例本身就是可游玩/可试玩的（`runtime/floors` + `runtime/sandbox` 实时渲染）。先跑几个楼层、验证沙盒和设定，直到满意。
 2. **（可选）复制保底**：如果还想保留试玩数据继续玩，在当前操作前先让用户到**首页对实例点"复制"**，生成完整快照副本。原实例继续玩，副本用于清理打包。
 3. **就地清理**：在要打包的实例上，删改测试数据（下方 SOP 详述）。
-4. **确认封面图**：向用户确认是否提供封面（`cover.jpg/.jpeg/.png/.webp`，1MB 内），见下方步骤 5。
-5. **打包**：用户在前端点"导出为原型"。后端把**实例根**打包为 `.teabrew`，自动排除 `building/`、`.git/`、`sessions/` 等内部目录。
+4. **确认封面图**：向用户确认是否提供封面（`cover.jpg/.jpeg/.png/.webp`，建议 1MB 内），见下方步骤 5。
+5. **打包**：用户在前端点"导出为原型"。后端把**实例根**打包为 `.teabrew`，自动排除 `building/`、`.git/`、`.sessions/` 等内部目录，以及 `temp/pasted/`、`runtime/runtime_vars.jsonl` 两个路径前缀。
 
 ## 简介（给用户的说明）
 
-原型包会包含当前实例里**所有未被排除的目标内容**：`teahouse.md`、`settings/static_settings/`、`settings/dyn_settings/`、`skills/`、`runtime/`（沙盒 + 楼层）、`runtime/runtime_vars.jsonl`、`assets/` 等。**什么保留、什么剔除，由你和导演就地决定**——比如楼层只留开场楼 `floor-001.md`、变量只裁成开局变量子集、`teahouse.md` 泛化——这些都是业务判断，不写死成代码规则。
+原型包会包含当前实例里**所有未被排除的目标内容**：`teahouse.md`、`settings/static_settings/`、`settings/dyn_settings/`、`skills/`、`packages/`、`runtime/`（沙盒 + 楼层 + `assets/`）、`runtime/runtime_vars_snapshot.jsonl` 等。**什么保留、什么剔除，由你和导演就地决定**——比如楼层只留开场楼 `floor-1.md`、变量只裁成开局变量子集、`teahouse.md` 泛化——这些都是业务判断，不写死成代码规则。
+
+注意：`runtime/runtime_vars.jsonl`（变量**工作值**，gitignored 的派生态）由后端在打包时排除，原型携带的是**权威快照** `runtime/runtime_vars_snapshot.jsonl`；`temp/pasted/` 同样被排除（其余 `temp/` 内容会进包）。
 
 ## SOP（就地整理）
 
@@ -45,11 +47,12 @@ description: 教导导演如何把当前实例就地整理为一个可导出的�
 
 ```
 Glob settings/static_settings/**/*                       → 了解长期静态设定
-Glob settings/dyn_settings/**/*                → 了解动态设定与总结流水账
+Glob settings/dyn_settings/**/*                → 了解动态设定
 Glob skills/*/SKILL.md  (或 skills/…)   → 了解现有 skills
+Glob packages/**/*                              → 了解已安装的提示词包
 Glob runtime/sandbox/**/*                → 了解沙盒资源
-Glob runtime/**/*                               → 了解游玩运行时（含楼层、沙盒、runtime_vars、text-style-rules）
-Glob assets/**/*                                  → 了解静态资源
+Glob runtime/**/*                               → 了解游玩运行时（含楼层、沙盒、assets、runtime_vars、text-style-rules）
+Glob summary/**/*                               → 了解总结流水账与归档界
 Glob building/**/*                                → 了解创建者的元工作（点子/checklist/笔记），仅作参考，不打包
 ```
 
@@ -63,14 +66,15 @@ Glob building/**/*                                → 了解创建者的元工�
 
 在要打包的实例上，逐项清理。以下都是**业务判断**，导演与用户共同决定去留：
 
-- **楼层**：`runtime/floors/` 是新实例初始楼层的来源。通常只保留开场楼（如 `floor-001.md`）作为新实例的初始页面，删除测试过程的楼。若根级 `floors/` 归档里有不需要的测试楼，一并清理。
-- **变量**：`runtime/runtime_vars.jsonl` 裁剪为「开局变量」子集——删除只跟测试进度相关的运行时变量，保留设定/框架类变量（角色、世界观、初始状态）。
-- **`settings/dyn_settings/`**：流水账是进度，不属于原型——删除 `summary/sum-*.md` 及 `summary/index.json`（归档界），让新实例从零开始。若想保留开场楼的"开篇设定"，体现在开场的动态设定文件里而非流水账。
-- **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界已由 `summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需再写 `summarized_to`。
-- **静态设定（`settings/static_settings/`）+ 动态设定（`settings/dyn_settings/`）**：适度泛化。保留角色基础设定与世界观框架（静态），去掉"当前正在发生"的临时状态（动态）。`settings/static_settings/` 已 gitignore，本就不进 git，但仍是原型内容，打包处理时按需保留。
+- **楼层**：`runtime/floors/` 是新实例初始楼层的来源。楼层文件命名为 `floor-N.md`（不补零），半正式稿为 `floor-N-draft.md`。通常只保留开场楼（如 `floor-1.md`）作为新实例的初始页面，删除测试过程的楼（含残留草稿）。
+- **变量**：打包会排除工作值 `runtime/runtime_vars.jsonl`，原型携带的是权威快照 `runtime/runtime_vars_snapshot.jsonl`。把**快照**裁剪为「开局变量」子集——删除只跟测试进度相关的运行时变量，保留设定/框架类变量（角色、世界观、初始状态）；并把快照首行 `{"_snapshot": {"floor": ...}}` 的 `floor` 写为 `0`（原型必须从楼层 0 起算）。
+- **`summary/`**：流水账是进度，不属于原型——删除 `summary/sum-*.md` 及 `summary/index.json`（归档界），让新实例从零开始。若想保留开场楼的"开篇设定"，体现在开场的动态设定文件里而非流水账。
+- **`teahouse.md`**：泛化实例特有的进度引用——去掉对"当前楼层"的具体引用。归档界由 `summary/index.json` 维护，原型里该文件被删即回归初始，`teahouse.md` 无需写 `summarized_to`。
+- **静态设定（`settings/static_settings/`）+ 动态设定（`settings/dyn_settings/`）**：适度泛化。保留角色基础设定与世界观框架（静态），去掉"当前正在发生"的临时状态（动态）。`settings/static_settings/` 随实例入 git，是原型内容，打包时按需保留。
 - **skills/**：保留该原型要复用的 skill。若某 skill 的 SKILL.md 含过于具体的故事信息，用 Edit 泛化。
-- **temp/**：删除未完成草稿（`draft.md` 等）。**temp/ 本就纳入 gitignore**（不随 GitCommit 提交、也不进原型包），即使残留下草稿也不污染产物。
-- **sessions/**：后端打包会自动排除，无需手动删（若看到也无需担忧）。**`.sessions/` 已 gitignore**,多会话文件（含临时子会话）不随 `GitCommit` 提交。
+- **packages/**：已安装的提示词包同属实例内容、随 git 入库存档，会一并进原型包。只保留原型要复用的包，其余可删。
+- **temp/**：删除未完成草稿（`draft.md` 等）与子会话报告。**`temp/` 已 gitignore**（不随 `GitCommit` 提交），但**其中除 `temp/pasted/` 外的内容仍会被打进原型包**——不清理就会把草稿带进产物。
+- **`.sessions/`**：后端打包会自动排除，无需手动删（若看到也无需担忧）。**`.sessions/` 已 gitignore**，多会话文件（含临时子会话）不随 `GitCommit` 提交。
 
 ### 步骤 4：确认清单
 
@@ -78,8 +82,9 @@ Glob building/**/*                                → 了解创建者的元工�
 
 ```
 Glob runtime/floors/**/*   → 确认只留预期楼层
-Glob runtime/runtime_vars.jsonl   → 确认变量子集
-Glob settings/static_settings/**/* settings/dyn_settings/**/* skills/**/* → 确认泛化完成
+Glob runtime/runtime_vars_snapshot.jsonl   → 确认变量子集，且首行 floor 为 0
+Glob settings/static_settings/**/* settings/dyn_settings/**/* skills/**/* packages/**/* → 确认泛化完成
+Glob temp/**/*                      → 确认草稿/报告已清（除 temp/pasted 外会进包）
 Glob building/**/*                  → 确认元工作都放在 building/（不进包）
 ```
 
@@ -95,7 +100,7 @@ Glob building/**/*                  → 确认元工作都放在 building/（不
 - `cover.png`
 - `cover.webp`
 
-（同目录出现多个时只取第一个。旧原型仅用 `cover.jpg`/`cover.png`。）
+（同目录出现多个时只取第一个。）
 
 **格式建议**：
 - 首选 `cover.webp` 或 `cover.jpg`（体积小）；`cover.png` 也可，但在渲染非纯色画面时体积偏大。
@@ -106,7 +111,7 @@ Glob building/**/*                  → 确认元工作都放在 building/（不
 - 高度随画面比例（常见竖封约 9:16）。
 
 **大小建议**：
-- **1MB 以内**为宜（示例参考：`ffmpeg -i in.png -vf "scale=1536:-2,format=yuvj420p" -qscale:v 3 -c:v mjpeg out.jpg` 可把 9MB PNG 压到 ~800KB）。
+- 建议 **1MB 以内**（示例参考：`ffmpeg -i in.png -vf "scale=1536:-2,format=yuvj420p" -qscale:v 3 -c:v mjpeg out.jpg` 可把 9MB PNG 压到 ~800KB）。
 - 若用户提供的封面过大，用 ffmpeg 按其需求压缩后，将结果放到实例根目录并命名为上述文件名之一。
 
 **确认动作**：
@@ -117,12 +122,13 @@ Glob building/**/*                  → 确认元工作都放在 building/（不
 
 确认无误后告知用户：
 - 实例已就地整理完成，可以作为原型导出。
-- 用户在前端点击**"导出为原型"**按钮，后端会打包实例根并排除 `building/`、`.git/`、`sessions/` 等内部目录。
+- 用户在前端点击**"导出为原型"**按钮，后端会打包实例根并排除 `building/`、`.git/`、`.sessions/` 等内部目录，以及 `temp/pasted/`、`runtime/runtime_vars.jsonl` 两个路径前缀。
 - 导出后可下载 `.teabrew` 文件，或直接基于它在新会话中创建实例。
 
 ## 注意事项
 
 - **导出来源就是实例根**：不需要镜像目录，就地整理后打包实例根即可。
 - **`building/` 是元工作区**：讨论点子、checklist、设计笔记放这里。它由后端在打包时固定排除，导演不需要把它整理进原型。
+- **其他固定排除项**：`.git/`、`.sessions/`、`__pycache__/`、`node_modules/` 等内部目录，以及两个路径前缀 `temp/pasted/`（粘贴内容暂存）与 `runtime/runtime_vars.jsonl`（派生工作值，原型改带权威快照 `runtime/runtime_vars_snapshot.jsonl`）。
 - **导入去重**：后端按内容 hash 去重，导出的包会与已有原型比对，重复内容不会重复入库。
 - **git 不影响打包**：`.git/` 会被打包时排除。若想留档，可用实例的 git 分支/commit 保存任一状态。

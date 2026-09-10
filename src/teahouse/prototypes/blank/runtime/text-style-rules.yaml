@@ -3,7 +3,7 @@
 # 当 rich_text 内容被渲染时，匹配的符号对会被包裹在自定义 HTML 中。
 # 适用于对书名号、引号、特定标记等着色，增强阅读体验。
 #
-# 导演可通过 teahouse-sandbox-richtext-render skill 编辑此文件。
+# 导演可通过 teahouse-syntax skill 的 references/richtext.md 编辑此文件。
 #
 # 每条规则字段:
 #   start_symbol  - 起始符号（支持多字符，如 "《"）
