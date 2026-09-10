@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronRight, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw, GitCommitHorizontal } from "lucide-react"
+import { ChevronRight, PanelLeftClose, Plus, Menu, Cpu, Puzzle, Bot, PenLine, RefreshCw, GitCommitHorizontal, Dices, Feather } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
@@ -30,6 +30,11 @@ interface ChatHeaderProps {
   onCreateSession: () => void
   instId: string | undefined
 
+  // DM（运行时导演）是否可用（实例存在 dm.yaml）。DM 与主/子会话完全独立，故它不是
+  // 会话列表的一项，而是顶部「导演 | DM」二段式 tab 的另一个模式。
+  dmAvailable: boolean
+  onSwitchPanelMode: (mode: "director" | "dm") => void
+
   // Auto commit
   autoApproveCommit: boolean
   onAutoApproveChange: (checked: boolean) => void
@@ -46,6 +51,47 @@ const EFFORT_LABEL: Record<string, string> = { none: "effort.none", low: "effort
 // 抽屉滑动进出动画时长（与下方 Tailwind duration 保持一致）
 const DRAWER_ANIM_MS = 200
 
+// 「导演 | DM」二段式切换 tab（仅桌面端标题行）—— 视觉照抄顶栏的「游玩/后台」分段控件。
+// DM 与主/子会话是相互独立的两条线路，切换即整块面板（消息区、输入、模型槽）换轨。
+// 移动端不用 tab：那边由顶部复合触发器 + 抽屉里的两个分组承担切换。
+function PanelModeTab({
+  mode,
+  dmAvailable,
+  directorHasNew,
+  dmHasNew,
+  onSwitch,
+}: {
+  mode: "director" | "dm"
+  dmAvailable: boolean
+  directorHasNew: boolean
+  dmHasNew: boolean
+  onSwitch: (mode: "director" | "dm") => void
+}) {
+  const { t } = useTranslation("chat")
+  const seg = (on: boolean) =>
+    `relative px-4 py-1.5 text-sm font-medium transition-colors ${
+      on ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"
+    }`
+  const iconCls = "h-4 w-4 inline mr-1 align-[-2px]"
+  const dot = <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+  return (
+    <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0">
+      <button className={seg(mode === "director")} onClick={() => onSwitch("director")}>
+        <Feather className={iconCls} />
+        {t("directorTitle")}
+        {directorHasNew && dot}
+      </button>
+      {dmAvailable && (
+        <button className={seg(mode === "dm")} onClick={() => onSwitch("dm")}>
+          <Dices className={iconCls} />
+          {t("dmConsole")}
+          {dmHasNew && dot}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function ChatHeader({
   slotModels,
   enabledPluginCount,
@@ -60,6 +106,8 @@ export function ChatHeader({
   onRefreshSessionList,
   onCreateSession,
   instId,
+  dmAvailable,
+  onSwitchPanelMode,
   autoApproveCommit,
   onAutoApproveChange,
   onClosePanel,
@@ -67,6 +115,16 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { t } = useTranslation("chat")
   const isMobile = useIsMobile()
+
+  // ── 导演 / DM 模式 ────────────────────────────────────────────────────
+  // activeSid 即模式：="dm" 就是 DM 轨，其余都是导演轨（主会话或某个子会话）。
+  const isDmMode = activeSid === DM_SID
+  const panelMode: "director" | "dm" = isDmMode ? "dm" : "director"
+  // 会话标签栏 / 抽屉「导演」分组只列主会话与子会话——DM 不在其中。
+  const directorSessions = sessionList.filter((s) => s.session_id !== DM_SID)
+  // tab 红点：只在看另一边时点，同一侧由会话标签栏自己的圆点负责。
+  const directorHasNew = isDmMode && directorSessions.some((s) => newMsgMap[s.session_id])
+  const dmHasNew = !isDmMode && !!newMsgMap[DM_SID]
 
   // 抽屉两阶段显隐：menuOpen = 意图（立即反映到标题/返回），renderDrawer = DOM 是否挂载。
   // 关闭时保留 DOM 一段动画时长播放退场，结束后才真正卸载（closing 用于挂退场类）。
@@ -90,8 +148,9 @@ export function ChatHeader({
 
   // ── 移动端：功能收进左上角全高左滑菜单 ─────────────────────────────────
   if (isMobile) {
+    // 当前导演会话名（DM 轨不显示会话名——DM 是单例，标题即模式名）
     const activeLabel = (() => {
-      const s = sessionList.find((x) => x.session_id === activeSid)
+      const s = directorSessions.find((x) => x.session_id === activeSid)
       if (!s) return null
       return s.session_id === MAIN_SID
         ? t("mainSession")
@@ -101,22 +160,35 @@ export function ChatHeader({
     return (
       <div className="p-3 border-b border-border shrink-0">
         <div className="flex items-center justify-between gap-2">
-          {/* 左侧：标题即抽屉触发器 + 上下文用量（文字在左、盲文进度条在右，共用左侧对齐） */}
+          {/* 左侧：抽屉触发器（模式 icon + 「导演 · 会话名」/「DM」+ 三横线，复合成一个按钮）+ 上下文用量。
+              导演/DM 的切换在抽屉里的两个分组（移动端不放 tab）。 */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               className="flex items-center gap-1.5 min-w-0 rounded hover:bg-muted px-1 py-1 transition-colors"
               onClick={() => (menuOpen ? closeMenu() : openMenu())}
               title={t("moreActions")}
             >
+              {isDmMode ? (
+                <Dices className="h-4 w-4 shrink-0" />
+              ) : (
+                <Feather className="h-4 w-4 shrink-0" />
+              )}
               <span className="text-sm font-semibold truncate">
-                {t("directorTitle")}
-                {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
+                {isDmMode ? (
+                  t("dmConsole")
+                ) : (
+                  <>
+                    {t("directorTitle")}
+                    {activeLabel && <span className="text-muted-foreground font-normal"> · {activeLabel}</span>}
+                  </>
+                )}
+                {directorHasNew && <span className="ml-1 inline-block h-2 w-2 rounded-full bg-red-500 align-middle" />}
               </span>
               <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
             </button>
 
             {usage && usage.threshold != null && usage.estimated_tokens != null && (
-              <div className="text-[10px] text-muted-foreground shrink-0">
+              <div className="text-[10px] text-muted-foreground min-w-0 overflow-hidden">
                 <ContextUsageBar usage={usage} textFirst />
               </div>
             )}
@@ -152,10 +224,14 @@ export function ChatHeader({
                   : "animate-in slide-in-from-left duration-200"
               }`}
             >
-              {/* 上区：会话（向上对齐，过多时可滚动） */}
-              <div className="min-h-0 overflow-y-auto py-2">
+              {/* 上区：导演会话（主会话 + 子会话，DM 不在其中）——占满剩余高度、可滚动。
+                  会话一律渲染为胶囊。 */}
+              <div className="min-h-0 flex-1 overflow-y-auto py-2">
                 <div className="flex items-center justify-between px-3 pb-1">
-                  <span className="text-sm font-semibold">{t("sessionGroup")}</span>
+                  <span className="flex items-center gap-1.5 text-sm font-semibold">
+                    <Feather className="h-3.5 w-3.5" />
+                    {t("directorTitle")}
+                  </span>
                   {instId && (
                     <button
                       className="flex items-center justify-center p-1 text-muted-foreground hover:bg-muted hover:text-foreground rounded"
@@ -175,23 +251,20 @@ export function ChatHeader({
                     <span className="truncate">{t("newSubSessionTitle")}</span>
                   </button>
                 )}
-                {sessionList.map((s) => {
+                {directorSessions.map((s) => {
                   const active = s.session_id === activeSid
                   const hasNew = !!newMsgMap[s.session_id]
                   const isMain = s.session_id === MAIN_SID
-                  const isDm = s.session_id === DM_SID
                   const label = isMain
                     ? t("mainSession")
-                    : isDm
-                      ? t("dmConsole")
-                      : t("sessionItem", { sid: s.session_id.replace("session-", "") })
+                    : t("sessionItem", { sid: s.session_id.replace("session-", "") })
                   return (
                     <button
                       key={s.session_id}
-                      className={`w-[90%] mx-auto flex items-center gap-2 px-3 py-2.5 text-sm rounded-md ${
+                      className={`w-[90%] mx-auto flex items-center gap-2 px-4 py-2.5 text-sm rounded-full ${
                         active
                           ? "bg-primary text-primary-foreground font-medium"
-                          : "text-muted-foreground hover:bg-muted"
+                          : "bg-muted/60 text-muted-foreground hover:bg-muted"
                       }`}
                       onClick={() => { onSwitchSession(s.session_id); closeMenu() }}
                     >
@@ -203,8 +276,31 @@ export function ChatHeader({
                 })}
               </div>
 
-              {/* 下区：设置（贴底，并入模型/配置/自动提交） */}
-              <div className="border-t border-border px-3 py-2 mt-auto">
+              {/* 下区常驻一：DM（与导演会话相互独立的一条线路，故自己成组、不混入上面的会话列表；
+                  实例只有一个 DM 会话，故组内只有一个胶囊） */}
+              {dmAvailable && (
+                <div className="border-t border-border py-2">
+                  <div className="flex items-center gap-1.5 px-3 pb-1 text-sm font-semibold">
+                    <Dices className="h-3.5 w-3.5" />
+                    {t("dmConsole")}
+                  </div>
+                  <button
+                    className={`w-[90%] mx-auto flex items-center gap-2 px-4 py-2.5 text-sm rounded-full ${
+                      isDmMode
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "bg-muted/60 text-muted-foreground hover:bg-muted"
+                    }`}
+                    onClick={() => { onSwitchPanelMode("dm"); closeMenu() }}
+                  >
+                    <span className="flex-1 text-left truncate">{t("dmConsole")}</span>
+                    {isDmMode && <span className="text-[10px] shrink-0">{t("current")}</span>}
+                    {dmHasNew && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />}
+                  </button>
+                </div>
+              )}
+
+              {/* 下区常驻二：设置（贴底，并入模型/配置/自动提交） */}
+              <div className="border-t border-border px-3 py-2">
                 <div className="pb-1 text-sm font-semibold">{t("modelConfigGroup")}</div>
                 <button
                   className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
@@ -261,11 +357,10 @@ export function ChatHeader({
 
   // ── 桌面端：完整头部 ────────────────────────────────────────────────────
   return (
-    <div className="shrink-0">
-      {/* Row 1: 导演 + 内联收起按钮 + 信息区 */}
+    <div className="shrink-0 border-b border-border">
+      {/* Row 1: 内联收起按钮 + 导演/DM tab（都在左侧）+ 信息区 */}
       <div className="flex items-center justify-between px-3 pt-2 pb-1 bg-muted/20">
         <div className="flex items-center gap-1.5">
-          <h3 className="text-sm font-semibold">{t("directorTitle")}</h3>
           {onClosePanel && (
             <button
               className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
@@ -275,6 +370,13 @@ export function ChatHeader({
               <PanelLeftClose className="h-3.5 w-3.5" />
             </button>
           )}
+          <PanelModeTab
+            mode={panelMode}
+            dmAvailable={dmAvailable}
+            directorHasNew={directorHasNew}
+            dmHasNew={dmHasNew}
+            onSwitch={onSwitchPanelMode}
+          />
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
@@ -304,47 +406,47 @@ export function ChatHeader({
           </div>
         </div>
       </div>
-      {/* 会话标签栏：仿文件编辑器标签——激活强调色、贴底、仅上方圆角。加号紧跟最右标签，刷新钉最右 */}
-      <div className="flex items-end gap-1.5 px-2 border-b border-border bg-muted/20">
-        <div className="flex items-end gap-1.5 flex-1 min-w-0 overflow-x-auto">
-          {sessionList.map((s) => {
-            const active = s.session_id === activeSid
-            const hasNew = !!newMsgMap[s.session_id]
-            const isMain = s.session_id === MAIN_SID
-            const isDm = s.session_id === DM_SID
-            const label = isMain
-              ? t("mainSession")
-              : isDm
-                ? t("dmConsole")
+      {/* 会话标签栏（仅导演轨）：仿文件编辑器标签——激活强调色、贴底、仅上方圆角。加号紧跟最右标签。
+          DM 轨整行不渲染——DM 与主/子会话是相互独立的线路，顶部的二段 tab 才是它的入口。 */}
+      {!isDmMode && (
+        <div className="flex items-end gap-1.5 px-2 bg-muted/20">
+          <div className="flex items-end gap-1.5 flex-1 min-w-0 overflow-x-auto">
+            {directorSessions.map((s) => {
+              const active = s.session_id === activeSid
+              const hasNew = !!newMsgMap[s.session_id]
+              const isMain = s.session_id === MAIN_SID
+              const label = isMain
+                ? t("mainSession")
                 : t("sessionItem", { sid: s.session_id.replace("session-", "") })
-            return (
-              <div key={s.session_id} className="relative shrink-0 flex items-end">
-                <button
-                  onClick={() => onSwitchSession(s.session_id)}
-                  className={`flex items-center px-2.5 text-xs rounded-t-md h-6 select-none whitespace-nowrap transition-colors ${
-                    active ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {label}
-                </button>
-                {/* 有新消息 → 右上角小圆圈 */}
-                {hasNew && !active && (
-                  <span className="absolute -top-1 right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
-                )}
-              </div>
-            )
-          })}
-          {!instId ? null : (
-            <button
-              className="shrink-0 self-end mb-1.5 ml-0.5 px-1.5 rounded-md h-5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center"
-              onClick={onCreateSession}
-              title={t("newSubSessionTitle")}
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          )}
+              return (
+                <div key={s.session_id} className="relative shrink-0 flex items-end">
+                  <button
+                    onClick={() => onSwitchSession(s.session_id)}
+                    className={`flex items-center px-2.5 text-xs rounded-t-md h-6 select-none whitespace-nowrap transition-colors ${
+                      active ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                  {/* 有新消息 → 右上角小圆圈 */}
+                  {hasNew && !active && (
+                    <span className="absolute -top-1 right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-background" />
+                  )}
+                </div>
+              )
+            })}
+            {!instId ? null : (
+              <button
+                className="shrink-0 self-end mb-1.5 ml-0.5 px-1.5 rounded-md h-5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center"
+                onClick={onCreateSession}
+                title={t("newSubSessionTitle")}
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

@@ -3,7 +3,6 @@ export const enChat = {
   dmConsole: "DM",
   dmOocNotice: "Everything sent here is treated as out-of-character",
   subSession: "Sub-session {{sid}}",
-  sessionGroup: "Sessions",
   sessionItem: "Session·{{sid}}",
   current: "Current",
   new: "New",

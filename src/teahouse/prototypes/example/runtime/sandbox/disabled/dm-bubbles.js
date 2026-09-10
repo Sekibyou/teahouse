@@ -98,7 +98,7 @@
       // 旁白：无框、居中、非斜体
       '.th-dm-kind-narrate{align-self:center;max-width:92%;background:transparent;',
       'border:none;box-shadow:none;text-align:center;opacity:.78;',
-      'font-size:calc(15px * var(--font-scale));}',
+      'font-size:calc(16px * var(--font-scale));}',
 
       // 输入条：固定在底部（只留药丸本体，无通栏底板）
       '.th-dm-inputbar{padding:8px 0.5px 10px;}',

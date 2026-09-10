@@ -3,7 +3,6 @@ export const jaChat = {
   dmConsole: "DM",
   dmOocNotice: "ここで送信した内容はすべて局外発言として扱われます",
   subSession: "サブセッション {{sid}}",
-  sessionGroup: "セッション",
   sessionItem: "セッション·{{sid}}",
   current: "現在",
   new: "新規",

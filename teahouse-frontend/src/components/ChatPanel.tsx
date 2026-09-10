@@ -95,6 +95,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   // DM（运行时导演）单例会话 id —— 与后端 sessions.DM_SESSION_ID 保持一致。
   const DM_SID = "dm"
   const [activeSid, setActiveSid] = useState(MAIN_SID)
+  // 上一次停留的导演会话（非 DM），供「导演 ↔ DM」tab 切回来时恢复。
+  const [lastDirectorSid, setLastDirectorSid] = useState(MAIN_SID)
 
   // Convenience getter/setter for the currently-viewed session
   const activeState: SessionUIState = sessionStateMap[activeSid] ?? {
@@ -898,6 +900,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     setMessages([])
     messagesBySidRef.current = {}
     setActiveSid(MAIN_SID)
+    setLastDirectorSid(MAIN_SID)
     historyCursorRef.current = null
     historyLoadedRef.current = false
     loadHistory(true, MAIN_SID)
@@ -936,6 +939,8 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     }
     setActiveSid(sid)
     clearSessionNew(sid)
+    // 非 DM 的会话记下来，DM tab 切回「导演」时恢复到这里。
+    if (sid !== DM_SID) setLastDirectorSid(sid)
     // 查询通道：切换会话时拉一次后端权威的 running 初始状态。
     // This populates sessionStateMap so isStreaming / elapsed / tokenCount are
     // correct immediately for the target session.
@@ -964,6 +969,18 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
   // user clicking a tab — without capturing a stale closure. Mirrors loadHistoryRef.
   const switchSessionRef = useRef(switchSession)
   switchSessionRef.current = switchSession
+
+  // 导演栏顶部 tab：导演 / DM。「DM」是实例级单例会话，与主/子会话完全独立——它不进
+  // 会话列表、没有会话标签栏；切回「导演」时恢复上次停留的导演会话。
+  const switchPanelMode = useCallback((mode: "director" | "dm") => {
+    if (mode === "dm") {
+      if (activeSid !== DM_SID) switchSession(DM_SID)
+      return
+    }
+    if (activeSid !== DM_SID) return
+    const target = sessionList.some((s) => s.session_id === lastDirectorSid) ? lastDirectorSid : MAIN_SID
+    switchSession(target)
+  }, [activeSid, lastDirectorSid, sessionList, switchSession])
 
   /**
    * Merge a freshly-listed set of server sessions into the current list WITHOUT
@@ -1761,6 +1778,9 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         activeSid={activeSid}
         newMsgMap={newMsgMap}
         onSwitchSession={switchSession}
+        // 实例启用 DM（有 dm.yaml）才给出「DM」tab——会话列表里出现 dm 条目即代表启用。
+        dmAvailable={sessionList.some((s) => s.session_id === DM_SID)}
+        onSwitchPanelMode={switchPanelMode}
         onRefreshSessionList={refreshSessionList}
         onCreateSession={createSession}
         instId={instId}
