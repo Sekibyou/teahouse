@@ -35,6 +35,12 @@ BUILTIN_DEFAULT_YAML = """system: |
   <available_skills>
   ${teahouse.available_skills}
   </available_skills>
+
+user_tail: |
+  <runtime_context>
+  ${teahouse.big_files}
+  ${teahouse.usage}
+  </runtime_context>
 """
 
 

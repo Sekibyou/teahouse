@@ -24,7 +24,7 @@ from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
 from .tools import execute_tool, load_tools, load_tools_usage
 from .script import load_batch, BatchError
-from .director_system import build_template_variables, resolve_preset_template
+from .director_system import build_template_variables, resolve_preset_template, render_user_tail
 from .database.director_prompt_presets import ensure_director_preset_binding
 from .database.connection import set_db_path
 from .database.migrate import run_migrations
@@ -629,7 +629,7 @@ async def _tool_use_loop(
                 status_code=400,
                 detail="DM 未启用：实例根目录缺少 dm.yaml",
             )
-        tool_system, fake_msgs = dm_res
+        tool_system, fake_msgs, user_tail_tpl = dm_res
     else:
         tools = load_tools(user_id=user_id)
         tools_usage = await load_tools_usage(user_id=user_id)
@@ -642,7 +642,7 @@ async def _tool_use_loop(
             raise HTTPException(status_code=500, detail="Director system prompt requires a user")
         preset = await ensure_director_preset_binding(user_id)
         variables = build_template_variables(instance_dir, tools_usage)
-        tool_system, fake_msgs = resolve_preset_template(
+        tool_system, fake_msgs, user_tail_tpl = resolve_preset_template(
             preset["template_yaml"], variables, instance_dir, max_depth=parse_depth
         )
     if fake_msgs:
@@ -661,6 +661,22 @@ async def _tool_use_loop(
             f"The Report tool writes conclusions to temp/ for later review. "
             f"Do not do unrelated work or wait for further instructions — this task is one-shot."
         )
+
+    # User-tail wrapper: preset's optional `user_tail` wraps the NEWEST user message
+    # with per-turn dynamic content (usage / big-file warnings / story vars). Applied
+    # here — once, after the system prompt is final and msg is rebuilt from history —
+    # and written to the in-memory msg ONLY; the raw user input persists untouched
+    # (written at append_user above), so history never carries the wrapper. Because
+    # this sits outside the round loop, mid-loop pending messages are NOT re-wrapped.
+    if user_tail_tpl is not None:
+        for _m in reversed(msg):
+            if _m.get("role") == "user" and isinstance(_m.get("content"), str) and _m.get("content"):
+                _m["content"] = render_user_tail(
+                    user_tail_tpl, instance_dir, msg, tool_system,
+                    getattr(client.config, "max_context", 0) or 0, _m["content"],
+                    max_depth=parse_depth,
+                )
+                break
 
     # Resolve effective reasoning effort for this session at run time.
     # Precedence: explicit caller override (child session meta) → session-level

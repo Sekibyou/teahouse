@@ -133,6 +133,7 @@ export const enSettings = {
     docExampleLabel: "Example:",
     docFormMessages: "Form A — messages list (any number of turns)",
     docFormShorthand: "Form B — user / assistant shorthand (single turn)",
+    docFormUserTail: "Form C — user_tail (wraps this round's newest user message; optional)",
     docBody: `A director prompt preset is the prompt structure sent to the director model, written in YAML.
 
 system — the director's system prompt template. Three kinds of placeholders are available:
@@ -141,13 +142,21 @@ system — the director's system prompt template. Three kinds of placeholders ar
 • \${teahouse.xxx}: built-in system values. These four are fixed — the names cannot be changed, but you may reorder them freely or use only some of them:
     \${teahouse.behavior} — director behaviour rules
     \${teahouse.tools_usage} — tool usage guide
-    \${teahouse.file_tree} — instance file tree
+    \${teahouse.file_tree} — instance directory structure (a fixed note; does not track files)
     \${teahouse.available_skills} — available skill list
 • \${varName}: an instance variable reference (e.g. \${gold}), resolved to a live snapshot at assembly time.
 
-Note: \${teahouse.xxx} content is inserted literally only after all placeholder resolution has finished, so any {{}} or \${} inside it is never expanded a second time.
+Notes:
+• \${teahouse.xxx} content is inserted literally only after all placeholder resolution has finished, so any {{}} or \${} inside it is never expanded a second time.
+• Anything in system that changes per instance (e.g. \${varName}) invalidates the whole context cache — \${teahouse.file_tree} is a fixed note, so it is safe. **Put story variables in user_tail, not in system.**
 
-Besides system, you can seed conversation history for other roles. Pick one of two forms: a messages list (same format as the text-generation config, any number of turns), or the user / assistant shorthand (a single turn). If you write both, messages wins and the shorthand is silently ignored.`,
+Besides system, you can seed conversation history for other roles. Pick one of two forms: a messages list (same format as the text-generation config, any number of turns), or the user / assistant shorthand (a single turn). If you write both, messages wins and the shorthand is silently ignored.
+
+user_tail (optional) — wraps THIS round's newest user message in a template, carrying per-turn information (context usage, big-file warnings, story variables) so it lands at the tail and never breaks the cached prefix. It supports three extra dynamic placeholders:
+    \${teahouse.user_input} — the user's raw input for this round
+    \${teahouse.usage} — current context usage (escalates with an over-threshold hint)
+    \${teahouse.big_files} — big-file warnings (empty when none)
+If the template omits \${teahouse.user_input}, the engine auto-appends a divider note plus the raw user line. The wrapper exists only for that request — history always stores the raw user input.`,
     editTitle: "Edit",
     deleteTitle: "Delete",
     viewTitle: "View",

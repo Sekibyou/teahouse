@@ -35,8 +35,24 @@ INSTANCE_TEAHOUSE = "teahouse.md"
 INSTANCE_DM_YAML = "dm.yaml"
 INSTANCE_SKILLS_DIR = "skills"
 
-# Directories excluded entirely from tree display
-TREE_EXCLUDE = {"__pycache__", ".git", ".DS_Store", "node_modules", "sessions", "building"}
+# Constant "structure guidance" file backing `${teahouse.file_tree}`. The var name
+# is kept for backward compatibility with user-written presets, but its content is
+# now a fixed description of the engine's top-level convention — NOT a live scan.
+# Anything per-turn (usage, big-file warnings) goes through `user_tail` instead, so
+# the system prompt stays byte-stable and the prompt cache prefix survives.
+STRUCTURE_FILE = "structure.md"
+
+# `${teahouse.user_input}` — the round's raw user text. Placeholder inside a
+# `user_tail` template; substituted as a literal (never re-parsed).
+USER_INPUT_PLACEHOLDER = "${teahouse.user_input}"
+
+# Appended when a `user_tail` template omits `${teahouse.user_input}`: the author's
+# content stays on top, the raw user line is dropped below this divider.
+USER_TAIL_SUFFIX = (
+    "\n\n————————————\n\n"
+    "以上内容为挂载于最新用户消息上的信息。\n\n"
+    "用户的原始输入是：\n\n" + USER_INPUT_PLACEHOLDER
+)
 
 
 def get_floors_stats(dir_path: Path) -> dict | None:
@@ -125,77 +141,34 @@ def get_floors_stats(dir_path: Path) -> dict | None:
     }
 
 
-def _floors_summary(dir_path: Path) -> str:
-    """Build a one-line summary for the floors directory with stats."""
-    stats = get_floors_stats(dir_path)
-    if stats is None:
-        return "floors/"
+def _load_structure() -> str:
+    """Constant structure guidance backing `${teahouse.file_tree}`.
 
-    floor_bits = [f"{stats['total_confirmed']} confirmed floors"]
-    if stats["total_drafts"]:
-        floor_bits.append(f"{stats['total_drafts']} draft{'s' if stats['total_drafts'] != 1 else ''}")
-    parts = []
-    parts.append(f"Latest floor: {stats['latest_floor']} ({', '.join(floor_bits)})")
-    if stats["last_summary_start"] is not None:
-        if stats["last_summary_start"] == stats["last_summary_end"]:
-            parts.append(f"Last summary covered floor {stats['last_summary_start']}")
-        else:
-            parts.append(f"Last summary covered floors {stats['last_summary_start']}~{stats['last_summary_end']}")
-    if stats["unsummarized"] > 0:
-        parts.append(f"{stats['unsummarized']} confirmed floors unsummarized")
-
-    return f"floors/  ({'; '.join(parts)})"
-
-
-# Top-level instance dirs that are fully expanded in the tree (they hold the
-# author-facing content a director works with). Everything else is one line.
-FULLY_EXPAND_TREE = {"runtime", "settings", "skills"}
-
-
-def _scan_tree(instance_dir: Path) -> str:
-    """Build a listing of the instance root directory.
-
-    - Root-level files and dirs are listed.
-    - Content-rich top-level dirs (runtime/, settings/, skills/) are fully
-      expanded; others (generate-config/, summary/, temp/, building/) collapse
-      to one line. building/ is excluded (meta-workspace, not shipped content).
-    - The working floor history under runtime/floors/ gets stats.
-    - Use Glob to explore inside directories when needed.
+    No disk scan: the engine's top-level layout is fixed by convention, so this is
+    just documentation. The var name is kept for backward compatibility with
+    user-written presets that still reference `${teahouse.file_tree}`.
     """
-    lines: list[str] = []
-    root = instance_dir.resolve()
-
-    entries = sorted(
-        [e for e in root.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
-        key=lambda e: (not e.is_dir(), e.name),
+    path = TEMPLATE_DIR / STRUCTURE_FILE
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return (
+        "(instance root is fixed by engine convention: runtime/ settings/ "
+        "generate-config/ summary/ skills/ temp/ — use Glob to explore contents)"
     )
 
-    for i, entry in enumerate(entries):
-        is_last = i == len(entries) - 1
-        connector = "└── " if is_last else "├── "
 
-        if entry.is_dir() and entry.name in FULLY_EXPAND_TREE:
-            lines.append(f"{connector}{entry.name}/")
-            _scan_recursive(entry, lines, indent="    ")
-        elif entry.is_dir():
-            lines.append(f"{connector}{entry.name}/")
-        else:
-            lines.append(f"{connector}{entry.name}")
+def format_big_files(big: list[tuple[str, int]]) -> str:
+    """Render the big-file warning for `${teahouse.big_files}`.
 
-    lines.append("(This simplified tree shows only the instance root structure. Use Glob/Read tools to explore directory contents in full detail.)")
-    lines.append("(Note: this tree and the floors/ stats are rebuilt fresh on every request — they are not a stale snapshot. Files, drafts, and the archive boundary always reflect current disk state, so re-check them if something seems outdated.)")
-
-    # Big-file warning: surface files so large that a single Read could be
-    # expensive is a Read cost (above BIG_INPUT_CHAR_LIMIT chars ≈ 10.7k tokens),
-    # estimated token size, so the director can budget its reads.
-    big = _scan_big_files(instance_dir)
-    if big:
-        lines.append("")
-        lines.append("⚠️ 大文件预警（单个文件一次 Read 即接近上半场预算，读取前请先规划/分段）：")
-        for rel, chars in big:
-            lines.append(f"  - {rel}：约 {chars // 3:,} token（{chars:,} 字符）")
-        lines.append("（.sessions/、.git 等内部目录不参与预警）")
-
+    Returns "" when there is nothing to warn about, so the placeholder stays empty
+    for most turns and never churns the prompt cache.
+    """
+    if not big:
+        return ""
+    lines = ["⚠️ 大文件预警（单个文件一次 Read 即接近上半场预算，读取前请先规划/分段）："]
+    for rel, chars in big:
+        lines.append(f"  - {rel}：约 {chars // 3:,} token（{chars:,} 字符）")
+    lines.append("（.sessions/、.git 等内部目录不参与预警）")
     return "\n".join(lines)
 
 
@@ -247,35 +220,6 @@ def _scan_big_files(instance_dir: Path) -> list[tuple[str, int]]:
             continue
     out.sort(key=lambda x: -x[1])
     return out
-
-
-def _scan_recursive(dir_path: Path, lines: list[str], indent: str) -> None:
-    """Recursively scan a content-rich top-level dir, fully expanding subdirs.
-
-    runtime/floors/ is summarized via get_floors_stats; runtime/sandbox/disabled/
-    is shown collapsed as a disable toggle. Everything else is expanded normally.
-    """
-    entries = sorted(
-        [e for e in dir_path.iterdir() if e.name not in TREE_EXCLUDE and not e.name.startswith(".")],
-        key=lambda e: (not e.is_dir(), e.name),
-    )
-
-    for i, entry in enumerate(entries):
-        is_last = i == len(entries) - 1
-        connector = "└── " if is_last else "├── "
-
-        if entry.is_dir() and entry.name == "floors" and dir_path.name == "runtime":
-            # runtime/floors/ — the context-engine's floor history
-            lines.append(f"{indent}{connector}{_floors_summary(entry)}")
-        elif entry.is_dir() and entry.name == "disabled" and dir_path.name == "sandbox":
-            # runtime/sandbox/disabled/ — collapsed disable toggle
-            count = sum(1 for f in entry.rglob("*") if f.is_file())
-            lines.append(f"{indent}{connector}disabled/  ({count} file(s) disabled — sandbox ignores this dir)")
-        elif entry.is_dir():
-            lines.append(f"{indent}{connector}{entry.name}/")
-            _scan_recursive(entry, lines, indent + "    ")
-        else:
-            lines.append(f"{indent}{connector}{entry.name}")
 
 
 def _scan_skills(instance_dir: Path) -> str:
@@ -338,11 +282,17 @@ def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> 
 
     Returns a flat name→value map usable as the var_map for ${...} resolution:
       - `teahouse.behavior` / `teahouse.tools_usage` / `teahouse.file_tree` /
-        `teahouse.available_skills` — system-internal values, only present while
-        assembling this preset (elsewhere they are missing → render literally).
+        `teahouse.available_skills` — static system-internal values, only present
+        while assembling this preset (elsewhere they are missing → render literally).
+        `teahouse.file_tree` is a CONSTANT structure guidance (no disk scan) so the
+        system-prompt prefix stays cache-stable.
       - All sandbox variables merged in (the ${name} no-cache snapshot).
     teahouse.md is intentionally NOT here — preset templates reference it as a file
     slice `{{teahouse.md}}`.
+
+    Per-turn dynamic values (`teahouse.user_input` / `teahouse.usage` /
+    `teahouse.big_files`) are deliberately NOT here — they belong to `user_tail` and
+    are added in `render_user_tail` (see there).
     """
     variables: dict[str, str] = {}
 
@@ -356,7 +306,7 @@ def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> 
         variables["teahouse.behavior"] = ""
 
     variables["teahouse.tools_usage"] = tools_usage_text.strip()
-    variables["teahouse.file_tree"] = _scan_tree(instance_dir)
+    variables["teahouse.file_tree"] = _load_structure()
     variables["teahouse.available_skills"] = _scan_skills(instance_dir)
 
     # Sandbox variables (no-cache snapshot)
@@ -370,53 +320,118 @@ def build_template_variables(instance_dir: Path, tools_usage_text: str = "") -> 
     return variables
 
 
-def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH) -> tuple[str, list[dict]]:
-    """Parse a YAML preset template and resolve variables + file slices.
+def _resolve_text(
+    text: str,
+    variables: dict[str, str],
+    instance_dir: Path,
+    max_depth: int,
+    type_map: dict | None = None,
+) -> str:
+    """Resolve `${}` + `{{}}` in `text`, then splice `teahouse.*` values as literals.
 
-    Returns (system_prompt, fake_messages_list).
+    The `teahouse.*` values are pulled out of the var_map *before* `resolve_variables`
+    runs (so `${teahouse.behavior}` survives verbatim — a missing key renders
+    literally), then substituted as plain text by a regex pass *after* resolution
+    converges. Their content therefore never re-expands, so source files (behavior.md,
+    tool-usage guides, or raw user input) need no escaping.
 
-    Fake messages can be specified in two ways:
-    1. `messages:` key — a list of {role, content} dicts (same format as Generate config)
-    2. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange
-
-    `variables` is the var_map from build_template_variables (teahouse.* internal +
-    sandbox vars). system: and fake-message contents are resolved via resolve_variables
-    (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
-
-    System-internal `teahouse.*` values are NOT fed into the placeholder resolver.
-    They are pulled out of the var_map up front, so `${teahouse.behavior}` etc.
-    survive resolve_variables verbatim (missing key → literal). After resolution
-    (and its escape/sentinel passes) has fully converged, a single regex substitution
-    splices each `teahouse.*` value in as plain text. Their content therefore stays
-    literal — `{{}}` / `${}` inside (e.g. behavior.md / tool-usage teaching examples)
-    are never re-expanded, and the source files need no `\\` escapes.
+    Shared by the system prompt, preset fake messages, and `user_tail` so the
+    "splice teahouse.* literally, last" invariant lives in one place.
     """
-    data = yaml.safe_load(yaml_text) or {}
-    type_map = _build_type_map(instance_dir)
-
-    teahouse_keys = [k for k in variables if k.startswith("teahouse.")]
-    teahouse_values = {k: variables[k] for k in teahouse_keys}
+    teahouse_values = {k: v for k, v in variables.items() if k.startswith("teahouse.")}
     plain_var_map = {k: v for k, v in variables.items() if not k.startswith("teahouse.")}
     if teahouse_values:
         splice_re = re.compile(r"\$\{(" + "|".join(re.escape(k) for k in teahouse_values) + r")\}")
     else:
         splice_re = re.compile(r"(?!)")  # never matches
 
-    def _splice(text: str) -> str:
-        return splice_re.sub(lambda m: teahouse_values[m.group(1)], text)
+    tm = type_map if type_map is not None else _build_type_map(instance_dir)
+    resolved = resolve_variables(text, plain_var_map, instance_dir, max_depth=max_depth, type_map=tm)
+    return splice_re.sub(lambda m: teahouse_values[m.group(1)], resolved)
+
+
+def estimate_usage_text(messages: list[dict], system_prompt: str, max_context: int) -> str:
+    """A one-line context-usage report for `${teahouse.usage}`.
+
+    Mirrors the threshold logic of `GET /instances/{id}/context-usage`
+    (`routes/workspaces.py`): `threshold = max_context * POST_COMPACT_RATIO` (0.70).
+    Once over it, escalates to an explicit hint to proactively compact.
+    """
+    from .compact import estimate_context_tokens, POST_COMPACT_RATIO
+
+    est = estimate_context_tokens(messages, system_prompt)
+    if not max_context:
+        return f"上下文用量：约 {est:,} tokens。"
+    pct = est / max_context
+    threshold = int(max_context * POST_COMPACT_RATIO)
+    base = f"上下文用量：约 {est:,} tokens / {max_context:,}（{pct:.0%}）。"
+    if est >= threshold:
+        return base + (
+            f"已超过压缩阈值（{threshold:,} tokens）。"
+            "请考虑主动清理已过期的工具输出/中间结果，避免触发自动压缩。"
+        )
+    return base
+
+
+def render_user_tail(
+    template: str,
+    instance_dir: Path,
+    messages: list[dict],
+    system_prompt: str,
+    max_context: int,
+    user_input: str,
+    max_depth: int = MAX_RESOLVE_DEPTH,
+) -> str:
+    """Render a preset `user_tail` template into the trailing user message's content.
+
+    `template` is the RAW (unresolved) string from the preset. If it omits
+    `${teahouse.user_input}`, `USER_TAIL_SUFFIX` is appended so the raw user line is
+    still carried below the author's content. Resolution happens ONCE, after the
+    decision — so `${teahouse.user_input}` splices correctly in both branches.
+
+    Called per-turn from `app.py`; the result is never persisted.
+    """
+    variables = build_template_variables(instance_dir, "")
+    variables["teahouse.user_input"] = user_input or ""
+    variables["teahouse.usage"] = estimate_usage_text(messages, system_prompt, max_context)
+    variables["teahouse.big_files"] = format_big_files(_scan_big_files(instance_dir))
+
+    raw = template if USER_INPUT_PLACEHOLDER in template else template + USER_TAIL_SUFFIX
+    return _resolve_text(raw, variables, instance_dir, max_depth)
+
+
+def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH) -> tuple[str, list[dict], str | None]:
+    """Parse a YAML preset template and resolve variables + file slices.
+
+    Returns (system_prompt, fake_messages_list, user_tail).
+
+    Fake messages can be specified in two ways:
+    1. `messages:` key — a list of {role, content} dicts (same format as Generate config)
+    2. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange
+
+    `user_tail` (optional) is the RAW template that wraps the trailing user message
+    each turn — see `render_user_tail`. It is returned unresolved because it depends
+    on per-turn data (user input, context usage) unknown at assembly time. It is NOT
+    a fake message (those are prepended and role-tagged; `user_tail` wraps the real
+    trailing turn and is never persisted).
+
+    `variables` is the var_map from build_template_variables (teahouse.* internal +
+    sandbox vars). system: and fake-message contents are resolved via `_resolve_text`
+    (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
+    """
+    data = yaml.safe_load(yaml_text) or {}
+    type_map = _build_type_map(instance_dir)
+
+    def _resolve(content: str) -> str:
+        return _resolve_text(str(content), variables, instance_dir, max_depth, type_map)
 
     # Resolve system template with ${variable} + {{path}} substitution
     system_template = data.get("system", "") or ""
-    system_prompt = _splice(
-        resolve_variables(system_template, plain_var_map, instance_dir, max_depth=max_depth, type_map=type_map)
-    )
+    system_prompt = _resolve(system_template)
 
     # Collect fake messages: explicit `messages` key takes priority,
     # then fall back to top-level `user`/`assistant` shorthand
     fake_messages_raw = data.get("messages")
-
-    def _resolve_msg(content: str) -> str:
-        return _splice(resolve_variables(str(content), plain_var_map, instance_dir, max_depth=max_depth, type_map=type_map))
 
     if isinstance(fake_messages_raw, list):
         fake_messages = []
@@ -424,18 +439,22 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
             if isinstance(msg, dict) and "role" in msg:
                 fake_messages.append({
                     "role": msg["role"],
-                    "content": _resolve_msg(msg.get("content", "") or ""),
+                    "content": _resolve(msg.get("content", "") or ""),
                 })
     else:
         fake_messages = []
         user_text = data.get("user")
         assistant_text = data.get("assistant")
         if user_text:
-            fake_messages.append({"role": "user", "content": _resolve_msg(user_text).strip()})
+            fake_messages.append({"role": "user", "content": _resolve(user_text).strip()})
         if assistant_text:
-            fake_messages.append({"role": "assistant", "content": _resolve_msg(assistant_text).strip()})
+            fake_messages.append({"role": "assistant", "content": _resolve(assistant_text).strip()})
 
-    return system_prompt, fake_messages
+    # Optional per-turn wrapper for the trailing user message (raw, unresolved).
+    user_tail_raw = data.get("user_tail")
+    user_tail = str(user_tail_raw) if user_tail_raw is not None else None
+
+    return system_prompt, fake_messages, user_tail
 
 
 # ---------------------------------------------------------------------------
@@ -484,11 +503,12 @@ async def resolve_dm_system(
     instance_dir: Path,
     user_id: str | None,
     max_depth: int = MAX_RESOLVE_DEPTH,
-) -> Optional[tuple[str, list[dict]]]:
-    """组装 DM 的 system prompt。返回 (system_prompt, fake_messages)；未启用 → None。
+) -> Optional[tuple[str, list[dict], str | None]]:
+    """组装 DM 的 system prompt。返回 (system_prompt, fake_messages, user_tail)；未启用 → None。
 
     工具指南只注入 DM 白名单（`tools.DM_TOOLS`）的 usage，避免把导演的全量工具
     说明塞进 DM 上下文。末尾**无条件**追加引擎级「呈现契约」（见 `_DM_CONTRACT`）。
+    `user_tail` 为未解析的尾部包裹模板（与导演预设同语义，见 `render_user_tail`）。
     """
     p = instance_dir / INSTANCE_DM_YAML
     if not p.is_file():
@@ -498,8 +518,8 @@ async def resolve_dm_system(
     yaml_text = p.read_text(encoding="utf-8")
     tools_usage = await load_tools_usage(user_id=user_id, only=DM_TOOLS)
     variables = build_template_variables(instance_dir, tools_usage)
-    system_prompt, fake_messages = resolve_preset_template(
+    system_prompt, fake_messages, user_tail = resolve_preset_template(
         yaml_text, variables, instance_dir, max_depth=max_depth
     )
     system_prompt = (system_prompt.rstrip() + "\n\n" + _DM_CONTRACT).strip()
-    return system_prompt, fake_messages
+    return system_prompt, fake_messages, user_tail

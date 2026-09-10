@@ -133,6 +133,7 @@ export const zhSettings = {
     docExampleLabel: "示例：",
     docFormMessages: "写法 A —— messages 列表（可写任意多轮）",
     docFormShorthand: "写法 B —— user / assistant 简写（单轮）",
+    docFormUserTail: "写法 C —— user_tail（包裹本轮最新用户消息，可选）",
     docBody: `导演提示词预设 = 发给导演模型的提示词结构，用 YAML 编写。
 
 system —— 导演的系统提示词模板，可用三类占位符：
@@ -141,13 +142,21 @@ system —— 导演的系统提示词模板，可用三类占位符：
 • \${teahouse.xxx}：系统内部值，固定为下列四个。名称不可更改，但顺序可任意调整，也可只用其中几个：
     \${teahouse.behavior} —— 行为准则
     \${teahouse.tools_usage} —— 工具使用指南
-    \${teahouse.file_tree} —— 实例目录树
+    \${teahouse.file_tree} —— 实例目录结构（固定说明，不随文件变动）
     \${teahouse.available_skills} —— 可用 Skill 列表
 • \${变量名}：实例变量引用（如 \${金币}），组装时取实时快照。
 
-注意：\${teahouse.xxx} 的内容在所有占位符解析结束后才作为字面量植入，其内部的 {{}} 与 \${} 不会被二次展开。
+注意：
+• \${teahouse.xxx} 的内容在所有占位符解析结束后才作为字面量植入，其内部的 {{}} 与 \${} 不会被二次展开。
+• \${变量名} 一旦写进 system，就会随实例变化而变动，导致整段上下文缓存失效。**剧情变量应写进 user_tail，不要写进 system**（\${teahouse.file_tree} 已是固定说明，安全）。
 
-除 system 外，还可预置其他 role 的对话历史，两种写法二选一：messages 列表（与正文生成配置同格式，可写任意多轮），或 user / assistant 简写（单轮）。两者同时写时以 messages 为准，简写会被静默忽略。`,
+除 system 外，还可预置其他 role 的对话历史，两种写法二选一：messages 列表（与正文生成配置同格式，可写任意多轮），或 user / assistant 简写（单轮）。两者同时写时以 messages 为准，简写会被静默忽略。
+
+user_tail（可选）—— 把**本轮最新用户消息**用模板包裹，承载每轮都会变的信息（上下文用量、大文件预警、剧情变量），使它落在消息尾部、不破坏缓存前缀。它额外支持三个动态占位符：
+    \${teahouse.user_input} —— 用户本轮的原始输入
+    \${teahouse.usage} —— 当前上下文用量（含超阈值提示）
+    \${teahouse.big_files} —— 大文件预警（无则空）
+若模板里没写 \${teahouse.user_input}，系统会自动在其末尾补一句分隔说明并附上用户原文。包裹内容只存在于本次请求，历史里保存的始终是用户原文。`,
     editTitle: "编辑",
     deleteTitle: "删除",
     viewTitle: "查看",

@@ -6,11 +6,15 @@
 # Output / Roll，**没有**子会话、Generate、BatchExecute。
 #
 # 本文件是 yaml，格式同导演提示词：`system:` 为系统提示词，可选 `messages:` /
-# `user:` / `assistant:` 为预设对话。占位符在组装时解析：
+# `user:` / `assistant:` 为预设对话，可选 `user_tail:` 包裹本轮玩家消息。占位符在组装时解析：
 #   ${teahouse.tools_usage}      —— DM 白名单工具的使用指南（自动注入）
-#   ${teahouse.file_tree}        —— 实例目录树
+#   ${teahouse.file_tree}        —— 实例目录结构（固定说明，不随文件变动）
 #   ${teahouse.available_skills} —— 可用 Skill 列表
 #   ${变量名} / {{path}}          —— 沙盒变量 / 文件切片
+# 仅 `user_tail` 内还可用（每轮动态，落在消息尾部不破坏缓存）：
+#   ${teahouse.user_input}       —— 玩家本轮原始输入
+#   ${teahouse.usage}            —— 当前上下文用量（超阈值会升级提示）
+#   ${teahouse.big_files}        —— 大文件预警（无则空）
 # 注意：文件本身（dm.yaml）会被解析，因此要展示字面 {{...}} / ${...} 时需加 \ 转义。
 #
 # kind（消息类型）：当前生效 `say` / `narrate` / `roll`（见下方 system 内说明）。可自行
@@ -60,3 +64,9 @@ system: |
 
   # 实例结构
   ${teahouse.file_tree}
+
+# 可选：把每轮变动信息挂在玩家消息上（落在消息尾部，不破坏上下文缓存）。
+# 这里没写 ${teahouse.user_input}，系统会自动在末尾补上玩家原文。
+user_tail: |
+  ${teahouse.big_files}
+  ${teahouse.usage}

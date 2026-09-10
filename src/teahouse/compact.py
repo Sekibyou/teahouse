@@ -69,7 +69,8 @@ POST_COMPACT_RATIO = 0.70
 # tokens under the chars/3 estimate). Shared by:
 #   - execute_read: an oversized file is truncated to this many chars and the
 #     read reports its true total size.
-#   - _scan_tree: files above this size are listed as a big-file warning with an
+#   - _scan_big_files / format_big_files: files above this size are listed as a
+#     big-file warning (surfaced via `${teahouse.big_files}` in user_tail) with an
 #     estimated token count, so the director knows a Read could be expensive.
 #   - SessionLoop.enqueue: an oversized pending user message is spilled to a
 #     temp/ file and replaced by a pointer message instead of flooding the round.

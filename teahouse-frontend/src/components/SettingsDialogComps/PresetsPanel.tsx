@@ -149,6 +149,17 @@ user: |
   x+y=99
 assistant: |
   OK.`}</pre>
+                    <p className="text-[11px] text-muted-foreground">{t("preset.docFormUserTail")}</p>
+                    <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 overflow-x-auto text-muted-foreground">{`system: |
+  <behavior>
+  \${teahouse.behavior}
+  </behavior>
+
+user_tail: |
+  \${teahouse.big_files}
+  \${teahouse.usage}
+
+  \${teahouse.user_input}`}</pre>
                   </div>
                 </div>
               )}
