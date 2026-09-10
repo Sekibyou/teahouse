@@ -2,13 +2,6 @@ export const enMisc = {
   sandbox: {
     waiting: "Waiting for AI to generate content...",
     sessionCreateError: "Missing instance context; cannot create sub-session",
-    notFound: "Neither {{draft}} nor {{final}} found",
-    chapterTitle: "Chapter {{num}}",
-    applyVarsFailed: "Failed to apply variables: {{error}}",
-    writeFloorFailed: "Failed to write back floor: {{error}}",
-    writeMetaFailed: "Failed to write floor-{{num}}-meta.json: {{error}}",
-    renameFailed: "Rename failed: {{error}}",
-    maintainVarsCommit: "Variable maintenance for chapter {{num}} floor",
   },
   sandboxFileList: {
     fileList: "File list",

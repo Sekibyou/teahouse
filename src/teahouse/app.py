@@ -992,6 +992,9 @@ async def chat(body: ChatRequest, request: Request):
             raise HTTPException(status_code=404, detail="Instance not found")
 
         instance_dir = Path(inst["dir_path"])
+        from .prose_vars import register_instance
+        # So the variable layer's broadcasts carry the id the frontend filters on.
+        register_instance(instance_dir, inst["id"])
 
         from . import sessions as _sessions
         from .session_loop import SessionLoop

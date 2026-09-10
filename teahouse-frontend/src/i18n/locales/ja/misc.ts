@@ -2,13 +2,6 @@ export const jaMisc = {
   sandbox: {
     waiting: "AI のコンテンツ生成を待機中...",
     sessionCreateError: "インスタンスコンテキストがありません。サブセッションを作成できません",
-    notFound: "{{draft}} も {{final}} も見つかりません",
-    chapterTitle: "第 {{num}} 章",
-    applyVarsFailed: "変数の適用に失敗：{{error}}",
-    writeFloorFailed: "フロアの書き戻しに失敗：{{error}}",
-    writeMetaFailed: "floor-{{num}}-meta.json の書き込みに失敗：{{error}}",
-    renameFailed: "名前の変更に失敗：{{error}}",
-    maintainVarsCommit: "第 {{num}} 章フロアの変数メンテナンス",
   },
   sandboxFileList: {
     fileList: "ファイル一覧",

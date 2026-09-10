@@ -25,6 +25,14 @@ from typing import Optional
 
 from .connection import generate_uuid, current_timestamp, execute, fetch_one, fetch_all
 from ..git_utils import git_init, git_initial_commit
+from ..prose_vars import (
+    VALID_VAR_TYPES as _VALID_VAR_TYPES,
+    load_store as _load_store,
+    write_live as _write_live,
+    current_meta as _current_meta,
+    infer_var_type,
+    clamp_number,
+)
 
 # ---------------------------------------------------------------------------
 # Path utilities
@@ -566,64 +574,32 @@ def write_asset(instance_dir: Path, file_path: str, data: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime vars — runtime/runtime_vars.jsonl
+# Runtime vars — runtime/runtime_vars.jsonl (live) + runtime_vars_snapshot.jsonl
 #
-# The single authority for instance variables ("文件即状态"). jsonl: one variable
-# per line, each a JSON object that can carry optional metadata:
+# Two files, one variable class (design: ignored/prose-vars-design.md):
+#   - runtime/runtime_vars.jsonl          (gitignored) = WORKING value, carries draft
+#     effects, recomputed often. Derived — may be deleted and rebuilt at any time.
+#   - runtime/runtime_vars_snapshot.jsonl (tracked)    = AUTHORITATIVE snapshot taken
+#     at the last promotion; draft effects never enter it.
+#
+# jsonl: a first `_meta`/`_snapshot` header line, then one variable per line, each a
+# JSON object that can carry optional metadata:
 #     {"name":"金币","value":140,"type":"number","min":0,"max":1000}
 #     {"name":"修为","value":"炼气四层","type":"string"}
 #     {"name":"A_擂台赛胜负","value":"2胜1负","note":"仅本剧本段",
 #      "change_log":[{"at":"floor-010","to":"1胜0负","why":"首胜"}]}
 # Convention:
-#   - Values are any JSON-serializable object.
-#   - `type` is the declared strong type of the variable, one of:
-#       number | string | boolean | array
+#   - `type` is the declared strong type: number | string | boolean | array
 #     (object is reserved for program-internal use and is not maintainable by the
-#     正文 bot). When absent (legacy lines), it is inferred from the value. Type is
-#     enforced on write: a new value whose type mismatches the declared `type`
-#     raises ValueError.
-#   - `min` / `max` (numeric only) bound the value: on every set/add the value is
-#     clamped to [min, max] so it can never exceed the range. Out-of-range writes
-#     are silently clamped, not rejected.
+#     正文 bot). Absent (legacy lines) → inferred from the value. Enforced on write:
+#     a new value whose type mismatches the declared `type` raises ValueError.
+#   - `min` / `max` (numeric only) bound the value: on every set/add it is clamped.
 #   - `note` is overwritten on update; `change_log` is appended on update.
 #   - SetRuntimeVar writes, GetRuntimeVars reads, delete removes a name.
+#   - All reads/writes funnel through prose_vars.load_store: it bootstraps a missing
+#     or stale working store (rebuild from snapshot + replay the floors above it),
+#     so callers always see fresh values.
 # ---------------------------------------------------------------------------
-
-_RUNTIME_VARS_PATH = "runtime/runtime_vars.jsonl"
-
-
-def _runtime_vars_path(instance_dir: Path) -> Path:
-    full = (instance_dir / _RUNTIME_VARS_PATH).resolve()
-    if not str(full).startswith(str(instance_dir.resolve())):
-        raise ValueError("Path traversal detected")
-    return full
-
-
-_VALID_VAR_TYPES = {"number", "string", "boolean", "array"}
-
-
-def infer_var_type(value) -> str:
-    """Infer a declared `type` from a value (backward-compat for legacy entries).
-
-    object cannot be represented by any maintainable type and is mapped to `string`
-    as the least-surprising fallback for legacy entries carrying non-scalar data.
-    """
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, list):
-        return "array"
-    return "string"
-
-
-def clamp_number(value, lo=None, hi=None):
-    """Clamp a numeric value to [lo, hi]. Bounds that are None are ignored."""
-    if hi is not None:
-        value = min(value, hi)
-    if lo is not None:
-        value = max(value, lo)
-    return value
 
 
 def build_type_map(instance_dir: Path) -> dict:
@@ -645,6 +621,10 @@ def build_type_map(instance_dir: Path) -> dict:
 def read_sandbox_vars(instance_dir: Path, names: list[str] | None = None) -> list[dict]:
     """Read runtime vars as a flat list of {name, value, note?, change_log?}.
 
+    Goes through prose_vars.load_store: a missing or stale working store is rebuilt
+    from the authoritative snapshot (+ replay of the floors above it) before
+    returning, so callers always see fresh values.
+
     - `names` = None (or empty): return every initialized variable.
     - `names` = requested list: return **exactly one entry per requested name**,
       using `value: None` for uninitialized names, so callers can check "not set"
@@ -652,22 +632,7 @@ def read_sandbox_vars(instance_dir: Path, names: list[str] | None = None) -> lis
 
     Missing file behaves like an empty store.
     """
-    full = _runtime_vars_path(instance_dir)
-    data: dict[str, dict] = {}
-    if full.exists():
-        try:
-            for line in full.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(entry, dict) and "name" in entry and "value" in entry:
-                    data[entry["name"]] = entry
-        except OSError:
-            data = {}
+    data: dict[str, dict] = _load_store(instance_dir)
 
     if names:
         out = []
@@ -700,23 +665,7 @@ def write_sandbox_vars(
     Missing names in updates are created (with optional metadata). No name is
     ever duplicated — one line per name.
     """
-    full = _runtime_vars_path(instance_dir)
-    data: dict[str, dict] = {}
-
-    if full.exists():
-        try:
-            for line in full.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(entry, dict) and "name" in entry:
-                    data[entry["name"]] = entry
-        except OSError:
-            data = {}
+    data: dict[str, dict] = _load_store(instance_dir)
 
     note = note or {}
     change_log = change_log or {}
@@ -782,38 +731,20 @@ def write_sandbox_vars(
         entry["change_log"] = log
         data[name] = entry
 
-    full.parent.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps(data[k], ensure_ascii=False) for k in data]
-    full.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    _write_live(instance_dir, data, _current_meta(instance_dir))
 
 
 def delete_sandbox_vars(instance_dir: Path, names: list[str]) -> None:
-    """Remove named variables from the jsonl file (their lines are dropped)."""
-    full = _runtime_vars_path(instance_dir)
-    if not full.exists():
-        return
-    remove = set(names)
-    try:
-        lines = full.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return
-    kept = []
-    for line in lines:
-        st = line.strip()
-        if not st:
-            continue
-        try:
-            entry = json.loads(st)
-        except json.JSONDecodeError:
-            kept.append(line)
-            continue
-        if isinstance(entry, dict) and "name" in entry and entry["name"] in remove:
-            continue  # drop
-        kept.append(line)
-    if not kept:
-        full.unlink()
-    else:
-        full.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    """Remove named variables from the working store (their lines are dropped).
+
+    Writes through the live store: even when every variable is removed the file is
+    kept (holding only its header) so the bootstrap can never mistake "all deleted"
+    for "missing" and resurrect them from the snapshot.
+    """
+    data: dict[str, dict] = _load_store(instance_dir)
+    for n in names:
+        data.pop(n, None)
+    _write_live(instance_dir, data, _current_meta(instance_dir))
 
 
 def delete_file_or_dir(instance_dir: Path, file_path: str) -> None:

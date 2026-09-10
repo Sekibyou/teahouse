@@ -162,14 +162,21 @@
     writeFile: function(path, content) { return callHost('writeFile', [path, content]); },
 
     // ---- 转正（草稿 → 正式稿）----
-    // 一次性完成：解析正文 teahouse-vars → 应用变量 → 标记 msg 写回 → 改名 → git 提交。
-    // 返回 {ok, data|error}，data 含 {num, title, commit_hash, applied, failed, committed_draft}。
-    // 已转正且无未消费 action → 幂等返回。二次补解析失败变量 → 再次调用即可。
+    // 后端一次完成：重算变量（含本楼草稿）→ 冻结快照 → floor-N-draft.md 改名
+    // floor-N.md → git 提交。正文里的 teahouse-vars 块永远保留、不改写、不打标记。
+    // 返回 {ok, data|error}，data 含 {num, title, commit_hash, failed, committed_draft}。
+    // 已是正式稿 → 幂等返回（committed_draft=false）。
     commitDraft: function(num) { return callHost('commitDraft', [num]); },
+
+    // ---- 刷新变量 ----
+    // 沙盒在【改过 draft / 改过 runtime_vars.jsonl】之后调用：后端重算工作值并回传
+    // {vars}。变量在草稿落盘那一刻即生效，不再等到转正。
+    refresh: function() { return callHost('refresh', []); },
 
     // ---- 重写 = 回档：git 丢弃所有暂存/未跟踪改动 ----
     // 复用后端 /git/discard（git checkout -- . + clean -fd，连 untracked 的
-    // floor-N-draft.md 一并清除）。B 按钮用它回档后重新生成。
+    // floor-N-draft.md 一并清除）。B 按钮用它回档后重新生成。变量工作值同时失效、
+    // 下次读取时由快照重建。
     gitDiscard: function() { return callHost('gitDiscard', []); },
 
     // 富文本渲染

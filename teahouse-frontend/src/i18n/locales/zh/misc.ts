@@ -2,13 +2,6 @@ export const zhMisc = {
   sandbox: {
     waiting: "等待 AI 生成内容...",
     sessionCreateError: "缺少实例上下文，无法创建子会话",
-    notFound: "未找到 {{draft}} 或 {{final}}",
-    chapterTitle: "第 {{num}} 章",
-    applyVarsFailed: "应用变量失败：{{error}}",
-    writeFloorFailed: "写回正文失败：{{error}}",
-    writeMetaFailed: "写入 floor-{{num}}-meta.json 失败：{{error}}",
-    renameFailed: "改名失败：{{error}}",
-    maintainVarsCommit: "第 {{num}} 章正文变量维护",
   },
   sandboxFileList: {
     fileList: "文件清单",

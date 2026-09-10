@@ -241,7 +241,7 @@ const prefs = JSON.parse(await Teahouse.readText("runtime/sandbox/var-editor/imp
 
 #### `Teahouse.setVar(updates) → Promise<{name,value}[]>`
 
-原子合并写入实例变量，落盘到 `runtime/runtime_vars.jsonl`（**文件即状态**，进 git，导演中断时仍能恢复）。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
+原子合并写入实例变量，落盘到 `runtime/runtime_vars.jsonl`（**文件即状态**，导演中断时仍能恢复）。该文件是**派生的工作值、被 gitignore**；真正入 git 的是转正时冻结的 `runtime/runtime_vars_snapshot.jsonl`。`updates` 为 `{key: value}` 对象，值为任意 JSON 可序列化对象（标量/嵌套皆可）。返回**写后全部变量** `[{name, value, note?, change_log?}]`。也支持元数据/删除：`Teahouse.setVar(updates, {note?, change_log?, delete?})`——`note` 覆盖该变量备注、`change_log` 追加一条历史笔记、`delete` 删名。
 
 ```js
 await Teahouse.setVar({
@@ -405,36 +405,55 @@ Teahouse.runTool([
 
 一句话：**runTool 是"我自己按计划连做几步"，子会话是"我开一个 agent 替我想/做"**——两者分工别混。子会话相关操作只走 `Teahouse.session*` API。
 
-### 转正：`Teahouse.commitDraft(N)` / 回档：`Teahouse.gitDiscard()`（v2 新增）
+### 变量生效与转正：`Teahouse.refresh()` / `Teahouse.commitDraft(N)` / 回档 `Teahouse.gitDiscard()`
 
-草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md` **不再由导演 `FileOps move` + `GitCommit`**，改由沙盒调用 `commitDraft` 一次性完成（正文末尾可能带 `<!-- teahouse-vars: [...] -->` 变量操作块，见「正文变量块」）。
+**核心约定：变量在草稿落盘那一刻即生效，不必等转正。** 实例只有**一类变量、两个文件**：
+
+- `runtime/runtime_vars.jsonl` —— **工作值**（gitignored，派生文件，可随时删除重建）。沙盒 `setVar` 与导演 `SetRuntimeVar` 都写它；一切读取（`getVars`、`${}` 占位符、导演系统提示词）都取自它。
+- `runtime/runtime_vars_snapshot.jsonl` —— **权威快照**（入 git）。只在转正时由后端写入，等于转正那一刻的完整变量状态。
+
+正文里的 `<!-- teahouse-vars: [...] -->` 块**永远保留在正文里**：转正不剥离、不打 `msg` 标记、不产出 `floor-N-meta.json`。后端会在每次读取变量时重放「所有比最后一个正式楼层更新的楼层文件」（即草稿）里的块——所以**草稿一落盘，变量就更新**；改写草稿后重放一次即可，始终幂等。
+
+> **准则：正式楼层不可变。** `runtime/floors/floor-N.md`（定稿）是 git 锁定的历史，**包括其中的变量块在内，一律不要修改**——要改就走回退 / 新建分支（那是分支操作，不是"改"历史）。只有草稿 `floor-N-draft.md` 可以任意修改、重写。
+>
+> 引擎**不校验**这一点：若绕过约定直接改了某个旧正式楼层的变量块，该块不会再被重放，快照与正文会**静默不一致**（变量停在旧值，无任何报错）。所以这是一条必须自觉遵守的约束。
+>
+> 万一已经发生了（或变量状态明显错乱），导演可调用 **`RepairVars`** 兜底：以 git 历史里最早的变量快照为基底，从零重放所有正式楼层（+ 当前草稿）的变量块，重建变量并重新冻结权威快照。幂等，只动变量、不碰正文。
+
+#### `Teahouse.refresh() → Promise<{ok, data|error}>`
+
+**让后端立即重算变量**并返回 `{vars}`。**凡沙盒里合法地创建 / 修改 / 重写了 `runtime/floors/floor-N-draft.md`（或改了 `runtime_vars.jsonl`）之后，都应当调用一次**——这样依赖变量的界面（选项、状态栏、分支判定）随草稿即时更新，而不是等到转正。
+
+```js
+await Teahouse.refresh()      // 重算并拿到最新变量
+```
+
+> 读变量（`getVars`）的读路径本身也会触发重算，`refresh` 是主动推送一次，让界面在新草稿落盘后立刻对齐。建议在收到 `output.refresh`（`path` 以 `runtime/floors/` 开头）时调用。
 
 #### `Teahouse.commitDraft(N) → Promise<{ok, data|error}>`
 
-把「解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交」绑定为一个**单向闸门**（请求-响应语义，失败 reject）。`data`：
+草稿 `floor-N-draft.md` 转正为正式稿 `floor-N.md`：**后端一次完成**「重算变量（含本楼草稿）→ 冻结快照 → 改名 → git 提交」，沙盒只发一个请求（单向闸门，请求-响应语义）。`data`：
 
 ```js
-{ num, title, commit_hash,
-  applied: [{type, name, value?, index?, applied_value?}],  // 本次消费的操作
-  failed:  [{type, name, value?, index?, error}],           // 解析失败的操作（error 含原因）
-  committed_draft: bool,    // true=本次新转正；false=幂等/二次补解析
+{ num, path, title, commit_hash,
+  failed: string[],          // 变量块解析/应用失败的说明（可空）
+  committed_draft: bool,     // true=本次新转正；false=已是正式稿（幂等）
   commit_warning?: string }
 ```
 
 分支语义：
-- `floor-N-draft.md` 存在 → 正常转正（consumed_draft=true）；同时应用正文里的变量块，成功/失败的都带 `msg`（`consumed` / `error:…`）并记入 `floor-N-meta.json`，正文剥离为纯 prose，一并提交。
-- `floor-N.md` 已存在但还有**未带 msg 的裸 action** → 二次补解析（`committed_draft=false`，git type=other「正文变量维护」），把新裸 action 再解析一遍，并入该楼的 `floor-N-meta.json`。
-- 已全部消费 → 幂等返回（不动正文/git）。
+- `floor-N-draft.md` 存在 → 正常转正：变量重算到本楼、快照冻结在 N、文件改名并以 `floor-N: <标题>` 提交。
+- `floor-N.md` 已存在 → **幂等返回**（`committed_draft=false`），不动正文与 git。不再有"二次补解析"分支。
 
-判断「是否有失败」用 `data.failed.length > 0`；沙盒据此决定是否引导导演人工修正失败的 action 后**再次 commitDraft** 补解析。
+判断「是否有失败」用 `data.failed.length > 0`。**转正不由导演做**：不要 `FileOps move` + `GitCommit`。
 
-**适用**：A 按钮（确认草稿可用）/ input-bar 三态的 `AWAIT_COMMIT`。**不是** runTool 的多步工具数组——它是宿主编排的确定性闸门，沙盒只发一个请求。
+**适用**：A 按钮（确认草稿可用）/ input-bar 三态的 `AWAIT_COMMIT`。
 
 #### `Teahouse.gitDiscard() → Promise<{ok, data|error}>`
 
-**重写 = 回档**：git 丢弃所有未提交改动（`git checkout -- .` + `git clean -fd`，连 untracked 的 `floor-N-draft.md` 一并清除）。B 按钮用于"这版草稿不满意，回到上一正式稿状态重新生成"。
+**重写 = 回档**：git 丢弃所有未提交改动（`git checkout -- .` + `git clean -fd`，连 untracked 的 `floor-N-draft.md` 一并清除）。B 按钮用于"这版草稿不满意，回到上一正式稿状态重新生成"。工作值同时失效，下次读取变量时由快照重建——**存档点之外的临时状态会被回档，这是期望行为**。
 
-> 注意：`commitDraft` / `gitDiscard` 走宿主 `SandboxManager` 桥（`callHost`），非 runTool。它们不经过导演 LLM，无法由导演工具集触发——由沙盒 UI 按钮调用。
+> 注意：`refresh` / `commitDraft` / `gitDiscard` 走宿主 `SandboxManager` 桥（`callHost`），非 runTool。它们不经过导演 LLM，无法由导演工具集触发——由沙盒 UI 或沙盒脚本调用。
 
 ### 子会话（sub-session）— 一次性导演子任务
 
@@ -500,7 +519,7 @@ API（调用一律返回统一的 `{ok, data|error}` —— 用 `res.ok` 判成�
 | `generate_progress` | `{ run_uuid, path, delta, accumulated_len, accumulated_text, done, instance_id }` | `Generate` 流式每收到一个正文 chunk 广播一条。**bootstrap 内部已集中订阅并维护 `Teahouse.currentDraft`**，UI 组件订阅 `draft.change` 即可——不需要直接处理此事件 |
 | `draft.change` | `{ path, text, accumulated_len }` | bootstrap 收到 `generate_progress` 后更新 `currentDraft` 并广播此事件。UI 组件（如正文渲染器）订阅此事件即可实现生成中的打字机效果 |
 | `generation.status` | `'idle'` / `'generating'` / `'done'` | 生成状态变化时广播。`generating`=开始生成/有新 delta；`done`=生成结束、`currentDraft` 已清空 |
-| `draft.committed` | `{ num, path, title, commit_hash, applied, failed, committed_draft }` | `Teahouse.commitDraft()` 成功转正/补解析后宿主广播。**非调用方组件**（page-bar 角标、导演手动转正后 input-bar 切态）订阅它同步状态 |
+| `draft.committed` | `{ num, path, title, commit_hash, failed, committed_draft }` | `Teahouse.commitDraft()` 成功转正后宿主广播。**非调用方组件**（page-bar 角标、导演手动转正后 input-bar 切态）订阅它同步状态 |
 | `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
 | `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |

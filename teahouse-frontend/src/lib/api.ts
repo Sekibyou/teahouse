@@ -666,6 +666,18 @@ export const floorsApi = {
   list: async (instanceId: string) => {
     return get<{ floors: FloorEntry[] }>(`/api/instances/${instanceId}/floors`)
   },
+  /** 转正：floor-{num}-draft.md → floor-{num}.md（后端一次完成重算+快照+改名+提交）。 */
+  commitDraft: async (instanceId: string, num: number) => {
+    return post<{
+      num: number
+      path: string
+      title: string
+      commit_hash: string | null
+      failed: string[]
+      committed_draft: boolean
+      commit_warning?: string
+    }>(`/api/instances/${instanceId}/floors/${num}/commit-draft`, {})
+  },
 }
 
 // DM 呈现记录（runtime/dm-output.jsonl）—— 与 floors 并列的独立线路，沙盒渲染气泡用。

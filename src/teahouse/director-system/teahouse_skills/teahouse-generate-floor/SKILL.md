@@ -241,15 +241,17 @@ FileOps move temp/draft-{{N}}.md runtime/floors/floor-{{N}}-draft.md
 
 **必须等用户明确确认满意后**，才执行转正。**转正不再是导演做 `FileOps move` + `GitCommit`**——改由沙盒 `Teahouse.commitDraft(N)`（host 侧的确定性闸门）一次性完成：
 
-> 沙盒（本实例的 `runtime/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：解析正文里的 `<!-- teahouse-vars: [...] -->` 变量块 → 应用变量 → 剥离块写回纯正文 + 把变量操作记入 `floor-N-meta.json` → `floor-N-draft.md` 改名 `floor-N.md` → git 提交(type=floor) → 广播 `draft.committed`。
+> 沙盒（本实例的 `runtime/sandbox/` 前端，如 input-bar.js）在用户点击「确认草稿可用」时调用 `Teahouse.commitDraft(N)`。它会：重算变量（含本楼正文的变量块）→ 冻结权威快照 → `floor-N-draft.md` 改名 `floor-N.md` → git 提交 → 广播 `draft.committed`。**正文里的变量块始终保留在正文里**，不剥离、不打标记。
 
 作为导演，你的职责是确保正文**末尾**已正确产出 `<!-- teahouse-vars: [...] -->` 变量操作块（见下节「正文变量块约定」），并让用户理解转正由 front-end 触发，**不要自己 move + commit**。
 
 如果用户通过对话要求"提交/定稿"，你可以提醒：转正是草稿页的「确认」按钮动作；若正文里没有需要生效的变量块，沙盒会直接转正（无变量操作）。
 
+**变量不等转正才生效。** 草稿一落盘，后端就会重放「所有比最后一个正式楼层更新的楼层」里的变量块，变量随即更新——依赖变量的选项、状态显示、分支判定在草稿阶段即可工作。你改写 `floor-N-draft.md`（Edit/WriteLine）后，让沙盒调用一次 `Teahouse.refresh()` 即可让界面同步；沙盒通常已挂在 `output.refresh` 上自动刷新。
+
 ## 正文变量块约定（teahouse-vars）
 
-正文可携带变量操作，**由正文 AI 在正文末尾就地书写**一个 HTML 注释块。转正（commitDraft）时由宿主一次性解析、应用、剥离块（记入 `floor-N-meta.json`）并 git 提交。
+正文可携带变量操作，**由正文 AI 在正文末尾就地书写**一个 HTML 注释块。**这个块永远留在正文里**（缓存命中 + 给后续正文 AI 做示范），后端在每次读取变量时重放它。
 
 ```html
 <!-- teahouse-vars: [
@@ -277,8 +279,8 @@ FileOps move temp/draft-{{N}}.md runtime/floors/floor-{{N}}-draft.md
 - **note 字段**：每条操作可加 `"note"` 极简说明这次变动指代什么剧情（如 `"note": "买米"`），便于回溯；尽量 10 字以内，没有明确指代可省略。
 - **类型约束（硬）**：正文 bot 只维护 boolean/string/number/array 四类；**对象仅程序内用，正文 bot 不维护对象**（非要用只能 `set` 整体替换，非最佳实践）。
 - **强类型与数值边界**：每个变量声明了类型（见 `正文变量维护.md` 清单的 `type` 列），`set` 值必须与类型相符；数值变量可有 `min`/`max`，`set`/`add` 写入自动夹取（超界压回边界，正文 AI 按剧情写期望值即可）。正文 AI 可用 `${@type 变量名}` 读取变量的类型（发送前展开），用 `${变量名}` 读值。
-- **失败留痕**：转正时成功的 action 写 `"msg":"consumed"`，失败的写 `"msg":"error:<原因>"`；这些变量操作会被剥离出正文、记入 `floor-N-meta.json`（JSON 不进正文渲染、不回灌正文 AI）。导演可读 `floor-N-meta.json` 看到哪些成功/失败及 note。带 `msg` 的 action 后续不再被消费。
-- 变量变更需绑定单一时刻（转正那次 git 提交），故**不要在正文里反复改同一个块**；正式稿被 git 锁定，二次补解析仅处理"无 msg 的裸 action"，并把这些新操作并入该楼的 `floor-N-meta.json`。
+- **解析失败不落痕**：块写坏（JSON 非法、类型不符）时，后端重算会跳过该条并把失败说明回传给沙盒（一次性提示），**不改写正文、不写入任何标记**。因此改草稿后重算天然幂等——改写同一楼的块，重放即以新块为准。
+- **变量以楼层为界**：变量状态锚定在「最后一个正式楼层」（转正时冻结为权威快照）。比它更新的楼层（草稿）里的块会在每次重算时重放，所以**草稿可以任意修改**，改完重算即可，不会累积错误。
 
 ### 导演如何保证正文产块
 

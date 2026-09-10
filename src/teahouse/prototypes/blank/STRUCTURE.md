@@ -7,14 +7,16 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
   teahouse.md           实例配置：工作内容定义 + Skill 路由。始终实时注入导演上下文。
   README.md             实例说明文档（对创作者/玩家）。
   cover.jpg             封面图（可选，根目录取名即被识别）。
-  .gitignore            常见 `.sessions/` `temp/`（不入 git）；随实例提交。
+  .gitignore            常见 `.sessions/` `temp/` `runtime/runtime_vars.jsonl`（不入 git）；随实例提交。
   prototype.json        原型包元数据（引擎打包/导入时生成与读取的 JSON，根目录）。
 
   runtime/              游戏运行时 —— 直接影响游玩的一切
     floors/             floor-N.md（定稿）/ floor-N-draft.md（半正式稿）正文历史
     sandbox/            UI / 场景脚本 *.js *.css（input-bar.js、page-bar.js、var-editor/ 等组件）
     assets/             二进制资源（封面/背景/字体/音频等），沙盒 用 readAsset 读
-    runtime_vars.jsonl  变量「文件即状态」：一变量一行 jsonl，SetRuntimeVar 写、GetRuntimeVars 读
+    runtime_vars.jsonl  变量工作值（**不入 git**）：一变量一行 jsonl，SetRuntimeVar 写、GetRuntimeVars 读；
+                        派生 = 快照 + 比最后正式楼层更新的楼层里的变量块重放，随时可删可重建
+    runtime_vars_snapshot.jsonl  变量权威快照（**入 git**）：= 每次转正时刻的完整变量状态
     text-style-rules.yaml 文本样式着色规则（符号着色，导演经 richtext skill 编辑）
 
   settings/             作者设定与组装
@@ -48,7 +50,8 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
 | `runtime/sandbox/input-bar.js` | 前端（页面挂载） | 底部输入条组件 |
 | `runtime/sandbox/var-editor/important-vars.json` | `var-editor.js` | readText 读取重要变量清单 |
 | `runtime/floors/floor-N.md` / `floor-N-draft.md` | 前端 + 正文生成 | 文件中间数字排序展示；Generate 落盘草稿、commitDraft 转正 |
-| `runtime/runtime_vars.jsonl` | 引擎 SetRuntimeVar / GetRuntimeVars | 文件即状态，权威变量源 |
+| `runtime/runtime_vars.jsonl` | 引擎 SetRuntimeVar / GetRuntimeVars | 派生工作值（不入 git）：一变量一行 jsonl，草稿落盘即更新 |
+| `runtime/runtime_vars_snapshot.jsonl` | 引擎（转正时写入） | 权威快照（入 git）：转正时刻的完整变量状态 |
 | `runtime/text-style-rules.yaml` | 前端 renderRichText | 符号着色 |
 | `generate-config/generate.yaml` | `runtime/sandbox/input-bar.js` | `source_file` 直接指向；Generate 读它组织正文请求 |
 | `generate-config/continue.yaml` | `runtime/sandbox/input-bar.js` | `CONT_YAML` 常量指向；续写补全 |
@@ -67,6 +70,6 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
 - **游玩会直接反映的改动**（改完立刻影响画面/剧情）→ `runtime/`（沙盒、楼层、变量、着色规则）。
 - **支撑游玩但不定格在某个画面**的改动 → `settings/`（设定与其引用关系）。
 - **正文模型怎么组织上下文** → `generate-config/`（薄壳）+ `settings/assemble.md`（组装器）。
-- **引擎静默维护、创作者只读或经工具改** → `summary/index.json`、`runtime/runtime_vars.jsonl` 的写、`prototype.json`。
+- **引擎静默维护、创作者只读或经工具改** → `summary/index.json`、`runtime/runtime_vars_snapshot.jsonl` 的写、`runtime/runtime_vars.jsonl`（派生值，勿手改）、`prototype.json`。
 
 > ⚠️ 被上面表格引用的文件改名 = 破坏引擎对接；同理 `runtime/`、`settings/`、`generate-config/`、`summary/`、`skills/` 这些顶层目录名不可改。要定制作品，请**改这些位置里的内容**。

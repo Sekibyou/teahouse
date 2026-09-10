@@ -26,6 +26,7 @@ from .placeholder import resolve_placeholders, resolve_variables, validate_var_n
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
+from .prose_vars import register_instance as _register_instance
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
@@ -557,6 +558,41 @@ async def execute_set_runtime_var(instance_dir: Path, args: dict[str, Any], inst
     if not items:
         return "No variables found." + prefix_warn
     return "Variables set:\n" + "\n".join(_fmt_var_entry(item) for item in items) + prefix_warn
+
+
+async def execute_repair_vars(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
+    """Rebuild the whole variable store from the OLDEST snapshot in git history.
+
+    Manual fallback for when the variable state and the prose have gone out of sync —
+    e.g. a snapshot that looks wrong, or a variable block edited on an older formal
+    floor (which the normal recompute cannot see, because it only replays floors above
+    the latest snapshot). Re-derives everything forward from the oldest committed
+    snapshot and re-freezes the snapshot at the current formal floor.
+    """
+    from .prose_vars import full_repair
+
+    try:
+        errors, info = full_repair(instance_dir)
+    except Exception as e:  # noqa: BLE001 — surface any git/IO failure as a tool error
+        return f"Error: 变量全量修复失败：{e}"
+
+    src = f"提交 {info['base_commit'][:9]}" if info["base_commit"] else "无可用历史快照，从零起算"
+    lines = [
+        "变量已按 git 历史里最早的可用快照全量重建。",
+        f"- 基底：第 {info['base_floor']} 楼（{src}）",
+        f"- 重放的正式楼层：{info['replayed'] or '（无）'}",
+        f"- 重放的草稿楼层：{info['drafts'] or '（无）'}",
+        f"- 当前正式楼层：{info['floor']}；变量数：{info['vars']}",
+        "- 权威快照已就地重冻结（runtime/runtime_vars_snapshot.jsonl 已改动，需 GitCommit 才会入库）。",
+    ]
+    if info.get("skipped"):
+        lines.append(
+            f"- 已跳过 {info['skipped']} 个楼层号高于当前正式楼层的早期快照"
+            "（多为原型携带的、与本实例楼层数不符的编号）。"
+        )
+    if errors:
+        lines.append("- 解析/应用告警：" + "；".join(errors))
+    return "\n".join(lines)
 
 
 def _sandbox_var_map(instance_dir: Path) -> dict:
@@ -2315,7 +2351,7 @@ async def execute_wait(instance_dir: Path, args: dict[str, Any]) -> str:
 # GitCommit is excluded (handled by its own dispatcher branch above).
 _FILE_TOOL_EXECUTORS = {
     "SetRuntimeVar", "Write", "Edit", "Report", "WriteLine", "FileOps",
-    "GitBranch", "GitCheckout", "Output", "OutputEdit",
+    "GitBranch", "GitCheckout", "Output", "OutputEdit", "RepairVars",
 }
 
 TOOL_EXECUTORS = {
@@ -2336,6 +2372,7 @@ TOOL_EXECUTORS = {
     "BatchExecute": execute_batch_execute,
     "GetRuntimeVars": execute_get_runtime_vars,
     "SetRuntimeVar": execute_set_runtime_var,
+    "RepairVars": execute_repair_vars,
     "GitCommit": execute_git_commit,
     "GitBranch": execute_git_branch,
     "GitCheckout": execute_git_checkout,
@@ -2418,6 +2455,7 @@ async def execute_tool(
     """
     # Role-level denylist. Checked before the whitelist so a tool that is both
     # excluded for the role and absent from enabled_tools reports the right reason.
+    _register_instance(instance_dir, instance_id)
     if exclude and name in exclude:
         return f"Error: tool '{name}' is not available in this context (DM-only tool)."
     # Sub-session permission gate. Main sessions (session_id=None/'main') and

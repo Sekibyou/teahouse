@@ -6,8 +6,8 @@
        GENERATING   生成/重写中 → 打字禁用，右侧为「停止」按钮，可 Esc 打断
        AWAIT_COMMIT 最新章是草稿 → 右侧按钮变「确认草稿」形态（sendBtn 三态）：
          send（纸飞机）= 正常发送 / stop（方块）= 打断生成 / commit（绿色文字）= 转正
-         确认草稿 → Teahouse.commitDraft(N)：解析 teahouse-vars → 应用变量
-                    → 标记 msg 写回 → 改名 floor-N.md → git 提交
+         确认草稿 → Teahouse.commitDraft(N)：重算变量（含本楼）→ 冻结快照
+                    → 改名 floor-N.md → git 提交（变量块保留在正文，不剥离）
                      菜单含 rewrite/continue（草稿阶段折腾）；仅「生成下一章」模式打字禁用，
                      其余模式打字可用（找导演走「与导演对话」，回档不做常驻按钮）。
      写下一章 = 写 user_msg + Generate floor-N-draft.md，不碰 git；
@@ -420,7 +420,7 @@
       sendBtn.style.minWidth = '86px';
       sendBtn.style.padding = '0 16px';
       sendBtn.style.fontSize = '13px';
-      sendBtn.title = '解析正文 teahouse-vars 块并转正为正式稿';
+      sendBtn.title = '重算变量、冻结快照并把本楼草稿转正为正式稿';
     } else {
       sendMode = 'send';
       sendBtn.innerHTML = SEND_ICON;
@@ -855,7 +855,7 @@
         var d = res.data || {};
         refreshState();
         if (d.committed_draft === false) {
-          flashStatus('已补解析变量 ✓');
+          flashStatus('已是正式稿 ✓');
         } else if (d.failed && d.failed.length > 0) {
           flashStatus('已转正，但 ' + d.failed.length + ' 个变量操作失败（可找导演修正后补提交）');
         } else {
@@ -1146,6 +1146,9 @@
   window.Teahouse.on('output.refresh', function(data) {
     var p = data && data.path;
     if (p && p.indexOf('runtime/floors/') === 0) {
+      // 楼层文件变动（草稿落盘 / 改写）→ 让后端重算变量，使变量在草稿阶段即生效，
+      // 不必等到转正。读变量本身也会触发重算，这里是主动推送一次。
+      if (window.Teahouse.refresh) window.Teahouse.refresh().catch(function() {});
       refreshState();
       return;
     }

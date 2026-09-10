@@ -136,9 +136,13 @@ def git_commit(instance_dir: Path, message: str, paths: list[str] | None = None)
     branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
     commit_hash = _git_run(["rev-parse", "--short", "HEAD"], instance_dir)
 
-    # Count changed files
-    diff_out = _git_run(["diff", "--name-only", "HEAD~1..HEAD", "--"], instance_dir)
-    files = [f for f in diff_out.split("\n") if f] if diff_out else []
+    # Count changed files. Cosmetic — a root commit has no HEAD~1, so a failure here
+    # must not turn a successful commit into a reported error.
+    try:
+        diff_out = _git_run(["diff", "--name-only", "HEAD~1..HEAD", "--"], instance_dir)
+        files = [f for f in diff_out.split("\n") if f] if diff_out else []
+    except Exception:
+        files = []
 
     return {
         "commit_hash": commit_hash,

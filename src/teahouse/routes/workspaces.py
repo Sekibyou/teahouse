@@ -68,7 +68,10 @@ PACK_EXCLUDE_DIRS = {"building", "sessions", ".git", "__pycache__", "node_module
 # content (long-text spills and attached images); these are transient session
 # scratch and must not leak into a distributed .teabrew. Scoped to the prefix
 # rather than all of temp/, which also carries draft.md and sub-session Reports.
-PACK_EXCLUDE_PATHS = ("temp/pasted",)
+# runtime/runtime_vars.jsonl is the derived working store (gitignored): the pack
+# ships the authoritative snapshot instead, and a consumer rebuilds the working
+# store from it on first read (prose_vars bootstrap).
+PACK_EXCLUDE_PATHS = ("temp/pasted", "runtime/runtime_vars.jsonl")
 
 
 
@@ -170,6 +173,19 @@ def _broadcast_floors(instance_dir: Path, instance_id: str) -> None:
     if stats:
         stats["instance_id"] = instance_id or instance_dir.name
         state.broadcast("floors_changed", stats)
+
+
+def _invalidate_live_vars(instance_dir: Path) -> None:
+    """Drop the working variable store after a history-level git operation.
+
+    ``runtime/runtime_vars.jsonl`` is gitignored, so git neither restores nor deletes
+    it on discard / reset / branch switch — it would keep values from the state we just
+    left. Removing it makes the next variable read rebuild from the git-tracked
+    snapshot plus whatever floors that branch actually has (prose_vars bootstrap),
+    which is exactly "回到存档点".
+    """
+    from ..prose_vars import live_path
+    live_path(instance_dir).unlink(missing_ok=True)
 
 
 # ===== Prototypes =====
@@ -575,7 +591,12 @@ async def rename_my_instance(
 # ===== File operations =====
 
 def _resolve_instance_dir(inst: dict) -> Path:
-    return Path(inst["dir_path"])
+    from ..prose_vars import register_instance
+    d = Path(inst["dir_path"])
+    # The variable layer broadcasts with only the directory in hand; remember the UUID so
+    # those events carry the id the frontend filters on.
+    register_instance(d, inst.get("id"))
+    return d
 
 
 @router.get("/instances/{instance_id}/files")
@@ -2126,7 +2147,101 @@ async def get_floors(instance_id: str, user: UserInfo = Depends(require_user)):
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
+    from ..prose_vars import ensure_var_gitignore
+    ensure_var_gitignore(instance_dir)
     return {"floors": _list_floors(instance_dir)}
+
+
+def _extract_title(markdown: str) -> str:
+    """First markdown heading text of a floor, or ''."""
+    for line in (markdown or "").splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            return s.lstrip("#").strip()
+    return ""
+
+
+def _commit_draft(instance_dir: Path, num: int) -> dict:
+    """Promote floor-{num}-draft.md → floor-{num}.md (sync; run in a thread).
+
+    Variables are recomputed with this floor's block (blocks stay in the prose and are
+    never stripped or marked), the resulting full state is frozen as the authoritative
+    snapshot, then the file is renamed and committed. Because the snapshot anchors the
+    formal floors, an ordinary commit never has to unwind draft effects.
+    """
+    from ..prose_vars import (
+        SNAPSHOT_REL,
+        current_meta,
+        freeze_snapshot,
+        read_live_dict,
+        refresh,
+        write_live,
+    )
+
+    draft_rel = f"runtime/floors/floor-{num}-draft.md"
+    final_rel = f"runtime/floors/floor-{num}.md"
+    draft = instance_dir / draft_rel
+    final = instance_dir / final_rel
+
+    if not draft.exists():
+        if not final.exists():
+            return {"ok": False, "error": f"未找到 {draft_rel} 或 {final_rel}"}
+        # Already promoted: the block keeps applying through the recompute mechanism,
+        # so there is nothing left to parse — idempotent no-op.
+        return {"ok": True, "data": {
+            "num": num, "path": final_rel, "title": _extract_title(final.read_text(encoding="utf-8")) or f"第 {num} 章",
+            "commit_hash": None, "failed": [], "committed_draft": False,
+        }}
+
+    title = _extract_title(draft.read_text(encoding="utf-8")) or f"第 {num} 章"
+
+    # 1) Recompute with this floor's draft → live reflects floor N.
+    errors = refresh(instance_dir)
+    # 2) Freeze the authoritative snapshot at floor N (formal floors only: a draft above
+    #    N, if any, must not leak into it).
+    errors.extend(freeze_snapshot(instance_dir, num))
+    # 3) Rename draft → formal (F advances to N; the suffix becomes empty).
+    rename_file_or_dir(instance_dir, draft_rel, final_rel.rsplit("/", 1)[-1])
+    # 4) Re-stamp the live header so the next read does not fire a spurious recompute.
+    write_live(instance_dir, read_live_dict(instance_dir), current_meta(instance_dir))
+    # 5) Commit only what belongs to this floor (the live store is gitignored and never
+    #    enters a commit). A tracked old draft must have its deletion staged too.
+    status = git_status_porcelain(instance_dir)
+    paths = [final_rel, SNAPSHOT_REL]
+    if any(e.get("path") == draft_rel for e in status):
+        paths.append(draft_rel)
+    commit_hash, commit_warning = None, None
+    try:
+        commit_hash = git_commit(instance_dir, f"floor-{num}: {title}", paths).get("commit_hash")
+    except Exception as e:  # noqa: BLE001 — most often "nothing to commit"; report, don't fail
+        commit_warning = str(e)
+
+    return {"ok": True, "data": {
+        "num": num, "path": final_rel, "title": title,
+        "commit_hash": commit_hash, "failed": errors,
+        "committed_draft": True, "commit_warning": commit_warning,
+    }}
+
+
+@router.post("/instances/{instance_id}/floors/{num}/commit-draft")
+async def commit_draft(instance_id: str, num: int, user: UserInfo = Depends(require_user)):
+    """转正：floor-{num}-draft.md → floor-{num}.md（重算变量 → 冻结快照 → 改名 → git 提交）。"""
+    u = await require_user_info(user)
+    inst = await get_instance(instance_id)
+    if not inst or inst["user_id"] != u["id"]:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    instance_dir = _resolve_instance_dir(inst)
+    try:
+        result = await asyncio.to_thread(_commit_draft, instance_dir, num)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "转正失败"))
+    if result["data"].get("committed_draft"):
+        _broadcast_floors(instance_dir, instance_id)
+        state.broadcast("workspace_changed", {"tool": "CommitDraft", "instance_id": instance_id})
+    return result["data"]
 
 
 @router.get("/instances/{instance_id}/dm-output")
@@ -2257,6 +2372,7 @@ async def api_git_branch(instance_id: str, body: GitBranchRequest, user: UserInf
         if action in ("switch", "create", "delete"):
             state.broadcast("workspace_changed", {"tool": "GitBranch", "action": action, "instance_id": instance_id})
         if action == "switch":
+            _invalidate_live_vars(instance_dir)
             _broadcast_floors(instance_dir, instance_id)
         return result
     except Exception as e:
@@ -2379,6 +2495,7 @@ async def api_git_reset(instance_id: str, body: GitResetRequest, user: UserInfo 
         out = git_reset_hard(instance_dir, body.target_hash)
         branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
         state.broadcast("workspace_changed", {"tool": "GitReset", "branch": branch, "instance_id": instance_id})
+        _invalidate_live_vars(instance_dir)
         _broadcast_floors(instance_dir, instance_id)
         return {"status": "ok", "branch": branch, "message": out}
     except Exception as e:
@@ -2486,6 +2603,7 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
                 _git_run(["checkout", main_branch], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
+            _invalidate_live_vars(instance_dir)
             _broadcast_floors(instance_dir, instance_id)
             return {"status": "ok", "branch": branch, "message": f"deleted node {body.target_hash} and its successors; branch {body.branch_name} cleaned up"}
         else:
@@ -2493,6 +2611,7 @@ async def api_git_delete_node(instance_id: str, body: GitDeleteNodeRequest, user
             _git_run(["branch", "-m", body.branch_name], instance_dir)
             branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"], instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDeleteNode", "branch": branch, "instance_id": instance_id})
+            _invalidate_live_vars(instance_dir)
             _broadcast_floors(instance_dir, instance_id)
             return {"status": "ok", "branch": branch, "message": f"deleted node {body.target_hash} and its successors"}
     except Exception as e:
@@ -2520,6 +2639,7 @@ async def api_git_discard(instance_id: str, body: GitDiscardRequest, user: UserI
         else:
             out = git_discard_changes(instance_dir)
             state.broadcast("workspace_changed", {"tool": "GitDiscard", "instance_id": instance_id})
+            _invalidate_live_vars(instance_dir)
         return {"status": "ok", "message": out}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

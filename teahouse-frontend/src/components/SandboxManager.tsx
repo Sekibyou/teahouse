@@ -3,14 +3,12 @@ import type { TextStyleRule } from "@/lib/types"
 import { getBBCodeAnimationCSS, getBBCodeTooltipScript } from "@/lib/bbcodeParser"
 import { renderText, clearRenderTextCache } from "@/lib/htmlSanitizer"
 import { sandboxSrcApi, floorsApi, dmOutputApi, textStyleRulesApi, instancesApi, sandboxVarsApi, gitApi, rollApi } from "@/lib/api"
-import type { ToolsRunStep, SandboxVarEntry } from "@/lib/api"
-import { consumeVars } from "@/lib/teahouseVars"
+import type { ToolsRunStep } from "@/lib/api"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useSessionStore } from "@/stores/sessionStore"
 import { useThemeStore } from "@/stores/themeStore"
 import { useUiScaleStore } from "@/stores/uiScaleStore"
 import { useTranslation } from "react-i18next"
-import i18n from "@/i18n/config"
 
 // ============================================================
 // SandboxManager — file-system driven sandbox iframe + TeahouseBridge
@@ -382,12 +380,32 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           break
         }
         case "commitDraft": {
-          // 转正：解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交。
+          // 转正：后端一次完成「重算变量 → 冻结快照 → 改名 → git 提交」。
           if (!instanceId || typeof _args[0] !== "number") {
             result = { ok: false, error: "commitDraft requires {num}" }
             break
           }
-          result = await runCommitDraft(instanceId, _args[0], sendToSandbox)
+          const res = await floorsApi.commitDraft(instanceId, _args[0])
+          if (res.ok) {
+            sendToSandbox("draft.committed", res.data)
+            sendToSandbox("output.refresh", { path: "*" })
+            result = { ok: true, data: res.data }
+          } else {
+            result = { ok: false, error: res.error }
+          }
+          break
+        }
+        case "refresh": {
+          // 沙盒改过 draft / 变量后调用。后端 /runtime-vars 的读路径会做 bootstrap +
+          // 软重算，故一次读取即可把工作值刷新到最新，并回传给它更新显示。
+          if (!instanceId) {
+            result = { ok: false, error: "refresh requires instance context" }
+            break
+          }
+          const res = await sandboxVarsApi.get(instanceId, [])
+          result = res.ok
+            ? { ok: true, data: { vars: res.data?.vars ?? [] } }
+            : { ok: false, error: res.error }
           break
         }
       }
@@ -426,143 +444,4 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
       style={{ minHeight: "400px" }}
     />
   )
-}
-
-// ============================================================
-// commitDraft 宿主实现
-//
-// 把「解析 teahouse-vars → 应用变量 → 剥离块记入 floor-N-meta.json → 改名 → git 提交」绑定为
-// 一个请求-响应单向闸门，由沙盒 Teahouse.commitDraft(N) 触发。返回
-// {num, title, commit_hash, applied, failed, committed_draft}。失败 reject。
-//
-// 两条分支：
-//   1. floor-N-draft.md 存在（未转正）→ 正常转正。committed_draft=true。
-//   2. floor-N.md 已存在且有未带 msg 的裸 action → 二次补解析(正文变量维护)。
-//      committed_draft=false，git 提交 type=other。
-//   3. 已全部消费 → 幂等返回（committed_draft=false，不动）。
-// ============================================================
-async function runCommitDraft(
-  instanceId: string,
-  num: number,
-  sendToSandbox: (event: string, data: unknown) => void,
-): Promise<unknown> {
-  const draftPath = `runtime/floors/floor-${num}-draft.md`
-  const finalPath = `runtime/floors/floor-${num}.md`
-
-  // 1) 读取正文：优先草稿，否则正式稿（二次补解析）。都读不到 → 报错。
-  const draftRes = await instancesApi.readText(instanceId, draftPath)
-  let markdown = draftRes.ok ? draftRes.data?.content ?? null : null
-  const isDraft = markdown !== null
-  if (!isDraft) {
-    const finalRes = await instancesApi.readText(instanceId, finalPath)
-    markdown = finalRes.ok ? finalRes.data?.content ?? null : null
-  }
-  if (markdown === null) {
-    return { ok: false, error: i18n.t("misc:sandbox.notFound", { draft: draftPath, final: finalPath }) }
-  }
-  const title = extractTitle(markdown) || i18n.t("misc:sandbox.chapterTitle", { num })
-
-  // 2) 当前变量快照（add/append/pop/x 需要现值）
-  const varsRes = await sandboxVarsApi.get(instanceId, [])
-  const currentVars: SandboxVarEntry[] = varsRes.ok ? varsRes.data?.vars ?? [] : []
-  const varMap: Array<{ name: string; value?: unknown }> = currentVars.map((v) => ({
-    name: v.name,
-    value: v.value,
-  }))
-
-  // 3) 解析 + 应用（mutate varMap 为新值；返回 updates 供一次 setVar）
-  const { applied, failed, updates, strippedMarkdown, metaActions } = consumeVars(markdown, varMap)
-  const hasConsumed = applied.length > 0
-
-  // 若正文没有变化（既无待消费 action，又已是正式稿）→ 幂等返回，不动正文/git。
-  if (!isDraft && !hasConsumed) {
-    return {
-      ok: true,
-      data: { num, title, commit_hash: null, applied, failed, committed_draft: false },
-    }
-  }
-
-  // 4) 写变量（一次 setVar，仅成功写入的 updates）
-  if (Object.keys(updates).length > 0) {
-    const setRes = await sandboxVarsApi.set(instanceId, { updates })
-    if (!setRes.ok) return { ok: false, error: i18n.t("misc:sandbox.applyVarsFailed", { error: setRes.error }) }
-  }
-
-  // 5) 写回：正文剥离 teahouse-vars 块（纯 prose），变量操作记入 floor-N-meta.json。
-  if (hasConsumed) {
-    const metaPath = `runtime/floors/floor-${num}-meta.json`
-
-    const writeFloorRes = await instancesApi.writeFile(instanceId, isDraft ? draftPath : finalPath, strippedMarkdown)
-    if (!writeFloorRes.ok) return { ok: false, error: i18n.t("misc:sandbox.writeFloorFailed", { error: writeFloorRes.error }) }
-
-    // 二次补解析（正式稿再出现裸 action）需并入既有 meta；草稿转正无既有 meta。
-    let mergedVars = metaActions
-    if (!isDraft) {
-      const metaRes = await instancesApi.readText(instanceId, metaPath)
-      if (metaRes.ok && metaRes.data?.content) {
-        try {
-          const existing = JSON.parse(metaRes.data.content)
-          const prev = existing && Array.isArray(existing.vars)
-            ? existing.vars
-            : Array.isArray(existing) ? existing : []
-          mergedVars = prev.concat(metaActions)
-        } catch {
-          mergedVars = metaActions
-        }
-      }
-    }
-    const metaBody = { floor: num, vars: mergedVars }
-    const writeMetaRes = await instancesApi.writeFile(instanceId, metaPath, JSON.stringify(metaBody, null, 2))
-    if (!writeMetaRes.ok) return { ok: false, error: i18n.t("misc:sandbox.writeMetaFailed", { num, error: writeMetaRes.error }) }
-  }
-
-  // 6) 改名（仅草稿分支）：floor-N-draft.md → floor-N.md
-  //    后端 rename 的 new_name 只接受"纯文件名"（不含路径分隔符）
-  if (isDraft) {
-    const newName = finalPath.split("/").pop() || ""
-    const renameRes = await instancesApi.renameEntry(instanceId, draftPath, newName)
-    if (!renameRes.ok) return { ok: false, error: i18n.t("misc:sandbox.renameFailed", { error: renameRes.error }) }
-  }
-
-  // 7) git 提交（paths 限定，避免卷入导演其它未提交工作）
-  //    改名 = 新文件出现 + 旧 draft 被删两个变更。若旧 draft 曾被 tracked（以 other
-  //    暂存过），删除必须一并 stage，否则提交后旧文件成脏改动；git 会自动把"同名新旧"
-  //    识别为 rename(R100)。若 draft 纯 untracked，git add 未跟踪的已删文件会 fatal
-  //    pathspec 报错，故只有它在 git status 里被列为变更（tracked）时才含入 paths。
-  const commitPaths = [finalPath, "runtime/runtime_vars.jsonl"]
-  if (hasConsumed) commitPaths.push(`runtime/floors/floor-${num}-meta.json`)
-  if (isDraft) {
-    const fileRes = await gitApi.fileStatus(instanceId)
-    const listed = fileRes.ok ? fileRes.data?.files ?? [] : []
-    const draftChanged = listed.some((f) => f.path === draftPath)
-    if (draftChanged) commitPaths.push(draftPath)
-  }
-  const commitRes = await gitApi.commit(instanceId, {
-    type: isDraft ? "floor" : "other",
-    number: num,
-    message: isDraft ? title : i18n.t("misc:sandbox.maintainVarsCommit", { num }),
-    paths: commitPaths,
-  })
-
-  const payload = {
-    num,
-    path: finalPath,
-    title,
-    commit_hash: commitRes.ok ? commitRes.data?.commit_hash ?? null : null,
-    applied,
-    failed,
-    committed_draft: isDraft,
-    commit_warning: !commitRes.ok ? commitRes.error : undefined,
-  }
-  // 8) 广播 draft.committed + 兜底 output.refresh（防止改名后幽灵草稿残留）
-  sendToSandbox("draft.committed", payload)
-  sendToSandbox("output.refresh", { path: "*" })
-
-  return { ok: true, data: payload }
-}
-
-/** 从 markdown 首行标题提取章节名；无标题 → 默认"第 N 章"。 */
-function extractTitle(markdown: string): string {
-  const m = /^\s*#{1,6}\s+(.+?)\s*$/m.exec(markdown || "")
-  return m ? m[1].trim() : ""
 }
