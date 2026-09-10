@@ -16,7 +16,7 @@
 本实例已配置好基础的 DM 提示词与渲染器，启用步骤：
 
 1. 把 `dm.yaml.example` 改名为 `dm.yaml`。
-2. 把 `runtime/sandbox/novel-main.js` 移入 `runtime/sandbox/disabled/` 文件夹。
+2. 把 `runtime/sandbox/novel-main.js` 移入 `runtime/sandbox/disabled/` 文件夹。翻页器 `runtime/sandbox/page-bar.js` 也需禁用。
 3. 从 `runtime/sandbox/disabled/` 文件夹里移出 `dm-main.js`。
 4. 参考设定修改 `dm.yaml`：指出设定都位于哪里、应该阅读哪些内容。
 

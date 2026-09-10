@@ -94,6 +94,8 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
   const MAIN_SID = "main"
   // DM（运行时导演）单例会话 id —— 与后端 sessions.DM_SESSION_ID 保持一致。
   const DM_SID = "dm"
+  // DM 的启用开关就是这个文件的存废（实例根目录）。
+  const DM_YAML_REL = "dm.yaml"
   const [activeSid, setActiveSid] = useState(MAIN_SID)
   // 上一次停留的导演会话（非 DM），供「导演 ↔ DM」tab 切回来时恢复。
   const [lastDirectorSid, setLastDirectorSid] = useState(MAIN_SID)
@@ -306,6 +308,36 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
           const data = JSON.parse(e.data)
           if (data.instance_id && data.instance_id !== instId && data.instance_id !== instName) return
           setFloorsStats(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      // 根目录 dm.yaml 的增删/改名 = DM 启用开关被拨动，后端会话列表随之增删 dm 条目。
+      // 会话列表权威在后端，故这里主动重拉一次；否则 DM 标签页要 F5 才出现/消失。
+      es.addEventListener("file_changed", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.instance_id && data.instance_id !== instId && data.instance_id !== instName) return
+          const path = data.path ? String(data.path) : ""
+          const prevPath = data.prev_path ? String(data.prev_path) : ""
+          if (path !== DM_YAML_REL && prevPath !== DM_YAML_REL) return
+          instancesApi.listSessions(instId!).then(res => {
+            if (!res.ok) return
+            const fresh = res.data?.sessions || []
+            const hasDm = fresh.some(s => s.session_id === DM_SID)
+            const local = sessionListRef.current
+            const merged = mergeServerSessions(local, fresh)
+            // merge 只增不减：dm.yaml 被删/改名时须显式摘掉本地残留的 dm 条目。
+            setSessionList(hasDm ? merged : merged.filter(s => s.session_id !== DM_SID))
+            refreshSessionsStatus()
+            // 正停在 DM 上而 DM 被关掉 → 退回它前面那个真实会话（不存在则主会话）。
+            if (!hasDm && activeSidRef.current === DM_SID) {
+              const idx = local.findIndex(s => s.session_id === DM_SID)
+              const prev = local[idx - 1] ?? local[local.length - 1]
+              switchSessionRef.current(prev?.session_id ?? MAIN_SID)
+            }
+          }).catch(() => {})
         } catch {
           // ignore malformed events
         }
