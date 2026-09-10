@@ -78,11 +78,20 @@
 
 ## 自建 Skill
 
-导演可以自建 skill（提示词包/方法论）。**实例自建 skill 放 `skills/<名字>/SKILL.md`，同名会覆盖系统内置 skill**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
+导演可以自建 skill（方法论 / 实例专用约定）。**实例自建 skill 放 `skills/<名字>/SKILL.md`**；系统内置 skill 在引擎 `teahouse_skills/` 目录（不要改它）。
+
+**优先级：系统内置 skill 优先于实例 skill**（同名时实例副本不生效）。内置 skill 是引擎约定的**必备参考**（API 手册、语法约定），不该被实例同名 skill 悄悄顶掉；实例 skill 应另起名字，专做某个故事的写作/组织约定。同名冲突时列表里会把内置那条标 `has_instance_copy`。
 
 - **SKILL.md 格式**：开头 YAML frontmatter 写 `name` + `description`（`description` 兼作触发条件，写清「当用户要求 X 时触发」），正文写方法论 + SOP。
 - **加载机制**：系统提示词只注入每个 skill 的 `name` + `description`（正文不注入），导演用 `SkillRead(name)` 按需读全文。
-- **多文件 skill**：`SkillRead` 只读 `SKILL.md`。若拆成 `Step1.md` / `Step2.md` 等分步文件，在 `SKILL.md` 里写清编排规则——「按序逐个用 `Read` 读 `skills/<名字>/StepN.md`，每步完成并落盘、用户确认后才读下一步」。分步文件不在自动扫描范围内，用 `Read` 工具读。
+- **多文件 skill**：用 `SkillRead(name, file="references/api.md")` 读 skill 目录内的子文件（`file` 默认 `SKILL.md`）。大体积 skill 的惯例是「薄 `SKILL.md` + `references/*.md`」——SKILL.md 保留流程与索引，详细手册拆到 `references/` 下按需加载；`file` 不存在时会回报该 skill 的可用文件清单。
+- **引用 skill 资产**：`{{skill:<skill 名>/<路径>}}` 切片可直接取 skill 目录内的文件（解析顺序与 `SkillRead` 一致：系统优先、实例兜底；支持 `:行段` / `|from=to`）。把内置标准件原样搬进实例而不经过你的上下文，靠 `Write` 显式解析即可：
+
+  ```
+  Write(path="runtime/sandbox/novel-main.js",
+        content="{{skill:teahouse-play-mode/assets/novel-main.js}}",
+        resolve_placeholders=true)
+  ```
 
 ## 建议设定格式
 

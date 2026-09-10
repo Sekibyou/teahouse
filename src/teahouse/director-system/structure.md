@@ -11,7 +11,7 @@
   - `assemble.md` 正文组装器 · `key-vars.md` 变量清单
 - `generate-config/` — 正文生成 / 补全的 yaml（薄壳，引用组装器）
 - `summary/` — 总结流水账 + 归档界索引
-- `skills/` — 实例自建 skill（同名覆盖系统 skill）
+- `skills/` — 实例自建 skill（同名时系统内置优先，实例副本不生效）
 - `temp/` — 临时草稿 / 报告（不进 git）
 - `dm.yaml` — 存在即启用 DM（跑团 / 聊天式）
 

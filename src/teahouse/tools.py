@@ -1934,19 +1934,21 @@ async def execute_roll(instance_dir: Path, args: dict[str, Any]) -> str:
 async def execute_skill_read(instance_dir: Path, args: dict[str, Any]) -> str:
     """Read a skill file. Defaults to SKILL.md; `file` reads a sub-file
     (e.g. references/api.md) for skills split into a thin SKILL.md + references.
-    Looks in instance skills/ first, then falls back to the system teahouse_skills/."""
+
+    System skills take priority over instance skills: built-in skills are the
+    on-demand API/convention reference (必需品), so an instance skill of the same
+    name must not silently shadow them. Instance skills fill in the rest."""
     name = args["name"]
     rel = (args.get("file") or "SKILL.md").strip() or "SKILL.md"
 
-    # Instance skills take priority
-    instance_skill_dir = instance_dir / "skills" / name
-    skill_dir = instance_skill_dir
+    # System skills first (built-ins are the required conventions)
+    from .director_system import TEMPLATE_DIR
+    system_skill_dir = TEMPLATE_DIR / "teahouse_skills" / name
+    skill_dir = system_skill_dir
 
     if not skill_dir.is_dir():
-        # Fall back to system skills
-        from .director_system import TEMPLATE_DIR
-        system_skill_dir = TEMPLATE_DIR / "teahouse_skills" / name
-        skill_dir = system_skill_dir
+        # Fall back to instance skills
+        skill_dir = instance_dir / "skills" / name
 
     if not skill_dir.is_dir():
         return f"Error: Skill '{name}' 不存在"

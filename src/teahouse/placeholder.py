@@ -1241,6 +1241,8 @@ def _resolve_msg_item(item, instance_dir: Path):
 def _resolve_one(raw: str, instance_dir: Path) -> str:
     if raw.startswith("glob:"):
         return _resolve_glob(raw[5:].strip(), instance_dir)
+    if raw.startswith(SKILL_ASSET_PREFIX):
+        return _resolve_skill_asset(raw, instance_dir)
     if raw.startswith("@"):
         return _resolve_package(raw, instance_dir)
     return _resolve_file(raw, instance_dir)
@@ -1312,6 +1314,39 @@ def _resolve_package(raw: str, instance_dir: Path) -> str:
         raise PlaceholderError(f"Package path is a directory: {pkg_name}")
     # 包内文件不搞 glob，仅走普通切片（含行段/anchor）
     return _resolve_file(rest, instance_dir, base_dir=pkg_root)
+
+
+# `{{skill:<名>/<路径>}}` — 引擎侧 Skill 资产引用。用于把内置标准件原样搬进实例而不
+# 经过 LLM 上下文，例如：
+#   Write(path="runtime/sandbox/novel-main.js",
+#         content="{{skill:teahouse-play-mode/assets/novel-main.js}}",
+#         resolve_placeholders=True)
+# 解析范围与 SkillRead 一致：**系统 skill 优先，实例 skill 兜底**。同样支持 `:行段`
+# 与 `|from=to` 修饰（经 _resolve_file 转发），路径穿越由 base_dir 根防护拦住。
+SKILL_ASSET_PREFIX = "skill:"
+
+
+def _resolve_skill_asset(raw: str, instance_dir: Path) -> str:
+    """Resolve `{{skill:<名>/<路径>}}` against the skill's directory."""
+    stripped = raw.strip()
+    if stripped.startswith(SKILL_ASSET_PREFIX):
+        stripped = stripped[len(SKILL_ASSET_PREFIX):].strip()
+    slash = stripped.find("/")
+    if slash == -1:
+        raise PlaceholderError(f"Skill 资产引用缺少文件路径: {raw}")
+    name = stripped[:slash].strip()
+    rest = stripped[slash + 1:].strip()
+    if not name or not rest:
+        raise PlaceholderError(f"Skill 资产引用不完整: {raw}")
+
+    from .director_system import TEMPLATE_DIR
+    root = TEMPLATE_DIR / "teahouse_skills" / name   # 系统 skill 优先
+    if not root.is_dir():
+        root = instance_dir / "skills" / name        # 实例 skill 兜底
+    if not root.is_dir():
+        raise PlaceholderError(f"Skill 不存在: {name}")
+
+    return _resolve_file(rest, instance_dir, base_dir=root)
 
 
 _NUM_SEGMENT_RE = re.compile(r"(\d+)")

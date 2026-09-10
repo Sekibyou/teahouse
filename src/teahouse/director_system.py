@@ -225,25 +225,25 @@ def _scan_big_files(instance_dir: Path) -> list[tuple[str, int]]:
 def _scan_skills(instance_dir: Path) -> str:
     """Scan system skills and instance skills, extract name + description from SKILL.md frontmatter.
 
-    System skills (teahouse_skills/) are always loaded.
-    Instance skills (skills/) are loaded on top — if a skill with the same
-    name exists in both, the instance version overrides the system version.
+    System skills (teahouse_skills/) are always loaded and take priority: they are
+    the on-demand API/convention reference (必需品), so an instance skill of the
+    same name must not silently shadow them. Instance skills fill in the rest.
     """
     system_skills_dir = TEMPLATE_DIR / "teahouse_skills"
     instance_skills_dir = instance_dir / INSTANCE_SKILLS_DIR
 
-    # Collect skill dirs: system first, then instance (instance overrides)
+    # Collect skill dirs: instance first, then system (system wins on name clash)
     skill_dirs: dict[str, Path] = {}
-
-    if system_skills_dir.is_dir():
-        for entry in system_skills_dir.iterdir():
-            if entry.is_dir():
-                skill_dirs[entry.name] = entry
 
     if instance_skills_dir.is_dir():
         for entry in instance_skills_dir.iterdir():
             if entry.is_dir():
-                skill_dirs[entry.name] = entry  # instance overrides
+                skill_dirs[entry.name] = entry
+
+    if system_skills_dir.is_dir():
+        for entry in system_skills_dir.iterdir():
+            if entry.is_dir():
+                skill_dirs[entry.name] = entry  # system overrides
 
     if not skill_dirs:
         return "（没有任何 Skill）"

@@ -1217,16 +1217,18 @@ def _get_system_skills_dir() -> Path:
 
 
 def _resolve_skill_dir(instance_dir: Path, skill_name: str) -> Path | None:
-    """Resolve a skill directory. Instance skills take priority over system skills.
+    """Resolve a skill directory for reading/exporting.
 
-    Returns None if the skill doesn't exist in either location.
+    System skills take priority over instance skills (built-ins are the required
+    on-demand API/convention reference, so an instance skill of the same name must
+    not shadow them). Returns None if the skill exists in neither location.
     """
-    instance_skill = _get_skill_dir(instance_dir, skill_name)
-    if instance_skill.is_dir():
-        return instance_skill
     system_skill = _get_system_skills_dir() / skill_name
     if system_skill.is_dir():
         return system_skill
+    instance_skill = _get_skill_dir(instance_dir, skill_name)
+    if instance_skill.is_dir():
+        return instance_skill
     return None
 
 
@@ -1259,25 +1261,24 @@ async def list_skills(instance_id: str, user: UserInfo = Depends(require_user)):
                     "has_examples": (entry / "examples").is_dir(),
                 })
 
-    # Instance skills (override annotation if name duplicates)
+    # Instance skills — same-named ones do NOT shadow the built-in (system wins);
+    # they are flagged on the system entry so the UI can hint "内置同名，实例副本未生效".
     inst_skills_dir = instance_dir / SKILLS_DIR
     if inst_skills_dir.is_dir():
         for entry in sorted(inst_skills_dir.iterdir()):
             if entry.is_dir():
-                item = {
-                    "name": entry.name,
-                    "source": "instance",
-                    "has_skill": (entry / "SKILL.md").exists(),
-                    "has_examples": (entry / "examples").is_dir(),
-                }
                 if entry.name in seen:
-                    # Replace the system entry with the instance override
-                    for i, r in enumerate(result):
+                    for r in result:
                         if r["name"] == entry.name:
-                            result[i] = item
+                            r["has_instance_copy"] = True
                             break
                 else:
-                    result.append(item)
+                    result.append({
+                        "name": entry.name,
+                        "source": "instance",
+                        "has_skill": (entry / "SKILL.md").exists(),
+                        "has_examples": (entry / "examples").is_dir(),
+                    })
     return result
 
 
@@ -1409,8 +1410,10 @@ async def export_skill_to_library(instance_id: str, skill_name: str, body: Optio
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    source = _resolve_skill_dir(instance_dir, skill_name)
-    if not source:
+    # Instance-only: this is the authoring flow (edit skills/<name>/ in the instance,
+    # then stock it into your library). Never grab the built-in of the same name.
+    source = _get_skill_dir(instance_dir, skill_name)
+    if not source.is_dir():
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not in this instance")
 
     overwrite = bool(body and body.get("overwrite"))
