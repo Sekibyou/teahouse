@@ -494,29 +494,6 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
         }
       })
 
-      es.addEventListener("file_changed", (e: MessageEvent) => {
-        // 后台子会话只写 temp/（Report）——落 temp 的变更若发生在当前在看会话之外，
-        // 表示有后台子会话在产出，给非当前会话标"有新消息"。
-        try {
-          const data = JSON.parse(e.data)
-          if (instId && data.instance_id !== instId && data.instance_id !== instName) return
-          const path = data.path || ""
-          if (!path.startsWith("temp/")) return
-          // Mark all sessions that are not currently active as having new content.
-          setNewMsgMap(prev => {
-            const next = { ...prev }
-            sessionListRef.current.forEach(s => {
-              if (s.session_id !== activeSidNewRef.current) next[s.session_id] = true
-            })
-            if (JSON.stringify(next) === JSON.stringify(prev)) return prev
-            newMsgMapRef.current = next
-            return next
-          })
-        } catch {
-          // ignore malformed events
-        }
-      })
-
       es.addEventListener("session_event", (e: MessageEvent) => {
         // All director events now arrive via this single SSE path.
         // When viewing the session, we render streaming updates in real-time
@@ -936,6 +913,7 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     // 吸底开关：消费程序化滚动标记；真正由用户向上滚（恢复查看旧内容）时关开关（规则 3）。
     if (isProgrammaticScrollRef.current) {
       isProgrammaticScrollRef.current = false
+      lastUserScrollTopRef.current = el.scrollTop
       return
     }
     if (el.scrollTop < lastUserScrollTopRef.current) {
@@ -1240,6 +1218,9 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
       if (scrollRef.current) {
         isProgrammaticScrollRef.current = true
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        // 程序化滚动后同步基线：否则若未产生 scroll 事件（本就到底），
+        // 旧基线会让用户随后的小幅上滑判不出"向上滚"。
+        lastUserScrollTopRef.current = scrollRef.current.scrollTop
         setTimeout(() => { isProgrammaticScrollRef.current = false }, 0)
       }
     })
@@ -1265,6 +1246,22 @@ export function ChatPanel({ onClosePanel }: { onClosePanel?: () => void }) {
     observer.observe(el)
     return () => observer.disconnect()
   }, [isStreaming, scrollToBottom])
+
+  // 切换会话：无论上一会话是否离开底部，一律重置为贴底。内容整体替换后容器仍保留
+  // 旧的 scrollTop，不重置的话新会话会停在最开头而不是最新消息处。
+  const prevActiveSidScrollRef = useRef(activeSid)
+  useEffect(() => {
+    if (prevActiveSidScrollRef.current === activeSid) return
+    prevActiveSidScrollRef.current = activeSid
+    stickRef.current = true
+    // 内容整体替换时浏览器可能先按旧 scrollTop 触发一次 scroll（含夹取到更小的值），
+    // 抢先置位程序化标记，免得它被当成"用户上滑"而把刚开的开关又关掉。
+    isProgrammaticScrollRef.current = true
+    scrollToBottom()
+    // 历史是异步拉取的：首次渲染往往只有空列表，落定后再兜一次底。
+    const timer = setTimeout(scrollToBottom, 120)
+    return () => { clearTimeout(timer); isProgrammaticScrollRef.current = false }
+  }, [activeSid, scrollToBottom])
 
   // 开关打开时：messages 每变一次（流式正文、新气泡）都强制贴底。
   useEffect(() => {
