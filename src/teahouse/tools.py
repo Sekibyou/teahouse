@@ -84,7 +84,12 @@ def _raw_tool_to_schema(tool: dict) -> dict:
     }
 
 
-def load_tools(path: Path | None = None, user_id: str | None = None, only: set[str] | None = None) -> list[dict]:
+def load_tools(
+    path: Path | None = None,
+    user_id: str | None = None,
+    only: set[str] | None = None,
+    exclude: set[str] | None = None,
+) -> list[dict]:
     """Load tool schemas from tools.json, returning OpenAI-compatible function-calling format.
 
     Call this once at startup. The result is also stored in the module-level TOOLS variable.
@@ -93,12 +98,16 @@ def load_tools(path: Path | None = None, user_id: str | None = None, only: set[s
     ``only`` (optional) restricts the returned schemas to that name set — used to
     give the DM a lean, role-specific toolset. When set, plugin tools are omitted
     (they are director-scoped extensions, not part of the DM's fixed set).
+    ``exclude`` (optional) drops that name set — used to keep DM-only tools out of
+    the director's schema (see DIRECTOR_EXCLUDED_TOOLS).
     """
     global TOOLS
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
     if only is not None:
         raw = [t for t in raw if t.get("name") in only]
+    if exclude:
+        raw = [t for t in raw if t.get("name") not in exclude]
     builtin = [_raw_tool_to_schema(t) for t in raw]
 
     # Merge plugin tools — scoped to the calling user so one user's plugin
@@ -118,21 +127,33 @@ def load_tools(path: Path | None = None, user_id: str | None = None, only: set[s
     return TOOLS
 
 
-def load_tools_summary() -> list[dict]:
+def load_tools_summary(
+    path: Path | None = None,
+    exclude: set[str] | None = None,
+) -> list[dict]:
     """Return ``[{name, short}]`` for the builtin tools.
 
     Used by the frontend's permission autocomplete (sub-session tool picker).
     ``short`` is a one-line label from tools.json; falls back to ``description``
     when a tool lacks a ``short`` field.
+    ``exclude`` (optional) drops that name set — sub-session grants are always
+    director-side, so DM-only tools must not be offered there.
     """
-    raw = json.loads(_TOOLS_JSON_PATH.read_text(encoding="utf-8"))
+    raw = json.loads((path or _TOOLS_JSON_PATH).read_text(encoding="utf-8"))
+    if exclude:
+        raw = [t for t in raw if t.get("name") not in exclude]
     return [
         {"name": t["name"], "short": t.get("short") or t.get("description", "")}
         for t in raw
     ]
 
 
-async def load_tools_usage(path: Path | None = None, user_id: str | None = None, only: set[str] | None = None) -> str:
+async def load_tools_usage(
+    path: Path | None = None,
+    user_id: str | None = None,
+    only: set[str] | None = None,
+    exclude: set[str] | None = None,
+) -> str:
     """Build the natural-language tool usage guide from tools.json.
 
     Each tool's `usage` field is rendered as a markdown section.
@@ -143,11 +164,14 @@ async def load_tools_usage(path: Path | None = None, user_id: str | None = None,
 
     ``only`` (optional) restricts the guide to that name set — used to build the
     DM's lean usage guide. Plugin usage guides are omitted when set.
+    ``exclude`` (optional) drops that name set — see DIRECTOR_EXCLUDED_TOOLS.
     """
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
     if only is not None:
         raw = [t for t in raw if t.get("name") in only]
+    if exclude:
+        raw = [t for t in raw if t.get("name") not in exclude]
 
     sections = ["# 工具使用指南\n"]
     for tool in raw:
@@ -2362,6 +2386,13 @@ DM_TOOLS = {
 }
 
 
+# 导演**排除**集 —— DM 呈现子系统的两个工具，导演（含其子会话）一律不得调用。
+# 导演的正交线路是 floors（Generate/Write），呈现归 DM 独占；导演误调 Output 会把气泡
+# 写进 runtime/dm-output.jsonl，污染玩家视图（Roll 不排：导演可用骰子做随机判定）。
+# schema 层摘掉（load_tools/load_tools_usage）+ 执行层拒绝（execute_tool）双层兜底。
+DIRECTOR_EXCLUDED_TOOLS = {"Output", "OutputEdit"}
+
+
 async def execute_tool(
     name: str,
     args: dict[str, Any],
@@ -2371,6 +2402,7 @@ async def execute_tool(
     run_uuid: str | None = None,
     session_id: str | None = None,
     enabled_tools: list[str] | None = None,
+    exclude: set[str] | None = None,
 ) -> str:
     """Execute a tool by name with the given args. Returns the result text.
 
@@ -2379,8 +2411,15 @@ async def execute_tool(
     (Generate → generate_progress) so viewers can bind the buffer to a batch.
     session_id (a non-main child session) restricts which tools may run: the
     tool must be in `enabled_tools` (defaulting to SUB_SESSION_BASE_TOOLS).
+    exclude is a role-level denylist applied *in addition* to enabled_tools — the
+    director's loop passes DIRECTOR_EXCLUDED_TOOLS so a hallucinated DM-only call
+    is refused even though the director session has no whitelist (DM passes None).
     Falls back to plugin tool executors if the tool is not built-in.
     """
+    # Role-level denylist. Checked before the whitelist so a tool that is both
+    # excluded for the role and absent from enabled_tools reports the right reason.
+    if exclude and name in exclude:
+        return f"Error: tool '{name}' is not available in this context (DM-only tool)."
     # Sub-session permission gate. Main sessions (session_id=None/'main') and
     # sandbox runTool pass enabled_tools=None → no restriction.
     if enabled_tools is not None and name not in enabled_tools:

@@ -1067,11 +1067,12 @@ async def list_available_tools(user: UserInfo = Depends(require_user)):
     """Return builtin tool ``[{name, short}]`` for the frontend permission autocomplete.
 
     Sources from tools.json (the single source of truth). ``short`` is a one-line
-    label; falls back to ``description`` when absent.
+    label; falls back to ``description`` when absent. DM-only tools (Output/OutputEdit)
+    are omitted — sub-session grants are director-side and could never run them.
     """
-    from ..tools import load_tools_summary
+    from ..tools import load_tools_summary, DIRECTOR_EXCLUDED_TOOLS
     await require_user_info(user)
-    return {"tools": load_tools_summary()}
+    return {"tools": load_tools_summary(exclude=DIRECTOR_EXCLUDED_TOOLS)}
 
 
 @router.post("/instances/{instance_id}/tools/run")
@@ -1117,11 +1118,16 @@ async def _run_steps(
     instance_id: str,
 ) -> None:
     from ..run_tool_tracker import run_tool_tracker
+    from ..director_system import dm_enabled
+    from ..tools import DIRECTOR_EXCLUDED_TOOLS
+    # DM 呈现工具（Output/OutputEdit）只有 DM 实例的沙盒可以驱动；普通实例的沙盒
+    # 调它们只会污染 runtime/dm-output.jsonl。
+    denied = None if dm_enabled(instance_dir) else DIRECTOR_EXCLUDED_TOOLS
     try:
         for i, step in enumerate(steps, 1):
             name = step.tool
             cargs = step.args or {}
-            result = await execute_tool(name, cargs, instance_dir, user_id, instance_id, run_uuid)
+            result = await execute_tool(name, cargs, instance_dir, user_id, instance_id, run_uuid, exclude=denied)
             ok = not result.startswith("Error")
             state.broadcast(
                 "tool_run",

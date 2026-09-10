@@ -616,6 +616,7 @@ async def _tool_use_loop(
     from .routes.settings import _user_max_parse_depth
     parse_depth = await _user_max_parse_depth(user_id)
 
+    denied: set[str] | None = None
     if is_dm:
         # DM 的提示词来自实例根目录 dm.yaml（不是全局 preset），工具限 DM 白名单。
         from .director_system import resolve_dm_system
@@ -631,8 +632,12 @@ async def _tool_use_loop(
             )
         tool_system, fake_msgs, user_tail_tpl = dm_res
     else:
-        tools = load_tools(user_id=user_id)
-        tools_usage = await load_tools_usage(user_id=user_id)
+        # 导演侧排除 DM 呈现子系统（Output/OutputEdit）——导演误调会把气泡写进
+        # runtime/dm-output.jsonl。schema 摘掉 + 执行层拒绝（下方 execute_tool 的 denied）双层兜底。
+        from .tools import DIRECTOR_EXCLUDED_TOOLS
+        denied = DIRECTOR_EXCLUDED_TOOLS
+        tools = load_tools(user_id=user_id, exclude=denied)
+        tools_usage = await load_tools_usage(user_id=user_id, exclude=denied)
 
         # Resolve the director system prompt from the user's prompt preset. Every user
         # has a built-in preset auto-created and auto-bound to the director slot, so this
@@ -905,7 +910,7 @@ async def _tool_use_loop(
                 continue
 
             # Execute
-            result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools)
+            result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools, exclude=denied)
             _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result, **({"batch": batch_meta} if batch_meta else {})})
             yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _tool_sub)
             _feed_tool_result(msg, api_style, tc_id, name, result, batch_meta)
