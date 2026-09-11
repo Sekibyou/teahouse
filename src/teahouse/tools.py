@@ -1873,6 +1873,14 @@ async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: 
         return "Error: 'content' 必填（要呈现的正文）"
     if kind is not None and not isinstance(kind, str):
         return "Error: 'kind' 必须是字符串（say / narrate / roll / …）"
+    # 文件切片 {{path}} —— 与 Write/Edit 同语义：只展开文件引用，不动 ${}（呈现的是
+    # 成品正文，变量已在别处展开）。strict：切片配错就报错让 DM 立刻看到并修正，
+    # 而不是把裸 {{...}} 原样推给玩家（呈现层是玩家可见面，静默失败比报错更糟）。
+    if "{{" in content:
+        try:
+            content = resolve_placeholders(content, instance_dir, strict=True)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
     try:
         rec = append_message(
             instance_dir, chara.strip(), content,
@@ -1905,6 +1913,13 @@ async def execute_output_edit(instance_dir: Path, args: dict[str, Any], instance
     old_string = args.get("old_string")
     if old_string is not None and not isinstance(old_string, str):
         return "Error: 'old_string' 必须是字符串（留空 = 整体覆写）"
+    # 与 Output 一致：new_string 解析文件切片 {{path}}；old_string 是锚点、不解析
+    # （要匹配的是落盘后已展开的正文，解析反而对不上）。
+    if "{{" in new_string:
+        try:
+            new_string = resolve_placeholders(new_string, instance_dir, strict=True)
+        except Exception as e:
+            return f"Error: 占位符解析失败: {e}"
 
     ok, err = edit_message(instance_dir, seq, old_string, new_string)
     if not ok:
