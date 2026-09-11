@@ -1855,6 +1855,98 @@ async def execute_generate(
     )
 
 
+# BatchGenerate 单批步数上限。定位是「旁路并行产出素材」——多角色独立行动、多个
+# 备选、若干临时设定，都在个位数规模；上限是防模型一次塞几十步把并发与配额打爆。
+MAX_BATCH_GENERATE_STEPS = 8
+
+
+async def execute_batch_generate(
+    instance_dir: Path,
+    args: dict[str, Any],
+    user_id: str | None = None,
+    run_uuid: str | None = None,
+    instance_id: str | None = None,
+) -> str:
+    """BatchGenerate — 一次发起 N 个 Generate，并行跑，全部结束后聚合返回。
+
+    每个 step 的参数与普通 Generate 完全一致（`source_file` / `path` / `overwrite` /
+    `reasoning_effort`）。**`reasoning_effort` 不传时默认 `none`（关闭思考）**——本工具
+    为快速反应而设，与单发 Generate「不传 = 提供商默认」相反。步骤之间**没有任何上下文
+    共享**——这正是它相对「DM 分几轮各写一条」的价值：多个角色/备选是真正独立产生的，
+    不会互相迁就趋同。人设与任务各自写在各 step 的 `source_file` yaml 里，前置信息用
+    变量或切片引用即可。
+
+    返回只给「路径 + 成败」，**不带正文**——要读内容自己 Read 对应路径。失败的步
+    不连坐其余步，可单独重发普通 Generate 重试。
+
+    与 runTool 的关系：runTool 是沙盒驱动的工具批（每批独立后台任务，各步仍串行）；
+    本工具是 **LLM 侧**一次调用内部的真并行扇出，聚合成一个 tool result 返回——所以
+    它不改变「同一轮多个 tool call 串行执行」的既有语义。
+    """
+    steps = args.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return "Error: 'steps' 必填，且为非空数组（每项参数同 Generate）"
+    if len(steps) > MAX_BATCH_GENERATE_STEPS:
+        return (
+            f"Error: 'steps' 最多 {MAX_BATCH_GENERATE_STEPS} 步，收到 {len(steps)} 步，"
+            f"请拆成多批。"
+        )
+    for i, step in enumerate(steps, 1):
+        if not isinstance(step, dict):
+            return f"Error: steps[{i}] 必须是对象（含 source_file / path）"
+
+    # 默认关闭思考（`reasoning_effort="none"`）——本工具是为「快速反应」设的：批量产出
+    # 的是旁路素材，不该让每一步都先想一轮，延迟会直接乘上步数。这点与单发 Generate
+    # 相反（那边不传 = 用提供商的默认配置）。要思考就按步显式传 low/mid/high/max。
+    normalized = [
+        step if step.get("reasoning_effort") is not None else {**step, "reasoning_effort": "none"}
+        for step in steps
+    ]
+
+    # 复用 execute_generate 本体：同一套 yaml 解析、占位符展开、writer 槽位解析、
+    # 流式落盘。它只用局部状态（缓冲/客户端），天然可重入，故直接并发即可。
+    tasks = [
+        asyncio.ensure_future(
+            execute_generate(instance_dir, step, user_id, run_uuid, instance_id)
+        )
+        for step in normalized
+    ]
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    except BaseException:
+        # 外层被打断（沙盒 runTool cancel / 导演 ESC）或被关闭：先取消全部子步，并
+        # 等它们跑完各自的 CancelledError 收尾（落半成品盘），再原样抛出。少了这段，
+        # 被 GeneratorExit 打断的 await 会把子任务留成孤儿——后台继续烧 token。
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    lines: list[str] = []
+    ok_count = 0
+    for i, (step, res) in enumerate(zip(normalized, results), 1):
+        path = step.get("path", "?")
+        if isinstance(res, BaseException):
+            lines.append(f"  [{i}] 失败  {path} — {type(res).__name__}: {res}")
+            continue
+        text = str(res)
+        if text.startswith("Error"):
+            reason = text.split(":", 1)[1].strip() if ":" in text else text
+            lines.append(f"  [{i}] 失败  {path} — {reason}")
+        elif "部分完成" in text:
+            # 中断但已落半成品盘：算完成（文件在），但要点明不完整。
+            ok_count += 1
+            lines.append(f"  [{i}] 部分  {path}（生成中断，已落盘半成品）")
+        else:
+            ok_count += 1
+            lines.append(f"  [{i}] ok    {path}")
+
+    head = f"BatchGenerate 完成 {ok_count}/{len(steps)}"
+    if ok_count < len(steps):
+        head += "（失败步可单独重发普通 Generate 重试）"
+    return head + "\n" + "\n".join(lines)
+
+
 async def execute_output(instance_dir: Path, args: dict[str, Any], instance_id: str | None = None) -> str:
     """Output — 向玩家呈现一条消息（追加到 runtime/dm-output.jsonl 的当前批次）。"""
     from .dm_output import append_message, DM_OUTPUT_REL, RESERVED_CHARA_USER
@@ -2367,6 +2459,7 @@ TOOL_EXECUTORS = {
     "Grep": execute_grep,
     "CheckPackageRefs": execute_check_package_refs,
     "Generate": execute_generate,
+    "BatchGenerate": execute_batch_generate,
     "Output": execute_output,
     "OutputEdit": execute_output_edit,
     "Roll": execute_roll,
@@ -2412,15 +2505,19 @@ SUB_SESSION_BASE_TOOLS = {
 
 
 # DM（运行时导演）工具白名单 —— 轻量、全权但无子会话能力（见 ignored/dm-design.md）。
-# 读/写/git 存盘/变量/呈现/骰子 + 少量辅助。**不给**：子会话三件套（Start/Send/DeleteSubSession）、
-# Report、EndSession、Generate（正文助手轨）、FileOps、CheckPackageRefs、
+# 读/写/git 存盘/变量/呈现/骰子/正文生成 + 少量辅助。**不给**：子会话三件套
+# （Start/Send/DeleteSubSession）、Report、EndSession、FileOps、CheckPackageRefs、
 # GitBranch/GitCheckout（分支切换是元操作，留给导演）。
+# Generate 与 BatchGenerate 都给：Generate 的 `path` 本就是自由的，DM 单发产出一份
+# 素材（落 temp/）与用 BatchGenerate 并行产出是同一类需求，只是份数不同。写进
+# runtime/floors/ 的正文历史仍归导演，由提示词约定，不靠工具限制。
 DM_TOOLS = {
     "Read", "Glob", "Grep",
     "Write", "Edit", "WriteLine",
     "GitCommit", "GitDiff", "GitStatus", "GitLog",
     "GetRuntimeVars", "SetRuntimeVar",
     "Output", "OutputEdit", "Roll",
+    "Generate", "BatchGenerate",
     "SkillRead", "TodoWrite", "Wait",
     "PruneContext",
 }
@@ -2469,7 +2566,7 @@ async def execute_tool(
     executor = TOOL_EXECUTORS.get(name)
     if executor:
         try:
-            if name == "Generate":
+            if name in ("Generate", "BatchGenerate"):
                 result = await executor(instance_dir, args, user_id, run_uuid, instance_id)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)

@@ -255,6 +255,56 @@
     }
   },
   {
+    "name": "BatchGenerate",
+    "short": "并行批量生成",
+    "description": "一次发起多个 Generate 并行执行，全部结束后聚合返回。各步独立落盘，互不共享上下文。",
+    "usage": "并行发起多个正文生成——一次调用最多 8 步，**全部结束（完成或报错）才返回**。\n\n每个 step 的参数与普通 `Generate` 完全一致（`source_file` / `path` / `overwrite` / `reasoning_effort`），各步各自落盘到自己的 `path`。\n\n### 为什么用它\n\n各步之间**没有任何上下文共享**：人设与任务写在各步自己的 `source_file` yaml 里，前置信息用 `{{}}` 切片或 `${}` 变量引用。所以多个角色/备选是**真正独立产生**的，不会互相迁就趋同。\n\n典型用法：\n1. **多角色各自独立行动**：每步一个角色的 yaml（人设写在 `system:` 段），各自落 `temp/gen/<角色>.md`，你再读回来汇总、推进剧情。\n2. **一次产出多个备选**：同一份 yaml 下发多次（不同 `path`），挑最合适的一条。\n3. **产出临时设定/素材**：随机事件、路人、配角、拍卖物品等——在正式产出正文之前先让它们各自成形，落 `temp/`，再用 `{{}}` 切片引用或裁剪。\n\n### 返回\n\n只给「路径 + 成败」，**不带正文** —— 要读内容自己 `Read` 对应路径（同一轮内即可继续 Read / Output）。失败的步**不连坐**其余步，可单独重发普通 `Generate` 重试。\n\n### 注意\n\n- **步骤的 `path` 请落在 `temp/`**：批量产出的是旁路素材，不进正文历史；写 `runtime/floors/` 的正文由单发 `Generate` 负责。\n- `overwrite` 语义与 `Generate` 一致：默认**拒绝覆盖**已存在的文件。\n- **`reasoning_effort` 不传时默认 `none`（关闭思考）**：批量产出的是旁路素材，不该让每步先想一轮——思考延迟会直接乘上步数。这点与单发 `Generate` **相反**，那边不传 = 用提供商的默认配置。需要思考就按步显式传 `low` / `mid` / `high` / `max`。\n- 与 `runTool` 的分工：`runTool` 是**沙盒代码**驱动的工具批；本工具是**你**一次调用内部的并行扇出，聚合成一条结果返回。\n\n配置文件格式与占位符语法同 `Generate`（切片语法见「行为准则」）。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "description": "要并行执行的生成步骤，每项参数同 Generate。最多 8 步。",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_file": {
+                "type": "string",
+                "description": "YAML 配置文件路径（同 Generate）"
+              },
+              "path": {
+                "type": "string",
+                "description": "输出文件路径（同 Generate），建议落 temp/"
+              },
+              "overwrite": {
+                "type": "boolean",
+                "description": "目标文件已存在时是否覆盖（默认 false，拒绝覆盖）"
+              },
+              "reasoning_effort": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "mid",
+                  "high",
+                  "max"
+                ],
+                "description": "本步思考强度。**不传默认 none（关闭思考）**——本工具为快速反应而设，与 Generate「不传 = 提供商默认」相反"
+              }
+            },
+            "required": [
+              "source_file",
+              "path"
+            ]
+          }
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
     "name": "Output",
     "short": "呈现一条气泡",
     "description": "向玩家呈现一条消息（追加到 runtime/dm-output.jsonl 的当前批次）",
