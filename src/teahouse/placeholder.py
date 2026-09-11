@@ -1410,7 +1410,10 @@ def _resolve_glob(raw_pattern: str, instance_dir: Path) -> str:
     for path in matched:
         rel = str(path.relative_to(instance_dir)).replace("\\", "/")
         content = path.read_text(encoding="utf-8")
-        parts.append(f"--- {rel} ---\n{content}")
+        # 文件边界用 ── 而非 ---：glob 解析结果绝大多数落进 Markdown（楼层、payload），
+        # 而 `--- x ---` 恰好是 Markdown 的水平分割线，会让"下一个文件开始"与真正的
+        # HR 无法区分。标记与 Read 切片展示保持一致（那边另带行号）。
+        parts.append(f"── file: {rel} ──\n{content}")
     return "\n\n".join(parts)
 
 
@@ -1460,28 +1463,28 @@ def _resolve_file(raw: str, instance_dir: Path, base_dir: Path | None = None) ->
     content = full.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
 
-    # 1. Line range
+    # 1. Line range（end=None 表示开放式"到文末"）
     if line_range is not None:
         start, end = line_range
         start = max(0, start)
-        end = min(len(lines), end)
+        end = len(lines) if end is None else min(len(lines), end)
         if start >= end:
-            raise PlaceholderError(f"Line range out of bounds: {start+1}-{end}")
+            raise PlaceholderError(
+                f"Line range out of bounds: {start+1}-{end}（文件共 {len(lines)} 行）"
+            )
         lines = lines[start:end]
 
     # 2. Anchor modifiers (from= / to=) — LINE-level. from= cuts from the line
     #    containing the anchor; to= cuts up to AND INCLUDING that line.
-    for part in anchor_parts:
-        part = part.strip()
-        from_a = _extract_quoted(part, "from")
-        to_a = _extract_quoted(part, "to")
-
-        if from_a is not None:
-            idx = _find_anchor_line(from_a, lines)
+    mods = _parse_modifiers(anchor_parts)
+    uncropped = list(lines)  # 裁切前视图，只用于把"顺序写反"与"锚点不存在"区分开
+    for key, val in mods:
+        if key == "from":
+            idx = _find_anchor_line(val, lines, uncropped)
             lines = lines[idx:]
 
-        if to_a is not None:
-            idx = _find_anchor_line(to_a, lines)
+        elif key == "to":
+            idx = _find_anchor_line(val, lines, uncropped)
             lines = lines[: idx + 1]  # include the anchor line
 
     # 3. String-level anchors (between= / and=) — crop a SUBSTRING between two
@@ -1491,14 +1494,11 @@ def _resolve_file(raw: str, instance_dir: Path, base_dir: Path | None = None) ->
     #    between= runs to end-of-text, a single and= runs from start-of-text.
     content = "".join(lines)
     between_a = and_a = None
-    for part in anchor_parts:
-        part = part.strip()
-        b = _extract_quoted(part, "between")
-        a = _extract_quoted(part, "and")
-        if b is not None:
-            between_a = b
-        if a is not None:
-            and_a = a
+    for key, val in mods:
+        if key == "between":
+            between_a = val
+        elif key == "and":
+            and_a = val
 
     if between_a is not None or and_a is not None:
         start = 0
@@ -1539,24 +1539,46 @@ def _resolve_file_path(instance_dir: Path, file_path: str, base_dir: Path | None
 # Modifier parsing
 # =====================================================================
 
-LINE_RANGE_RE = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+LINE_RANGE_FORMS = (
+    # 顺序即优先级：`:N-M` 必须先于 `:N-` 尝试，否则 "5-10" 会被开放式吞掉半截。
+    (re.compile(r"^(\d+)\s*-\s*(\d+)$"), "closed"),   # :N-M  N~M 行（含端点）
+    (re.compile(r"^(\d+)$"),               "single"),  # :N    单行
+    (re.compile(r"^(\d+)\s*-$"),           "open_end"),# :N-   N 到文末
+    (re.compile(r"^-\s*(\d+)$"),           "open_start"),# :-M  开头到 M
+)
 
 
-def _extract_line_range(s: str) -> Optional[tuple[int, int]]:
-    """Extract 0-indexed [start, end) from a 'start-end' pattern.
-    Returns None if no line range found.
+def _extract_line_range(s: str) -> tuple[int, Optional[int]]:
+    """Parse a `:行段` spec (the text after the colon). Returns 0-indexed
+    ``(start, end)``; ``end=None`` means "to end of file".
+
+    Raises PlaceholderError for anything else. Because a colon *was* written, the
+    remainder must be a valid range: silently treating a typo as "no range" would
+    expand the WHOLE file — and on a strict surface that means dumping an entire
+    file into the prose/prompt instead of failing loudly. See behavior.md「失败行为」.
     """
-    s = s.strip()
-    m = LINE_RANGE_RE.search(s)
-    if not m:
-        return None
-    start = int(m.group(1)) - 1  # 1-indexed → 0-indexed
-    end = int(m.group(2))         # inclusive → exclusive
-    if start < 0:
-        raise PlaceholderError(f"Line number must be >= 1, got {m.group(1)}")
-    if start >= end:
-        raise PlaceholderError(f"Empty line range: {start+1}-{end}")
-    return (start, end)
+    spec = (s or "").strip()
+    for rx, kind in LINE_RANGE_FORMS:
+        m = rx.match(spec)
+        if not m:
+            continue
+        if kind == "closed":
+            start, end = int(m.group(1)) - 1, int(m.group(2))
+        elif kind == "single":
+            start = int(m.group(1)) - 1
+            end = start + 1
+        elif kind == "open_end":
+            start, end = int(m.group(1)) - 1, None
+        else:  # open_start
+            start, end = 0, int(m.group(1))
+        if start < 0:
+            raise PlaceholderError(f"Line number must be >= 1, got {spec}")
+        if end is not None and start >= end:
+            raise PlaceholderError(f"Empty line range: {spec}")
+        return (start, end)
+    raise PlaceholderError(
+        f"无法解析的行段 '{spec}'（合法写法：:N、:N-M、:N-、:-M）"
+    )
 
 
 def _split_pipes_outside_quotes(s: str) -> list[str]:
@@ -1577,14 +1599,41 @@ def _split_pipes_outside_quotes(s: str) -> list[str]:
     return parts
 
 
-def _extract_quoted(s: str, key: str) -> Optional[str]:
-    """Extract value from key="value" pattern. Returns None if not found."""
-    m = re.search(rf'{key}="([^"]*)"', s)
-    return m.group(1) if m else None
+# 合法修饰符：key="value"（值须双引号包裹）。顺序即书写顺序，保持既有的应用语义。
+_MODIFIER_RE = re.compile(r'^(from|to|between|and)\s*=\s*"([^"]*)"$')
 
 
-def _find_anchor_line(anchor: str, lines: list[str]) -> int:
-    """Find the 0-indexed line index containing anchor. Raises if not exactly one."""
+def _parse_modifiers(anchor_parts: list[str]) -> list[tuple[str, str]]:
+    """Parse `|key="value"` modifier segments into ordered (key, value) pairs.
+
+    Raises PlaceholderError on an unknown key or a malformed segment (e.g. a missing
+    quote, or `from=` typo'd as `form=`). Previously such a segment was silently
+    dropped — which turned a typo into "read the WHOLE file" instead of an error.
+    Empty segments (`{{a.md|}}`) stay tolerated.
+    """
+    out: list[tuple[str, str]] = []
+    for part in anchor_parts:
+        p = part.strip()
+        if not p:
+            continue
+        m = _MODIFIER_RE.match(p)
+        if not m:
+            raise PlaceholderError(
+                f"无法识别的切片修饰符 '{p}'（合法：from= / to= / between= / and=，"
+                f'值须用双引号包裹）'
+            )
+        out.append((m.group(1), m.group(2)))
+    return out
+
+
+def _find_anchor_line(anchor: str, lines: list[str], uncropped: list[str] | None = None) -> int:
+    """Find the 0-indexed line index containing anchor. Raises if not exactly one.
+
+    ``uncropped`` (optional) is the pre-crop view of the same file. When the anchor
+    is absent from ``lines`` but present there, it was cut away by an earlier
+    from=/to= — i.e. the two anchors are written in reversed order. Saying that beats
+    "Anchor not found", which is misleading: the anchor plainly exists.
+    """
     found = None
     for i, line in enumerate(lines):
         if anchor in line:
@@ -1592,6 +1641,11 @@ def _find_anchor_line(anchor: str, lines: list[str]) -> int:
                 raise PlaceholderError(f"Anchor appears on multiple lines: '{anchor}'")
             found = i
     if found is None:
+        if uncropped is not None and any(anchor in l for l in uncropped):
+            raise PlaceholderError(
+                f"Anchor order reversed: '{anchor}' 落在上一次裁切已经切掉的部分 ——"
+                f' from= / to= 的顺序写反了（应写成 |from="起点"|to="终点"）'
+            )
         raise PlaceholderError(f"Anchor not found: '{anchor}'")
     return found
 
@@ -1695,13 +1749,15 @@ def _resolve_file_lines(raw: str, instance_dir: Path, base_dir: Path | None = No
     # Working on original indices lets us recover true line numbers at the end.
     kept = list(range(len(full_lines)))  # original line indices
 
-    # 1. Line range
+    # 1. Line range（end=None 表示开放式"到文末"）
     if line_range is not None:
         s, e = line_range
         s = max(0, s)
-        e = min(len(kept), e)
+        e = len(kept) if e is None else min(len(kept), e)
         if s >= e:
-            raise PlaceholderError(f"Line range out of bounds: {s+1}-{e}")
+            raise PlaceholderError(
+                f"Line range out of bounds: {s+1}-{e}（文件共 {len(kept)} 行）"
+            )
         kept = kept[s:e]
 
     # Helper to map a current kept-lines view onto original indices for _find_anchor_line
@@ -1709,27 +1765,23 @@ def _resolve_file_lines(raw: str, instance_dir: Path, base_dir: Path | None = No
         return [full_lines[i] for i in kept]
 
     # 2. Line-level anchors (from/to)
-    for part in anchor_parts:
-        part = part.strip()
-        from_a = _extract_quoted(part, "from")
-        to_a = _extract_quoted(part, "to")
-        if from_a is not None:
-            idx = _find_anchor_line(from_a, _kept_text_list())
+    mods = _parse_modifiers(anchor_parts)
+    uncropped = _kept_text_list()  # 裁切前视图，只用于区分"顺序写反"与"锚点不存在"
+    for key, val in mods:
+        if key == "from":
+            idx = _find_anchor_line(val, _kept_text_list(), uncropped)
             kept = kept[idx:]
-        if to_a is not None:
-            idx = _find_anchor_line(to_a, _kept_text_list())
+        elif key == "to":
+            idx = _find_anchor_line(val, _kept_text_list(), uncropped)
             kept = kept[: idx + 1]
 
     # 3. String-level anchors (between/and) on the joined surviving text.
     between_a = and_a = None
-    for part in anchor_parts:
-        part = part.strip()
-        b = _extract_quoted(part, "between")
-        a = _extract_quoted(part, "and")
-        if b is not None:
-            between_a = b
-        if a is not None:
-            and_a = a
+    for key, val in mods:
+        if key == "between":
+            between_a = val
+        elif key == "and":
+            and_a = val
 
     if between_a is None and and_a is None:
         # Pure line crop — every kept line is a full real line.
