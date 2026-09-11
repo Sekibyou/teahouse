@@ -2059,34 +2059,6 @@ def _load_text_style_rules(instance_dir: Path) -> list[dict]:
     return data.get("rules", [])
 
 
-async def execute_batch_execute(instance_dir: Path, args: dict[str, Any]) -> str:
-    """BatchExecute executor — reports the batch anchor record.
-
-    The batch is expanded into its real sub-calls by app._tool_use_loop (mode B)
-    before this executor runs. This executor only produces the *anchor* result for
-    the BatchExecute call itself so the director sees a concrete "expanded N steps"
-    record to tie the sub-results to. If expansion failed earlier (the call survived
-    with only `path`), re-attempt the load to surface the real error.
-    """
-    from .script import load_batch, BatchError
-    raw_path = str(args.get("path", "")).strip()
-    total = args.get("total")
-
-    if total is not None:
-        # Anchor path: expansion already succeeded upstream; report the summary.
-        return (
-            f"BatchExecute 已展开共 {total} 步，按脚本行序执行。\n"
-            f"后续各条结果均以 [BatchExecute X/{total}] 前缀标识其在批次中的序号。"
-        )
-
-    # Fallback: expansion failed (only path present). Re-attempt to surface why.
-    try:
-        steps = load_batch(instance_dir, raw_path)
-    except BatchError as e:
-        return f"Error: BatchExecute 未能展开脚本: {e}"
-    return f"BatchExecute 已展开共 {len(steps)} 步。"
-
-
 async def execute_todo_write(instance_dir: Path, args: dict[str, Any]) -> str:
     """Write the full todo list (overwrite). Session-only, no persistence."""
     todos = args["todos"]
@@ -2386,7 +2358,6 @@ TOOL_EXECUTORS = {
     "SkillRead": execute_skill_read,
     "FileOps": execute_file_ops,
     "TodoWrite": execute_todo_write,
-    "BatchExecute": execute_batch_execute,
     "GetRuntimeVars": execute_get_runtime_vars,
     "SetRuntimeVar": execute_set_runtime_var,
     "RepairVars": execute_repair_vars,
@@ -2427,7 +2398,7 @@ SUB_SESSION_BASE_TOOLS = {
 
 # DM（运行时导演）工具白名单 —— 轻量、全权但无子会话能力（见 ignored/dm-design.md）。
 # 读/写/git 存盘/变量/呈现/骰子 + 少量辅助。**不给**：子会话三件套（Start/Send/DeleteSubSession）、
-# Report、EndSession、Generate（正文助手轨）、BatchExecute、FileOps、CheckPackageRefs、
+# Report、EndSession、Generate（正文助手轨）、FileOps、CheckPackageRefs、
 # GitBranch/GitCheckout（分支切换是元操作，留给导演）。
 DM_TOOLS = {
     "Read", "Glob", "Grep",

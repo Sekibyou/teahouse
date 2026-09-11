@@ -23,7 +23,6 @@ from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
 from .tools import execute_tool, load_tools, load_tools_usage
-from .script import load_batch, BatchError
 from .director_system import build_template_variables, resolve_preset_template, render_user_tail
 from .database.director_prompt_presets import ensure_director_preset_binding
 from .database.connection import set_db_path
@@ -460,79 +459,6 @@ class ToolApprovalStore:
 approval_store = ToolApprovalStore()
 
 
-def _expand_batch_calls(all_tool_calls: list[dict], instance_dir: Path) -> list[dict]:
-    """Expand BatchExecute entries into their real tool-call steps (mode B).
-
-    Each ``BatchExecute`` call in ``all_tool_calls`` is replaced in-place by the
-    static JSONL steps it points to (with optional line slice), each step becoming
-    a normal tool call. The expansion is single-level (a step that itself names
-    ``BatchExecute`` is *not* expanded again) to guard against infinite recursion.
-
-    Returns the new list. Errors reading a script surface as a synthetic tool
-    result that explains the failure, so the round can degrade gracefully.
-    """
-    import uuid as _uuid
-    out: list[dict] = []
-    for tc in all_tool_calls:
-        try:
-            name = tc["function"]["name"]
-            args = json.loads(tc["function"]["arguments"]) if tc["function"].get("arguments") else {}
-        except (json.JSONDecodeError, KeyError, AttributeError):
-            name = ""
-            args = {}
-
-        if name != "BatchExecute":
-            out.append(tc)
-            continue
-
-        raw_path = str(args.get("path", "")).strip()
-        try:
-            steps = load_batch(instance_dir, raw_path)
-        except BatchError as e:
-            # Degrade: keep the batch call itself so Phase 4 executes it; a BatchExecute
-            # executor that reports the script error will surface the reason cleanly.
-            out.append(tc)
-            continue
-
-        total = len(steps)
-
-        # Keep the BatchExecute call itself as the batch's anchor record (before the
-        # expanded steps). Its executor reports "expanded N steps" so the director
-        # sees a concrete BatchExecute tool_call + result it can tie the sub-results to.
-        anchor_tc: dict = {
-            "id": tc.get("id") or f"batch_{_uuid.uuid4().hex[:8]}",
-            "type": "function",
-            "function": {
-                "name": "BatchExecute",
-                "arguments": json.dumps({"path": raw_path, "total": total}, ensure_ascii=False),
-            },
-        }
-        # No _batch_meta on the anchor: it is the batch record itself, not a sub-step,
-        # so its own tool_result must not carry an index prefix.
-        out.append(anchor_tc)
-
-        for i, step in enumerate(steps, 1):
-            tool_name = step["tool"]
-            tool_args = step.get("args", {})
-            expanded_tc: dict = {
-                "id": f"batch_{_uuid.uuid4().hex[:8]}",
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(tool_args, ensure_ascii=False),
-                },
-            }
-            # Batch metadata — display-only. Stripped before feeding LLM context
-            # (Phase 3), attached to persisted records + SSE (Phase 4).
-            expanded_tc["_batch_meta"] = {
-                "path": raw_path,
-                "index": i,
-                "total": total,
-            }
-            out.append(expanded_tc)
-    return out
-
-
 async def _tool_use_loop(
     client: LLMClient,
     messages: list[dict],
@@ -706,16 +632,7 @@ async def _tool_use_loop(
         from .reasoning import resolve_session_effort
         reasoning_effort = await resolve_session_effort(instance_dir, sid, user_id)
 
-    def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str, batch_meta: dict | None = None):
-        # When a call came from a BatchExecute expansion, prepend a batch note so
-        # the director can tell this step was issued as part of a batch script (a
-        # single JSONL run), not a manual loner call. Display-only for the LLM;
-        # the frontend keeps the plain badge via the SSE/persisted `batch` field.
-        if batch_meta:
-            path = batch_meta.get("path", "?")
-            idx = batch_meta.get("index", "?")
-            total = batch_meta.get("total", "?")
-            result = f"[This call was invoked by BatchExecute, NOT by you manually. It is auto-expanded sub-step {idx}/{total} of the script {path}]\n{result}"
+    def _feed_tool_result(msgs: list[dict], style: str, tc_id: str, name: str, result: str):
         if style == "anthropic":
             msgs.append({
                 "role": "user",
@@ -804,14 +721,6 @@ async def _tool_use_loop(
                 )
             raise
 
-        # ── Phase 1.5: Expand BatchExecute into real tool calls (mode B) ──
-        # Any BatchExecute entries are replaced by their static JSONL steps before
-        # the assistant message is built, so the expanded steps ride the same round
-        # as ordinary tool calls: independent SSE event, independent tool_result,
-        # independent persistence.
-        if all_tool_calls:
-            all_tool_calls = _expand_batch_calls(all_tool_calls, instance_dir)
-
         # ── Phase 2: If no tool calls, done ──
         if not all_tool_calls:
             # Persist the plain-text assistant reply (no tool blocks).
@@ -821,19 +730,11 @@ async def _tool_use_loop(
             return
 
         # ── Phase 3: Add assistant message with tool_calls ──
-        # Build a batch-metadata-stripped copy for the LLM context: display-only
-        # `_batch_meta` must not reach the model's tool_calls.
-        _llm_calls: list[dict] = []
-        for tc in all_tool_calls:
-            _c = dict(tc)
-            _c.pop("_batch_meta", None)
-            _llm_calls.append(_c)
-
         if api_style == "anthropic":
             content_array = []
             if collected_text:
                 content_array.append({"type": "text", "text": collected_text})
-            for tc in _llm_calls:
+            for tc in all_tool_calls:
                 try:
                     input_json = json.loads(tc["function"]["arguments"])
                 except (json.JSONDecodeError, KeyError):
@@ -850,7 +751,7 @@ async def _tool_use_loop(
             assistant_msg: dict = {
                 "role": "assistant",
                 "content": ai_content,
-                "tool_calls": _llm_calls,
+                "tool_calls": all_tool_calls,
             }
             # Echo this round's reasoning back so thinking-enabled models
             # (DeepSeek-Reasoner) can accept the next round's request.
@@ -875,8 +776,6 @@ async def _tool_use_loop(
             except (json.JSONDecodeError, KeyError):
                 args = {}
             ev: dict = {"type": "tool_call", "id": tc_id, "name": name, "args": args}
-            if tc.get("_batch_meta"):
-                ev["_batch_meta"] = tc["_batch_meta"]
             yield _tag(ev, _tool_base + _ti)
 
         for _ti, tc in enumerate(all_tool_calls):
@@ -886,7 +785,6 @@ async def _tool_use_loop(
                 args = json.loads(tc["function"]["arguments"])
             except (json.JSONDecodeError, KeyError):
                 args = {}
-            batch_meta = tc.get("_batch_meta")
             _tool_sub = _tool_base + _ti
 
             # Approval-required tools
@@ -900,20 +798,20 @@ async def _tool_use_loop(
                 approved_result = await approval_store.wait_for_approval(tc_id)
                 if approved_result is None:
                     reject_reason = "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
-                    _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": reject_reason, **({"batch": batch_meta} if batch_meta else {})})
+                    _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": reject_reason})
                     yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}, _tool_sub)
-                    _feed_tool_result(msg, api_style, tc_id, name, reject_reason, batch_meta)
+                    _feed_tool_result(msg, api_style, tc_id, name, reject_reason)
                     continue
-                _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": approved_result, **({"batch": batch_meta} if batch_meta else {})})
+                _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": approved_result})
                 yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}, _tool_sub)
-                _feed_tool_result(msg, api_style, tc_id, name, approved_result, batch_meta)
+                _feed_tool_result(msg, api_style, tc_id, name, approved_result)
                 continue
 
             # Execute
             result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools, exclude=denied)
-            _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result, **({"batch": batch_meta} if batch_meta else {})})
+            _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result})
             yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _tool_sub)
-            _feed_tool_result(msg, api_style, tc_id, name, result, batch_meta)
+            _feed_tool_result(msg, api_style, tc_id, name, result)
 
         # Flush this round's completed assistant record (reasoning + text + all tool results)
         _flush_assistant(collected_text, _round_blocks, round_order)

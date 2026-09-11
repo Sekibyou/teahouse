@@ -184,22 +184,6 @@ class PluginContext:
         from .database.workspaces import write_sandbox_vars
         write_sandbox_vars(self._require_instance(), updates, note, change_log)
 
-    # ---- run a static JSONL batch (deterministic, no director LLM) ----
-    async def run_batch(self, path: str, args: dict | None = None) -> dict:
-        from .script import load_batch
-        from .tools import execute_tool
-        instance_dir = self._require_instance()
-        steps = load_batch(instance_dir, path)
-        results = []
-        for i, step in enumerate(steps, 1):
-            name = step["tool"]
-            cargs = {**step.get("args", {}), **(args or {})}
-            res = await execute_tool(name, cargs, instance_dir, self.user_id or None)
-            results.append({"index": i, "tool": name, "result": res})
-            if res.startswith("Error"):
-                return {"ok": False, "completed": results, "failed": {"index": i, "tool": name, "result": res}}
-        return {"ok": True, "completed": results}
-
     # ---- network (allowlist-gated) ----
     async def network_request(
         self,

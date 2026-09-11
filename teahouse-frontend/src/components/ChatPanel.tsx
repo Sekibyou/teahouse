@@ -663,7 +663,6 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
                   id: data.id as string,
                   name: data.name as string,
                   args: data.args as Record<string, unknown>,
-                  ...(data._batch_meta ? { batch: data._batch_meta as { path: string; index: number; total: number } } : {}),
                 }],
               })))
               return

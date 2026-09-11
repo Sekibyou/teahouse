@@ -377,14 +377,6 @@ def _api_tool_result(b, api_style: str) -> dict:
         result_msg = "[cancelled by user interruption]"
     else:
         result_msg = b_result
-    # Mirror the live path's BatchExecute note so the director sees, on refresh /
-    # replay, that this step was issued as part of a batch script (not a loner call).
-    blk_batch = b.get("batch")
-    if blk_batch and isinstance(blk_batch, dict):
-        bpath = blk_batch.get("path", "?")
-        bidx = blk_batch.get("index", "?")
-        btotal = blk_batch.get("total", "?")
-        result_msg = f"[This call was invoked by BatchExecute, NOT by you manually. It is auto-expanded sub-step {bidx}/{btotal} of the script {bpath}]\n{result_msg}"
     if api_style == "anthropic":
         return {
             "role": "user",

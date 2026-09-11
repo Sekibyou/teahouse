@@ -1,6 +1,6 @@
 # DM 模式（跑团 / 语C / 聊天式）
 
-DM 是**实例级的单例 agent**：玩家在**游玩视图**与它对话，它用 `Output` 把发言呈现为气泡（`runtime/dm-output.jsonl`）。它不是批量产文的正文助手，而是这个世界的**主持人 / 对手戏演员**。工具集轻量全权：读 / 写 / git 存盘 / 变量 / `Output` / `Roll`，**没有**子会话、`Generate`、`BatchExecute`。
+DM 是**实例级的单例 agent**：玩家在**游玩视图**与它对话，它用 `Output` 把发言呈现为气泡（`runtime/dm-output.jsonl`）。它不是批量产文的正文助手，而是这个世界的**主持人 / 对手戏演员**。工具集轻量全权：读 / 写 / git 存盘 / 变量 / `Output` / `Roll`，**没有**子会话、`Generate`。
 
 ## 一、启用与切换
 

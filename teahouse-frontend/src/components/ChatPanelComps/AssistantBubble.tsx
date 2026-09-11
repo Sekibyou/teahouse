@@ -163,11 +163,6 @@ export const AssistantBubble = memo(function AssistantBubble({
                       <Terminal className="h-3 w-3 shrink-0" />
                       <span className="font-mono font-medium text-foreground">{block.name}</span>
                       <span className="font-mono opacity-60 truncate">{formatBlockArgs(block)}</span>
-                      {block.batch && (
-                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">
-                          BatchExecute {block.batch.index}/{block.batch.total}
-                        </span>
-                      )}
                     </div>
                     {block.result === "(interrupted)" ? (
                       <div className="flex items-start gap-1.5 text-muted-foreground/50">

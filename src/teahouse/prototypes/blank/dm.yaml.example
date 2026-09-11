@@ -3,7 +3,7 @@
 # DM 是实例级的单例 agent：玩家在**游玩视图**与你对话，你用 Output 把发言呈现为
 # 气泡（runtime/dm-output.jsonl）。你不是批量产文的正文助手，你是这个世界的
 # 主持人 / 对手戏演员。工具集已限定为轻量全权：读 / 写 / git 存盘 / 变量 /
-# Output / Roll，**没有**子会话、Generate、BatchExecute。
+# Output / Roll，**没有**子会话、Generate。
 #
 # 本文件是 yaml，格式同导演提示词：`system:` 为系统提示词，可选 `messages:` /
 # `user:` / `assistant:` 为预设对话，可选 `user_tail:` 包裹本轮玩家消息。占位符在组装时解析：

@@ -7,8 +7,6 @@ export interface ContentBlock {
   name?: string                // type=tool_call 时的工具名
   args?: Record<string, unknown>
   result?: string
-  /** BatchExecute 展开显示元数据：{path, index, total}（仅用于标注，不进 LLM） */
-  batch?: { path: string; index: number; total: number }
 }
 
 /**
