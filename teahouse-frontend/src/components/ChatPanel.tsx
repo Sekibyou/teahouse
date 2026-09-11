@@ -1052,11 +1052,19 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
   }, [instId, sessionList, mergeServerSessions])
 
   // Manually create a new sub-session（用户并行工作用：全权，等价主会话）。
+  // 用户主动建的 → 立刻切过去（他建它就是为了马上用）；代码自动建的（导演
+  // StartSubSession / 沙盒 sessionCreate）不在此路径，仍只静默入列、不抢焦点。
   const createSession = useCallback(() => {
     if (!instId) return
     instancesApi.createUserSession(instId).then(res => {
-      if (res.ok) {
-        toast.success(t("subSessionCreated", { sid: res.data?.session_id }))
+      const sid = res.data?.session_id
+      if (res.ok && sid) {
+        // 先入列再切换：标签栏按 sessionList 渲染，缺条目会切出一个没有标签的会话。
+        setSessionList(prev => prev.some(s => s.session_id === sid)
+          ? prev
+          : [...prev, { session_id: sid, record_count: 0 }])
+        switchSessionRef.current(sid)
+        toast.success(t("subSessionCreated", { sid }))
       } else {
         toast.error(t("createSubSessionFail"))
       }
