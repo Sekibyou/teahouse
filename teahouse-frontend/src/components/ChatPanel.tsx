@@ -1098,8 +1098,6 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
   const imagesRef = useRef(images)
   imagesRef.current = images
   const imageIdRef = useRef(0)
-  // 大输入框模式：点击按钮后独占「历史记录 + 输入框」总高度的 80%，便于长文本输入
-  const [expandedInput, setExpandedInput] = useState(false)
   // 普通模式下输入框自动变高的上限（像素）
   const INPUT_GROW_MAX = 120
   const [autoApproveCommit, setAutoApproveCommit] = useState(() => {
@@ -1441,7 +1439,6 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     // 还有图没上传完就发，只会丢图 —— 直接挡住。
     if (pending.some((img) => img.uploading)) return
 
-    setExpandedInput(false)
     // Capture current pastes/images, then clear both working states immediately so
     // the (async) _doSend uses a stable snapshot and the input resets right away.
     const p = pastesRef.current
@@ -1757,17 +1754,13 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     return () => clearInterval(interval)
   }, [activeSid, switchSession, handleSandboxSend])
 
-  // 普通模式下输入框随输入自动变高（有上限）；大输入框模式下交给 flex 拉伸填满，须清掉内联高度让其生效
+  // 输入框随输入自动变高（有上限）
   useEffect(() => {
     const el = inputRef.current
     if (!el) return
-    if (expandedInput) {
-      el.style.height = ""
-      return
-    }
     el.style.height = "auto"
     el.style.height = Math.min(el.scrollHeight, INPUT_GROW_MAX) + "px"
-  }, [input, expandedInput])
+  }, [input])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (filteredCommands.length > 0) {
@@ -1843,7 +1836,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       />
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleHistoryScroll} className={`overflow-auto px-3 py-2 space-y-3 min-h-0 ${expandedInput ? "flex-[0.2]" : "flex-1"}`}>
+      <div ref={scrollRef} onScroll={handleHistoryScroll} className="overflow-auto px-3 py-2 space-y-3 min-h-0 flex-1">
         {messages.length === 0 && (
           <div className="text-center text-muted-foreground py-8">
             <p className="text-sm">{t("startHint")}</p>
@@ -2031,8 +2024,6 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
         onKeyDown={handleKeyDown}
         inputRef={inputRef}
         isStreaming={isStreaming || isWaiting || isCompacting}
-        expandedInput={expandedInput}
-        onToggleExpand={() => setExpandedInput(v => !v)}
         onSend={handleSend}
         onStop={handleStop}
         isCompacting={isCompacting}

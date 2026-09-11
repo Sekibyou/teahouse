@@ -162,8 +162,6 @@ export const jaMisc = {
     reject: "拒否",
     committing: "コミット中...",
     commit: "コミットを確認",
-    collapseInput: "小さい入力ボックスを閉じる",
-    expandInput: "大きい入力ボックスを展開（高さ 80%）",
     summarizing: "要約中…",
     placeholderNormal: "メッセージを入力... / コマンドを見る (Enter で送信)",
     placeholderStreaming: "メッセージを入力して Enter で挿入（生成は中断しません）...",

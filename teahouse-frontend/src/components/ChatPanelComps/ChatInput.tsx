@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { Send, Square, Minimize2, Maximize2, CheckCircle2, Paperclip, ImagePlus, X, Loader2 } from "lucide-react"
+import { Send, Square, CheckCircle2, Paperclip, ImagePlus, X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTranslation } from "react-i18next"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -54,10 +54,6 @@ interface ChatInputProps {
   onAddImages: (files: File[]) => void
   onRemoveImage: (id: number) => void
 
-  // Expand toggle
-  expandedInput: boolean
-  onToggleExpand: () => void
-
   // Send / Stop
   onSend: () => void
   onStop: () => void
@@ -91,8 +87,6 @@ export function ChatInput({
   onKeyDown,
   inputRef,
   isStreaming,
-  expandedInput,
-  onToggleExpand,
   onSend,
   onStop,
   onFocus,
@@ -198,11 +192,9 @@ export function ChatInput({
     if (hasText) e.preventDefault()
   }
   return (
-    <div className={`relative ${expandedInput
-      ? "flex-[0.8] min-h-0 flex flex-col p-3"
-      // hideTopBorder 移动端信息栏紧贴输入框上方：去掉顶线，并收窄顶部 padding，
-      // 让楼层统计与输入框连成整体而非留一片空白断层
-      : (hideTopBorder ? "shrink-0 pt-1.5 px-3 pb-3" : "shrink-0 p-3")}`}>
+    // hideTopBorder 移动端信息栏紧贴输入框上方：去掉顶线，并收窄顶部 padding，
+    // 让楼层统计与输入框连成整体而非留一片空白断层
+    <div className={`relative ${hideTopBorder ? "shrink-0 pt-1.5 px-3 pb-3" : "shrink-0 p-3"}`}>
       {filteredCommands.length > 0 && (
         <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-border bg-popover shadow-lg overflow-hidden">
           {filteredCommands.map((cmd, i) => (
@@ -254,7 +246,7 @@ export function ChatInput({
           </div>
         </div>
       ) : (
-        <div className={`flex flex-col gap-1 ${expandedInput ? "flex-1 min-h-0" : ""}`}>
+        <div className="flex flex-col gap-1">
           {(pastes.length > 0 || images.length > 0) && (
             <div className="flex flex-wrap items-end gap-1.5">
               {pastes.map((p, i) => (
@@ -304,18 +296,7 @@ export function ChatInput({
               ))}
             </div>
           )}
-        <div className={`flex gap-2 ${expandedInput ? "flex-1 min-h-0" : "items-end"}`}>
-          {!isMobile && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="shrink-0 self-end text-muted-foreground hover:text-foreground h-10 w-10"
-              onClick={onToggleExpand}
-              title={expandedInput ? t("chatInput.collapseInput") : t("chatInput.expandInput")}
-            >
-              {expandedInput ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </Button>
-          )}
+        <div className="flex gap-2 items-end">
           <Button
             size="icon"
             variant="ghost"
@@ -342,10 +323,7 @@ export function ChatInput({
             ref={inputRef}
             className={`flex-1 rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-1 focus:ring-ring ${
               isMobile ? "text-sm placeholder:text-xs" : "text-sm"
-            } ${expandedInput
-                ? "min-h-0 resize-y"
-                : "resize-none min-h-[40px] max-h-[120px]"
-              }`}
+            } resize-none min-h-[40px] max-h-[120px]`}
             rows={1}
             value={isCompacting ? compactingText : input}
             onChange={(e) => onInputChange(e.target.value)}

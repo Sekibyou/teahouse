@@ -162,8 +162,6 @@ export const enMisc = {
     reject: "Reject",
     committing: "Committing...",
     commit: "Confirm commit",
-    collapseInput: "Collapse the small input box",
-    expandInput: "Expand the large input box (takes 80% height)",
     summarizing: "Summarizing…",
     placeholderNormal: "Type a message... / view commands (Enter to send)",
     placeholderStreaming: "Type a message and press Enter to insert (without interrupting generation)...",

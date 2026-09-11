@@ -163,8 +163,6 @@ export const zhMisc = {
     reject: "拒绝",
     committing: "提交中...",
     commit: "确认提交",
-    collapseInput: "收起小输入框",
-    expandInput: "展开大输入框（占高度 80%）",
     summarizing: "正在总结中…",
     placeholderNormal: "输入消息... / 查看命令 (Enter 发送)",
     placeholderStreaming: "输入消息回车插入（不中断生成）...",
