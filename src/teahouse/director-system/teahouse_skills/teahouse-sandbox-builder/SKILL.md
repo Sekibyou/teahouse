@@ -96,7 +96,7 @@ FastAPI 后端
 |---|---|
 | `references/core-api.md` | 楼层 `listFloors` · 富文本 `renderRichText` · 文件 `readText`/`readAsset`/`writeFile` · 发送消息 `send`/`openDirector`/`openDM` · UI `registerUI` · 容器约定 |
 | `references/vars-api.md` | 变量 `setVar`/`getVars`/`roll`/`replacePlaceholders`（含空值语义）· 变量生效与转正 `refresh`/`commitDraft`/`gitDiscard`、正式楼层不可变 |
-| `references/events.md` | `on`/`off` + 事件类型表 · 跟随宿主主题 `theme.change` · 跟随宿主字号 `font-scale` · 流式草稿 `currentDraft` |
+| `references/events.md` | `on`/`off` + 事件类型表 · 跟随宿主主题 `theme.change` · 跟随宿主字号 `font-scale` · 导演/DM 忙碌态 `session.busy`（锁输入条 + 等待提示） · 流式草稿 `currentDraft` |
 | `references/subsessions.md` | 子会话 `sessionCreate`/`sessionSend`/`sessionDestroy` + `session_done` 完整流程与权限 |
 | `references/run-tool.md` | `runTool(steps)` 内联工具流水线 + 与 `Teahouse.session*` 的分工对照表 |
 | `references/dm-api.md` | DM 呈现 `listMessages` · `sessionSend('dm')` · `chara`/`kind` 两处配合约定 · 用户消息包裹层 |

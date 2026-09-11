@@ -80,6 +80,80 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
     reloadTextStyleRules()
   }, [reloadTextStyleRules])
 
+  // ---- director/DM busy state → sandbox ----
+  // The backend is the authority (session_tracker's `running` map, delivered on
+  // every `session_event`). Those arrive once per streamed token, so collapse
+  // them here and only postMessage on an actual start/end boundary — the
+  // sandbox then gets exactly one `session.busy` per boundary and can drive its
+  // own elapsed timer. `since` is the earliest start time among the sessions
+  // currently busy, so a rebuilt iframe resumes the count instead of restarting.
+  const busySinceRef = useRef<Record<string, number>>({})
+  const busyKeyRef = useRef<string>("")
+  const busyPayloadRef = useRef<{ sessions: Record<string, boolean>; busy: boolean; since: number | null }>(
+    { sessions: {}, busy: false, since: null }
+  )
+
+  // `authoritative` = the caller got a full snapshot of every live session
+  // (GET /sessions/status), so any sid absent from it is idle — a stale entry
+  // left by a missed `done` is dropped. Stream events merge instead, so a
+  // payload that happens not to mention a sid can never silently unlock it.
+  const applyRunningMap = useCallback((rMap: Record<string, boolean>, authoritative = false) => {
+    const since = busySinceRef.current
+    const now = Date.now()
+    if (authoritative) {
+      for (const sid of Object.keys(since)) if (rMap[sid] !== true) delete since[sid]
+    }
+    for (const [sid, running] of Object.entries(rMap)) {
+      if (running) { if (since[sid] == null) since[sid] = now }
+      else delete since[sid]
+    }
+    const busySids = Object.keys(since).sort()
+    const key = busySids.join(",")
+    if (key === busyKeyRef.current) return
+    busyKeyRef.current = key
+    const sessions: Record<string, boolean> = {}
+    for (const sid of busySids) sessions[sid] = true
+    busyPayloadRef.current = {
+      sessions,
+      busy: busySids.length > 0,
+      since: busySids.length > 0 ? Math.min(...busySids.map((s) => since[s])) : null,
+    }
+    sendToSandbox("session.busy", busyPayloadRef.current)
+  }, [sendToSandbox])
+
+  const onSessionState = useCallback((payload: Record<string, unknown>) => {
+    const rMap = payload.running
+    if (!rMap || typeof rMap !== "object") return
+    applyRunningMap(rMap as Record<string, boolean>)
+  }, [applyRunningMap])
+
+  // Re-read the authoritative map (GET /sessions/status). `authoritative` is only
+  // set on reconnect: events were missed there, so a sid missing from the
+  // response really is idle (a missed `done` would otherwise leave the sandbox's
+  // input locked forever). At mount we merge instead — the refs were just reset,
+  // so the two behave alike, and merging can't undo a `start` that raced ahead
+  // of this request.
+  const reconcileBusy = useCallback((authoritative = false) => {
+    if (!instanceId) return
+    instancesApi.getSessionsStatus(instanceId).then((res) => {
+      if (res.ok && res.data) applyRunningMap(res.data.sessions ?? {}, authoritative)
+    }).catch(() => {})
+  }, [instanceId, applyRunningMap])
+
+  const onReconnect = useCallback(() => reconcileBusy(true), [reconcileBusy])
+
+  // Instance switched → the previous instance's busy sids say nothing about this
+  // one (their `done` will never arrive here), so drop them before any event.
+  // Then seed from the backend: the page may have loaded (or the iframe been
+  // rebuilt) while a loop was already running, in which case no `start` event
+  // is left to arrive and the sandbox would otherwise think it is idle.
+  useEffect(() => {
+    busySinceRef.current = {}
+    busyKeyRef.current = ""
+    busyPayloadRef.current = { sessions: {}, busy: false, since: null }
+    reconcileBusy()
+  }, [reconcileBusy])
+
   // ---- file_changed watchdog: route to srcdoc rebuild vs sandbox refresh ----
   useSSERefresh({
     instanceId,
@@ -120,6 +194,8 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
       // 透传子会话结束/销毁事件给沙盒（bootstrap 用 Teahouse.on('session_done') 订阅）
       sendToSandbox(event, payload)
     }, [sendToSandbox]),
+    onSessionState,
+    onReconnect,
   })
 
   // ---- Build srcdoc from engine bootstrap + instance UI files ----
@@ -212,6 +288,13 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
       )
       iframe.contentWindow?.postMessage(
         { _type: "_teahouse_event", _event: "font-scale", _data: { scale: hostScale } },
+        "*"
+      )
+      // A rebuilt iframe starts with no busy state (its editor may have just
+      // changed mid-generation) — replay the current one so its input lock and
+      // "working" indicator are correct from the first paint.
+      iframe.contentWindow?.postMessage(
+        { _type: "_teahouse_event", _event: "session.busy", _data: busyPayloadRef.current },
         "*"
       )
       return

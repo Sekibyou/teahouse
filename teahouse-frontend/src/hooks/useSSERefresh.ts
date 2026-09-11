@@ -18,6 +18,15 @@ interface SSERefreshOptions {
   /** Called when a sub-session broadcasts session_done (EndSession), session_destroyed
    * (DeleteSubSession), session_created, or a runTool batch is cancelled (tool_run_cancelled). */
   onSessionEvent?: (event: string, payload: Record<string, unknown>) => void
+  /** Called on every `session_event` broadcast (one per director/DM tool-loop
+   * event, i.e. per streamed token too). Carries the authoritative `running`
+   * map (`{sid: bool}`) + `stats`. Consumers that only care about the
+   * busy/idle transition must dedupe on that map themselves. */
+  onSessionState?: (payload: Record<string, unknown>) => void
+  /** Called when the SSE stream reconnects after a drop. Events may have been
+   * missed during the gap, so consumers holding derived state should re-fetch
+   * the authoritative source (e.g. GET /sessions/status). */
+  onReconnect?: () => void
   /** The instance ID (UUID) to scope events to. */
   instanceId: string | undefined
   /** The instance name (directory name) as fallback match for tool-executor broadcasts. */
@@ -60,6 +69,8 @@ export function useSSERefresh({
   onToolRun,
   onGenerateProgress,
   onSessionEvent,
+  onSessionState,
+  onReconnect,
   instanceId,
   instanceName,
   pollIntervalMs,
@@ -74,6 +85,8 @@ export function useSSERefresh({
   const burstCountRef = useRef(0)
   const lastTreeKeyRef = useRef<string>("")
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // False until the first successful open; every later open is a reconnect.
+  const hasConnectedRef = useRef(false)
   // Latest poll callbacks, read via ref so the interval never has to re-arm
   // when their identity changes (stable across renders).
   const pollRefs = useRef({ onPollFetch, onPollTick })
@@ -84,6 +97,7 @@ export function useSSERefresh({
     if (!instanceId) return
 
     let stopped = false
+    hasConnectedRef.current = false
 
     // A stable snapshot key for the tree, so identical polls are no-ops.
     // MUST be recursive: hashing only top-level paths means any file created
@@ -211,6 +225,29 @@ export function useSSERefresh({
         })
       }
 
+      // session_event fires per streamed token, so only parse it when someone
+      // actually consumes the running map.
+      const onState = onSessionState
+      if (onState) {
+        es.addEventListener("session_event", (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data)
+            const id = data.instance_id
+            if (id && id !== instanceId && id !== instanceName) return
+            onState(data)
+          } catch {
+            // ignore malformed events
+          }
+        })
+      }
+
+      es.onopen = () => {
+        // The very first open is the initial connect; anything after is a
+        // reconnect, during which events were missed.
+        if (hasConnectedRef.current) onReconnect?.()
+        else hasConnectedRef.current = true
+      }
+
       es.onerror = () => {
         es.close()
         esRef.current = null
@@ -261,5 +298,5 @@ export function useSSERefresh({
         wsTimerRef.current = null
       }
     }
-  }, [instanceId, instanceName, onToolRun, onGenerateProgress, onSessionEvent, pollIntervalMs])
+  }, [instanceId, instanceName, onToolRun, onGenerateProgress, onSessionEvent, onSessionState, onReconnect, pollIntervalMs])
 }

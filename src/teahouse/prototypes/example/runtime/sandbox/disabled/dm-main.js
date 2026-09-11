@@ -11,6 +11,10 @@
   // 玩家扮演发言：Teahouse.sessionSend('dm', text) —— 默认按扮演处理，
   //   后端自动把它写入 dm-output（开新批次）再交给 DM。
   //
+  // 忙碌态：订阅宿主透传的 `session.busy`（后端 session_tracker 的权威
+  //   running map，宿主归一后只在「开始 / 结束」两个沿各推一次）——
+  //   DM 工作期间锁住输入条 + 显示等待提示，避免玩家对着盲盒猛敲。
+  //
   // 版式：气泡内容区与正文渲染器**同宽居中**（min(90%, 760px)），
   //   复用 theme.css 的 CSS 变量，亮暗主题 / 宿主字号自动跟随。
   //
@@ -20,6 +24,11 @@
   var DM_SID = 'dm';
   var root = null;
   var userName = '你';   // 玩家显示名，读变量 `user`，缺省「你」
+
+  // ---- 忙碌态（后端权威，宿主只在边界推送） ----
+  var busy = false;       // DM 会话是否正在工作
+  var busySince = 0;      // 本轮忙碌的起始时刻（宿主给出 since 时以其为准）
+  var busyTicker = null;  // 秒数跳动定时器，仅在忙碌期间存在
 
   // 发送按钮纸飞机图标（同 input-bar 的 feather send，颜色随 currentColor）
   var SEND_ICON =
@@ -103,6 +112,15 @@
       // 输入条：固定在底部（只留药丸本体，无通栏底板）
       '.th-dm-inputbar{padding:8px 0.5px 10px;}',
 
+      // 忙碌提示：输入条上方的居中胶囊（仅 DM 工作时显示）
+      '.th-dm-working{display:none;align-items:center;justify-content:center;gap:7px;',
+      'padding:0 0 8px;font-size:calc(12px * var(--font-scale));',
+      'color:var(--panel-text-dim,rgba(0,0,0,.45));}',
+      '.th-dm-working.on{display:flex;}',
+      '.th-dm-working-dot{flex:none;width:7px;height:7px;border-radius:50%;',
+      'background:var(--accent,#60a5fa);animation:th-dm-pulse 1.3s ease-in-out infinite;}',
+      '@keyframes th-dm-pulse{0%,100%{opacity:.3;}50%{opacity:1;}}',
+
       // 药丸式输入条 —— 外观取自 input-bar，但固定贴底、不悬浮
       '.th-dm-inputwrap{display:flex;align-items:center;gap:8px;',
       'background:var(--input-bg,rgba(16,16,36,.92));',
@@ -111,6 +129,7 @@
       'box-shadow:0 2px 10px rgba(0,0,0,.12);',
       'transition:border-color .2s,background .25s;}',
       '.th-dm-inputwrap:focus-within{border-color:var(--accent);}',
+      '.th-dm-inputwrap.th-dm-locked{opacity:.72;}',
 
       // 唤起 DM 栏触发器（仿 novel 输入条左侧模式按钮：胶囊 + 小圆点 + 标签）
       '.th-dm-open{flex:none;height:26px;padding:0 10px;border-radius:20px;',
@@ -129,6 +148,7 @@
       'caret-color:var(--accent);font:inherit;',
       'font-size:calc(13px * var(--font-scale));line-height:1.4;}',
       '.th-dm-input::placeholder{color:var(--panel-text-dim,rgba(0,0,0,.4));}',
+      '.th-dm-input:disabled{cursor:not-allowed;}',
 
       '.th-dm-send{flex:none;height:28px;min-width:28px;padding:0 9px;border:none;',
       'border-radius:999px;display:flex;align-items:center;justify-content:center;',
@@ -242,6 +262,50 @@
     });
   }
 
+  // ---- 忙碌态：锁输入条 + 显示等待提示 ----
+  // 秒数只在忙过 3 秒后才露出来：短回合闪一下反而显得卡。
+  function busyLabel() {
+    var secs = Math.floor((Date.now() - busySince) / 1000);
+    return secs >= 3 ? ('DM 正在工作… ' + secs + 's') : 'DM 正在工作…';
+  }
+
+  function paintBusy() {
+    if (!root) return;
+    var box = root.querySelector('.th-dm-working');
+    var text = root.querySelector('.th-dm-working-text');
+    var input = root.querySelector('.th-dm-input');
+    var send = root.querySelector('.th-dm-send');
+    var wrap = root.querySelector('.th-dm-inputwrap');
+    if (box) box.className = busy ? 'th-dm-working on' : 'th-dm-working';
+    if (text) text.textContent = busy ? busyLabel() : '';
+    if (input) {
+      input.disabled = busy;
+      input.placeholder = busy ? 'DM 正在工作，请稍候…' : '说点什么…';
+    }
+    if (send) send.disabled = busy;
+    if (wrap) wrap.className = busy
+      ? 'th-dm-inner th-dm-inputwrap th-dm-locked'
+      : 'th-dm-inner th-dm-inputwrap';
+  }
+
+  // since：宿主给出的权威起始时刻（epoch ms）。iframe 重建时靠它把秒数续上，
+  // 而不是从 0 重数。空闲时不保留定时器。
+  function setBusy(on, since) {
+    on = !!on;
+    var wasBusy = busy;
+    busy = on;
+    if (on) {
+      busySince = (typeof since === 'number' && since > 0)
+        ? since
+        : (wasBusy && busySince ? busySince : Date.now());
+    } else {
+      busySince = 0;
+    }
+    if (busyTicker) { clearInterval(busyTicker); busyTicker = null; }
+    if (on) busyTicker = setInterval(paintBusy, 1000);
+    paintBusy();
+  }
+
   function build() {
     ensureStyle();
     root = document.createElement('div');
@@ -250,7 +314,10 @@
     // 提交会被浏览器拦截、点发送毫无反应 —— 必须 click / Enter 手动触发。
     root.innerHTML =
       '<div class="th-dm-list"><div class="th-dm-inner th-dm-stream"></div></div>' +
-      '<div class="th-dm-inputbar"><div class="th-dm-inner th-dm-inputwrap">' +
+      '<div class="th-dm-inputbar">' +
+      '<div class="th-dm-working"><span class="th-dm-working-dot"></span>' +
+      '<span class="th-dm-working-text"></span></div>' +
+      '<div class="th-dm-inner th-dm-inputwrap">' +
       '<button class="th-dm-open" type="button" title="唤起 DM 栏">' +
       '<span class="th-dm-open-dot"></span>DM</button>' +
       '<input class="th-dm-input" type="text" placeholder="说点什么…" autocomplete="off">' +
@@ -264,6 +331,7 @@
       if (window.Teahouse.openDM) window.Teahouse.openDM();
     });
     function submit() {
+      if (busy) return;   // 忙碌期间输入条已 disabled，这里兜底键盘/程序化触发
       var text = input.value.trim();
       if (!text) return;
       input.value = '';
@@ -274,6 +342,8 @@
     input.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); submit(); }
     });
+    // 新根节点落地时可能已经处于忙碌（iframe 刚重建 / 提示先于建树到达）
+    paintBusy();
   }
 
   function refresh() {
@@ -293,6 +363,15 @@
   window.Teahouse.on('output.refresh', function(data) {
     var p = data && data.path;
     if (p === 'runtime/dm-output.jsonl') refresh();
+  });
+
+  // 后端权威的「DM 是否正在工作」：宿主把 session_event 的 running map 归一成
+  // 这个事件（payload: { sessions:{<sid>:true}, busy, since }），只在开始 / 结束
+  // 两个沿各推一次，不随流式正文高频刷新。
+  // 只认 DM 会话自身——主导演在后台跑（生成正文、总结等）不该锁住玩家对话。
+  window.Teahouse.on('session.busy', function(data) {
+    var sessions = (data && data.sessions) || {};
+    setBusy(!!sessions[DM_SID], data && data.since);
   });
 
   refresh();

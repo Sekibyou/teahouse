@@ -26,6 +26,9 @@ All events are broadcast via ``state.broadcast("session_event", ...)`` with the
 exact same shape as ``_tool_use_loop`` yield events, plus ``instance_id``,
 ``session_id``, and ``running`` snapshot. The frontend consumes these events
 uniformly — there is no separate "direct SSE" vs "background _drain" path.
+The busy window is bracketed explicitly: ``type:"start"`` (``_broadcast_start``,
+right after the task registers) and ``type:"done"`` (``_broadcast_done``), so a
+consumer can render "working" without waiting for the first token to arrive.
 
 Diagnostic event log
 --------------------
@@ -362,6 +365,7 @@ class SessionLoop:
                 self._run_tool_loop(client, enabled_tools, reasoning_effort)
             )
             task_tracker.register(self.instance_dir.name, self.session_id, self._task)
+            self._broadcast_start()
             try:
                 await self._task
             except asyncio.CancelledError:
@@ -424,6 +428,7 @@ class SessionLoop:
         self._task = compact_task
         task_tracker.stats_start(self.instance_dir.name, self.session_id)
         task_tracker.register(self.instance_dir.name, self.session_id, compact_task)
+        self._broadcast_start()
         try:
             await compact_task
             # Compact truncated the jsonl (only the [compact] marker remains).
@@ -589,6 +594,27 @@ class SessionLoop:
                 "elapsed": stats.elapsed if stats else 0,
                 "token_count": stats.token_count if stats else 0,
             },
+        })
+
+    def _broadcast_start(self) -> None:
+        """Announce that this session's loop just became busy.
+
+        Counterpart of ``_broadcast_done``. The task is registered before the
+        first LLM round, but nothing carries that fact to consumers until the
+        first token/tool event lands — which can be seconds later on a large
+        context. Anything that renders a "working" state from the ``running``
+        map (the chat panel's submit/stop button, the sandbox's input lock)
+        would sit idle for that whole window, so emit the boundary explicitly.
+
+        Must be called AFTER ``task_tracker.register`` — the ``running`` map is
+        derived from the tracker and would not yet list this session otherwise.
+        """
+        state.broadcast("session_event", {
+            "instance_id": self.instance_id or self.instance_dir.name,
+            "session_id": self.session_id,
+            "type": "start",
+            "running": task_tracker.running_sessions(self.instance_dir.name),
+            "stats": {"elapsed": 0, "token_count": 0},
         })
 
     def _broadcast_user_msg(self, queue_id: str | None, content: str, order: int, images: list | None = None) -> None:

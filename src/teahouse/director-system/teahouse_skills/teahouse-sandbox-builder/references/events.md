@@ -19,6 +19,7 @@
 | `draft.committed` | `{ num, path, title, commit_hash, failed, committed_draft }` | `Teahouse.commitDraft()` 成功转正后宿主广播。**非调用方组件**（page-bar 角标、导演手动转正后 `novel-main.js` 输入条切态）订阅它同步状态 |
 | `session_done` | `{ instance_id, session_id }` | 子会话导演调用了 `EndSession` —— 宣告该子任务工作完成。**只发信号、不销毁会话**；是否销毁由调用方（沙盒 `sessionDestroy` 或用户）决定 |
 | `session_destroyed` | `{ instance_id, session_id }` | 某子会话被销毁（沙盒或前端调用 `sessionDestroy`）后广播。沙盒若在监听对应会话,应清理相关 UI/状态 |
+| `session.busy` | `{ sessions: { <sid>: true }, busy: bool, since: number \| null }` | **导演 / DM 会话开始或结束工作时**推送，**只在两个沿各推一次**（不随流式正文高频刷新）。`sessions` 只列**正在工作**的会话（`main` 主导演 / `dm` DM / `session-<uuid>` 子会话）；`busy` = 是否有任一在跑；`since` = 当前这批忙碌里最早的起始时刻（epoch ms）。**iframe 重建后会补推一次当前值**，订阅即得状态，无需自行拉初始。详见下节 |
 | `theme.change` | `{ dark: bool }` | 宿主切 dark/light 主题时推送（初次挂载 / iframe 重建后也会补推当前值）。`dark` 表示宿主当前是否**暗色**。沙盒 UI 若想跟随宿主主题，订阅此事件切换自己的配色 |
 | `font-scale` | `{ scale: number }` | 宿主在 设置→通用设置 调字号档位时推送（初次挂载 / iframe 重建后也会补推当前值）。`scale` 是宿主 `--ui-scale` 的乘数（<1 缩小、>1 放大，默认为 1）。沙盒**是否跟随由作者决定**：想跟随宿主字号就用 rem / 字号 CSS 变量做基准（见下），不想跟随可无视此事件 |
 
@@ -80,6 +81,29 @@ Teahouse.on('font-scale', function(ev) {
 - 宿主切字号**不重建 iframe**，沙盒原地改根 CSS 变量即可即时生效。
 - 用 rem 的组件会在浏览器默认 16px 基准上乘 `--font-scale`；若想要**更大范围**的整块缩放（连 rem 的间距也一起），可直接改根 `font-size` 而非只设字号变量，但那样会连布局间距一起放大——通常只想要正文可读性时选字号变量即可。
 - 不跟随也合法：某个 canvas / 特殊组件想固定字号，无视 `font-scale` 事件、维持自己的 px 即可。
+
+## 导演 / DM 忙碌态（`session.busy`）
+
+游玩界面的输入条最怕"盲盒"：玩家发了话，AI 却半天不出声，玩家只能反复敲。**`session.busy` 就是把「现在正忙、请稍候」这件事告诉沙盒**——据此锁住输入 + 显示等待提示。
+
+它由后端**权威状态**（`session_tracker` 的 running map）驱动：导演 / DM 的工具循环一启动就广播 `start` 边界、结束时广播 `done`，宿主把 running map 归一成本事件，**只在开始 / 结束两个沿各推一次**，不随流式正文高频刷新。
+
+```js
+Teahouse.on('session.busy', function(ev) {
+  // ev.sessions 只列正在工作的会话；缺省即空闲
+  var dmWorking = !!ev.sessions['dm'];
+  var dirWorking = !!ev.sessions['main'];
+  input.disabled = dmWorking;                 // 锁输入（DM 式）
+  hint.textContent = dmWorking ? 'DM 正在工作… ' + elapsed(ev.since) : '';
+});
+```
+
+**要点**：
+- **事件在初次挂载 / iframe 重建后也会补推一次当前值**，订阅即得状态，无需自行拉初始（与 `theme.change` / `font-scale` 同）。
+- **只认自己关心的会话**：DM 式看 `sessions['dm']`，小说式看 `sessions['main']`。主导演在后台跑（生成正文、总结）时不该锁住 DM 的扮演输入，反之亦然。
+- **秒数自己算**：`since` 是权威起始时刻（epoch ms），用它算「已过去多少秒」；iframe 中途重建也能续上，不会从 0 重数。**没有高频 tick**——不要指望靠事件更新秒数，用 `setInterval` 自绘。
+- **超时兜底**：SSE 断线期间可能漏掉结束事件。宿主在重连后会拉 `GET /instances/{id}/sessions/status` 校正并补推，沙盒侧无需额外处理。
+- 忙碌期间**别把 DOM 全拆了重建**（那会丢掉玩家已输入的草稿）——禁用输入框即可。
 
 ## 流式草稿（`Teahouse.currentDraft`）
 
