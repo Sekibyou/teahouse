@@ -1955,7 +1955,9 @@ export function WorkspacePage() {
           <InstancePackagesDialog instance={activeInstance} onClose={() => { setManagePackagesOpen(false); loadContentCounts() }} />
         )}
 
-        {/* File tree overlay (half-screen drawer) — only in backstage mode。进出动画对齐导演抽屉 */}
+        {/* File tree overlay (half-screen drawer) — only in backstage mode。进出动画对齐导演抽屉。
+            层级：遮罩 z-40、抽屉 z-[45]——**必须低于全屏面板(z-50)**。抽屉最下方的 git 栏会打开
+            GitDialog（同为移动端全屏面板），若抽屉也是 z-50，DOM 靠后者（抽屉在面板之后渲染）会盖住它。 */}
         {(showFileTree || fileTreeClosing) && (
           <>
             <div
@@ -1967,7 +1969,7 @@ export function WorkspacePage() {
               onClick={closeFileTree}
             />
             <div
-              className={`fixed left-0 top-0 bottom-0 w-[78%] max-w-sm z-50 bg-background border-r border-border flex flex-col shadow-lg ${
+              className={`fixed left-0 top-0 bottom-0 w-[78%] max-w-sm z-[45] bg-background border-r border-border flex flex-col shadow-lg ${
                 fileTreeClosing
                   ? "animate-out slide-out-to-left duration-200 fill-mode-forwards"
                   : "animate-in slide-in-from-left duration-200"
