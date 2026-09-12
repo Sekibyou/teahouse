@@ -188,6 +188,7 @@ export const enMisc = {
     thinking: "Thinking...",
     interrupted: "Interrupted",
     waiting: "Waiting...",
+    running: "Running...",
     mermaidPending: "Diagram generating — will appear when complete…",
     copy: "Copy",
     copied: "Copied",

@@ -187,7 +187,7 @@ export const AssistantBubble = memo(function AssistantBubble({
                       </div>
                     ) : (
                       <div className="flex items-center gap-1.5 text-muted-foreground">
-                        {isIdle || !isLatest ? (
+                        {isIdle ? (
                           <>
                             <XCircle className="h-3 w-3 text-muted-foreground/50" />
                             <span>{t("assistant.interrupted")}</span>
@@ -195,7 +195,7 @@ export const AssistantBubble = memo(function AssistantBubble({
                         ) : (
                           <>
                             <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>{t("assistant.waiting")}</span>
+                            <span>{block.running ? t("assistant.running") : t("assistant.waiting")}</span>
                           </>
                         )}
                       </div>

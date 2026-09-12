@@ -668,6 +668,23 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
               return
             }
 
+            if (evType === "tool_start") {
+              // 该批次的工具是串行执行的：后端在执行每个工具前宣告一次，
+              // 借此把「正在执行」与「同批排队中」区分开。
+              setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
+                ...m,
+                status: "streaming",
+                blocks: [{
+                  type: "tool_call" as const,
+                  id: data.id as string,
+                  name: data.name as string,
+                  args: (m.blocks && m.blocks[0] && m.blocks[0].type === "tool_call" ? m.blocks[0].args : {}) as Record<string, unknown>,
+                  running: true,
+                }],
+              })))
+              return
+            }
+
             if (evType === "tool_result") {
               setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                 ...m,

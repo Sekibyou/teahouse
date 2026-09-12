@@ -7,6 +7,8 @@ export interface ContentBlock {
   name?: string                // type=tool_call 时的工具名
   args?: Record<string, unknown>
   result?: string
+  /** 仅前端流式态：后端 tool_start 已宣告该工具开始执行（同批其余块仍在排队） */
+  running?: boolean
 }
 
 /**

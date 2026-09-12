@@ -189,6 +189,7 @@ export const zhMisc = {
     thinking: "思考中...",
     interrupted: "已中断",
     waiting: "等待中...",
+    running: "执行中...",
     mermaidPending: "图表生成中，输出完整后自动显示…",
     copy: "复制",
     copied: "已复制",

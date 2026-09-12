@@ -787,6 +787,11 @@ async def _tool_use_loop(
                 args = {}
             _tool_sub = _tool_base + _ti
 
+            # Announce the tool that is about to run: one batch of tool_calls is
+            # executed serially, so the frontend needs to tell "running now" apart
+            # from "queued behind it in the same batch".
+            yield _tag({"type": "tool_start", "id": tc_id, "name": name}, _tool_sub)
+
             # Approval-required tools
             if name in APPROVAL_REQUIRED_TOOLS:
                 yield _tag({
