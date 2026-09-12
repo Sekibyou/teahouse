@@ -317,19 +317,26 @@ def render_records(records: list[dict]) -> list[dict]:
                 "blocks": [],
                 "kind": "reasoning",
             })
-        for i, b in enumerate(rec.get("blocks") or []):
+        # 气泡序号约定：text 块固定 sub 0，工具块 sub = 1 + 工具序号。工具侧流式执行
+        # 时（见的 _tool_use_loop）在"参数产出完成"那一刻就要发气泡——那时还不知道
+        # 本轮有没有 text 块——所以编号不能依赖数组下标，两边统一用这条规则。
+        _tool_k = 0
+        for b in rec.get("blocks") or []:
             if b.get("type") == "text":
+                sub = 0
                 out.append({
                     "role": "assistant",
                     "order": order,
-                    "sub": i,
-                    "subRank": i,
+                    "sub": sub,
+                    "subRank": sub,
                     "content": b.get("text", ""),
                     "reasoning": "",
                     "blocks": [{"type": "text", "text": b.get("text", "")}],
                     "kind": "text",
                 })
             elif b.get("type") == "tool_call":
+                sub = 1 + _tool_k
+                _tool_k += 1
                 result = b.get("result")
                 block: dict = {
                     "type": "tool_call",
@@ -345,8 +352,8 @@ def render_records(records: list[dict]) -> list[dict]:
                 out.append({
                     "role": "assistant",
                     "order": order,
-                    "sub": i,
-                    "subRank": i,
+                    "sub": sub,
+                    "subRank": sub,
                     "content": "",
                     "reasoning": "",
                     "blocks": [block],

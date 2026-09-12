@@ -477,18 +477,15 @@ class SessionLoop:
 
         _event_log(self.instance_dir, self.session_id, "tool_loop_start", {"enabled_tools": enabled_tools, "reasoning_effort": reasoning_effort})
         event_count = 0
-        async for event in _tool_use_loop(
-            client,
-            [],  # no new input — context rebuilt from jsonl
-            self.instance_dir,
-            self.user_id,
-            self.instance_id,
-            session_id=self.session_id,
-            enabled_tools=enabled_tools,
-            order_allocator=self.next_order,
-            reasoning_effort=reasoning_effort,
-            pending_check=self.check_pending_user,
-        ):
+
+        def _emit(event: dict) -> None:
+            """Decorate one event with session/tracker state and broadcast it.
+
+            Used for both the yielded (model-side) events and the tool-side events
+            the execution task pushes, so both travel the same path and keep their
+            real relative order.
+            """
+            nonlocal event_count
             task_tracker.stats_tick(self.instance_dir.name, self.session_id)
             stats = task_tracker.get_stats(self.instance_dir.name, self.session_id)
             ev = dict(event)
@@ -509,6 +506,21 @@ class SessionLoop:
                 "running": ev["running"],
             })
             state.broadcast("session_event", ev)
+
+        async for event in _tool_use_loop(
+            client,
+            [],  # no new input — context rebuilt from jsonl
+            self.instance_dir,
+            self.user_id,
+            self.instance_id,
+            session_id=self.session_id,
+            enabled_tools=enabled_tools,
+            order_allocator=self.next_order,
+            reasoning_effort=reasoning_effort,
+            pending_check=self.check_pending_user,
+            emit=_emit,
+        ):
+            _emit(event)
 
         # Final done event so the frontend knows the run completed.
         _event_log(self.instance_dir, self.session_id, "tool_loop_done", {"total_events": event_count})

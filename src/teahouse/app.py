@@ -312,6 +312,12 @@ async def _chat_common(body: ChatRequest, request: Request) -> LLMClient:
 # Tools that require user approval before execution
 APPROVAL_REQUIRED_TOOLS = {"GitCommit"}
 
+# Tools that must NOT run while their round is still being generated, even though
+# their arguments are complete: EndSession interrupts this very session (and thus
+# cancels the round that called it), so running it early would cut the round's own
+# output in half. Deferred to the end of the round, index order preserved.
+DEFERRED_TOOLS = {"EndSession"}
+
 
 def _preprocess_frontend_blocks(messages: list[dict], api_style: str) -> list[dict]:
     """Convert frontend RichMessage blocks into API-format tool_calls and tool_result messages.
@@ -470,13 +476,27 @@ async def _tool_use_loop(
     order_allocator=None,
     reasoning_effort: str | None = None,
     pending_check=None,
+    emit=None,
 ):
     """Run tool use loop with streaming: yield text chunks and tool_call events in real-time.
 
-    Yields SSE-compatible dict events: text, tool_call, tool_result, approval_required.
+    Yields SSE-compatible dict events: text, reasoning, stats_heartbeat, assistant_done.
     ``session_id`` selects which .sessions/<sid>.jsonl to read/write (None => main).
     ``enabled_tools`` (a child session) gates which tools the director may call;
     None means unrestricted (main session / sandbox runTool).
+
+    ``emit`` (callable) is how *tool-side* events (tool_call / tool_start /
+    approval_required / tool_result) reach the broadcaster: they are produced by a
+    background execution task, which cannot ``yield``. The caller passes the same
+    decorator+broadcast path it uses for the yielded events, so both arrive in
+    real order. Model-side events stay yielded.
+
+    Tools run in a producer/consumer pair: the model's tool-call arguments are
+    streamed, and each call is queued for execution as soon as its arguments are
+    complete — so a batch keeps executing while the rest of the round is still
+    being generated. Execution itself stays strictly serial, in production order,
+    and pauses on approval-required tools. ``EndSession`` is deferred to the end
+    of the round (running it early would tear down the round that spawned it).
 
     ``order_allocator`` (optional zero-arg callable) supplies this round's order
     from the owning SessionLoop's monotonic watermark, keeping the round's
@@ -521,10 +541,11 @@ async def _tool_use_loop(
         sessions.append_user(instance_dir, _real_user_content, session_id=sid)
 
     # Function-scope pending record for interruption fallback. Accumulated as
-    # streaming chunks arrive; cleared on each normal flush. If the generator is
-    # closed mid-stream (frontend disconnect / LLM error), Phase 1's
-    # ``except GeneratorExit`` persists whatever text/reasoning had accumulated
-    # so a long partial reply isn't lost wholesale.
+    # streaming chunks arrive; cleared on each normal flush. If the round is cut
+    # short (user interrupt / frontend disconnect / LLM error), _flush_interrupted
+    # persists whatever had accumulated — plus every tool call that was already
+    # announced, executed or not — so a long partial reply and the side effects it
+    # already had aren't lost from the record.
     _pending = {"content": "", "reasoning": ""}
 
     def _flush_assistant(content: str, blocks: list[dict] | None = None, order: int | None = None) -> None:
@@ -662,6 +683,119 @@ async def _tool_use_loop(
                 ev["sub"] = sub
             return ev
 
+        # ── Producer/consumer pair for this round's tool calls ──
+        # The model streams the round's tool-call arguments; a call is queued for
+        # execution as soon as its own arguments are complete, so execution overlaps
+        # with the rest of the round's generation. A single consumer task keeps
+        # execution strictly serial, in production order. Tool-side events are sent
+        # through `emit` (the caller's broadcaster) because that task cannot yield.
+        emit = emit or (lambda _ev: None)
+        _exec_queue: asyncio.Queue = asyncio.Queue()
+        _exec_task: asyncio.Task | None = None
+        _blocks_by_index: dict[int, dict] = {}   # index -> this round's tool_call block
+        _announced: dict[int, dict] = {}         # index -> {id, name, args}
+        _enqueued: set[int] = set()
+        _held: dict[int, tuple[int, str, str, dict]] = {}
+        _gate_next = 0
+
+        def _ensure_exec_task() -> None:
+            nonlocal _exec_task
+            if _exec_task is None:
+                _exec_task = asyncio.create_task(_exec_runner())
+
+        def _release_gated() -> None:
+            """Hand held calls to the queue strictly in index order, so a call whose
+            arguments are still streaming (or a deferred one) is never overtaken."""
+            nonlocal _gate_next
+            while _gate_next in _held:
+                item = _held.pop(_gate_next)
+                _enqueued.add(_gate_next)
+                _ensure_exec_task()
+                _exec_queue.put_nowait(item)
+                _gate_next += 1
+
+        async def _exec_runner() -> None:
+            while True:
+                item = await _exec_queue.get()
+                if item is None:
+                    return
+                _ti, tc_id, name, args = item
+                _sub = 1 + _ti
+                emit(_tag({"type": "tool_start", "id": tc_id, "name": name}, _sub))
+                try:
+                    if name in APPROVAL_REQUIRED_TOOLS:
+                        emit(_tag({
+                            "type": "approval_required",
+                            "id": tc_id,
+                            "name": name,
+                            "args": args,
+                        }, _sub))
+                        approved_result = await approval_store.wait_for_approval(tc_id)
+                        result = (
+                            "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
+                            if approved_result is None else approved_result
+                        )
+                    else:
+                        result = await execute_tool(
+                            name, args, instance_dir, user_id, instance_id,
+                            session_id=session_id, enabled_tools=enabled_tools,
+                            exclude=denied,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    # Every announced call must end up with a result: the persisted
+                    # record pairs assistant tool_calls with tool results one to
+                    # one, and an unpaired call makes the next request invalid.
+                    result = f"Error: 工具执行异常: {e}"
+                _blocks_by_index[_ti] = {
+                    "type": "tool_call", "id": tc_id, "name": name,
+                    "args": args, "result": result,
+                }
+                emit(_tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _sub))
+
+        async def _stop_exec_task() -> None:
+            """Cancel the execution consumer and wait for it to really stop."""
+            nonlocal _exec_task
+            task = _exec_task
+            _exec_task = None
+            if task is None or task.done():
+                return
+            task.cancel()
+            try:
+                await asyncio.gather(task, return_exceptions=True)
+            except asyncio.CancelledError:
+                # We are being cancelled ourselves; the child already got the message.
+                pass
+
+        def _flush_interrupted() -> None:
+            """Persist an aborted round honestly: executed calls keep their real
+            result, announced-but-unrun ones are recorded as interrupted (
+            records_to_context turns that into a cancellation notice), and calls
+            whose arguments never finished streaming are dropped."""
+            if not (_pending["content"] or _pending["reasoning"] or _announced):
+                return
+            blocks: list[dict] = []
+            if _pending["content"]:
+                blocks.append({"type": "text", "text": _pending["content"]})
+            for _i in sorted(_announced):
+                done = _blocks_by_index.get(_i)
+                if done is not None:
+                    blocks.append(done)
+                    continue
+                info = _announced[_i]
+                blocks.append({
+                    "type": "tool_call", "id": info["id"], "name": info["name"],
+                    "args": info["args"], "result": "(interrupted)",
+                })
+                # Flip the still-pending bubble to 已中断 without waiting for the
+                # frontend's own running→idle sweep.
+                emit(_tag({
+                    "type": "tool_result", "id": info["id"], "name": info["name"],
+                    "result": "(interrupted)",
+                }, 1 + _i))
+            _flush_assistant(_pending["content"], blocks, round_order)
+
         # ── Phase 0.5: Absorb user messages queued mid-generation ──
         # Before this round's message is sent to the API, drain any user message
         # the user typed while the director was busy. The caller (SessionLoop)
@@ -705,20 +839,47 @@ async def _tool_use_loop(
                     _pending["reasoning"] += chunk
                     task_tracker.stats_add_tokens(instance_dir.name, sid, len(chunk))
                     yield _tag(event, "r")
+                elif event["type"] == "tool_call_ready":
+                    # This call's arguments are complete; the round may still be
+                    # streaming the rest. Show its bubble right away (it reads as
+                    # 等待中 until the queue reaches it) and hand the call to the
+                    # execution queue, gated to index order.
+                    _ti = int(event.get("index", 0))
+                    _tc_id = event.get("id", "")
+                    _name = event.get("name", "")
+                    _bad_args = False
+                    try:
+                        _args = json.loads(event.get("arguments") or "{}")
+                        if not isinstance(_args, dict):
+                            _args = {}
+                    except json.JSONDecodeError:
+                        _args, _bad_args = {}, True
+                    _announced[_ti] = {"id": _tc_id, "name": _name, "args": _args}
+                    emit(_tag({"type": "tool_call", "id": _tc_id, "name": _name, "args": _args}, 1 + _ti))
+                    if not _bad_args and _name not in DEFERRED_TOOLS:
+                        _held[_ti] = (_ti, _tc_id, _name, _args)
+                        _release_gated()
                 elif event["type"] == "tool_calls":
                     all_tool_calls = event["calls"]
                 elif "error" in event:
                     yield _tag({"type": "text", "text": f"LLM API error: {event['error']}"}, 0)
+                    await _stop_exec_task()
                     return
         except GeneratorExit:
-            # Frontend disconnected mid-stream. Persist whatever reasoning/text
-            # had accumulated so a long partial reply isn't lost wholesale.
-            if _pending["content"] or _pending["reasoning"]:
-                _flush_assistant(
-                    _pending["content"],
-                    [{"type": "text", "text": _pending["content"]}] if _pending["content"] else None,
-                    round_order,
-                )
+            # Consumer dropped us mid-stream (session cancelled / frontend gone).
+            # Stop the execution consumer first, then persist the partial round.
+            await _stop_exec_task()
+            _flush_interrupted()
+            raise
+        except asyncio.CancelledError:
+            # User interrupt: same cleanup, then let the cancellation propagate so
+            # SessionLoop can write its "[auto] user interrupted" marker.
+            await _stop_exec_task()
+            _flush_interrupted()
+            raise
+        except BaseException:
+            # Any other failure (LLM error, bug): never leave a tool running.
+            await _stop_exec_task()
             raise
 
         # ── Phase 2: If no tool calls, done ──
@@ -759,64 +920,50 @@ async def _tool_use_loop(
                 assistant_msg["reasoning"] = _pending["reasoning"]
             msg.append(assistant_msg)
 
-        # ── Phase 4: Yield all tool_call events FIRST, then execute sequentially ──
+        # ── Phase 4: Drain the execution queue, then assemble this round's record ──
+        # Most calls were already handed over while the round was still streaming;
+        # whatever is left (deferred tools like EndSession, arguments that failed to
+        # parse mid-stream, calls whose ready event never arrived) runs now, in
+        # index order.
+        _held.clear()
+        for _ti, tc in enumerate(all_tool_calls):
+            if _ti in _enqueued:
+                continue
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError):
+                args = {}
+            if _ti not in _announced:
+                # Its bubble was never announced mid-stream — create it now.
+                _announced[_ti] = {"id": tc["id"], "name": name, "args": args}
+                emit(_tag({"type": "tool_call", "id": tc["id"], "name": name, "args": args}, 1 + _ti))
+            _enqueued.add(_ti)
+            _ensure_exec_task()
+            _exec_queue.put_nowait((_ti, tc["id"], name, args))
+
+        if _exec_task is not None:
+            _exec_queue.put_nowait(None)  # sentinel: exit once the queue is drained
+            try:
+                await _exec_task
+            except (asyncio.CancelledError, GeneratorExit):
+                # Interrupted while the queue was still draining (slow tool /
+                # pending approval): stop it and persist the partial round.
+                await _stop_exec_task()
+                _flush_interrupted()
+                raise
+            _exec_task = None
+
         _round_blocks: list[dict] = []
         if collected_text:
             _round_blocks.append({"type": "text", "text": collected_text})
-        # Block index layout within this round's persisted record:
-        # text block = sub 0 (when present); tool_calls follow with sub
-        # (1 if text else 0) + tool_index. Frontend sorts strictly by this.
-        _tool_base = 1 if collected_text else 0
-
-        for _ti, tc in enumerate(all_tool_calls):
-            tc_id = tc["id"]
-            name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
-            ev: dict = {"type": "tool_call", "id": tc_id, "name": name, "args": args}
-            yield _tag(ev, _tool_base + _ti)
-
-        for _ti, tc in enumerate(all_tool_calls):
-            tc_id = tc["id"]
-            name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
-            _tool_sub = _tool_base + _ti
-
-            # Announce the tool that is about to run: one batch of tool_calls is
-            # executed serially, so the frontend needs to tell "running now" apart
-            # from "queued behind it in the same batch".
-            yield _tag({"type": "tool_start", "id": tc_id, "name": name}, _tool_sub)
-
-            # Approval-required tools
-            if name in APPROVAL_REQUIRED_TOOLS:
-                yield _tag({
-                    "type": "approval_required",
-                    "id": tc_id,
-                    "name": name,
-                    "args": args,
-                }, _tool_sub)
-                approved_result = await approval_store.wait_for_approval(tc_id)
-                if approved_result is None:
-                    reject_reason = "用户拒绝了提交请求，或等待超时。请根据反馈调整，或放弃本次提交。"
-                    _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": reject_reason})
-                    yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": reject_reason}, _tool_sub)
-                    _feed_tool_result(msg, api_style, tc_id, name, reject_reason)
-                    continue
-                _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": approved_result})
-                yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": approved_result}, _tool_sub)
-                _feed_tool_result(msg, api_style, tc_id, name, approved_result)
-                continue
-
-            # Execute
-            result = await execute_tool(name, args, instance_dir, user_id, instance_id, session_id=session_id, enabled_tools=enabled_tools, exclude=denied)
-            _round_blocks.append({"type": "tool_call", "id": tc_id, "name": name, "args": args, "result": result})
-            yield _tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _tool_sub)
-            _feed_tool_result(msg, api_style, tc_id, name, result)
+        # Block layout within this round's persisted record: text block first
+        # (sub 0), tool blocks after it with sub = 1 + tool index — the same
+        # numbering the live events used and sessions.render_records replays.
+        for _ti in range(len(all_tool_calls)):
+            blk = _blocks_by_index[_ti]
+            _round_blocks.append(blk)
+            _feed_tool_result(msg, api_style, blk["id"], blk["name"], blk["result"])
 
         # Flush this round's completed assistant record (reasoning + text + all tool results)
         _flush_assistant(collected_text, _round_blocks, round_order)

@@ -396,6 +396,31 @@ class LLMClient:
     async def _stream_openai_tools(self, body: dict) -> AsyncGenerator[dict, None]:
         """Stream OpenAI response, accumulating tool_call fragments. Yields text chunks and final tool_calls."""
         tool_call_acc: dict[int, dict] = {}
+        # Ordinals (0-based position among this round's tool calls) already
+        # announced as complete. When a delta for a higher index shows up, every
+        # lower index is necessarily finished — the caller may start executing
+        # those while the rest of the round is still streaming.
+        announced: set[int] = set()
+
+        def _take_ready(upto: int | None) -> list[dict]:
+            """Consume unannounced indexes below ``upto`` (None = all) as ready events."""
+            out: list[dict] = []
+            for j in sorted(tool_call_acc):
+                if j in announced or (upto is not None and j >= upto):
+                    continue
+                announced.add(j)
+                tc = tool_call_acc[j]
+                out.append({
+                    "type": "tool_call_ready",
+                    "index": j,
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    # Raw fragment; the caller parses it and falls back to the
+                    # end-of-round path when the JSON is not usable.
+                    "arguments": tc["function"]["arguments"],
+                })
+            return out
+
         first_chunk = True
 
         async with self._client() as client:
@@ -436,6 +461,7 @@ class LLMClient:
 
                     # Tool call fragments
                     tc_deltas = delta.get("tool_calls", [])
+                    _max_idx = None
                     for tc_delta in tc_deltas:
                         idx = tc_delta.get("index", 0)
                         if idx not in tool_call_acc:
@@ -450,19 +476,45 @@ class LLMClient:
                             tc["function"]["arguments"] += frag
                             # Yield as hidden text for frontend token counting only
                             yield {"type": "text", "text": frag, "tool_args": True}
+                        _max_idx = idx if _max_idx is None else max(_max_idx, idx)
+                    if _max_idx is not None:
+                        # Everything below the highest index seen here is complete.
+                        for ev in _take_ready(_max_idx):
+                            yield ev
 
-                # Stream done — yield assembled tool calls if any
+                # Stream done — announce whatever is still pending, then yield the
+                # assembled tool calls.
                 if tool_call_acc:
+                    for ev in _take_ready(None):
+                        yield ev
                     calls = [
                         {"id": tc["id"], "type": "function", "function": tc["function"]}
-                        for tc in sorted(tool_call_acc.values(), key=lambda t: t.get("index", 0))
+                        for _idx, tc in sorted(tool_call_acc.items())
                     ]
                     yield {"type": "tool_calls", "calls": calls}
 
     async def _stream_anthropic_tools(self, body: dict) -> AsyncGenerator[dict, None]:
         """Stream Anthropic response, accumulating tool_use blocks. Yields text chunks and final tool_calls."""
         tool_blocks: dict[int, dict] = {}
+        # Content block indexes whose tool_use block already closed (that is the
+        # protocol's per-tool "arguments are complete" signal).
+        announced: set[int] = set()
         first_chunk = True
+
+        def _ready_event(idx: int) -> dict:
+            tb = tool_blocks[idx]
+            # Ordinal among this round's tool calls — content block indexes also
+            # count text/thinking blocks, so they are not the tool ordinal.
+            ordinal = sum(1 for k in tool_blocks if k < idx)
+            return {
+                "type": "tool_call_ready",
+                "index": ordinal,
+                "id": tb["id"],
+                "name": tb["name"],
+                # Raw fragment; the caller parses it and falls back to the
+                # end-of-round path when the JSON is not usable.
+                "arguments": tb.get("input_json", ""),
+            }
 
         async with self._client() as client:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
@@ -518,10 +570,21 @@ class LLMClient:
                                 # both the token counter and the elapsed timer moving.
                                 yield {"type": "text", "text": partial, "tool_args": True}
 
+                    elif current_event == "content_block_stop":
+                        idx = data.get("index", 0)
+                        if idx in tool_blocks and idx not in announced:
+                            announced.add(idx)
+                            yield _ready_event(idx)
+
                     elif current_event == "message_stop":
                         break
 
                 if tool_blocks:
+                    # Announce any tool block whose stop event never arrived.
+                    for idx in sorted(tool_blocks):
+                        if idx not in announced:
+                            announced.add(idx)
+                            yield _ready_event(idx)
                     calls = []
                     for idx in sorted(tool_blocks.keys()):
                         tb = tool_blocks[idx]
