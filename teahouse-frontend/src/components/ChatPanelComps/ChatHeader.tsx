@@ -187,7 +187,7 @@ export function ChatHeader({
               <Menu className="h-4 w-4 text-muted-foreground shrink-0" />
             </button>
 
-            {usage && usage.threshold != null && usage.estimated_tokens != null && (
+            {usage && usage.threshold != null && usage.used_tokens != null && (
               <div className="text-[10px] text-muted-foreground min-w-0 overflow-hidden">
                 <ContextUsageBar usage={usage} textFirst />
               </div>

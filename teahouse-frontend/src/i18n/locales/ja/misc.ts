@@ -192,5 +192,9 @@ export const jaMisc = {
     mermaidPending: "図表を生成中、完成後に表示されます…",
     copy: "コピー",
     copied: "コピーしました",
+    cacheHit: "キャッシュヒット {{pct}}%",
+    tokensOut: "出力 {{n}} tokens",
+    elapsedSec: "{{s}}s",
+    usageTitle: "キャッシュ読込 {{cached}} / 入力 {{input}}（書込 {{write}}）· 出力 {{output}} · 所要 {{elapsed}}s",
   },
 }

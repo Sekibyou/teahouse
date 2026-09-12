@@ -23,11 +23,11 @@ const STATUS_CLASS: Record<string, string> = {
 }
 
 export function ContextUsageBar({ usage, textFirst = false }: { usage: ContextUsage | null; textFirst?: boolean }) {
-  if (!usage || usage.threshold == null || usage.estimated_tokens == null) return null
-  const est = usage.estimated_tokens
+  if (!usage || usage.threshold == null || usage.used_tokens == null) return null
+  const used = usage.used_tokens
   const threshold = usage.threshold
-  const pct = (est / threshold) * 100
-  const estText = est >= 1000 ? (est / 1000).toFixed(1) : String(est)
+  const pct = (used / threshold) * 100
+  const estText = used >= 1000 ? (used / 1000).toFixed(1) : String(used)
   const thText = (threshold / 1000).toFixed(1)
   const barCls = STATUS_CLASS[usage.status ?? "normal"] ?? STATUS_CLASS.normal
   const braille = (
@@ -38,6 +38,9 @@ export function ContextUsageBar({ usage, textFirst = false }: { usage: ContextUs
   )
   const text = (
     <span>
+      {/* `~` marks the chars/3 fallback, which can be off by a wide margin —
+          before any call has reported usage there is nothing real to show. */}
+      {usage.estimated ? "~" : ""}
       {estText}/{thText}k tokens
     </span>
   )

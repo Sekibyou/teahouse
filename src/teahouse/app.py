@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -548,7 +549,13 @@ async def _tool_use_loop(
     # already had aren't lost from the record.
     _pending = {"content": "", "reasoning": ""}
 
-    def _flush_assistant(content: str, blocks: list[dict] | None = None, order: int | None = None) -> None:
+    def _flush_assistant(
+        content: str,
+        blocks: list[dict] | None = None,
+        order: int | None = None,
+        usage: dict | None = None,
+        elapsed: float | None = None,
+    ) -> None:
         sessions.append_assistant(
             instance_dir,
             content=content,
@@ -556,6 +563,8 @@ async def _tool_use_loop(
             blocks=blocks or [],
             session_id=sid,
             order=order,
+            usage=usage,
+            elapsed=elapsed,
         )
         _pending["content"] = ""
         _pending["reasoning"] = ""
@@ -622,6 +631,9 @@ async def _tool_use_loop(
     # this sits outside the round loop, mid-loop pending messages are NOT re-wrapped.
     if user_tail_tpl is not None:
         _max_ctx = getattr(client.config, "max_context", 0) or 0
+        # Last round's real measurement — this round's request hasn't been sent
+        # yet, so it is the freshest truth available at render time.
+        _real_usage = sessions.latest_usage(instance_dir, sid)
         for _m in reversed(msg):
             if _m.get("role") != "user":
                 continue
@@ -631,6 +643,7 @@ async def _tool_use_loop(
                     user_tail_tpl, instance_dir, msg, tool_system,
                     _max_ctx, _c,
                     max_depth=parse_depth,
+                    real_usage=_real_usage,
                 )
                 break
             if isinstance(_c, list):
@@ -642,6 +655,7 @@ async def _tool_use_loop(
                             user_tail_tpl, instance_dir, msg, tool_system,
                             _max_ctx, _part["text"],
                             max_depth=parse_depth,
+                            real_usage=_real_usage,
                         )
                         break
                 break
@@ -697,6 +711,15 @@ async def _tool_use_loop(
         _enqueued: set[int] = set()
         _held: dict[int, tuple[int, str, str, dict]] = {}
         _gate_next = 0
+        # This round's vendor-reported token accounting, captured from the usage
+        # event the streamer emits at end-of-stream. Stays None when the call was
+        # cut short (interrupt / error) — an absent measurement must never be
+        # written, so the session keeps reporting the last real one.
+        round_usage: dict | None = None
+        # Wall time of this round's LLM call (request → end of stream). Measured
+        # here rather than around the whole round: the tool execution that follows
+        # is its own long pole and would drown out the generation latency.
+        round_elapsed: float | None = None
 
         def _ensure_exec_task() -> None:
             nonlocal _exec_task
@@ -794,7 +817,7 @@ async def _tool_use_loop(
                     "type": "tool_result", "id": info["id"], "name": info["name"],
                     "result": "(interrupted)",
                 }, 1 + _i))
-            _flush_assistant(_pending["content"], blocks, round_order)
+            _flush_assistant(_pending["content"], blocks, round_order, round_usage, round_elapsed)
 
         # ── Phase 0.5: Absorb user messages queued mid-generation ──
         # Before this round's message is sent to the API, drain any user message
@@ -807,6 +830,7 @@ async def _tool_use_loop(
             msg.append({"role": "user", "content": _content})
 
         # ── Phase 1: Streaming LLM call ──
+        _round_t0 = time.monotonic()
         collected_text = ""
         all_tool_calls = None  # stores {"type": "tool_calls", "calls": [...]} when received
         try:
@@ -861,6 +885,17 @@ async def _tool_use_loop(
                         _release_gated()
                 elif event["type"] == "tool_calls":
                     all_tool_calls = event["calls"]
+                elif event["type"] == "usage":
+                    # End-of-stream token accounting from the vendor. Broadcast it
+                    # (no `sub` — it belongs to the round, not to a block, and a
+                    # sub would make the frontend open a spurious bubble) and hold
+                    # it for persistence with this round's record below.
+                    round_usage = {
+                        k: event.get(k, 0)
+                        for k in ("input_total", "cached_read", "cache_write", "output")
+                    }
+                    round_elapsed = round(time.monotonic() - _round_t0, 1)
+                    yield _tag({"type": "usage", **round_usage, "elapsed": round_elapsed})
                 elif "error" in event:
                     yield _tag({"type": "text", "text": f"LLM API error: {event['error']}"}, 0)
                     await _stop_exec_task()
@@ -885,7 +920,7 @@ async def _tool_use_loop(
         # ── Phase 2: If no tool calls, done ──
         if not all_tool_calls:
             # Persist the plain-text assistant reply (no tool blocks).
-            _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None, round_order)
+            _flush_assistant(collected_text, [{"type": "text", "text": collected_text}] if collected_text else None, round_order, round_usage, round_elapsed)
             # Signal the frontend to close this bubble (mirrors Phase 4's assistant_done).
             yield _tag({"type": "assistant_done"})
             return
@@ -966,7 +1001,7 @@ async def _tool_use_loop(
             _feed_tool_result(msg, api_style, blk["id"], blk["name"], blk["result"])
 
         # Flush this round's completed assistant record (reasoning + text + all tool results)
-        _flush_assistant(collected_text, _round_blocks, round_order)
+        _flush_assistant(collected_text, _round_blocks, round_order, round_usage, round_elapsed)
         # Signal the frontend that this tool round is a complete assistant turn, so
         # it can close the current bubble and start a fresh one — matching the
         # per-round records later replayed from .sessions/.
@@ -986,6 +1021,9 @@ async def _tool_use_loop(
     })
 
     _tail_text = ""
+    _tail_usage: dict | None = None
+    _tail_elapsed: float | None = None
+    _tail_t0 = time.monotonic()
     try:
         async for event in client.send_message_stream_tools(msg, system=tool_system, tools=tools):
             if event["type"] == "text":
@@ -1004,6 +1042,15 @@ async def _tool_use_loop(
                 _pending["reasoning"] += chunk
                 task_tracker.stats_add_tokens(instance_dir.name, sid, len(chunk))
                 yield event
+            elif event["type"] == "usage":
+                # The tail is its own API call — it needs its own capture, or the
+                # record it persists below would be the only one without usage.
+                _tail_usage = {
+                    k: event.get(k, 0)
+                    for k in ("input_total", "cached_read", "cache_write", "output")
+                }
+                _tail_elapsed = round(time.monotonic() - _tail_t0, 1)
+                yield event
             elif event["type"] == "tool_calls":
                 # If LLM returns tool calls even at max, execute them inline
                 pass
@@ -1012,12 +1059,14 @@ async def _tool_use_loop(
             _flush_assistant(
                 _pending["content"],
                 [{"type": "text", "text": _pending["content"]}] if _pending["content"] else None,
+                usage=_tail_usage,
+                elapsed=_tail_elapsed,
             )
         raise
     else:
         # Normal completion: persist the final tail reply as its own assistant record.
         if _tail_text:
-            _flush_assistant(_tail_text, [{"type": "text", "text": _tail_text}])
+            _flush_assistant(_tail_text, [{"type": "text", "text": _tail_text}], usage=_tail_usage, elapsed=_tail_elapsed)
 
 
 @app.post("/v1/chat")

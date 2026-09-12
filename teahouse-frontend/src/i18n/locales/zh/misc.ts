@@ -193,5 +193,9 @@ export const zhMisc = {
     mermaidPending: "图表生成中，输出完整后自动显示…",
     copy: "复制",
     copied: "已复制",
+    cacheHit: "缓存命中 {{pct}}%",
+    tokensOut: "输出 {{n}} tokens",
+    elapsedSec: "{{s}}s",
+    usageTitle: "缓存读 {{cached}} / 输入 {{input}}（写入 {{write}}）· 输出 {{output}} · 耗时 {{elapsed}}s",
   },
 }

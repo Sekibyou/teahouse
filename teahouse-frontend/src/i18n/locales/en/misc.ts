@@ -192,5 +192,9 @@ export const enMisc = {
     mermaidPending: "Diagram generating — will appear when complete…",
     copy: "Copy",
     copied: "Copied",
+    cacheHit: "cache hit {{pct}}%",
+    tokensOut: "out {{n}} tokens",
+    elapsedSec: "{{s}}s",
+    usageTitle: "cache read {{cached}} / input {{input}} (write {{write}}) · output {{output}} · took {{elapsed}}s",
   },
 }

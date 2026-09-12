@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Sun, Moon, Languages, Download, ExternalLink, ArrowUp, Loader2, Type } from "lucide-react"
+import { Sun, Moon, Languages, Download, ExternalLink, ArrowUp, Loader2, Type, Info } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -9,6 +10,7 @@ import { SavedBadge } from "@/components/SavedBadge"
 import { useCurrentLang, useLangStore, SUPPORTED_LANGS, LANG_LABELS } from "@/i18n/config"
 import { useThemeStore } from "@/stores/themeStore"
 import { useUiScaleStore, UI_SCALE_PRESETS } from "@/stores/uiScaleStore"
+import { useExtraInfoStore } from "@/stores/extraInfoStore"
 import { useNewVersion } from "@/stores/versionStore"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { appSettingsApi } from "@/lib/api"
@@ -23,13 +25,14 @@ export function GeneralPanel() {
   const isDark = useThemeStore((s) => s.isDark)
   const setTheme = useThemeStore((s) => s.setTheme)
 
-  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15, max_parse_depth: 10, ui_scale: "normal" })
+  const [appSettings, setAppSettings] = useState<AppSettings>({ max_retries: 3, max_tool_rounds: 15, max_parse_depth: 10, ui_scale: "normal", show_extra_info: true })
   const [settingsLoading, setSettingsLoading] = useState(false)
   const settingSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [savedSettingKeys, setSavedSettingKeys] = useState<Set<string>>(new Set())
   const savedFlashTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const scaleId = useUiScaleStore((s) => s.scaleId)
   const setScaleId = useUiScaleStore((s) => s.setScaleId)
+  const setShowExtraInfo = useExtraInfoStore((s) => s.setShow)
 
   useEffect(() => {
     let alive = true
@@ -39,11 +42,12 @@ export function GeneralPanel() {
         setAppSettings(res.data!)
         // 后端持久化的字号档 → 应用到 DOM（store 初始化后立即对齐一次）
         if (res.data!.ui_scale) setScaleId(res.data!.ui_scale)
+        setShowExtraInfo(res.data!.show_extra_info)
       }
       if (alive) setSettingsLoading(false)
     })
     return () => { alive = false }
-  }, [setScaleId])
+  }, [setScaleId, setShowExtraInfo])
 
   useEffect(() => () => {
     if (settingSaveTimer.current) clearTimeout(settingSaveTimer.current)
@@ -86,6 +90,12 @@ export function GeneralPanel() {
   const changeScale = (v: string) => {
     setScaleId(v)
     setAppSetting({ ui_scale: v })
+  }
+
+  // 额外信息开关：同样先落 store（气泡即时响应），再存后端持久化
+  const changeExtraInfo = (v: boolean) => {
+    setShowExtraInfo(v)
+    setAppSetting({ show_extra_info: v })
   }
 
   return (
@@ -133,6 +143,27 @@ export function GeneralPanel() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+      </div>
+
+      <div className="rounded-lg border p-4 mb-5 break-inside-avoid">
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-medium flex items-center gap-1.5">
+              <Info className="h-3.5 w-3.5" />
+              {t("general.showExtraInfo")}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t("general.showExtraInfoDesc")}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={appSettings.show_extra_info}
+              onCheckedChange={changeExtraInfo}
+            />
+            <SavedBadge show={savedSettingKeys.has("show_extra_info")} />
+          </div>
         </div>
       </div>
 

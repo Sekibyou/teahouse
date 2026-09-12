@@ -134,6 +134,21 @@ def estimate_context_tokens(
     return total // 3
 
 
+def usage_context_tokens(usage: dict | None) -> int | None:
+    """Context size implied by a recorded usage block, or None if there is none.
+
+    Next round's prompt is roughly *this* round's prompt plus this round's reply
+    (the reply is replayed back as history), so ``input_total + output`` tracks
+    the live context better than either half alone. Vendor-neutral by
+    construction: ``normalize_usage`` sums the vendor's disjoint input buckets
+    into ``input_total``.
+    """
+    if not usage:
+        return None
+    total = int(usage.get("input_total") or 0) + int(usage.get("output") or 0)
+    return total or None
+
+
 async def run_compact(
     client: LLMClient,
     instance_dir: Path,

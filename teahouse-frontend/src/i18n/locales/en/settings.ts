@@ -179,6 +179,8 @@ If the template omits \${teahouse.user_input}, the engine auto-appends a divider
     languageDesc: "Change the UI language",
     fontScale: "Font size",
     fontScaleDesc: "Adjust the overall font size of the UI (director / system text / editor).",
+    showExtraInfo: "Show extra info",
+    showExtraInfoDesc: "Show per-round stats under each director reply: output tokens, call duration, cache hit rate (hover for the full breakdown).",
     small: "Small",
     normal: "Standard",
     large: "Large",

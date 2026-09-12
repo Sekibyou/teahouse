@@ -179,6 +179,8 @@ user_tail（任意）—— **今回の最新ユーザーメッセージ**をテ
     languageDesc: "インターフェース言語を切り替えます",
     fontScale: "文字サイズ",
     fontScaleDesc: "UI（監督 / システム文字 / エディタ）の全体の文字サイズを調整します。",
+    showExtraInfo: "追加情報を表示",
+    showExtraInfoDesc: "監督の各応答の下に、そのターンの統計（出力トークン数・所要時間・キャッシュヒット率）を表示します（ホバーで詳細）。",
     small: "小",
     normal: "標準",
     large: "大",

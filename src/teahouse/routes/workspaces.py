@@ -1925,14 +1925,22 @@ async def get_context_usage(
     session_id: str = Query(default="main"),
     user: UserInfo = Depends(require_user),
 ):
-    """Estimate the active session's context usage vs the auto-compact threshold.
+    """Report the active session's context usage vs the auto-compact threshold.
 
-    ``threshold`` = resolved director profile's ``max_context`` x 0.7 (the
-    post-flight compact ratio), which the frontend usage bar treats as full.
-    ``status`` is ``danger`` (at/over threshold → auto-compact imminent),
-    ``warning`` (>= 85% of threshold) or ``normal``. When the director slot is
-    not configured, returns nulls so the frontend hides the bar.
+    ``threshold`` = resolved slot profile's ``max_context`` x 0.7 (the post-flight
+    compact ratio), which the frontend usage bar treats as full. ``status`` is
+    ``danger`` (at/over threshold → auto-compact imminent), ``warning`` (>= 85% of
+    threshold) or ``normal``. When the slot is not configured, returns nulls so
+    the frontend hides the bar.
+
+    ``used_tokens`` prefers the vendor's own accounting for the session's last API
+    call; ``estimated`` flags the chars/3 fallback used before any call has
+    reported usage. DM sessions resolve the ``dm`` slot (falling back to
+    ``director``) — measuring them against the director's ``max_context`` would
+    report a threshold that does not govern them.
     """
+    from .. import sessions
+
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
@@ -1940,33 +1948,46 @@ async def get_context_usage(
     instance_dir = _resolve_instance_dir(inst)
 
     from ..app import _resolve_slot_client
-    from ..compact import POST_COMPACT_RATIO, estimate_context_tokens
+    from ..compact import POST_COMPACT_RATIO, estimate_context_tokens, usage_context_tokens
 
-    try:
-        client = await _resolve_slot_client(u["id"], "director")
-    except HTTPException:
-        return {"session_id": session_id, "estimated_tokens": None,
+    def _unconfigured() -> dict:
+        return {"session_id": session_id, "used_tokens": None, "estimated": None,
                 "max_context": None, "threshold": None, "status": None}
+
+    slot = "dm" if session_id == sessions.DM_SESSION_ID else "director"
+    try:
+        client = await _resolve_slot_client(u["id"], slot)
+    except HTTPException:
+        if slot != "dm":
+            return _unconfigured()
+        try:
+            client = await _resolve_slot_client(u["id"], "director")
+        except HTTPException:
+            return _unconfigured()
 
     max_ctx = client.config.max_context
     threshold = int(max_ctx * POST_COMPACT_RATIO)
 
-    from .. import sessions
-    msgs = sessions.records_to_context(
-        instance_dir, client.api_style, session_id=session_id
-    )
-    est = estimate_context_tokens(msgs)
+    real = usage_context_tokens(sessions.latest_usage(instance_dir, session_id))
+    if real is not None:
+        used, estimated = real, False
+    else:
+        msgs = sessions.records_to_context(
+            instance_dir, client.api_style, session_id=session_id
+        )
+        used, estimated = estimate_context_tokens(msgs), True
 
-    if est >= threshold:
+    if used >= threshold:
         status = "danger"
-    elif est >= threshold * 0.85:
+    elif used >= threshold * 0.85:
         status = "warning"
     else:
         status = "normal"
 
     return {
         "session_id": session_id,
-        "estimated_tokens": est,
+        "used_tokens": used,
+        "estimated": estimated,
         "max_context": max_ctx,
         "threshold": threshold,
         "status": status,

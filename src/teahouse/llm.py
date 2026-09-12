@@ -57,6 +57,52 @@ def normalize_api_url(url: str, api_format: str = "openai") -> str:
         return url + "/v1/chat/completions"
 
 
+# ===== Usage normalization =====
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_usage(style: str, raw: dict | None) -> dict | None:
+    """Normalize a vendor usage block into provider-neutral token counts.
+
+    Returns ``{input_total, cached_read, cache_write, output}``, or None when the
+    block carries nothing usable. The two vendors bucket input differently:
+    OpenAI's ``prompt_tokens`` already counts the cached ones, while Anthropic's
+    three input fields are disjoint buckets. Summing them makes ``input_total``
+    the *full* prompt length in both cases, so ``cached_read / input_total`` is a
+    cache hit rate that can be compared across vendors.
+    """
+    if not raw:
+        return None
+
+    if style == "anthropic":
+        cached_read = _coerce_int(raw.get("cache_read_input_tokens"))
+        cache_write = _coerce_int(raw.get("cache_creation_input_tokens"))
+        input_total = _coerce_int(raw.get("input_tokens")) + cached_read + cache_write
+        output = _coerce_int(raw.get("output_tokens"))
+    else:
+        cached_read = _coerce_int((raw.get("prompt_tokens_details") or {}).get("cached_tokens"))
+        # Some OpenAI-compatible vendors report cache writes too (the Responses
+        # API namesakes); absent elsewhere.
+        cache_write = _coerce_int((raw.get("input_tokens_details") or {}).get("cache_write_tokens"))
+        input_total = _coerce_int(raw.get("prompt_tokens"))
+        output = _coerce_int(raw.get("completion_tokens"))
+
+    if not input_total and not output:
+        return None
+
+    return {
+        "input_total": input_total,
+        "cached_read": cached_read,
+        "cache_write": cache_write,
+        "output": output,
+    }
+
+
 # ===== Message preprocessing (from take_out llm_api_adapter.py) =====
 
 def _as_parts(content: Any) -> list[dict]:
@@ -159,6 +205,14 @@ class LLMClient:
         # Include tools if provided via kwargs
         tools = kwargs.pop("tools", None)
         if tools:
+            if self.api_style == "anthropic":
+                # Prompt-cache breakpoint on the last tool. Tools render BEFORE
+                # system and messages, so one breakpoint here caches the whole
+                # tool block alongside the system prompt below. Anthropic caches
+                # nothing without an explicit breakpoint, which would leave every
+                # round reporting a 0% hit rate.
+                tools = [dict(t) for t in tools]
+                tools[-1]["cache_control"] = {"type": "ephemeral"}
             body["tools"] = tools
 
         messages = preprocess_messages(messages, self.api_style)
@@ -190,7 +244,11 @@ class LLMClient:
         if self.api_style == "anthropic":
             body["messages"] = messages
             if system:
-                body["system"] = system
+                # Block form (not a bare string) so the breakpoint can sit on the
+                # end of the system prompt — the stable part of every request.
+                body["system"] = [
+                    {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+                ]
             return body
 
         # openai
@@ -396,6 +454,8 @@ class LLMClient:
     async def _stream_openai_tools(self, body: dict) -> AsyncGenerator[dict, None]:
         """Stream OpenAI response, accumulating tool_call fragments. Yields text chunks and final tool_calls."""
         tool_call_acc: dict[int, dict] = {}
+        # Last usage block seen this stream (see the choices guard below).
+        usage: dict | None = None
         # Ordinals (0-based position among this round's tool calls) already
         # announced as complete. When a delta for a higher index shows up, every
         # lower index is necessarily finished — the caller may start executing
@@ -438,6 +498,14 @@ class LLMClient:
                         data = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
+                    # Usage arrives on a trailing chunk whose `choices` is EMPTY,
+                    # so it must be read before the guard below drops that chunk.
+                    # (Some vendors instead attach it to a chunk that does carry
+                    # choices — reading unconditionally covers both.)
+                    _u = normalize_usage("openai", data.get("usage"))
+                    if _u:
+                        usage = _u
+
                     choices = data.get("choices", [])
                     if not choices:
                         continue
@@ -482,6 +550,9 @@ class LLMClient:
                         for ev in _take_ready(_max_idx):
                             yield ev
 
+                if usage:
+                    yield {"type": "usage", **usage}
+
                 # Stream done — announce whatever is still pending, then yield the
                 # assembled tool calls.
                 if tool_call_acc:
@@ -499,6 +570,10 @@ class LLMClient:
         # Content block indexes whose tool_use block already closed (that is the
         # protocol's per-tool "arguments are complete" signal).
         announced: set[int] = set()
+        # Usage is split across two events: `message_start` carries the whole
+        # input side (including both cache buckets), `message_delta` the running
+        # output count. Accumulate both, normalize once at the end.
+        usage_raw: dict = {}
         first_chunk = True
 
         def _ready_event(idx: int) -> dict:
@@ -535,6 +610,11 @@ class LLMClient:
                     if first_chunk:
                         first_chunk = False
                         yield {"type": "text", "text": ""}
+
+                    if current_event == "message_start":
+                        usage_raw.update((data.get("message") or {}).get("usage") or {})
+                    elif current_event == "message_delta":
+                        usage_raw.update(data.get("usage") or {})
 
                     if current_event == "content_block_start":
                         block_index = data.get("index", block_index + 1)
@@ -578,6 +658,10 @@ class LLMClient:
 
                     elif current_event == "message_stop":
                         break
+
+                _u = normalize_usage("anthropic", usage_raw)
+                if _u:
+                    yield {"type": "usage", **_u}
 
                 if tool_blocks:
                     # Announce any tool block whose stop event never arrived.

@@ -179,6 +179,8 @@ user_tail（可选）—— 把**本轮最新用户消息**用模板包裹，承
     languageDesc: "切换界面语言",
     fontScale: "字号",
     fontScaleDesc: "调整界面（导演栏 / 系统文字 / 编辑器）的整体字号。",
+    showExtraInfo: "显示额外信息",
+    showExtraInfoDesc: "在导演栏每轮回复下显示本轮统计：输出 token 数、调用耗时、缓存命中率（悬停看完整明细）。",
     small: "小",
     normal: "标准",
     large: "大",

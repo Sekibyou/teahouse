@@ -350,8 +350,19 @@ def _resolve_text(
     return splice_re.sub(lambda m: teahouse_values[m.group(1)], resolved)
 
 
-def estimate_usage_text(messages: list[dict], system_prompt: str, max_context: int) -> str:
+def estimate_usage_text(
+    messages: list[dict],
+    system_prompt: str,
+    max_context: int,
+    real_usage: dict | None = None,
+) -> str:
     """A one-line context-usage report for `${teahouse.usage}`.
+
+    Prefers the vendor's own token accounting from the last API call
+    (``real_usage``, as recorded on the newest assistant record); falls back to
+    the chars/3 estimate when no call has reported usage yet. Only the previous
+    round's measurement is available here — user_tail is rendered before this
+    round's request is sent — which is inherent, not a bug.
 
     Two escalation tiers, both naming the `PruneContext` tool (the delivery channel
     for the proactive-prune trigger — the tool only estimates by default, so
@@ -362,14 +373,24 @@ def estimate_usage_text(messages: list[dict], system_prompt: str, max_context: i
     The hint tier sits BELOW the compact threshold on purpose: user_tail is injected
     once per round, so the agent needs a round of lead time to act before compact.
     """
-    from .compact import estimate_context_tokens, POST_COMPACT_RATIO, PRUNE_HINT_RATIO
+    from .compact import (
+        estimate_context_tokens,
+        usage_context_tokens,
+        POST_COMPACT_RATIO,
+        PRUNE_HINT_RATIO,
+    )
 
-    est = estimate_context_tokens(messages, system_prompt)
+    real = usage_context_tokens(real_usage)
+    if real is not None:
+        est, approx = real, ""
+    else:
+        est, approx = estimate_context_tokens(messages, system_prompt), "约 "
+
     if not max_context:
-        return f"上下文用量：约 {est:,} tokens。"
+        return f"上下文用量：{approx}{est:,} tokens。"
     pct = est / max_context
     compact_at = int(max_context * POST_COMPACT_RATIO)
-    base = f"上下文用量：约 {est:,} tokens / {max_context:,}（{pct:.0%}）。"
+    base = f"上下文用量：{approx}{est:,} tokens / {max_context:,}（{pct:.0%}）。"
     if est >= compact_at:
         return base + (
             f"已达自动压缩阈值（{compact_at:,} tokens），本轮结束可能触发压缩。"
@@ -391,6 +412,7 @@ def render_user_tail(
     max_context: int,
     user_input: str,
     max_depth: int = MAX_RESOLVE_DEPTH,
+    real_usage: dict | None = None,
 ) -> str:
     """Render a preset `user_tail` template into the trailing user message's content.
 
@@ -403,7 +425,9 @@ def render_user_tail(
     """
     variables = build_template_variables(instance_dir, "")
     variables["teahouse.user_input"] = user_input or ""
-    variables["teahouse.usage"] = estimate_usage_text(messages, system_prompt, max_context)
+    variables["teahouse.usage"] = estimate_usage_text(
+        messages, system_prompt, max_context, real_usage
+    )
     variables["teahouse.big_files"] = format_big_files(_scan_big_files(instance_dir))
 
     raw = template if USER_INPUT_PLACEHOLDER in template else template + USER_TAIL_SUFFIX

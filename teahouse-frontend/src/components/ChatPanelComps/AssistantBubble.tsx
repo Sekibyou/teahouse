@@ -7,10 +7,11 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { Components } from "react-markdown"
 import { isMermaidLanguage, MermaidDiagram, isPendingMermaidLanguage, MermaidPending, maskUnclosedMermaidTail } from "@/components/MermaidDiagram"
-import type { RichMessage } from "./types"
+import type { RichMessage, RoundUsage } from "./types"
 import { formatBlockArgs } from "./utils"
 import { TodoWriteResult } from "./TodoWriteResult"
 import { useTranslation } from "react-i18next"
+import { useExtraInfoStore } from "@/stores/extraInfoStore"
 
 // chat 文本块同样支持 ```mermaid 图表：识别 language-mermaid 的 code 块渲染为
 // 图表；fenced 代码块会被 react-markdown 包进 <pre>，pre 覆盖识别 mermaid 时
@@ -94,6 +95,35 @@ const markdownComponents: Components = {
       : <pre>{children}</pre>
     return <FencedShell source={source} visual={visual} />
   },
+}
+
+// 本轮额外信息角标：缓存命中率 / 本轮输出 token / 调用耗时，明细挂 title。
+// input_total 为 0 说明这次调用没回传可用计量，此时直接不显示而不是画一个 0%。
+// 是否显示由用户偏好（设置→通用）决定——store 在此订阅，开关一拨即时生效。
+function UsageFooter({ usage, elapsed }: { usage: RoundUsage; elapsed?: number }) {
+  const { t } = useTranslation("misc")
+  const showExtra = useExtraInfoStore((s) => s.show)
+  if (!showExtra || !usage.input_total) return null
+  const hit = (usage.cached_read / usage.input_total) * 100
+  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  return (
+    <div
+      className="text-xs font-mono text-muted-foreground/70 pl-1"
+      title={t("assistant.usageTitle", {
+        cached: fmt(usage.cached_read),
+        input: fmt(usage.input_total),
+        write: fmt(usage.cache_write),
+        output: fmt(usage.output),
+        elapsed: elapsed != null ? elapsed.toFixed(1) : "—",
+      })}
+    >
+      {[
+        t("assistant.cacheHit", { pct: hit.toFixed(1) }),
+        t("assistant.tokensOut", { n: fmt(usage.output) }),
+        ...(elapsed != null ? [t("assistant.elapsedSec", { s: elapsed.toFixed(1) })] : []),
+      ].join(" · ")}
+    </div>
+  )
 }
 
 // ---- Assistant message bubble with thinking block ----
@@ -215,6 +245,9 @@ export const AssistantBubble = memo(function AssistantBubble({
           {content}
         </div>
       )}
+
+      {/* 本轮额外信息角标 — 后端只把它挂在轮次最后一个气泡上，故此处无需判末位 */}
+      {message.usage && <UsageFooter usage={message.usage} elapsed={message.elapsed} />}
     </div>
   )
 }, (prevProps, nextProps) =>

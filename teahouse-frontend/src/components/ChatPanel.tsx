@@ -12,7 +12,7 @@ import type { FloorsStats, ContextUsage } from "@/lib/types"
 import { toast } from "sonner"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import { FloorSummaryText } from "./ChatPanelComps/FloorSummaryText"
-import type { MsgStatus, ContentBlock, RichMessage } from "./ChatPanelComps/types"
+import type { MsgStatus, ContentBlock, RichMessage, RoundUsage } from "./ChatPanelComps/types"
 import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath } from "./ChatPanelComps/utils"
 import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
@@ -654,6 +654,36 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
               return
             }
 
+            if (evType === "usage") {
+              // Vendor token accounting for this round, emitted at end-of-stream —
+              // by then every bubble of the round already exists. It hangs on the
+              // round's LAST bubble (the renderer shows the badge there) and so
+              // deliberately bypasses `bubbleFor`: the event carries no `sub`, and
+              // bubbleFor would create a spurious empty bubble for it.
+              const roundUsage: RoundUsage = {
+                input_total: data.input_total ?? 0,
+                cached_read: data.cached_read ?? 0,
+                cache_write: data.cache_write ?? 0,
+                output: data.output ?? 0,
+              }
+              const roundElapsed = typeof data.elapsed === "number" ? data.elapsed : undefined
+              setMessagesFor(sid, (prev) => {
+                let last = -1
+                for (let i = 0; i < prev.length; i++) {
+                  if (prev[i].role === "assistant" && prev[i].order === order) last = i
+                }
+                if (last < 0) return prev
+                const next = prev.slice()
+                next[last] = {
+                  ...next[last],
+                  usage: roundUsage,
+                  ...(roundElapsed !== undefined ? { elapsed: roundElapsed } : {}),
+                }
+                return next
+              })
+              return
+            }
+
             if (evType === "tool_call") {
               setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                 ...m,
@@ -855,7 +885,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
 
   // Convert a backend session record (already in bubble view, carrying
   // order/sub/subRank) or an in-flight local message into RichMessage shape.
-  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number; images?: { path: string; mime: string }[] }): RichMessage {
+  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number; images?: { path: string; mime: string }[]; usage?: RoundUsage; elapsed?: number }): RichMessage {
     const order = typeof rec.order === "number" ? rec.order : 0
     const sub: number | "r" | null = rec.sub === undefined || rec.sub === null ? null : (rec.sub === "r" ? "r" : (typeof rec.sub === "number" ? rec.sub : null))
     const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
@@ -872,6 +902,8 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       sub,
       subRank,
       ...(rec.images && rec.images.length > 0 ? { images: rec.images } : {}),
+      ...(rec.usage ? { usage: rec.usage } : {}),
+      ...(rec.elapsed != null ? { elapsed: rec.elapsed } : {}),
       ...(auto && rec.role === "user" ? autoKindFields(auto) : {}),
     }
   }

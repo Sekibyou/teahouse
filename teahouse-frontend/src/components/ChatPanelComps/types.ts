@@ -19,6 +19,19 @@ export interface ContentBlock {
  * user 为 null）。``subRank`` 是数值排序 key（reasoning=-1, blocks 0..n，
  * user=0），前端按 ``(order, subRank)`` 纯排序渲染，不再用状态推断。
  */
+/**
+ * 一次 API 调用的真实 token 计量（后端 normalize_usage 归一后）。
+ * 一轮对话 = 一条 assistant 记录 = 一次调用，所以它天然按轮次归属。
+ * `input_total` 是完整输入（OpenAI 的 prompt_tokens 已含 cached；Anthropic
+ * 三个互斥桶求和），故 `cached_read / input_total` 跨厂商可比。
+ */
+export interface RoundUsage {
+  input_total: number
+  cached_read: number
+  cache_write: number
+  output: number
+}
+
 export interface RichMessage {
   id: string
   role: "user" | "assistant"
@@ -41,5 +54,9 @@ export interface RichMessage {
   autoSid?: string
   /** 用户气泡附带的图片（实例内路径，渲染时经 readAsset 取 data URI） */
   images?: { path: string; mime: string }[]
+  /** 本轮的厂商真实用量；只挂在该轮**最后一个**气泡上，角标即在此渲染 */
+  usage?: RoundUsage
+  /** 本轮 LLM 调用耗时（秒，请求→流结束）；与 usage 同为"最后气泡"承载 */
+  elapsed?: number
 }
 

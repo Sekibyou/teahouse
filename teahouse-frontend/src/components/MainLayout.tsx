@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
 import { useNewVersion } from "@/stores/versionStore"
 import { useUiScaleStore } from "@/stores/uiScaleStore"
+import { useExtraInfoStore } from "@/stores/extraInfoStore"
 import { dialogStackStore } from "@/stores/dialogStackStore"
 import { appSettingsApi } from "@/lib/api"
 
@@ -33,20 +34,26 @@ export function MainLayout() {
   const newVersion = useNewVersion()
   const setScaleId = useUiScaleStore((s) => s.setScaleId)
   const resetScale = useUiScaleStore((s) => s.reset)
+  const setShowExtraInfo = useExtraInfoStore((s) => s.setShow)
+  const resetExtraInfo = useExtraInfoStore((s) => s.reset)
 
-  // 登录后拉取用户字号档并应用到 DOM；未认证（登出）时复位到默认档，
-  // 避免上一账号的字号残留到下一账号/登录页。
+  // 登录后拉取用户字号档与额外信息开关并应用到 DOM；未认证（登出）时复位到
+  // 默认，避免上一账号的偏好残留到下一账号/登录页。
   useEffect(() => {
     if (!isAuthenticated || isLoading) {
       resetScale()
+      resetExtraInfo()
       return
     }
     let alive = true
     appSettingsApi.get().then((res) => {
-      if (alive && res.ok && res.data?.ui_scale) setScaleId(res.data.ui_scale)
+      if (!alive || !res.ok) return
+      if (res.data?.ui_scale) setScaleId(res.data.ui_scale)
+      // `false` is a meaningful value here — test the type, not truthiness.
+      if (typeof res.data?.show_extra_info === "boolean") setShowExtraInfo(res.data.show_extra_info)
     })
     return () => { alive = false }
-  }, [isAuthenticated, isLoading, setScaleId, resetScale])
+  }, [isAuthenticated, isLoading, setScaleId, resetScale, setShowExtraInfo, resetExtraInfo])
 
   useEffect(() => {
     if (isLoading) return

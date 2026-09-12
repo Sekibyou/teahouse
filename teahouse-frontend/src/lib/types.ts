@@ -164,6 +164,8 @@ export interface AppSettings {
   max_tool_rounds: number
   max_parse_depth: number
   ui_scale: string
+  /** 导演栏气泡上是否显示每轮额外信息（token 计数 / 耗时 / 缓存命中率） */
+  show_extra_info: boolean
 }
 
 export interface AvailableModel {
@@ -257,7 +259,10 @@ export interface FloorsStats {
 
 export interface ContextUsage {
   session_id: string
-  estimated_tokens: number | null
+  /** Context size implied by the session's last API call (vendor-reported when available). */
+  used_tokens: number | null
+  /** true when used_tokens is the chars/3 fallback, not a vendor count */
+  estimated: boolean | null
   max_context: number | null
   /** max_context * 0.7 — the auto-compact threshold the usage bar treats as full */
   threshold: number | null

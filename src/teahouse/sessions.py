@@ -186,6 +186,8 @@ def append_assistant(
     blocks: list[dict] | None = None,
     session_id: str = MAIN_SESSION_ID,
     order: int | None = None,
+    usage: dict | None = None,
+    elapsed: float | None = None,
 ) -> int:
     """Persist one finished assistant record (reasoning + interleaved blocks).
 
@@ -194,6 +196,14 @@ def append_assistant(
     explicitly when a session allocator reserved it (so the persisted order
     matches the round's streaming events and any interleaved reservations).
     Returns the stamped order.
+
+    ``usage`` is the vendor-reported token accounting for this round's API call
+    (one record == exactly one call). Stored as a sibling key so
+    ``records_to_context`` — which reads only ``content``/``blocks`` — rebuilds
+    the LLM context unaffected, and legacy records stay byte-identical.
+
+    ``elapsed`` is the seconds that call took (request → end of stream). Kept
+    apart from ``usage`` because it is our own measurement, not a vendor figure.
     """
     rec = {
         "role": "assistant",
@@ -201,6 +211,10 @@ def append_assistant(
         "reasoning": reasoning,
         "blocks": blocks or [],
     }
+    if usage:
+        rec["usage"] = usage
+    if elapsed is not None:
+        rec["elapsed"] = elapsed
     if order is not None:
         rec["order"] = order
     return append_record(instance_dir, rec, session_id=session_id)
@@ -258,6 +272,23 @@ def load_records(
     return records[start:end], total
 
 
+def latest_usage(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> dict | None:
+    """Return the most recent recorded usage block, or None.
+
+    Each assistant record carries its round's vendor-reported usage as a sibling
+    key, so the newest one is the freshest real measurement of this session's
+    context. Returns None when no round has recorded usage yet — a fresh session,
+    or one just compacted (``truncate`` clears the file, correctly dropping a
+    measurement that no longer describes the context).
+    """
+    records, _ = load_records(instance_dir, session_id=session_id)
+    for rec in reversed(records):
+        usage = rec.get("usage")
+        if usage:
+            return usage
+    return None
+
+
 PREVIEW_LINES = 3
 
 
@@ -306,6 +337,7 @@ def render_records(records: list[dict]) -> list[dict]:
         # assistant
         order = rec.get("order", 0)
         reasoning = rec.get("reasoning", "")
+        _record_start = len(out)
         if reasoning:
             out.append({
                 "role": "assistant",
@@ -359,6 +391,14 @@ def render_records(records: list[dict]) -> list[dict]:
                     "blocks": [block],
                     "kind": "tool_call",
                 })
+        # Usage covers the whole round, so hang it on the round's LAST bubble —
+        # the renderer shows the badge there instead of mid-round. A record whose
+        # only bubble was dropped (none here; every branch appends) leaves it off.
+        if len(out) > _record_start:
+            if rec.get("usage"):
+                out[-1]["usage"] = rec["usage"]
+            if rec.get("elapsed") is not None:
+                out[-1]["elapsed"] = rec["elapsed"]
     return out
 
 

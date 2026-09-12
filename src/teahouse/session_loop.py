@@ -46,9 +46,29 @@ import uuid
 from pathlib import Path
 
 from . import sessions
-from .compact import POST_COMPACT_RATIO, estimate_context_tokens, run_compact
+from .compact import (
+    POST_COMPACT_RATIO,
+    estimate_context_tokens,
+    run_compact,
+    usage_context_tokens,
+)
 from .session_tracker import task_tracker
 from .state import state
+
+
+def _context_tokens(instance_dir: Path, session_id: str, msgs: list[dict]) -> int:
+    """Conservative context size for the compact triggers.
+
+    Takes the larger of the last *real* measurement and the chars/3 estimate.
+    Real usage describes the last call, so anything appended since (tool results,
+    new turns) is invisible to it and it understates; conversely PruneContext can
+    shrink the context and make it overstate. Erring high is the safe direction
+    for a compact trigger — a needless compact costs one call, an overflow costs
+    the round. Falls back to the estimate alone when no call reported usage.
+    """
+    est = estimate_context_tokens(msgs)
+    real = usage_context_tokens(sessions.latest_usage(instance_dir, session_id))
+    return max(est, real) if real is not None else est
 
 _EVENT_LOG_ENABLED = os.environ.get("TEHOUSE_EVENT_LOG") == "1"
 
@@ -335,7 +355,7 @@ class SessionLoop:
                 msgs_for_check = sessions.records_to_context(
                     self.instance_dir, client.api_style, session_id=self.session_id
                 )
-                est = estimate_context_tokens(msgs_for_check)
+                est = _context_tokens(self.instance_dir, self.session_id, msgs_for_check)
                 if est > max_ctx * 0.85:
                     _event_log(self.instance_dir, self.session_id, "compact_preflight", {"est": est, "max": max_ctx})
                     ok = await self._run_compact_task(client)
@@ -384,7 +404,7 @@ class SessionLoop:
                 msgs_for_check = sessions.records_to_context(
                     self.instance_dir, client.api_style, session_id=self.session_id
                 )
-                est = estimate_context_tokens(msgs_for_check)
+                est = _context_tokens(self.instance_dir, self.session_id, msgs_for_check)
                 if est > max_ctx * POST_COMPACT_RATIO:
                     _event_log(self.instance_dir, self.session_id, "compact_postflight", {"est": est, "max": max_ctx})
                     ok = await self._run_compact_task(client)
