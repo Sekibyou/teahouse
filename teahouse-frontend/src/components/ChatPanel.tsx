@@ -1256,7 +1256,11 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     if (activeSid === MAIN_SID) {
       return [think, { name: "/compact", description: t("compactContext") }, clear]
     }
-    // 全权会话（用户新建 / DM）没有工具白名单，权限增删命令无从谈起，同主会话只留 think/clear。
+    // DM 栏：这里打字的默认语义是**局外发言**，故给一个「剧情内（扮演）发言」入口。
+    if (activeSid === DM_SID) {
+      return [think, clear, { name: "/say", description: t("sayDesc") }]
+    }
+    // 全权会话（用户新建）没有工具白名单，权限增删命令无从谈起，同主会话只留 think/clear。
     // 用假值判断：SSE 新建条目会把 enabled_tools 落成 null，后端空数组也等价于「不限权」。
     if (!activeEnabled) {
       return [think, clear]
@@ -1516,19 +1520,68 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     _doSend(text, useTools, undefined, p, pending.map(({ path, mime }) => ({ path, mime })))
   }
 
+  // 扮演发言的前缀要带「本条的呈现序号」N：后端写入 dm-output 时分配的正是
+  // 「当前最大 seq + 1」，故这里预先算出来告诉 DM（控制台也据此显示 #N）。
+  const nextDmSeq = useCallback(async (instId: string) => {
+    try {
+      const res = await dmOutputApi.list(instId)
+      return res.ok
+        ? (res.data?.messages ?? []).reduce((m, x) => Math.max(m, x.seq || 0), 0) + 1
+        : 1
+    } catch {
+      return 1   // 取不到就退回 1，包裹层仍生效
+    }
+  }, [])
+
   // 核心发送逻辑（供 handleSend 和 sandbox 调用的共享函数）
   const _doSend = async (text: string, useTools: boolean, targetSid?: string, pastes?: { id: number; content: string }[], images?: { path: string; mime: string }[]) => {
     const sid = targetSid || activeSid
 
     // 命令仅在会话空闲时执行（生成/等待/压缩中禁用）
     const trimmedText = text.trim()
-    const isCommand = /^\/(clear|compact|think|permission-add|permission-remove)(\s|$)/.test(trimmedText)
+    const isCommand = /^\/(clear|compact|think|say|permission-add|permission-remove)(\s|$)/.test(trimmedText)
     if (isCommand) {
       const st = sessionStateRef.current[sid]
       if (st?.running || st?.waiting || st?.compacting) {
         toast.error(t("sessionBusyCommand"))
         return
       }
+    }
+
+    // /say command —— 仅 DM 栏：把这条当**剧情内发言**（扮演）发给 DM，等价于沙盒里的
+    // 扮演输入——后端会把它写进 dm-output 开新批次，玩家侧随即出现气泡。纯文本：
+    // 它最终是要进 Output 正文的，粘贴块/附图这类长内容不适用。
+    const sayMatch = trimmedText.match(/^\/say(?:\s+([\s\S]*))?$/)
+    if (sayMatch) {
+      if (sid !== DM_SID) {
+        toast.error(t("sayOnlyDm"))
+        return
+      }
+      const body = (sayMatch[1] || "").trim()
+      if (!body) {
+        toast.error(t("sayEmpty"))
+        return
+      }
+      if ((pastes && pastes.length > 0) || (images && images.length > 0)) {
+        toast.error(t("sayTextOnly"))
+        return
+      }
+      const inst = getActiveInstance()
+      if (!inst) {
+        toast.error(t("noInstanceSay"))
+        return
+      }
+      setError("")
+      patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
+      try {
+        const content = wrapDmMessage(body, { ooc: false, seq: await nextDmSeq(inst.id) })
+        // dmOoc 不传 = 扮演回合：后端把这条写进 dm-output。
+        await chatApi.sendDirectorMessage([{ role: "user", content }], inst.id, sid)
+      } catch {
+        patchSessionState(sid, { waiting: false })
+        toast.error(t("requestFail"))
+      }
+      return
     }
 
     // /clear command
@@ -1763,8 +1816,9 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     }
   }
 
-  // 沙盒 Teahouse.send() / sessionSend('dm', …) → 入队列 (no polling, fire-and-forget)
-  const handleSandboxSend = useCallback(async (msg: string, targetSid?: string) => {
+  // 沙盒 Teahouse.send() / sessionSend('dm', …) / sessionSendOoc('dm', …) → 入队列
+  // (no polling, fire-and-forget)。ooc=true 走局外通道：不落 dm-output、DM 可回正文。
+  const handleSandboxSend = useCallback(async (msg: string, targetSid?: string, ooc?: boolean) => {
     const sid = targetSid || activeSid
     const inst = getActiveInstance()
     if (!inst) return
@@ -1772,19 +1826,12 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
     let content = msg
     if (sid === DM_SID) {
-      // 扮演发言：套上「〔已入呈现 #N〕」前缀。N = 当前 dm-output 最大 seq + 1
-      // （后端随后会把这条写入 dm-output，分到的正是 N）。
-      let seq = 1
-      try {
-        const res = await dmOutputApi.list(inst.id)
-        seq = res.ok
-          ? (res.data?.messages ?? []).reduce((m, x) => Math.max(m, x.seq || 0), 0) + 1
-          : 1
-      } catch { /* 取不到就退回 1，包裹层仍生效 */ }
-      content = wrapDmMessage(msg, { ooc: false, seq })
+      content = ooc
+        ? wrapDmMessage(msg, { ooc: true })
+        : wrapDmMessage(msg, { ooc: false, seq: await nextDmSeq(inst.id) })
     }
-    chatApi.sendDirectorMessage([{ role: "user", content }], inst.id, sid).catch(() => {})
-  }, [activeSid])
+    chatApi.sendDirectorMessage([{ role: "user", content }], inst.id, sid, sid === DM_SID && !!ooc).catch(() => {})
+  }, [activeSid, nextDmSeq])
 
   // Check sessionStore for pending sandbox messages (polled lightly)
   useEffect(() => {
@@ -1803,7 +1850,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
             activeSidRef.current = sid
           }
         }
-        handleSandboxSend(bSess.message, sid)
+        handleSandboxSend(bSess.message, sid, bSess.ooc)
         return
       }
       const msg = useSessionStore.getState().pendingMessage

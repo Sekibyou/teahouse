@@ -447,6 +447,19 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
           }
           break
         }
+        case "sessionSendOoc": {
+          // { session_id, message } → 局外发言：只对 DM 会话有意义（不落 dm-output、
+          // DM 可回正文）。非 dm 的会话没有「局外」这一区分，直接报错而不是静默丢弃。
+          const p = _args[0] as { session_id?: string; sessionId?: string; message?: string } | undefined
+          const sid = p?.session_id || p?.sessionId
+          if (instanceId && sid === "dm" && p?.message) {
+            useSessionStore.getState().setPendingSessionSend({ sessionId: sid, message: p.message, ooc: true })
+            result = { ok: true, data: true }
+          } else {
+            result = { ok: false, error: "sessionSendOoc requires {session_id: 'dm', message}" }
+          }
+          break
+        }
         case "sessionDestroy": {
           // { session_id, abort? } → destroy a child session (abort cancels in-flight).
           const p = _args[0] as { session_id?: string; sessionId?: string; abort?: boolean } | undefined

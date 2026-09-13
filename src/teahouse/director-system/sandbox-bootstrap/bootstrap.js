@@ -193,8 +193,14 @@
 
     // 子会话
     sessionCreate: function(opts) { return callHost('sessionCreate', [opts || {}]); },
+    // 扮演发言：发给会话；发给 'dm' 时后端自动写入 dm-output（开新批次）再交给 DM。
     sessionSend: function(session_id, message) {
       return callHost('sessionSend', [{ session_id: session_id, message: message }]);
+    },
+    // 局外发言（仅 'dm'）：不落 dm-output，只进 DM 会话——DM 据此知道你不在扮演，
+    // 可以回正文（状态小结、设定问答等），回复只在 DM 栏可见。
+    sessionSendOoc: function(session_id, message) {
+      return callHost('sessionSendOoc', [{ session_id: session_id, message: message }]);
     },
     sessionDestroy: function(session_id, abort) {
       return callHost('sessionDestroy', [{ session_id: session_id, abort: !!abort }]);

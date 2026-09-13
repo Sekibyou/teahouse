@@ -54,10 +54,10 @@ DM 是**实例级的单例 agent**：玩家在**游玩视图**与它对话，它
 
 ## 五、玩家发言的两条通道
 
-| 通道 | 入口 | 去向 |
-|---|---|---|
-| **扮演** | 游玩视图的沙盒输入（`Teahouse.sessionSend('dm', text)`） | 进 `dm-output.jsonl`（开新批次）再交给 DM |
-| **局外** | 导演栏的 DM 控制台输入框 | 只进会话、**不进** dm-output |
+| 通道 | 玩法侧入口 | 控制台侧入口 | 去向 |
+|---|---|---|---|
+| **扮演**（剧情内） | 沙盒输入 `Teahouse.sessionSend('dm', text)`（参考渲染器里默认模式） | `/say 内容` | 进 `dm-output.jsonl`（开新批次）再交给 DM；DM 这一回合只准调工具、不写正文 |
+| **局外** | 沙盒输入 `Teahouse.sessionSendOoc('dm', text)`（参考渲染器的「局外」开关） | DM 控制台输入框（默认语义） | 只进会话、**不进** dm-output；DM 可以回正文（只在 DM 栏可见） |
 
 两条通道靠前端加的系统前缀区分（`[[TH-SYS presence N]]` / `[[TH-SYS ooc]]`），前缀只为 DM 的会话上下文服务，后端写呈现记录时会剥掉。详见 `teahouse-sandbox-builder` skill 的 `references/dm-api.md`。
 

@@ -7,8 +7,11 @@
 //     可见的气泡，不含元信息）。
 //
 // 前缀格式（固定 fence `[[TH-SYS …]]`，内部区分两种）：
-//   [[TH-SYS presence N]]   扮演发言（沙盒输入）——已进 dm-output，seq=N
-//   [[TH-SYS ooc]]          局外发言（DM 控制台输入）——不进 dm-output
+//   [[TH-SYS presence N]]   扮演发言（剧情内）——已进 dm-output，seq=N
+//   [[TH-SYS ooc]]          局外发言——不进 dm-output
+//
+// 两种前缀与「从哪个入口发出」无关：沙盒默认扮演、`sessionSendOoc` 发局外；
+// DM 控制台默认局外、`/say` 发剧情内。判定只看语义，不看入口。
 //
 // 渲染：
 //   - 导演栏（DM 控制台）读 session → 调用 parseDmWrap() 把前缀裁掉、渲染为 badge

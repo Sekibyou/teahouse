@@ -18,7 +18,13 @@ if (enabled) messages.forEach(m => renderBubble(m.chara, m.content, m.kind))
 
 ### `Teahouse.sessionSend('dm', text) → Promise<{ok, data:true, error?}>`
 
-玩家**扮演**发言：发给 DM 会话；后端自动把它写入 dm-output（开新批次）再交给 DM（写盘即广播 `file_changed`，故气泡立刻可见）。注意区分：**导演栏里的 DM 会话输入框**里打的字是**局外**发言（只进会话、不进 dm-output），与沙盒的扮演输入是两条不同通道。
+玩家**扮演**发言（剧情内）：发给 DM 会话；后端自动把它写入 dm-output（开新批次）再交给 DM（写盘即广播 `file_changed`，故气泡立刻可见）。
+
+### `Teahouse.sessionSendOoc('dm', text) → Promise<{ok, data:true, error?}>`
+
+玩家**局外**发言：只进 DM 会话、**不落 dm-output**（玩家视图不出气泡）。DM 据此知道这条不是扮演、可以回**正文**（状态小结、设定问答等）——而正文只出现在 **DM 栏**，所以要让玩家看见答复，调用前先 `Teahouse.openDM()`（参考实现 `dm-main.js` 的「局外」开关就是这么做的）。仅 `'dm'` 有效，传其它会话 id 返回 `{ok:false, error}`。
+
+**两条通道与「从哪个入口发」无关**：沙盒默认扮演、要发局外用 `sessionSendOoc`；DM 栏默认局外、要发剧情内发言用 `/say 内容`。
 
 ## 创作约定：`chara` 与 `kind` 是**开放的**，靠「两处配合」定义
 
@@ -39,8 +45,8 @@ if (enabled) messages.forEach(m => renderBubble(m.chara, m.content, m.kind))
 
 | 前缀行 | 含义 |
 |---|---|
-| `[[TH-SYS presence N]]` | 扮演发言（沙盒输入）——已写入 `runtime/dm-output.jsonl`，seq=N |
-| `[[TH-SYS ooc]]` | 局外发言（DM 控制台输入）——不进 dm-output |
+| `[[TH-SYS presence N]]` | 扮演发言（剧情内）——已写入 `runtime/dm-output.jsonl`，seq=N |
+| `[[TH-SYS ooc]]` | 局外发言——不进 dm-output |
 
 格式为 `<前缀行>\n\n<正文>`；约定源 `teahouse-frontend/src/lib/dmWrap.ts`。
 

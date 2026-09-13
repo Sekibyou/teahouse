@@ -8,8 +8,12 @@
   //   - 与 floors 并列的**独立线路**：DM 不走 runtime/floors/。
   //   - 只有最新批次可改；历史批次已冻结（见 OutputEdit）。
   //
-  // 玩家扮演发言：Teahouse.sessionSend('dm', text) —— 默认按扮演处理，
-  //   后端自动把它写入 dm-output（开新批次）再交给 DM。
+  // 玩家发言两条通道（由输入条的「局外」开关决定）：
+  //   Teahouse.sessionSend('dm', text)     —— 扮演（剧情内）：后端自动把它写入
+  //     dm-output（开新批次）再交给 DM。
+  //   Teahouse.sessionSendOoc('dm', text)  —— 局外：只进 DM 会话、不落 dm-output；
+  //     DM 据此知道你不在扮演，可回正文，回复只在 DM 栏可见。
+  //   反向同理：DM 控制台里打字默认是局外，要发剧情内发言用 `/say 内容`。
   //
   // 忙碌态：订阅宿主透传的 `session.busy`（后端 session_tracker 的权威
   //   running map，宿主归一后只在「开始 / 结束」两个沿各推一次）——
@@ -24,6 +28,7 @@
   var DM_SID = 'dm';
   var root = null;
   var userName = '你';   // 玩家显示名，读变量 `user`，缺省「你」
+  var oocMode = false;   // 输入条「局外」开关：开时这条走 sessionSendOoc（不推进剧情）
 
   // ---- 忙碌态（后端权威，宿主只在边界推送） ----
   var busy = false;       // DM 会话是否正在工作
@@ -152,6 +157,18 @@
       '.th-dm-open:hover{background:var(--control-bg,rgba(0,0,0,.05));}',
       '.th-dm-open-dot{width:8px;height:8px;border-radius:50%;flex:none;',
       'background:var(--accent,#60a5fa);}',
+
+      // 「局外」开关：点亮后这条发言走 sessionSendOoc —— 不推进剧情、不进 dm-output，
+      // DM 会回正文，答复只在 DM 栏可见。
+      '.th-dm-ooc{flex:none;height:26px;padding:0 10px;border-radius:20px;',
+      'background:transparent;border:1px solid var(--panel-border,rgba(0,0,0,.12));',
+      'color:var(--panel-text-dim,rgba(0,0,0,.45));',
+      'font-size:calc(12px * var(--font-scale));font-weight:600;line-height:1;',
+      'cursor:pointer;user-select:none;',
+      'transition:background .2s,border-color .2s,color .2s;}',
+      '.th-dm-ooc:hover{background:var(--control-bg,rgba(0,0,0,.05));}',
+      '.th-dm-ooc.on{background:var(--accent-fill,#8a7a5c);',
+      'color:var(--accent-filled-text,#fff);border-color:transparent;}',
 
       '.th-dm-input{flex:1;min-width:0;height:auto;padding:0;border:none;',
       'background:transparent;color:var(--panel-text,inherit);outline:none;',
@@ -453,7 +470,9 @@
     if (text) text.textContent = busy ? busyLabel() : '';
     if (input) {
       input.disabled = busy;
-      input.placeholder = busy ? 'DM 正在工作，请稍候…' : '说点什么…';
+      input.placeholder = busy
+        ? 'DM 正在工作，请稍候…'
+        : (oocMode ? '局外发言：不推进剧情…' : '说点什么…');
     }
     if (send) send.disabled = busy;
     if (wrap) wrap.className = busy
@@ -493,6 +512,8 @@
       '<div class="th-dm-inner th-dm-inputwrap">' +
       '<button class="th-dm-open" type="button" title="唤起 DM 栏">' +
       '<span class="th-dm-open-dot"></span>DM</button>' +
+      '<button class="th-dm-ooc" type="button" ' +
+      'title="局外发言：不推进剧情、不进呈现记录，DM 的答复只在 DM 栏可见">局外</button>' +
       '<input class="th-dm-input" type="text" placeholder="说点什么…" autocomplete="off">' +
       '<button class="th-dm-send" type="button" title="发送">' + SEND_ICON + '</button>' +
       '</div></div>';
@@ -500,14 +521,30 @@
     var input = root.querySelector('.th-dm-input');
     var sendBtn = root.querySelector('.th-dm-send');
     var openDmBtn = root.querySelector('.th-dm-open');
+    var oocBtn = root.querySelector('.th-dm-ooc');
     openDmBtn.addEventListener('click', function() {
       if (window.Teahouse.openDM) window.Teahouse.openDM();
     });
+    // 「局外」开关：切换本条发言的通道（扮演 / 局外）。开着时输入框提示也换掉，
+    // 免得玩家忘了自己在哪条通道。状态不随发送复位，方便连续局外对话。
+    function setOocMode(on) {
+      oocMode = !!on;
+      oocBtn.className = oocMode ? 'th-dm-ooc on' : 'th-dm-ooc';
+      paintBusy();
+    }
+    oocBtn.addEventListener('click', function() { setOocMode(!oocMode); });
     function submit() {
       if (busy) return;   // 忙碌期间输入条已 disabled，这里兜底键盘/程序化触发
       var text = input.value.trim();
       if (!text) return;
       input.value = '';
+      if (oocMode) {
+        // 局外发言：只进 DM 会话、不落 dm-output。DM 的答复是正文、只在 DM 栏可见，
+        // 故顺手唤起 DM 栏让玩家看得到；不需要这个行为就删掉下面这行 openDM。
+        if (window.Teahouse.openDM) window.Teahouse.openDM();
+        window.Teahouse.sessionSendOoc(DM_SID, text);
+        return;
+      }
       // 扮演发言 → 后端自动入 dm-output
       window.Teahouse.sessionSend(DM_SID, text);
     }
