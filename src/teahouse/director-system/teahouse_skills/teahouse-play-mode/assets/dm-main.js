@@ -30,6 +30,16 @@
   var busySince = 0;      // 本轮忙碌的起始时刻（宿主给出 since 时以其为准）
   var busyTicker = null;  // 秒数跳动定时器，仅在忙碌期间存在
 
+  // ---- 出场特效：新消息先以「正在输入」占位，再揭示正文 ----
+  var nodeBySeq = Object.create(null);  // seq → 已渲染的气泡节点（复用，不重复入场）
+  var ENTER_MS = 500;                    // 占位「正在输入」停留时长（≈0.5s）
+  var STAGGER_MS = 300;                  // 多条一起到达时的错峰步长（第 i 条等 i×0.3s 才出场）
+  // 本次加载的「首帧」标记：首帧里已存在的消息一律直接成稿（不占位、不滑入）。
+  // nodeBySeq 只活在内存，iframe 一重建（刷新页面 / 改沙盒代码 / 切布局）就归零，
+  // 若不分首帧，整段历史会被当成「新消息」从头重播一遍入场动画。首帧落定后置
+  // false —— 此后到达的才是真·新消息，正常走入场。
+  var firstPaint = true;
+
   // 发送按钮纸飞机图标（同 input-bar 的 feather send，颜色随 currentColor）
   var SEND_ICON =
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -157,6 +167,22 @@
       '.th-dm-send:hover:not(:disabled){opacity:.85;}',
       '.th-dm-send:disabled{opacity:.5;cursor:not-allowed;}',
 
+      // ---- 出场特效：气泡先「正在输入」，再揭示正文 ----
+      // 整条消息的出现：从下往上滑入 + 透明度渐变（≈0.2s，播放起点用内联 animation-delay 错峰）
+      '.th-dm-in{animation:th-dm-appear .2s ease both;}',
+      '@keyframes th-dm-appear{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}',
+      // 正文揭示时的淡入
+      '.th-dm-fadein{animation:th-dm-fadein .18s ease both;}',
+      '@keyframes th-dm-fadein{from{opacity:0;}to{opacity:1;}}',
+      // 「正在输入」三点：随各自 kind 继承颜色 / 对齐
+      '.th-dm-typing{display:inline-flex;align-items:center;gap:4px;height:1.1em;vertical-align:middle;}',
+      '.th-dm-typing i{display:block;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.5;',
+      'animation:th-dm-blink 1s ease-in-out infinite both;}',
+      '.th-dm-typing i:nth-child(1){animation-delay:-.2s;}',
+      '.th-dm-typing i:nth-child(2){animation-delay:-.1s;}',
+      '.th-dm-typing i:nth-child(3){animation-delay:0s;}',
+      '@keyframes th-dm-blink{0%,80%,100%{opacity:.25;transform:translateY(0);}40%{opacity:.85;transform:translateY(-3px);}}',
+
       // 空态
       '.th-dm-empty{padding:3rem 0;text-align:center;opacity:.5;',
       'font-size:calc(15px * var(--font-scale));}',
@@ -198,10 +224,9 @@
     var isUser = m.chara === 'user';
     var kind = normalizeKind(m.kind);
 
-    // 旁白：居中无框，标签「旁白」
+    // 旁白：居中无框，不标发言者（内容本身就是旁白，无需「旁白」二字）
     if (kind === 'narrate') {
       return '<div class="th-dm-bubble th-dm-kind-narrate" data-seq="' + esc(m.seq) + '">' +
-        '<div class="th-dm-chara">旁白</div>' +
         '<div class="th-dm-content">' + contentHtml + '</div>' +
         '</div>';
     }
@@ -239,27 +264,175 @@
     });
   }
 
+  // 「正在输入」三点占位（结构由 bubbleHtml 包进各自的 kind 形态里）
+  function typingHtml() {
+    return '<span class="th-dm-typing"><i></i><i></i><i></i></span>';
+  }
+
+  // HTML 字符串 → 单个根元素
+  function elemFromHtml(html) {
+    var t = document.createElement('div');
+    t.innerHTML = html;
+    return t.firstElementChild;
+  }
+
+  function nearBottom() {
+    var s = root.querySelector('.th-dm-list');
+    if (!s) return true;
+    return (s.scrollHeight - s.scrollTop - s.clientHeight) < 80;
+  }
+
+  function scrollBottom() {
+    var s = root.querySelector('.th-dm-list');
+    if (s) s.scrollTop = s.scrollHeight;
+  }
+
+  // 揭示：把占位「...」换成真正内容
+  function reveal(node, html) {
+    var c = node.querySelector('.th-dm-content');
+    if (c) {
+      c.innerHTML = html;
+      c.classList.add('th-dm-fadein');
+      // 淡入播完就摘类：留着的话，这个节点日后再被移动/重插时会重播
+      c.addEventListener('animationend', function() {
+        c.classList.remove('th-dm-fadein');
+      }, { once: true });
+    } else {
+      node.innerHTML = html;
+    }
+    node.dataset.entering = '0';
+  }
+
+  // 只有「新消息」或「内容变过的老消息」才跑 renderRichText；其余复用节点缓存的 HTML。
+  // 关键：生成结束时后端会推一次全量 listMessages —— 若对每条都重渲染 + 重写 DOM，
+  // 老气泡会被整片重建，视觉上就是「闪一下」。这里靠缓存把未变消息变成 no-op。
   function render(messages) {
     var stream = root && root.querySelector('.th-dm-stream');
     if (!stream) return;
     if (!messages || messages.length === 0) {
+      nodeBySeq = Object.create(null);
       stream.innerHTML = '<div class="th-dm-empty">（还没有对话。说点什么，故事就开始了…）</div>';
+      firstPaint = false;   // 空态也算首帧落定：之后来的第一条就是真·新消息，该入场
       return;
     }
-    Promise.all(messages.map(function(m) {
-      return renderContent(m).then(function(html) { return bubbleHtml(m, html); });
-    })).then(function(parts) {
-      stream.innerHTML = parts.join('');
-      var scroller = root.querySelector('.th-dm-list');
-      if (scroller) scroller.scrollTop = scroller.scrollHeight;
-    }).catch(function() {
-      // 极端兜底：纯文本回退
-      stream.innerHTML = messages.map(function(m) {
-        return bubbleHtml(m, esc(trimLines(m.content)));
-      }).join('');
-      var scroller = root.querySelector('.th-dm-list');
-      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    var jobs = [];   // 每条消息一个 renderContent Promise，或 null（用缓存）
+    var cache = [];  // 索引 → html
+    messages.forEach(function(m, i) {
+      var key = (m.seq != null) ? String(m.seq) : ('#' + i);
+      var node = nodeBySeq[key];
+      if (!node || (node.dataset.entering !== '1' && node.__rawContent !== m.content)) {
+        jobs[i] = renderContent(m);
+      } else {
+        jobs[i] = null;
+        cache[i] = node.__html;
+      }
     });
+    var todo = [];
+    jobs.forEach(function(p, i) { if (p) todo.push(i); });
+    Promise.all(todo.map(function(i) { return jobs[i]; })).then(function(htmls) {
+      todo.forEach(function(i, k) { cache[i] = htmls[k]; });
+      paint(messages, cache);
+    }).catch(function() {
+      paint(messages, messages.map(function(m) { return esc(trimLines(m.content)); }));
+    });
+  }
+
+  // 增量对账：按 seq 复用已有节点，只有「首次出现」的消息才走入场流程。
+  function paint(messages, htmls) {
+    var stream = root.querySelector('.th-dm-stream');
+    if (!stream) return;
+    var wasNear = nearBottom();   // 入场前是否贴底 → 决定末尾要不要跟着滚
+    var touched = Object.create(null);
+    var pending = [];
+
+    // ---- 第一遍：建新节点 / 就地更新内容。此遍一律不动 DOM 结构。 ----
+    messages.forEach(function(m, i) {
+      var key = (m.seq != null) ? String(m.seq) : ('#' + i);
+      touched[key] = true;
+      var node = nodeBySeq[key];
+      if (!node) {
+        // fresh = 本次加载之后才到达的消息；首帧里的历史消息不算，直接成稿
+        var fresh = !firstPaint;
+        node = elemFromHtml(bubbleHtml(m, fresh ? typingHtml() : (htmls[i] || '')));
+        if (!node) return;
+        if (fresh) {
+          // 新消息：先摆出「正在输入」占位，稍后揭示
+          var idx = pending.length;   // 本批次内的出场次序 → 决定错峰延迟
+          node.classList.add('th-dm-in');
+          node.style.animationDelay = (idx * STAGGER_MS) + 'ms';
+          // 入场动画播完立刻摘掉动画类与内联延迟：类留在节点上的话，一旦这个节点
+          // 日后再被移动/重插（DOM 移动 = 移除再插入，会重置动画），浏览器就会把
+          // th-dm-appear 从头重播一遍 —— 整列旧气泡跟着闪。摘掉后节点不可再被重播。
+          node.addEventListener('animationend', function() {
+            node.classList.remove('th-dm-in');
+            node.style.animationDelay = '';
+          }, { once: true });
+          pending.push({ node: node, idx: idx });
+        } else {
+          node.dataset.entering = '0';   // 已成品，无待揭示内容
+        }
+        node.dataset.seqKey = key;
+        node.__rawContent = m.content;
+        node.__html = htmls[i] || '';
+        nodeBySeq[key] = node;
+      } else if (node.dataset.entering !== '1') {
+        // 老消息：内容有变才重写（相同 = no-op，杜绝每次 refresh 都重建 DOM 的闪烁）
+        if (node.__rawContent !== m.content) {
+          var c = node.querySelector('.th-dm-content');
+          if (c) c.innerHTML = htmls[i];
+          node.__rawContent = m.content;
+          node.__html = htmls[i] || '';
+        }
+      } else if (htmls[i] != null) {
+        // 仍在占位阶段（ENTER_MS 内又来一次 refresh）：更新待揭示的内容
+        node.__rawContent = m.content;
+        node.__html = htmls[i];
+      }
+    });
+
+    // 清掉本次不再存在的节点（含空态占位）——先清，下面摆位的游标才对得上
+    Array.prototype.slice.call(stream.children).forEach(function(ch) {
+      var k = ch.dataset ? ch.dataset.seqKey : null;
+      if (!k || !touched[k]) {
+        if (k && nodeBySeq[k]) delete nodeBySeq[k];
+        ch.remove();
+      }
+    });
+
+    // ---- 第二遍：按序摆放，只在节点不在期望位置时才移动它。 ----
+    // ⚠️ 不能像以前那样对每条都 `stream.appendChild(node)` 来"顺带排序"：
+    // appendChild 作用在**已在同一父下**的节点上 = 先移除再插入（Chrome 官方
+    // moveBefore 文档明说这种"隐式移除会重置各类状态"），CSS 动画随之被重置并
+    // 从头播放——于是每次 refresh 所有旧气泡都重播一遍 th-dm-in 入场动画，
+    // 整列闪一下。改用游标比对：顺序本来就对的节点一个都不碰。
+    var ref = stream.firstChild;
+    messages.forEach(function(m, i) {
+      var key = (m.seq != null) ? String(m.seq) : ('#' + i);
+      var node = nodeBySeq[key];
+      if (!node) return;
+      if (node === ref) {
+        ref = node.nextSibling;      // 已在期望位置 → 游标前进
+      } else {
+        stream.insertBefore(node, ref);   // ref 为 null 时等同追加到末尾
+      }
+    });
+
+    // 首帧落定：本帧内已存在的消息都按「旧消息」处理过了，之后到达的才走入场
+    firstPaint = false;
+
+    // 入场：按次序错峰出场（第 i 条等 i×STAGGER），各自占位 ENTER_MS 后再揭示正文
+    pending.forEach(function(p) {
+      p.node.dataset.entering = '1';
+      setTimeout(function() {
+        if (!p.node.isConnected) return;
+        var stick = nearBottom();
+        reveal(p.node, p.node.__html || '');
+        if (stick) scrollBottom();
+      }, p.idx * STAGGER_MS + ENTER_MS);
+    });
+
+    // 只有原本就贴底时才跟随滚动（免得把正在上翻看历史的玩家拽回来）
+    if (wasNear) scrollBottom();
   }
 
   // ---- 忙碌态：锁输入条 + 显示等待提示 ----
