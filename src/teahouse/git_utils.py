@@ -346,7 +346,10 @@ def git_status_porcelain(instance_dir: Path) -> list[dict]:
         # followed by a literal space then the (zero-escaped) path.
         raw = tok[:2]
         path = tok[3:]
-        staged = raw[0] != " "
+        # `?? ` (untracked) puts "?" in the X column — which is not a space, so a
+        # naive `raw[0] != " "` labels every newly written file as *staged*. Only a
+        # real index status (A/M/D/R…) counts as staged.
+        staged = raw[0] not in (" ", "?")
 
         if raw[0] == "?" and raw[1] == "?":
             status = "?"

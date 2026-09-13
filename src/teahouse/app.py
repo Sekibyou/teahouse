@@ -510,7 +510,7 @@ async def _tool_use_loop(
 
     ``pending_check`` (optional zero-arg callable) drains user messages queued
     during generation. It is invoked before every round's API send; when it
-    returns a non-empty list of (queue_id, content, order) tuples, each content
+    returns a non-empty list of (queue_id, content, order, images) tuples, each content
     is appended to the round's context as a trailing user message so the LLM
     sees it on this round instead of the user waiting for the whole loop to
     finish. Persistence + queued→done broadcast are the caller's job (see
@@ -825,9 +825,19 @@ async def _tool_use_loop(
         # has already persisted it + broadcast the queued→done upgrade; here we
         # only append the content into `msg` so this round's API call includes
         # it — the user doesn't have to wait for the whole tool loop to finish.
+        # Queue items are the 4-tuple (queue_id, content, order, images) — keep
+        # the arity in step with SessionLoop._drain_and_persist.
         _pending_msgs = pending_check() if pending_check else None
-        for _qid, _content, _order in (_pending_msgs or []):
-            msg.append({"role": "user", "content": _content})
+        for _qid, _pm_content, _order, _pm_images in (_pending_msgs or []):
+            if _pm_images:
+                msg.append({
+                    "role": "user",
+                    "content": sessions._user_content_parts(
+                        _pm_content, _pm_images, instance_dir, client.api_style
+                    ),
+                })
+            else:
+                msg.append({"role": "user", "content": _pm_content})
 
         # ── Phase 1: Streaming LLM call ──
         _round_t0 = time.monotonic()
