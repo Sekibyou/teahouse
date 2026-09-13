@@ -23,7 +23,7 @@ export function FileTreeView({
   selectedFile: string | null
   selectionPaths?: Set<string>
   onToggle: (path: string) => void
-  onRowClick?: (node: TreeNodeRef, opts: { ctrl: boolean }) => void
+  onRowClick?: (node: TreeNodeRef, opts: { ctrl: boolean; shift: boolean }) => void
   onSelect: (path: string) => void
   onCreateFile: (parentPath: string) => void
   onCreateFolder: (parentPath: string) => void
@@ -201,7 +201,7 @@ export function FileTreeView({
                 // Swallow the click a long-press synthesizes on release — the
                 // menu is already open, don't also toggle/select the row.
                 if (mobilePressConsumedRef.current) { mobilePressConsumedRef.current = false; return }
-                onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey })
+                onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
               }}
             >
               {node.type === "directory" ? (
@@ -256,7 +256,7 @@ export function FileTreeView({
                     }`}
                     style={{ paddingLeft: `${8 + depth * 16}px` }}
                     onClick={(e) => {
-                      onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey })
+                      onRowClick?.({ path: node.path, type: node.type, name: node.name }, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
                     }}
                   />
                 }

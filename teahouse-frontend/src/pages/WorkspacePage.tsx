@@ -217,6 +217,9 @@ export function WorkspacePage() {
   const selectionPaths = useMemo(() => new Set(selection.map(s => s.path)), [selection])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+  // Shift+点击范围选择的锚点：最近一次普通/Ctrl 点击的节点。范围 = 锚点 ↔ 目标之间的
+  // 全部可见行（前序 DFS 顺序）。锚点失效（被折叠/删除）时退回选区末项。
+  const selectionAnchorRef = useRef<string | null>(null)
   // Blank-area right-click menu (root operations). Positioned at the cursor.
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
   // Mobile per-node "⋯" menu (fixed-position, rootMenu-style). Positioned at the icon.
@@ -1605,15 +1608,46 @@ export function WorkspacePage() {
     })
   }, [])
 
-  const handleNodeClick = useCallback((node: TreeNodeRef, opts: { ctrl: boolean }) => {
+  // 可见行展平（前序 DFS，与 FileTreeView 的渲染顺序一致），Shift+点击据此算区间。
+  // 过滤规则须与 FileTreeView 保持一致（跳过 .git 与 git 报 D 的幽灵节点），否则区间错位。
+  const flattenVisible = useCallback((): TreeNodeRef[] => {
+    const out: TreeNodeRef[] = []
+    const walk = (nodes: FileTreeNode[]) => {
+      for (const n of nodes) {
+        if (n.name === ".git" || fileStatusesRoot.get(n.path) === "D") continue
+        out.push({ path: n.path, type: n.type, name: n.name })
+        if (n.type === "directory" && expanded.has(n.path) && n.children) walk(n.children)
+      }
+    }
+    walk(fileTree)
+    return out
+  }, [fileTree, expanded, fileStatusesRoot])
+
+  const handleNodeClick = useCallback((node: TreeNodeRef, opts: { ctrl: boolean; shift: boolean }) => {
+    // Shift+点击：以锚点到目标的可见区间整体替换选区（VSCode 语义），不打开文件、不折叠目录。
+    if (opts.shift) {
+      const rows = flattenVisible()
+      const last = selectionRef.current[selectionRef.current.length - 1]?.path
+      const anchorPath = selectionAnchorRef.current ?? last
+      const from = anchorPath ? rows.findIndex(r => r.path === anchorPath) : -1
+      const to = rows.findIndex(r => r.path === node.path)
+      if (from >= 0 && to >= 0) {
+        const [lo, hi] = from <= to ? [from, to] : [to, from]
+        setSelection(rows.slice(lo, hi + 1))
+        return
+      }
+      // 锚点已不可见 → 退化为普通单选，走下面的分支。
+    }
     if (opts.ctrl) {
+      selectionAnchorRef.current = node.path
       toggleSelection(node)
       return
     }
+    selectionAnchorRef.current = node.path
     setSelection([node])
     if (node.type === "file") openFile(node.path)
     else toggleExpand(node.path)
-  }, [toggleSelection, openFile, toggleExpand])
+  }, [flattenVisible, toggleSelection, openFile, toggleExpand])
 
   // 键盘粘贴目标锚点：selection 最后一项 → 目录则其内、文件则其父目录；空则 root。
   const pasteAnchor = useCallback((): string => {
@@ -2001,7 +2035,7 @@ export function WorkspacePage() {
                     selectionPaths={selectionPaths}
                     onToggle={toggleExpand}
                     onRowClick={(node, opts) => {
-                      const isFileOpen = node.type === "file" && !opts.ctrl
+                      const isFileOpen = node.type === "file" && !opts.ctrl && !opts.shift
                       // 移动端：当前文件带未保存更改时切另一文件 → 先经三选项守卫（保存/丢弃/取消）。
                       if (isFileOpen && node.path !== selectedFileRef.current
                         && selectedFileRef.current && isDirtyRef.current) {
