@@ -36,6 +36,8 @@ Teahouse 实例根目录是**扁平化、语义化**的固定结构。以下目�
     summarize-prompt.md 总结子会话任务提示词（被 novel-main.js 经 readText 读取）
 
   skills/               实例自建 Skill（提示词包，同名时系统内置优先）
+  scripts/              预制脚本（Python，**约定不是强制**）：导演/DM 用 RunScript 工具按名调用，
+                        内部经宿主对象 t 批量调工具（步骤间可传数据）；README.md 登记各脚本用途与参数
   packages/             已安装提示词包（随 git 入库、随原型导出；默认可含 README 与若干设定/描写词/沙盒资源）
   temp/                 （不入 git）草稿/中间文件，子会话 Report 只写这里
   building/             （永不进原型包）打包期元工作区：点子/checklist/设计笔记

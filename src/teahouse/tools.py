@@ -2439,6 +2439,145 @@ async def execute_wait(instance_dir: Path, args: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# RunScript — instance-authored Python recipes (see ignored/script-exec-design.md)
+# ---------------------------------------------------------------------------
+#
+# A *command*, not an *agent*: the script decides nothing, it just carries out a
+# pre-authored pipeline (often fanning out Generate and post-processing the
+# results). Different from the sandbox's inline runTool batch in the one way that
+# matters — script steps can consume each other's results, so "generate → read it
+# back → trim → append to a JSON" is expressible.
+
+
+async def execute_run_script(
+    instance_dir: Path,
+    args: dict[str, Any],
+    session_id: str | None = "",
+    instance_id: str | None = None,
+    user_id: str | None = None,
+    enabled_tools: list[str] | None = None,
+    exclude: set[str] | None = None,
+) -> str:
+    """Execute a script by instance path or as a literal code snippet.
+
+    ``enabled_tools`` / ``exclude`` are the *caller's* gates, threaded straight
+    into the script's context so its inner ``run_tool`` calls are bounded by
+    exactly what the invoker could have called itself.
+
+    ``mode="await"`` blocks until the script finishes and returns its output;
+    ``mode="background"`` accepts immediately, and on completion wakes the
+    initiating session with an ``[auto]`` message (same mechanism as EndSession).
+    """
+    import uuid as _uuid
+
+    from .script_runtime import run_script
+
+    path = (args.get("path") or "").strip()
+    code = args.get("code")
+    if path and code:
+        return "Error: path 与 code 只能给一个（path=执行实例内脚本文件，code=直接执行这段代码）。"
+    if not path and not code:
+        return "Error: RunScript 需要 path（实例内脚本文件，如 scripts/foo.py）或 code（一段 Python）之一。"
+
+    if path:
+        try:
+            full = _validate_path(instance_dir, path)
+        except Exception as e:
+            return f"Error: 脚本路径非法: {e}"
+        if full.is_dir():
+            return f"Error: {path} 是目录，不是脚本文件。"
+        if not full.exists():
+            return (
+                f"Error: 脚本文件不存在: {path}。"
+                "脚本约定放在实例根 scripts/ 下——先用 Glob(\"scripts/*.py\") 看看有哪些，"
+                "并读 scripts/README.md 了解各自用途。"
+            )
+        try:
+            source = full.read_text(encoding="utf-8")
+        except Exception as e:
+            return f"Error: 读取脚本失败: {e}"
+        label = path
+    else:
+        source = str(code)
+        label = "(inline code)"
+
+    script_args = args.get("args") or {}
+    if not isinstance(script_args, dict):
+        return "Error: args 必须是字典（脚本通过 args 读取入参）。"
+
+    mode = args.get("mode") or "await"
+    if mode not in ("await", "background"):
+        return f"Error: mode 只能是 \"await\" 或 \"background\"，收到 {mode!r}。"
+
+    run_uuid = str(_uuid.uuid4())
+    call_kwargs = dict(
+        source=source,
+        args=script_args,
+        label=label,
+        user_id=user_id,
+        instance_id=instance_id,
+        session_id=session_id,
+        enabled_tools=enabled_tools,
+        exclude=exclude,
+        run_uuid=run_uuid,
+    )
+
+    if mode == "background":
+        from .run_tool_tracker import run_tool_tracker
+
+        task = asyncio.create_task(run_script(instance_dir, **call_kwargs))
+        run_tool_tracker.register(run_uuid, task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            run_tool_tracker.unregister(run_uuid)
+            if t.cancelled():
+                return  # the canceller already knows; no wake-up for a cancelled run
+            try:
+                summary = t.result()
+            except Exception as e:  # noqa: BLE001 — report, never raise into the loop
+                summary = f"Error: 脚本异常退出: {e}"
+            ok = not str(summary).startswith("Error")
+            state.broadcast(
+                "script_done",
+                {
+                    "instance_id": instance_id or instance_dir.name,
+                    "run_uuid": run_uuid,
+                    "label": label,
+                    "ok": ok,
+                    "summary": str(summary)[:2000],
+                },
+            )
+            # Wake the initiating session so its director can read the result and
+            # carry on — the same in-backend nudge EndSession uses for parents.
+            if session_id:
+                try:
+                    from .session_loop import SessionLoop
+
+                    loop = SessionLoop.get_or_create(
+                        instance_dir, session_id, instance_id=instance_id, user_id=user_id
+                    )
+                    loop.enqueue(
+                        # The "[auto] 后台脚本 <label> <tail>。" shape is sniffed by the
+                        # frontend's autoMsgKind() so this renders as a centred system
+                        # chip (like the sub-session wake) rather than a plain user
+                        # bubble — keep the shape if you reword it.
+                        f"[auto] 后台脚本 {label} {'已执行结束' if ok else '执行失败'}。"
+                        f"结果摘要：\n{str(summary)[:1500]}"
+                    )
+                except Exception:
+                    pass
+
+        task.add_done_callback(_on_done)
+        return (
+            f"脚本 {label} 已受理，后台执行中（run_uuid={run_uuid}）。\n"
+            "本轮无需等待——它跑完后会有一条 [auto] 消息把结果摘要送回本会话；"
+            "期间你可以继续别的操作。进度会以 tool_run 事件推送。"
+        )
+
+    return await run_script(instance_dir, **call_kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -2482,6 +2621,7 @@ TOOL_EXECUTORS = {
     "SendToSubSession": execute_send_to_sub_session,
     "DeleteSubSession": execute_delete_sub_session,
     "PruneContext": execute_prune_context,
+    "RunScript": execute_run_script,
 }
 
 # Sub-session default tool grants. A child session may only call the tools on
@@ -2519,7 +2659,7 @@ DM_TOOLS = {
     "Output", "OutputEdit", "Roll",
     "Generate", "BatchGenerate",
     "SkillRead", "TodoWrite", "Wait",
-    "PruneContext",
+    "PruneContext", "RunScript",
 }
 
 
@@ -2572,6 +2712,13 @@ async def execute_tool(
                 result = await executor(instance_dir, args, instance_id)
             elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession") or name == "PruneContext":
                 result = await executor(instance_dir, args, session_id, instance_id, user_id)
+            elif name == "RunScript":
+                # Scripts carry the invoker's gates inward, so a scoped session
+                # cannot widen its own scope by writing a script.
+                result = await executor(
+                    instance_dir, args, session_id, instance_id, user_id,
+                    enabled_tools, exclude,
+                )
             elif name in _FILE_TOOL_EXECUTORS:
                 result = await executor(instance_dir, args, instance_id)
             else:

@@ -275,6 +275,21 @@
       return callHost('cancelRunTools', [run_uuid]);
     },
 
+    // ---- runScript：执行一段预制脚本（服务端『命令』，不经过导演 LLM）----
+    // 与 runTool 走同一条通道（就是它的一个步骤），所以这里只是薄糖。
+    //   path  —— 实例内脚本文件，如 "scripts/forum-post.py"
+    //   args  —— 传给脚本的参数字典
+    //   opts  —— { code: "一段 Python（与 path 二选一）", mode: "await" | "background" }
+    // 返回 runTool 的 handle：可 await / .run_uuid / .cancel()。
+    // mode:"await"（默认）整段脚本跑完才 resolve；"background" 则受理即返（handle 立刻完成），
+    // 脚本在服务端后台跑、跑完经 script_done 事件送达。
+    runScript: function(path, args, opts) {
+      var o = opts || {};
+      var stepArgs = { args: args || {}, mode: o.mode || 'await' };
+      if (o.code) stepArgs.code = o.code; else stepArgs.path = path;
+      return window.Teahouse.runTool([{ tool: 'RunScript', args: stepArgs }]);
+    },
+
     // ---- 流式草稿（只读） ----
     // currentDraft: { path, text, accumulated_len } | null
     // generationStatus: 'idle' | 'generating' | 'done'

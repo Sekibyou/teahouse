@@ -66,3 +66,22 @@ Teahouse.runTool([
 - `SendToSubSession` / `DeleteSubSession` 只认 `args.session_id`，**与父会话无关，行为与导演调用完全一致**。
 
 一句话：**runTool 是"我自己按计划连做几步"，沙盒 `Teahouse.session*` 是"一步一个 API 调用"**；两者都能开/管子会话，按编排形态选——把子会话塞进一条确定性流水线时用前者，按需随手开关时用后者。
+
+## runScript —— 跑一段服务端预制脚本
+
+`Teahouse.runScript(path, args, opts)` 是 `runTool` 的薄糖：它就是往批次里塞一个 `{tool: "RunScript", args: {...}}`。用途是把一段**放在实例 `scripts/` 下的 Python 流程**当成一条命令来跑（脚本由作者预先写好、服务端受限环境执行、**不经过导演 LLM**）。
+
+```js
+// 按钮：跑 scripts/forum-post.py，传参，等它跑完
+Teahouse.runScript("scripts/forum-post.py", { topic: "剑冢异动", n: 5 })
+  .then(function (r) { console.log("脚本完成", r.results); })
+  .catch(function (e) { console.error("失败", e); });
+
+// 或直接内联一段代码（一次性编排）
+Teahouse.runScript(null, { a: 1 }, { code: "print(args['a'])" });
+```
+
+- 返回的就是 `runTool` 的 handle（`.then` / `.run_uuid` / `.cancel()`），语义完全一致。
+- `opts.mode`：`"await"`（默认，整段脚本跑完才 resolve）或 `"background"`（受理即返，脚本在服务端后台跑；此时 handle 立刻完成，跑完经 `script_done` 事件送达，`Teahouse.on("script_done", fn)` 收）。
+- **与 `runTool` 的关键差别在数据流**：`runTool` 每步 args 是静态的、拿不到上一步结果；脚本在服务端是普通 Python，可以"Generate 产出 → 读回内容 → 裁剪 → 追加进 json"。**需要步骤间依赖时用 runScript，不需要时才用裸 runTool。**
+- 脚本能干什么、怎么登记、有哪些沙盒限制，见实例根 `scripts/README.md`。

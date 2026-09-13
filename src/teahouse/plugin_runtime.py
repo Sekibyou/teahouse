@@ -96,8 +96,9 @@ class BackendUnsafeError(Exception):
 
 
 class _ImportVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, label: str = "backend.py") -> None:
         self.bad: list[str] = []
+        self.label = label
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -114,12 +115,13 @@ class _ImportVisitor(ast.NodeVisitor):
         if root in _ALWAYS_OK_IMPORTS:
             return
         if root in BLOCKED_IMPORT_PREFIXES or root not in SAFE_IMPORT_MODULES:
-            self.bad.append(f"L{lineno}: import {module!r} 不在白名单内（插件只能通过 PluginContext 访问文件/网络/数据）")
+            self.bad.append(f"L{lineno}: import {module!r} 不在白名单内（{self.label} 只能通过宿主对象访问文件/网络/数据）")
 
 
 class _CallVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, label: str = "backend.py") -> None:
         self.bad: list[str] = []
+        self.label = label
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
@@ -131,8 +133,9 @@ class _CallVisitor(ast.NodeVisitor):
 
 
 class _AttrVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, label: str = "backend.py") -> None:
         self.bad: list[str] = []
+        self.label = label
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in BLOCKED_DUNDER_ATTRS:
@@ -140,23 +143,28 @@ class _AttrVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def validate_backend_source(source: str) -> None:
-    """Run the static safety check over backend source text. Raises
-    BackendUnsafeError listing every violation if any."""
+def validate_backend_source(source: str, label: str = "backend.py") -> None:
+    """Run the static safety check over source text. Raises BackendUnsafeError
+    listing every violation if any.
+
+    ``label`` names the offending artifact in the error text — plugin backends
+    pass nothing (the default), instance scripts pass their path so authors see
+    ``scripts/foo.py`` instead of a misleading ``backend.py``.
+    """
     try:
-        tree = ast.parse(source)
+        tree = ast.parse(source, filename=label)
     except SyntaxError as e:
-        raise BackendUnsafeError(f"backend.py 语法错误: {e}")
+        raise BackendUnsafeError(f"{label} 语法错误: {e}")
 
     violations: list[str] = []
     for visitor in (_ImportVisitor, _CallVisitor, _AttrVisitor):
-        v = visitor()
+        v = visitor(label)
         v.visit(tree)
         violations.extend(v.bad)
 
     if violations:
         raise BackendUnsafeError(
-            "backend.py 未通过安全校验:\n" + "\n".join(violations)
+            f"{label} 未通过安全校验:\n" + "\n".join(violations)
         )
 
 
