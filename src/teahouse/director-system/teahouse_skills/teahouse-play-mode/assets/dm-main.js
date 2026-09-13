@@ -73,8 +73,11 @@
 
       // 气泡行：头像 + 气泡列（say 专用）
       '.th-dm-row{display:flex;align-items:flex-start;gap:10px;max-width:100%;}',
-      '.th-dm-row-dm{align-self:flex-start;}',
-      '.th-dm-row-user{align-self:flex-end;flex-direction:row-reverse;}',
+      // 注意：row 不要用 align-self 收缩到内容宽——那样 bubblewrap 的
+      // max-width:78% 会按「已缩小」的 row 算，形成反馈回路，把气泡强行压到
+      // 自身宽的约 78%（十来个字就折行）。改为 stretch（默认）撑满内容列，
+      // 左右对齐交给 flex-direction:row-reverse（user）本身完成。
+      '.th-dm-row-user{flex-direction:row-reverse;}',
 
       // 头像圆圈（文字头像；未来可换成 icon）
       '.th-dm-avatar{flex:none;width:38px;height:38px;border-radius:50%;',
