@@ -1,15 +1,13 @@
 import { useState, memo, useEffect, useRef, type ReactNode } from "react"
 import {
-  Loader2, ChevronDown, ChevronRight, Brain, Terminal,
-  CheckCircle2, XCircle, Copy, Check,
+  Loader2, ChevronDown, ChevronRight, Brain, Copy, Check,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { Components } from "react-markdown"
 import { isMermaidLanguage, MermaidDiagram, isPendingMermaidLanguage, MermaidPending, maskUnclosedMermaidTail } from "@/components/MermaidDiagram"
 import type { RichMessage, RoundUsage } from "./types"
-import { formatBlockArgs } from "./utils"
-import { TodoWriteResult } from "./TodoWriteResult"
+import { ToolCallBlock } from "./ToolCallBlock"
 import { useTranslation } from "react-i18next"
 import { useExtraInfoStore } from "@/stores/extraInfoStore"
 
@@ -186,53 +184,7 @@ export const AssistantBubble = memo(function AssistantBubble({
               )
             }
             if (block.type === "tool_call") {
-              return (
-                <div key={`tc-${i}`} className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-                  <div className="px-3 py-2 text-xs space-y-1">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Terminal className="h-3 w-3 shrink-0" />
-                      <span className="font-mono font-medium text-foreground">{block.name}</span>
-                      <span className="font-mono opacity-60 truncate">{formatBlockArgs(block)}</span>
-                    </div>
-                    {block.result === "(interrupted)" ? (
-                      <div className="flex items-start gap-1.5 text-muted-foreground/50">
-                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                        <span>{t("assistant.interrupted")}</span>
-                      </div>
-                    ) : block.result !== undefined ? (
-                      <div className="mt-1">
-                        {block.name === "TodoWrite" ? (
-                          <TodoWriteResult args={block.args || {}} result={block.result} />
-                        ) : block.result.startsWith("Error") ? (
-                          <div className="flex items-start gap-1.5 text-red-500">
-                            <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                            <span className="font-mono whitespace-pre-wrap">{block.result}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-1.5 text-muted-foreground">
-                            <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
-                            <span className="font-mono whitespace-pre-wrap line-clamp-3">{block.result}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        {isIdle ? (
-                          <>
-                            <XCircle className="h-3 w-3 text-muted-foreground/50" />
-                            <span>{t("assistant.interrupted")}</span>
-                          </>
-                        ) : (
-                          <>
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>{block.running ? t("assistant.running") : t("assistant.waiting")}</span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
+              return <ToolCallBlock key={`tc-${i}`} block={block} isIdle={isIdle} />
             }
             return null
           })}

@@ -189,34 +189,3 @@ export function formatCommitPreview(args: Record<string, unknown>): string {
   }
   return `[其他] ${msg}`
 }
-
-/** Format tool call args for compact display */
-export function formatBlockArgs(block: { args?: Record<string, unknown>; name?: string }): string {
-  const args = block.args || {}
-  const name = block.name || ""
-  if (name === "Read") return args.path as string
-  if (name === "Write") return args.path as string
-  if (name === "Edit") {
-    const slice = args.slice as string | undefined
-    if (slice) return slice
-    const p = args.path as string
-    const range =
-      args.offset != null || args.limit != null
-        ? `:${args.offset ?? 1}${args.limit != null ? `+${args.limit}` : ""}`
-        : ""
-    return `${p}${range}`
-  }
-  if (name === "WriteLine") return args.path as string
-  if (name === "Glob") return args.pattern as string
-  if (name === "TodoWrite") {
-    const todos = (args.todos as Array<{ status: string; activeForm?: string }>) || []
-    if (todos.length === 0) return "（空清单）"
-    const done = todos.filter((t) => t.status === "completed").length
-    const active = todos.find((t) => t.status === "in_progress")
-    const parts = [`${todos.length} 项`]
-    if (done > 0) parts.push(`${done} 项已完成`)
-    if (active) parts.push(`进行中: ${active.activeForm}`)
-    return parts.join("，")
-  }
-  return JSON.stringify(args)
-}

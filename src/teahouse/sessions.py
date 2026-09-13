@@ -289,19 +289,6 @@ def latest_usage(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> dict 
     return None
 
 
-PREVIEW_LINES = 3
-
-
-def _preview_str(text: str, max_lines: int = PREVIEW_LINES) -> str:
-    """Clip a long string to a short preview for display (never for LLM context)."""
-    trimmed = text.rstrip("\n")
-    lines = trimmed.splitlines()
-    if len(lines) > max_lines:
-        shown = "\n".join(lines[:max_lines])
-        return f"{shown}\n…({len(lines) - max_lines} more lines)"
-    return trimmed
-
-
 def render_records(records: list[dict]) -> list[dict]:
     """Return a *display* list of bubbles for the frontend renderer.
 
@@ -314,10 +301,11 @@ def render_records(records: list[dict]) -> list[dict]:
       single assistant bubble into independent UI bubbles.
 
     ``subRank`` is a numeric sort key (reasoning=-1, blocks 0..n-1, user=0) so
-    the frontend can order strictly by ``(order, subRank)``. Tool results are
-    clipped to a short preview (the full result stays in storage for LLM
-    context). ``records_to_context`` reads the *original* records directly, so
-    the LLM context is unaffected by this display splitting.
+    the frontend can order strictly by ``(order, subRank)``. Tool results cross
+    in full — the renderer condenses them to a one-line summary and only shows
+    the raw text when the user expands the bubble. ``records_to_context`` reads
+    the *original* records directly, so the LLM context is unaffected by this
+    display splitting.
     """
     out: list[dict] = []
     records = sorted(records, key=lambda r: r.get("order", 0))
@@ -375,9 +363,11 @@ def render_records(records: list[dict]) -> list[dict]:
                     "id": b.get("id", ""),
                     "name": b.get("name", ""),
                     "args": b.get("args"),
-                    # Only the clipped preview crosses to the renderer; the full
-                    # tool output stays in storage for LLM context.
-                    "result": _preview_str(result) if isinstance(result, str) else None,
+                    # Full result — the renderer derives its one-line summary from
+                    # it (Read 的行范围与字数、Grep 的匹配数…), and only expands to
+                    # the raw text on demand. Clipping the payload here would make
+                    # those aggregates wrong after a session reload.
+                    "result": result if isinstance(result, str) else None,
                 }
                 if b.get("batch"):
                     block["batch"] = b["batch"]

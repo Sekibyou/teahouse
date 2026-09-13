@@ -1,7 +1,10 @@
-import { CheckCheck, CircleDot, Circle, XCircle, CheckCircle2 } from "lucide-react"
+import { CheckCheck, CircleDot, Circle, XCircle } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
-/** Render a TodoWrite result as a visual task list */
+/** 把 TodoWrite 的结果渲染成一份可视化任务清单。 */
 export function TodoWriteResult({ args, result }: { args: Record<string, unknown>; result: string }) {
+  const { t } = useTranslation("misc")
+
   if (result.startsWith("Error")) {
     return (
       <div className="flex items-start gap-1.5 text-red-500">
@@ -10,23 +13,32 @@ export function TodoWriteResult({ args, result }: { args: Record<string, unknown
       </div>
     )
   }
+
   const todos = (args.todos as Array<{ content: string; status: string }>) || []
-  if (todos.length === 0) {
-    return (
-      <div className="flex items-start gap-1.5 text-green-600 dark:text-green-400">
-        <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
-        <span className="font-mono whitespace-pre-wrap line-clamp-3">{result}</span>
-      </div>
-    )
+  const counts = { completed: 0, in_progress: 0, pending: 0 }
+  for (const todo of todos) {
+    if (todo.status === "completed") counts.completed++
+    else if (todo.status === "in_progress") counts.in_progress++
+    else counts.pending++
   }
+  const stat = t("assistant.tools.todoStat", {
+    done: counts.completed,
+    active: counts.in_progress,
+    pending: counts.pending,
+  })
+
+  if (todos.length === 0) {
+    return <div className="text-muted-foreground">{stat}</div>
+  }
+
   return (
     <div>
       <div className="space-y-0.5">
-        {todos.map((t, i) => {
+        {todos.map((todo, i) => {
           const icon =
-            t.status === "completed" ? (
+            todo.status === "completed" ? (
               <CheckCheck className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
-            ) : t.status === "in_progress" ? (
+            ) : todo.status === "in_progress" ? (
               <CircleDot className="h-3 w-3 text-amber-500 shrink-0 mt-0.5" />
             ) : (
               <Circle className="h-3 w-3 text-muted-foreground/40 shrink-0 mt-0.5" />
@@ -35,22 +47,20 @@ export function TodoWriteResult({ args, result }: { args: Record<string, unknown
             <div
               key={i}
               className={`flex items-start gap-1.5 ${
-                t.status === "completed"
+                todo.status === "completed"
                   ? "text-muted-foreground/50 line-through"
-                  : t.status === "in_progress"
+                  : todo.status === "in_progress"
                     ? "text-foreground font-medium"
                     : "text-muted-foreground"
               }`}
             >
               {icon}
-              <span>{t.content}</span>
+              <span>{todo.content}</span>
             </div>
           )
         })}
       </div>
-      <div className="mt-1.5 pt-1.5 border-t border-border/50 text-[10px] text-muted-foreground font-mono">
-        {result}
-      </div>
+      <div className="mt-1.5 pt-1.5 border-t border-border/50 text-muted-foreground">{stat}</div>
     </div>
   )
 }
