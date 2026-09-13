@@ -49,9 +49,13 @@ export interface RichMessage {
   /** 后端队列 ID，用于 queued→done 升级匹配 */
   _queue_id?: string
   /** 固定格式 `[auto]` 系统消息的归类（特殊标记渲染）；普通消息无此字段 */
-  autoKind?: "interrupt" | "endsession" | "session_done" | "compact" | "auto_continue" | "long_msg" | "paste_notice"
+  autoKind?: "interrupt" | "endsession" | "session_done" | "script_done" | "compact" | "auto_continue" | "long_msg" | "paste_notice"
   /** 当 autoKind==="session_done" 时，提取出的子会话 sid（如 "session-<uuid>"） */
   autoSid?: string
+  /** 当 autoKind==="script_done" 时，跑完的后台脚本标识（path 或 "(inline code)"） */
+  autoLabel?: string
+  /** 当 autoKind==="script_done" 时，该脚本是否执行失败（失败用警示配色） */
+  autoFailed?: boolean
   /** 用户气泡附带的图片（实例内路径，渲染时经 readAsset 取 data URI） */
   images?: { path: string; mime: string }[]
   /** 本轮的厂商真实用量；只挂在该轮**最后一个**气泡上，角标即在此渲染 */

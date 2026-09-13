@@ -53,6 +53,8 @@ export const jaChat = {
   compactingBubble: "セッションコンテキストを圧縮中…",
   autoContinueBubble: "セッションを圧縮したため、自動的に作業を継続します",
   subSessionEnd: "サブセッション終了：",
+  scriptDoneBubble: "バックグラウンドスクリプト完了：",
+  scriptFailedBubble: "バックグラウンドスクリプト失敗：",
   longMsgBubble: "過長メッセージ",
   waitingDots: "待機中...",
   generatingDots: "生成中...",

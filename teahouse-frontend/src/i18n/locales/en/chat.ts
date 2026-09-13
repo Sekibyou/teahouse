@@ -53,6 +53,8 @@ export const enChat = {
   compactingBubble: "Compacting session context…",
   autoContinueBubble: "Session compacted, automatically continuing",
   subSessionEnd: "Sub-session ended: ",
+  scriptDoneBubble: "Background script finished: ",
+  scriptFailedBubble: "Background script failed: ",
   longMsgBubble: "Oversized message",
   waitingDots: "Waiting...",
   generatingDots: "Generating...",

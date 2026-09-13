@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText } from "lucide-react"
+import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi, dmOutputApi } from "@/lib/api"
 import { wrapDmMessage, parseDmWrap, dmBadgeLabel } from "@/lib/dmWrap"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
@@ -2001,6 +2001,16 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
                         <>
                           <ArrowRight className="h-3 w-3 text-muted-foreground/60" />
                           <span>{t("autoContinueBubble")}</span>
+                        </>
+                      ) : msg.autoKind === "script_done" ? (
+                        <>
+                          {msg.autoFailed
+                            ? <TriangleAlert className="h-3 w-3 text-destructive/70" />
+                            : <SquareTerminal className="h-3 w-3 text-muted-foreground/60" />}
+                          <span className={msg.autoFailed ? "text-destructive/80" : undefined}>
+                            {msg.autoFailed ? t("scriptFailedBubble") : t("scriptDoneBubble")}
+                            <span className="font-mono">{msg.autoLabel || ""}</span>
+                          </span>
                         </>
                       ) : (
                         <>

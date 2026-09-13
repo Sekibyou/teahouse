@@ -44,9 +44,11 @@ export function insertBubbleSorted(msgs: RichMessage[], msg: RichMessage): RichM
  * - "interrupt"   : 用户打断（"[auto] user interrupted"）
  * - "endsession"  : 子会话经 EndSession 被后端强制中断（"[auto] interrupted by EndSession tool"）
  * - "session_done": 委派的子会话已结束（…"子会话 session-<uuid> 已完成"…），并附带提取出的 uuid
+ * - "script_done" : 后台脚本跑完（"[auto] 后台脚本 <label> 已执行结束。结果摘要：…"），
+ *                   附带脚本标识与成败（失败时前端用警示配色）
  * 其它消息返回 null（普通 user 气泡）。
  */
-export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "compact" } | { kind: "auto_continue" } | { kind: "long_msg" } | { kind: "paste_notice" } | null {
+export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "endsession" } | { kind: "session_done"; sid: string } | { kind: "script_done"; label: string; failed: boolean } | { kind: "compact" } | { kind: "auto_continue" } | { kind: "long_msg" } | { kind: "paste_notice" } | null {
   // A [compact] prefix (whether the manual command or the summary marker written
   // after a finished compact) renders as a system bubble, not a normal user bubble.
   if (content.trim().startsWith("[compact]")) return { kind: "compact" }
@@ -63,6 +65,12 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   if (trimmed.startsWith("会话已压缩")) return { kind: "auto_continue" }
   const sidMatch = trimmed.match(/session-([0-9a-fA-F]{4,})/)
   if (sidMatch && /子会话/.test(trimmed)) return { kind: "session_done", sid: sidMatch[0] }
+  // Background-script wake written by RunScript's background mode. The prefix and
+  // the two tails are produced by execute_run_script — keep them in sync.
+  const scriptMatch = trimmed.match(/^后台脚本 (.+?) (已执行结束|执行失败)/)
+  if (scriptMatch) {
+    return { kind: "script_done", label: scriptMatch[1], failed: scriptMatch[2] === "执行失败" }
+  }
   return null
 }
 
@@ -111,6 +119,9 @@ export function parsePasteNotice(content: string): PasteNoticeInfo {
   if (auto.kind === "session_done") {
     return { autoKind: "session_done" as const, autoSid: auto.sid }
   }
+  if (auto.kind === "script_done") {
+    return { autoKind: "script_done" as const, autoLabel: auto.label, autoFailed: auto.failed }
+  }
   if (auto.kind === "endsession") {
     return { autoKind: "endsession" as const }
   }
@@ -149,7 +160,11 @@ export function mergeConsecutiveSameRole(msgs: RichMessage[]): RichMessage[] {
     const last = result[result.length - 1]
     const lastHasBlocks = last?.blocks && last.blocks.length > 0
     const curHasBlocks = m.blocks && m.blocks.length > 0
-    if (last && last.role === m.role && !lastHasBlocks && !curHasBlocks) {
+    // Auto-status chips (`[auto]` / `[compact]` system records) are each a whole
+    // record of their own: merging one into a neighbouring bubble would both
+    // swallow its badge and corrupt the payload built from `content`.
+    const lastIsAuto = !!last?.autoKind
+    if (last && last.role === m.role && !lastHasBlocks && !curHasBlocks && !lastIsAuto && !m.autoKind) {
       last.content = last.content ? last.content + "\n" + m.content : m.content
     } else {
       result.push({ ...m })
