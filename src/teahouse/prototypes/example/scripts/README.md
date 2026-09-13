@@ -69,9 +69,7 @@ print(f"已产出 {n} 条")
 
 | 脚本 | 用途 | 参数 | 何时调用 |
 |---|---|---|---|
-| *(示例：`forum-post.py`)* | *(按话题产出 N 条论坛发言，追加进 `runtime/assets/forum.json`)* | *(topic: str, n: int)* | *(玩家开启论坛界面时)* |
-
-（上面这行是格式示例，加真脚本时**替换掉它**；没有脚本时把表格留空即可。）
+| `enable-dm.py` | 把实例从小说式切换为 DM 式（移 JS 进/出 `disabled/`、清空 `floors/`、`dm.yaml.example`→`dm.yaml`、更新 `teahouse.md` 说明）。幂等 | 无 | 需要把实例转为 DM（跑团 / 语C / 聊天式）时 |
 
 ## 注意事项
 

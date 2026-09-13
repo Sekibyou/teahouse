@@ -11,14 +11,12 @@
 1. 把变量 `启用变量维护` 设置为 `true`（解锁组装器里的「变量维护要求」段）。
 2. 前往 `settings/key-vars.md` 声明你需要正文维护的变量。格式请参考 `settings/key-vars.md.example`。
 
-## 如何启用 DM（默认关闭）
+## DM 模式
 
-本实例已配置好基础的 DM 提示词与渲染器，启用步骤：
+跑团 / 语C / 聊天式：玩家在游玩视图与 DM 对话，DM 用 `Output` 把发言呈现为气泡（记录落在 `runtime/dm-output.jsonl`）。
 
-1. 把 `dm.yaml.example` 改名为 `dm.yaml`。
-2. 把 `runtime/sandbox/novel-main.js` 移入 `runtime/sandbox/disabled/` 文件夹。翻页器 `runtime/sandbox/page-bar.js` 也需禁用。
-3. 从 `runtime/sandbox/disabled/` 文件夹里移出 `dm-main.js`。
-4. 参考设定修改 `dm.yaml`：指出设定都位于哪里、应该阅读哪些内容。
+- 切换SOP：1. 查看 `dm-main.js` 文件的位置，如果是disabled则说明大概率未开启 2. 查看 `dm.yaml` 或者 `dm.yaml.example`，带example后缀的话则说明未开启 3. 要启用的话，直接执行一键切换脚本即可 4. 启用后修改 `teahouse.md` 本段，标记为已启用，删除此SOP
+- 一键切换脚本：`scripts/enable-dm.py`。
 
 ## Skill使用
 
