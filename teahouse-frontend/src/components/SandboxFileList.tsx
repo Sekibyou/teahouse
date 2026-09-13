@@ -53,11 +53,17 @@ export function SandboxFileList({ instanceId, instanceName, variant, open = true
     // (runtime/sandbox/ or runtime/floors/). Changes elsewhere (teahouse.md,
     // settings/, a vars write, …) don't affect what this panel renders. The
     // path arrives backend-bare; the list's file keys are bare too.
-    onFileChanged: useCallback((path: string) => {
-      const isRelevant =
-        path !== undefined && path !== null && path !== "" &&
-        (path.startsWith("runtime/sandbox/") || path.startsWith("runtime/floors/") ||
-         path === "runtime/sandbox" || path === "runtime/floors")
+    // 200ms 内的连发只投递一条事件（path = 最后一条），所以要看整批的 paths：
+    // "先动 sandbox 文件、后写 teahouse.md" 这种连发否则会被最后那条判为不相关而漏刷。
+    onFileChanged: useCallback((path: string, event?: Record<string, unknown>) => {
+      const burst = Array.isArray(event?.paths) ? (event.paths as string[]) : []
+      const paths = burst.length > 1 ? burst : [path]
+      const isRelevant = paths.some(
+        (p) =>
+          p !== undefined && p !== null && p !== "" &&
+          (p.startsWith("runtime/sandbox/") || p.startsWith("runtime/floors/") ||
+           p === "runtime/sandbox" || p === "runtime/floors")
+      )
       // Only a change under the two dirs this panel shows reloads it; anything
       // else (teahouse.md, settings/, a vars write, …) doesn't affect the list.
       if (isRelevant) setRefresh((v) => v + 1)

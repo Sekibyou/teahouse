@@ -158,21 +158,34 @@ export function SandboxManager({ instanceId, instanceName, onSend, onOpenDirecto
   useSSERefresh({
     instanceId,
     instanceName,
-    onFileChanged: useCallback((path: string) => {
+    onFileChanged: useCallback((path: string, event?: Record<string, unknown>) => {
       if (!path) return
-      // 样式规则变更：先刷新宿主侧的规则（renderRichText 用它着色）并清缓存，
-      // 再让沙盒重渲染正文，避免沙盒用旧的规则集重渲染而看起来"没反应"。
-      if (path.includes("text-style-rules.yaml")) {
-        reloadTextStyleRules().then(() => sendToSandbox("output.refresh", { path }))
-        return
-      }
+      // A 200ms burst is delivered as ONE event whose `path` is the LAST change of
+      // the burst, so decide on the whole burst (`event.paths`, which also carries
+      // a move's source path) rather than the last path alone: a switch script
+      // moves the sandbox code and then writes teahouse.md, and judging by
+      // teahouse.md would skip the iframe rebuild — the sandbox kept rendering the
+      // old version until the user pressed F5.
+      const burst = Array.isArray(event?.paths) ? (event.paths as string[]) : []
+      const paths = burst.length > 1 ? burst : [path]
+      const touchedRules = paths.some((p) => p.includes("text-style-rules.yaml"))
       // srcdoc is built solely from runtime/sandbox/. Only changes under
       // runtime/sandbox/ (sandbox code edited/written, or moved to/from
       // runtime/sandbox/disabled) can alter the iframe's contents, so rebuild it.
       // Floors / runtime_vars.jsonl / text-style-rules.yaml are DATA the sandbox
       // re-reads — route them to output.refresh so prose ${name} re-resolves.
-      const isSandboxCode = path.includes("runtime/sandbox/")
-      if (isSandboxCode) {
+      const touchedSandbox = paths.some((p) => p.includes("runtime/sandbox/"))
+      if (touchedRules) {
+        // 样式规则变更：先刷新宿主侧的规则（renderRichText 用它着色）并清缓存，
+        // 再让沙盒重渲染正文，避免沙盒用旧的规则集重渲染而看起来"没反应"。
+        // 若沙盒代码本身也变了，重建出的 iframe 自然会用上新规则，不必再刷一次。
+        if (!touchedSandbox) {
+          reloadTextStyleRules().then(() => sendToSandbox("output.refresh", { path }))
+          return
+        }
+        reloadTextStyleRules()
+      }
+      if (touchedSandbox) {
         setSrcdocVersion((v) => v + 1)
       } else {
         // floors / vars / style → ask sandbox to re-read & re-render

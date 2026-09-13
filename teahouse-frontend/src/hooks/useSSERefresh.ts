@@ -7,7 +7,14 @@ interface SSERefreshOptions {
   /** Called when a single file was modified (Write, Edit, WriteLine, GitDiscard single file).
    * Receives the bare path plus the full parsed file_changed payload (may carry
    * `type` / `prev_path` when the backend annotated it) so consumers can do
-   * type-aware partial tree updates instead of an unconditional full reload. */
+   * type-aware partial tree updates instead of an unconditional full reload.
+   *
+   * ⚠️ A 200ms burst of events is coalesced into ONE delivery, so `path` is the
+   * **last** event's path. When the burst carried more than one path, `event.paths`
+   * holds every one of them (deduped, order preserved, and including a move's
+   * `prev_path` source) — a consumer that watches a single subtree MUST consult it:
+   * a burst can move sandbox code and then write teahouse.md, and judging by the
+   * last path alone would miss the sandbox change. */
   onFileChanged: (path: string, event?: Record<string, unknown>) => void
   /** Called when workspace state changed (git operations, branch switch, etc.). */
   onWorkspaceChanged: () => void
@@ -83,6 +90,7 @@ export function useSSERefresh({
   const lastFileEventRef = useRef<Record<string, unknown>>({})
   const burstStructuralRef = useRef(false)
   const burstCountRef = useRef(0)
+  const burstPathsRef = useRef<string[]>([])
   const lastTreeKeyRef = useRef<string>("")
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // False until the first successful open; every later open is a reconnect.
@@ -126,14 +134,29 @@ export function useSSERefresh({
       const t = evt.type ? String(evt.type) : ""
       if (t === "created" || t === "deleted" || t === "moved") burstStructuralRef.current = true
       burstCountRef.current += 1
+      // Remember every path this burst touched (capped): the consumers below get
+      // only ONE representative event, and a consumer watching a subtree would
+      // otherwise judge by the last path alone — missing an earlier sandbox move
+      // because a later write to teahouse.md happened to land in the same window.
+      // A move reports its DESTINATION as `path` and the source as `prev_path`, so
+      // both are collected: "a file left runtime/sandbox/" matters just as much as
+      // "a file arrived", and only prev_path records the former.
+      for (const cand of [evt.path, evt.prev_path]) {
+        const bp = cand ? String(cand) : ""
+        if (bp && burstPathsRef.current.length < 50 && !burstPathsRef.current.includes(bp)) {
+          burstPathsRef.current.push(bp)
+        }
+      }
       lastFileEventRef.current = evt
       if (fileTimerRef.current) return
       fileTimerRef.current = setTimeout(() => {
         fileTimerRef.current = null
         const structuralInBurst = burstStructuralRef.current
         const countInBurst = burstCountRef.current
+        const burstPaths = burstPathsRef.current
         burstStructuralRef.current = false
         burstCountRef.current = 0
+        burstPathsRef.current = []
         if (instanceId) useGitStore.getState().fetchGitStatus(instanceId)
         const last = lastFileEventRef.current
         const delivered = { ...last }
@@ -149,6 +172,7 @@ export function useSSERefresh({
         ) {
           delivered.type = "__full_reload"
         }
+        if (burstPaths.length > 1) delivered.paths = burstPaths
         onFileChanged(String(delivered.path || ""), delivered)
       }, DEBOUNCE_MS)
     }
