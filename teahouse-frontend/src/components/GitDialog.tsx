@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { gitApi } from "@/lib/api"
@@ -37,7 +38,9 @@ interface GitDialogProps {
   instanceId: string
   open: boolean
   onClose: () => void
-  onRefresh: () => void
+  /** 通知宿主重载工作区（文件树等）。**只刷新，不关闭本弹窗**——是否关闭由
+   * 各操作自行决定（整体改变工作区的操作如提交/切换分支才 closeWithExit）。 */
+  refreshWorkspace: () => void
 }
 
 type TabKey = "graph" | "commit"
@@ -68,7 +71,7 @@ function nextTempName(): string {
   return `temp-${Date.now().toString(36)}`
 }
 
-export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogProps) {
+export function GitDialog({ instanceId, open, onClose, refreshWorkspace }: GitDialogProps) {
   const { t } = useTranslation("git")
   const isMobile = useIsMobile()
   // 移动端全屏进出动画：本组件由父层常驻渲染，open 切 false 时先保留 DOM 播从右滑出再隐藏；
@@ -108,6 +111,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
   const [renaming, setRenaming] = useState(false)
   const [newBranchName, setNewBranchName] = useState("")
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  /** 提交管理页「全部丢弃」的二次确认（破坏性操作，防误触） */
+  const [confirmingDiscardAll, setConfirmingDiscardAll] = useState(false)
 
   const [tab, setTab] = useState<TabKey>("graph")
 
@@ -187,7 +192,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       setCommitAndBranch(false)
       await loadStatus()
       await loadFileStatuses()
-      onRefresh()
+      refreshWorkspace()
+      closeWithExit()
     } else {
       setError(res.error || t("error.commit"))
     }
@@ -216,7 +222,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       }
       await loadStatus()
       await loadFileStatuses()
-      onRefresh()
+      refreshWorkspace()
+      closeWithExit()
     } catch (e: any) {
       setError(e.message || t("error.operation"))
     }
@@ -231,7 +238,7 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       setRenaming(false)
       setNewBranchName("")
       await loadStatus()
-      onRefresh()
+      refreshWorkspace()
     } else {
       setError(res.error || t("error.rename"))
     }
@@ -253,7 +260,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
       setConfirmingDelete(false)
       await loadStatus()
       await loadFileStatuses()
-      onRefresh()
+      refreshWorkspace()
+      closeWithExit()
     } else {
       setError(res.error || t("error.delete"))
     }
@@ -261,12 +269,14 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
 
   const handleDiscardAll = async () => {
     setError("")
+    setConfirmingDiscardAll(false)
     const res = await gitApi.discard(instanceId)
     if (res.ok) {
       setContextNode(null)
       await loadFileStatuses()
       await loadStatus()
-      onRefresh()
+      // 只刷新，不关闭——用户常在丢弃后继续提交/继续挑文件丢弃
+      refreshWorkspace()
     } else {
       setError(res.error || t("error.discard"))
     }
@@ -278,7 +288,8 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
     if (res.ok) {
       await loadFileStatuses()
       await loadStatus()
-      onRefresh()
+      // 只刷新，不关闭——用户往往要连续丢弃多个（而非全部）文件
+      refreshWorkspace()
     } else {
       setError(res.error || t("error.restore"))
     }
@@ -671,10 +682,22 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
                     {/* Left: uncommitted files */}
                     <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? "min-h-0" : "border-r border-border"}`}>
                       <div className="flex-1 overflow-auto p-4">
-                        <h4 className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
-                          <FileText className="h-3.5 w-3.5" />
-                          {t("commit.uncommittedTitle")}
-                        </h4>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                            <FileText className="h-3.5 w-3.5" />
+                            {t("commit.uncommittedTitle")}
+                          </h4>
+                          {!filesLoading && fileStatuses.length > 0 && (
+                            <button
+                              className="flex items-center gap-1 px-1.5 py-1 rounded text-xs text-muted-foreground hover:text-destructive hover:bg-muted transition-colors shrink-0"
+                              title={t("commit.discardAllTip")}
+                              onClick={() => setConfirmingDiscardAll(true)}
+                            >
+                              <Undo2 className="h-3.5 w-3.5" />
+                              {t("commit.discardAll")}
+                            </button>
+                          )}
+                        </div>
                         {filesLoading ? (
                           <div className="flex items-center justify-center py-8">
                             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -851,6 +874,20 @@ export function GitDialog({ instanceId, open, onClose, onRefresh }: GitDialogPro
             )}
           </div>
         </div>
+      </div>
+
+      {/* 「全部丢弃」二次确认。外层包一个 stopPropagation：根节点 onClick=closeWithExit，
+          ConfirmDialog 遮罩上的点击若不拦截会冒泡上去、把整个版本控制弹窗一起关掉。 */}
+      <div onClick={e => e.stopPropagation()}>
+        <ConfirmDialog
+          open={confirmingDiscardAll}
+          title={t("commit.discardAllTitle")}
+          message={t("commit.discardAllMsg")}
+          variant="destructive"
+          confirmText={t("commit.discardAllConfirm")}
+          onConfirm={handleDiscardAll}
+          onCancel={() => setConfirmingDiscardAll(false)}
+        />
       </div>
     </div>
   )
