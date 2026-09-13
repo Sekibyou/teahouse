@@ -1723,15 +1723,17 @@ async def set_session_permissions(
     ``action`` is ``add`` (union with the current list) or ``remove``
     (difference). Persisted in the child session's ``.meta.json``; the next tool
     loop reads it fresh, so changes take effect without recreating the session.
-    The main session is unrestricted and rejects this endpoint.
+    The main session and DM session are unrestricted (no allow-list to edit) and
+    reject this endpoint — writing ``enabled_tools`` into DM's meta would
+    silently narrow the DM tool set from "全部" to "白名单".
     """
-    from ..sessions import MAIN_SESSION_ID, ensure_meta, save_meta
+    from ..sessions import MAIN_SESSION_ID, DM_SESSION_ID, ensure_meta, save_meta
     from ..tools import TOOL_EXECUTORS, SUB_SESSION_BASE_TOOLS
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
     if not inst or inst["user_id"] != u["id"]:
         raise HTTPException(status_code=404, detail="Instance not found")
-    if session_id == MAIN_SESSION_ID:
+    if session_id in (MAIN_SESSION_ID, DM_SESSION_ID):
         raise HTTPException(status_code=400, detail="Permission changes only apply to child sessions")
     if body.action not in ("add", "remove"):
         raise HTTPException(status_code=422, detail="action must be 'add' or 'remove'")
@@ -1854,11 +1856,13 @@ async def destroy_session(
     ``abort=true`` additionally cancels an in-flight /v1/chat for that session
     (frontend-disconnect style). Broadcasts ``session_destroyed``.
 
-    The main session is special-cased: ``/clear`` truncates its records but
-    keeps the JSONL file on disk and does NOT broadcast ``session_destroyed``.
-    Deleting the file would drop the main entry from the frontend session
-    strip (it only re-adds on a genuine destroy), leaving no "主会话" tab.
-    Child sessions keep the delete + broadcast behavior.
+    Main and DM are special-cased for the ``/clear`` meaning ("wipe the
+    conversation, not the session"): their records are truncated but the JSONL
+    file stays on disk and no ``session_destroyed`` is broadcast. Deleting main's
+    file would drop the entry from the frontend session strip (it only re-adds on
+    a genuine destroy), leaving no "主会话" tab; deleting DM's meta would throw
+    away its thinking-strength setting and the broadcast would bounce the user
+    out of the DM tab. Child sessions keep the delete + broadcast behavior.
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -1866,13 +1870,18 @@ async def destroy_session(
         raise HTTPException(status_code=404, detail="Instance not found")
     instance_dir = _resolve_instance_dir(inst)
 
-    from ..sessions import MAIN_SESSION_ID, destroy as _destroy, truncate as _truncate
+    from ..sessions import (
+        MAIN_SESSION_ID,
+        DM_SESSION_ID,
+        destroy as _destroy,
+        truncate as _truncate,
+    )
 
     if abort:
         from ..session_tracker import abort_session_requests
         await abort_session_requests(instance_dir.name, session_id)
 
-    if session_id == MAIN_SESSION_ID:
+    if session_id in (MAIN_SESSION_ID, DM_SESSION_ID):
         _truncate(instance_dir, session_id)
         return {"status": "ok", "session_id": session_id}
 

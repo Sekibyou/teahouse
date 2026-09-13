@@ -68,6 +68,34 @@ async def resolve_session_effort(
     return None
 
 
+async def ensure_dm_effort(
+    instance_dir: Path,
+    user_id: str | None = None,
+) -> str | None:
+    """Initialize the DM session's effort by copying the director's, once.
+
+    DM is an instance-level singleton with no explicit creation event — it
+    materializes on its first message. Left unset, it falls through to the vendor
+    default (heavy on reasoning-default models like DeepSeek) while the frontend
+    renders the absence as "无". So on first use we snapshot what the director
+    resolves to right now (the user-level default, same as the main session);
+    later changes to that default do not propagate, and an explicit DM setting is
+    never overwritten.
+
+    Director unset → nothing is written, so DM keeps following the vendor default
+    exactly like the director does. Returns the effort written, or ``None``.
+    """
+    from .sessions import DM_SESSION_ID, ensure_meta, meta_path
+
+    if meta_path(instance_dir, DM_SESSION_ID).exists():
+        return None
+    effort = await resolve_session_effort(instance_dir, MAIN_SESSION_ID, user_id)
+    if not effort:
+        return None
+    ensure_meta(instance_dir, DM_SESSION_ID, {"reasoning_effort": effort})
+    return effort
+
+
 def effort_kwargs(api_style: str, effort: str | None) -> dict:
     """Return the extra LLM body kwargs for an effort under an API style.
 

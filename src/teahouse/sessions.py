@@ -47,7 +47,7 @@ def resolve_session_path(instance_dir: Path, session_id: str) -> Path:
     return d / f"{session_id}.jsonl"
 
 
-def _meta_path(instance_dir: Path, session_id: str) -> Path:
+def meta_path(instance_dir: Path, session_id: str) -> Path:
     """Get the metadata path for a session."""
     return instance_dir / SESSION_DIR / f"{session_id}.meta.json"
 
@@ -58,7 +58,7 @@ def ensure_meta(instance_dir: Path, session_id: str, defaults: dict | None = Non
     Main session defaults to ``{}`` (empty = unrestricted). Callers that need
     specific defaults (e.g. ``enabled_tools`` for child sessions) pass them in.
     """
-    p = _meta_path(instance_dir, session_id)
+    p = meta_path(instance_dir, session_id)
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -72,7 +72,7 @@ def ensure_meta(instance_dir: Path, session_id: str, defaults: dict | None = Non
 
 def load_meta(instance_dir: Path, session_id: str) -> dict:
     """Read session metadata. Returns ``{}`` if absent (never creates)."""
-    p = _meta_path(instance_dir, session_id)
+    p = meta_path(instance_dir, session_id)
     if not p.exists():
         return {}
     try:
@@ -83,7 +83,7 @@ def load_meta(instance_dir: Path, session_id: str) -> dict:
 
 def save_meta(instance_dir: Path, session_id: str, meta: dict) -> None:
     """Overwrite the session metadata file."""
-    p = _meta_path(instance_dir, session_id)
+    p = meta_path(instance_dir, session_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
@@ -532,10 +532,12 @@ def destroy(instance_dir: Path, session_id: str) -> None:
     """Delete a session's JSONL and metadata file.
 
     Unified lifecycle — works for child sessions. Main will be lazily
-    recreated on the next write.
+    recreated on the next write. Note ``/clear`` does NOT come here for main /
+    DM — those go through ``truncate`` to keep their metadata (see
+    ``routes/workspaces.destroy_session``).
     """
     sess = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
-    meta = instance_dir / SESSION_DIR / f"{session_id}.meta.json"
+    meta = meta_path(instance_dir, session_id)
     for p in (sess, meta):
         if p.exists():
             p.unlink()

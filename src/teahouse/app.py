@@ -1108,6 +1108,12 @@ async def chat(body: ChatRequest, request: Request):
             loop = SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id)
             raw = new_inputs[-1]["content"]
             _content = raw.get("manual") if isinstance(raw, dict) else raw
+            # DM 会话首次被使用时，把导演（用户级默认）当时的思考强度复制下来落盘，
+            # 免得它停在「未设置」——前端把未设置渲染成「无」，实际却走厂商默认
+            # （DS 这类默认思考很重）。已存在 meta 则不再覆盖。
+            if sid == _sessions.DM_SESSION_ID:
+                from .reasoning import ensure_dm_effort
+                await ensure_dm_effort(instance_dir, user_id)
             # DM 游玩输入（扮演）：先落 dm-output（开新批次）再入队，让气泡立刻可见。
             # DM 栏的局外输入（dm_ooc=true）只进会话，不进 dm-output。
             if (

@@ -797,6 +797,9 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
             // cached partial list masks the authoritative jsonl history.
             if (evType === "done" || evType === "compact_done") {
               delete messagesBySidRef.current[sid]
+              // DM 的思考强度由后端在首轮自动继承导演设置并落盘，这里补一次刷新，
+              // 否则顶部会一直停在「无」直到用户切走再切回。
+              if (sid === DM_SID) refreshSessionEffort(sid)
             }
           }
         } catch {
@@ -1539,7 +1542,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       if (inst) {
         instancesApi.clearSessionMemory(inst.id, sid).catch(() => {})
       }
-      const label = sid === "main" ? t("mainSession") : t("subSession", { sid })
+      const label = sid === "main" ? t("mainSession") : sid === DM_SID ? t("dmConsole") : t("subSession", { sid })
       toast.success(t("clearedContent", { label }))
       return
     }
@@ -1586,7 +1589,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       const res = await instancesApi.setSessionReasoning(activeInst.id, sid, effort)
       if (res.ok) {
         const scope = res.data?.scope
-        const label = sid === "main" ? t("mainSession") : t("subSession", { sid })
+        const label = sid === "main" ? t("mainSession") : sid === DM_SID ? t("dmConsole") : t("subSession", { sid })
         toast.success(
           scope === "user"
             ? t("mainEffortSet", { effort })
@@ -1605,7 +1608,8 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     if (permMatch) {
       const action: "add" | "remove" = permMatch[1] === "permission-add" ? "add" : "remove"
       const tools = (permMatch[2] || "").trim().split(/\s+/).filter(Boolean)
-      if (sid === MAIN_SID) {
+      // DM 与主会话同为「全权、无白名单」，改不了权限（后端同样拒绝）。
+      if (sid === MAIN_SID || sid === DM_SID) {
         toast.error(t("permissionMainOnly"))
         return
       }
