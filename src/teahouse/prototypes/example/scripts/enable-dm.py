@@ -82,10 +82,15 @@ async def run(t, args):
     th_path = "teahouse.md"
     if t.file_exists(th_path):
         th = t.read_file(th_path)
-        key = "## 如何启用 DM"
-        idx = th.find(key)
+        keys = ("## DM 模式", "## 如何启用 DM")
+        idx, key = -1, ""
+        for k in keys:
+            i = th.find(k)
+            if i != -1:
+                idx, key = i, k
+                break
         if idx == -1:
-            notes.append("  [跳过] teahouse.md 未找到「## 如何启用 DM」章节，说明未改")
+            notes.append("  [跳过] teahouse.md 未找到「## DM 模式」/「## 如何启用 DM」章节，说明未改")
         else:
             nxt = th.find("\n## ", idx + len(key))
             if nxt == -1:
