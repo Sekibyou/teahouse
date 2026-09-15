@@ -243,6 +243,7 @@ export const enMisc = {
       outputShown: "shown · {{chars}} chars",
       outputEdited: "edited",
       rolled: "= {{value}}",
+      rolledDice: "{{dice}} = {{value}}",
       waited: "waited {{ms}} ms",
       pruneNone: "no candidates",
       pruneCandidates: "{{n}} candidates · ~{{chars}} chars saved",

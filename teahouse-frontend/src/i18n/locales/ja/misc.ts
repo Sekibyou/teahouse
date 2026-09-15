@@ -243,6 +243,7 @@ export const jaMisc = {
       outputShown: "提示済み · {{chars}} 文字",
       outputEdited: "編集済み",
       rolled: "= {{value}}",
+      rolledDice: "{{dice}} = {{value}}",
       waited: "{{ms}} ms 待機",
       pruneNone: "候補なし",
       pruneCandidates: "{{n}} 件の候補 · 約 {{chars}} 文字削減",

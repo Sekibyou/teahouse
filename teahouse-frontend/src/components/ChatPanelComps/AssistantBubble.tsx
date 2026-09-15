@@ -144,7 +144,9 @@ export const AssistantBubble = memo(function AssistantBubble({
   const hasBlocks = blocks && blocks.length > 0
 
   return (
-    <div className="max-w-[85%] space-y-1">
+    // 列向 flex + items-start：各块（思考/正文/工具气泡/角标）各按自身内容定宽，
+    // 否则容器宽 = 最宽的那个孩子（如 usage 角标）会把同消息内所有气泡一起撑开。
+    <div className="flex max-w-[85%] flex-col items-start gap-1">
       {/* Thinking / reasoning block */}
       {(status === "reasoning" || (reasoning && status !== "pending")) && (
         <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">

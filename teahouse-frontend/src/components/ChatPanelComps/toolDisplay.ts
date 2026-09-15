@@ -290,8 +290,15 @@ function buildSummary({ name, args, result, t }: SummaryCtx): string | null {
       return k("outputEdited")
 
     // ---- 杂项 ----
-    case "Roll":
-      return k("rolled", { value: result.trim() })
+    case "Roll": {
+      // `note` 是导演给这次掷骰的说明，只存在于工具入参里（execute_roll 不用它、
+      // 也不会落进会话记录）——纯展示时从 args 现取，不入 result、不进 LLM 上下文。
+      // 有 note 时把它当标题（说明这一掷是干什么的），正文补出骰式；没 note 时
+      // 标题回落骰式，正文只留结果，避免重复。
+      return str(args.note).trim()
+        ? k("rolledDice", { dice: str(args.dice), value: result.trim() })
+        : k("rolled", { value: result.trim() })
+    }
     case "Wait":
       return k("waited", { ms: n(Number(args.ms) || 0) })
     case "PruneContext": {
@@ -426,7 +433,7 @@ function buildTarget(
     case "OutputEdit":
       return args.seq != null ? `#${args.seq}` : ""
     case "Roll":
-      return str(args.dice)
+      return str(args.note).trim() || str(args.dice)
     case "Wait":
       return args.ms != null ? `${args.ms}ms` : ""
     case "Report":

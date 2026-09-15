@@ -244,6 +244,7 @@ export const zhMisc = {
       outputShown: "已呈现 · {{chars}} 字符",
       outputEdited: "已修改",
       rolled: "= {{value}}",
+      rolledDice: "{{dice}} = {{value}}",
       waited: "已等待 {{ms}} ms",
       pruneNone: "无候选",
       pruneCandidates: "{{n}} 条候选 · 可省 {{chars}} 字符",
