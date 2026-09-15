@@ -78,7 +78,7 @@ const dmg = await Teahouse.roll("2d6+1")
 const loot = await Teahouse.roll("4d6k3")   // 保最高 3 个
 ```
 
-支持语法（同导演 `roll()`）：`XdN` + 可选 `kN`(保最高) / `dlN`(丢最低) / `rN`(重掷≤N) / `roN`(重掷一次≤N) / `e`/`!`(爆炸) / `p`(穿透) / 尾随 `+/-` 修正，如 `"1d6"`、`"2d10+5"`、`"4d6k3"`、`"4d6dl1"`、`"1d6r1"`、`"1d6!"`。非法表达式 → Promise reject。
+支持语法（同导演 `roll()`）：一个或多个**骰子项**用 `+` / `-` 相连（单层加减，裸整数亦可作项），每项为 `XdN` + 可选 `kN`(保最高) / `dlN`(丢最低) / `rN`(重掷≤N) / `roN`(重掷一次≤N) / `e`/`!`(爆炸) / `p`(穿透)。如 `"1d6"`、`"2d10+5"`、`"4d6k3"`、`"4d6dl1"`、`"1d6r1"`、`"1d6!"`、`"1d20+1d6-2"`。**不支持乘法与括号**（`2d6*2` 写 `2d6+2d6`）。非法表达式 → Promise reject。
 
 ### 变量字面量替换：`Teahouse.replacePlaceholders(text, fallbacks?) → Promise<string>`
 

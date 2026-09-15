@@ -208,12 +208,16 @@ def _substitute_variable_literals(text: str, var_map: dict) -> str:
 # so arbitrary calls are never executed.
 
 # --- Simple dice roller (RPG-style syntax), adapted from the reference. ---
-# Supported: "1d6", "2d10+5", "4d6k3" (keep highest 3), "4d6dl1" (drop lowest 1),
-# "1d6r1" (reroll 1s), "1d6ro1" (reroll once), "1d6e" / "1d6!" (exploding),
-# "1d6p" (penetrating). Returns an int total. Runs only inside the code-block
-# whitelist via WHITELIST_FUNCS["roll"], still getting a plain string constant.
-_ROLL_PATTERN = re.compile(
-    r"^(\d+)?d(\d+)((?:[kdlrop!e]+\d*)*)?([+-]\d+)?$", re.IGNORECASE
+# One or more terms joined by +/- ("1d20+1d6-2"), each term being either a dice
+# term or a bare integer. A dice term is XdN with optional keep (kN), drop-lowest
+# (dlN), reroll (rN), reroll-once (roN), exploding (e/!), penetrating (p) —
+# e.g. "1d6", "2d10+5", "4d6k3" (keep highest 3), "4d6dl1", "1d6r1", "1d6e".
+# No multiplication and no parentheses: "2d6*2" is written "2d6+2d6", "3*(1d6)"
+# as "3d6" — single level only. Returns an int total. Runs only inside the
+# code-block whitelist via WHITELIST_FUNCS["roll"], still getting a plain string
+# constant.
+_ROLL_TERM = re.compile(
+    r"([+-]?)(?:(\d+)?d(\d+)((?:[kdlrop!e]+\d*)*)|(\d+))", re.IGNORECASE
 )
 _ROLL_KEEP = re.compile(r"k(\d+)", re.IGNORECASE)
 _ROLL_DROP = re.compile(r"dl(\d+)", re.IGNORECASE)
@@ -242,23 +246,42 @@ def _apply_explode(values: list[int], kept: list[bool], sides: int, explode: boo
 
 
 def _roll(expression) -> int:
-    """Roll `expression` (e.g. "2d6+1", "4d6k3") and return the int total.
+    """Roll `expression` (e.g. "2d6+1", "4d6k3", "1d20+1d6-2") and return the int total.
 
-    Supported grammar is a subset of the reference dice roller: XdN with optional
-    keep (kN), drop-lowest (dlN), reroll (rN), reroll-once (roN), exploding (e/!),
-    penetrating (p), and a trailing +/- modifier. Unknown syntax raises ValueError
-    which the code-block evaluator catches → falls back to the literal block.
+    A sum of one or more signed terms, each a dice term (XdN with optional keep
+    kN, drop-lowest dlN, reroll rN, reroll-once roN, exploding e/!, penetrating p)
+    or a bare integer. Unknown syntax raises ValueError which the code-block
+    evaluator catches → falls back to the literal block.
     """
-    expr = str(expression).strip().lower()
-    m = _ROLL_PATTERN.match(expr)
-    if not m:
-        raise ValueError(f"invalid dice expression: {expr}")
-    count = int(m.group(1)) if m.group(1) else 1
-    sides = int(m.group(2))
-    mods = m.group(3) or ""
-    bonus = int(m.group(4)) if m.group(4) else 0
+    # Only whitespace *around* a +/- is absorbed. Blanket space-stripping would
+    # silently merge "1d6 1d20" into "1d61" + a "d20" modifier instead of
+    # rejecting it — a missing operator must stay an error.
+    expr = re.sub(r"\s*([+-])\s*", r"\1", str(expression)).strip().lower()
+    if not expr:
+        raise ValueError(f"invalid dice expression: {expression}")
+
+    total = 0
+    pos = 0
+    while pos < len(expr):
+        m = _ROLL_TERM.match(expr, pos)
+        if not m:
+            raise ValueError(f"invalid dice expression: {expr}")
+        sign, count_s, sides_s, mods, int_s = m.groups()
+        if int_s is not None:
+            value = int(int_s)
+        else:
+            value = _roll_dice(
+                int(count_s) if count_s else 1, int(sides_s), mods or ""
+            )
+        total += -value if sign == "-" else value
+        pos = m.end()
+    return int(total)
+
+
+def _roll_dice(count: int, sides: int, mods: str) -> int:
+    """Roll `count`d`sides` with the modifier string `mods`, return the kept total."""
     if count <= 0 or sides <= 0:
-        raise ValueError(f"invalid dice expression: {expr}")
+        raise ValueError(f"invalid dice expression: {count}d{sides}{mods}")
 
     values = [random.randint(1, sides) for _ in range(count)]
     kept = [True] * count
@@ -298,8 +321,7 @@ def _roll(expression) -> int:
             for i in lowest:
                 kept[i] = False
 
-    total = sum(v for v, ok in zip(values, kept) if ok) + bonus
-    return int(total)
+    return int(sum(v for v, ok in zip(values, kept) if ok))
 
 
 WHITELIST_FUNCS = {
