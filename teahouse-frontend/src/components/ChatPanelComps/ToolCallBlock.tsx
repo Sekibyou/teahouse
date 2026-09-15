@@ -61,15 +61,17 @@ export function ToolCallBlock({ block, isIdle }: { block: ContentBlock; isIdle: 
   const canExpand = hasResult && !isError && !CHECKLIST_TOOLS.has(block.name || "")
 
   // 错误未被摘要覆盖，故仅在"有摘要、或默认渲染"时才有可折叠的正文可点开。
-  const headerClass = "flex w-full items-center gap-1.5 text-left text-muted-foreground"
+  // 标题行允许换行（items-start + 标识 break-all）：标识（路径/变量名列表/提交信息）
+  // 可能极长，用 truncate 在 fit-content 的 flex 里截不住、只会把气泡撑宽。
+  const headerClass = "flex w-full items-start gap-1.5 text-left text-muted-foreground"
 
   const header = (
     <>
-      <Icon className="h-3 w-3 shrink-0" />
-      <span className="font-mono font-medium text-foreground">{block.name}</span>
-      {target && <span className="font-mono text-muted-foreground/70 truncate">{target}</span>}
+      <Icon className="h-3 w-3 mt-0.5 shrink-0" />
+      <span className="font-mono font-medium text-foreground shrink-0">{block.name}</span>
+      {target && <span className="min-w-0 font-mono text-muted-foreground/70 break-all">{target}</span>}
       {canExpand && (
-        <span className="ml-auto shrink-0 text-muted-foreground/50">
+        <span className="ml-auto mt-0.5 shrink-0 text-muted-foreground/50">
           {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </span>
       )}
@@ -77,7 +79,7 @@ export function ToolCallBlock({ block, isIdle }: { block: ContentBlock; isIdle: 
   )
 
   return (
-    <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+    <div className="max-w-full rounded-lg border border-border bg-muted/30 overflow-hidden">
       <div className="px-3 py-2 text-xs space-y-1">
         {canExpand ? (
           <button

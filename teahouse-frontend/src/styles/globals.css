@@ -329,9 +329,11 @@
 
 
 
-/* ---- mermaid 缩略图：等比缩到容器宽，不溢出、可整图预览 ---- */
+/* ---- mermaid 缩略图：等比缩到容器宽，不溢出、可整图预览 ----
+   max-width 必须 !important：mermaid 渲染出的 svg 带内联 style="max-width:Npx"，
+   内联样式优先级高于本规则，不加则宽图会按原始 px 溢出、把气泡撑开。 */
 .teahouse-mermaid-thumb svg {
-  max-width: 100%;
+  max-width: 100% !important;
   height: auto;
   margin: 0 auto;
   display: block;

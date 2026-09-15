@@ -106,7 +106,7 @@ function UsageFooter({ usage, elapsed }: { usage: RoundUsage; elapsed?: number }
   const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
   return (
     <div
-      className="text-xs font-mono text-muted-foreground/70 pl-1"
+      className="max-w-full text-xs font-mono text-muted-foreground/70 pl-1 break-words"
       title={t("assistant.usageTitle", {
         cached: fmt(usage.cached_read),
         input: fmt(usage.input_total),
@@ -146,10 +146,13 @@ export const AssistantBubble = memo(function AssistantBubble({
   return (
     // 列向 flex + items-start：各块（思考/正文/工具气泡/角标）各按自身内容定宽，
     // 否则容器宽 = 最宽的那个孩子（如 usage 角标）会把同消息内所有气泡一起撑开。
-    <div className="flex max-w-[85%] flex-col items-start gap-1">
+    // 但 items-start 下孩子的宽度不受容器约束（fit-content 可溢出容器），故每个孩子
+    // 都带 max-w-full 把宽度钉死在 85% 容器内——否则一条超长工具标题 / 宽 mermaid
+    // 会横向撑开整块气泡。
+    <div className="flex max-w-[85%] min-w-0 flex-col items-start gap-1">
       {/* Thinking / reasoning block */}
       {(status === "reasoning" || (reasoning && status !== "pending")) && (
-        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+        <div className="max-w-full rounded-lg border border-border bg-muted/30 overflow-hidden">
           <button
             className="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
             onClick={() => setThinkingOpen(!thinkingOpen)}
@@ -178,7 +181,7 @@ export const AssistantBubble = memo(function AssistantBubble({
           {blocks!.map((block, i) => {
             if (block.type === "text" && block.text) {
               return (
-                <div key={`t-${i}`} className="rounded-lg px-3 py-2 bg-muted text-base prose dark:prose-invert prose-chat max-w-none break-words">
+                <div key={`t-${i}`} className="max-w-full rounded-lg px-3 py-2 bg-muted text-base prose dark:prose-invert prose-chat break-words">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                     {maskUnclosedMermaidTail(block.text!) ?? block.text!}
                   </ReactMarkdown>
@@ -195,7 +198,7 @@ export const AssistantBubble = memo(function AssistantBubble({
 
       {/* Fallback: plain text message (no blocks) */}
       {!hasBlocks && content && (
-        <div className="rounded-lg px-3 py-2 text-base bg-muted whitespace-pre-wrap break-words">
+        <div className="max-w-full rounded-lg px-3 py-2 text-base bg-muted whitespace-pre-wrap break-words">
           {content}
         </div>
       )}
