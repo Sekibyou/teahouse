@@ -159,6 +159,37 @@ def preprocess_messages(messages: list[dict], api_format: str) -> list[dict]:
     return m
 
 
+# ===== Tool schema translation =====
+
+def tools_for_style(tools: list[dict] | None, api_format: str) -> list[dict] | None:
+    """Translate internal (OpenAI function-calling) tool schemas into the vendor's shape.
+
+    Tools are always built OpenAI-style — `{type: "function", function: {name,
+    description, parameters}}` (see `tools._raw_tool_to_schema`) — because that is what
+    the OpenAI-compatible path sends. Anthropic's Messages API at the version we pin
+    (2023-06-01) takes a *flat* client tool instead: `{name, description, input_schema}`
+    and **no `type` tag** — the tag exists only on server tools (e.g. `web_search_*`).
+    Handing the OpenAI shape to a spec-compliant Anthropic endpoint rejects the entire
+    request (422, serde: "unknown variant `function`, expected `web_search_...`"), so
+    every tool-using turn fails.
+    """
+    if not tools or api_format != "anthropic":
+        return tools
+    out: list[dict] = []
+    for t in tools:
+        # Already translated, or a plugin that supplied the Anthropic shape itself.
+        if "input_schema" in t:
+            out.append(dict(t))
+            continue
+        fn = t.get("function") or {}
+        out.append({
+            "name": fn.get("name") or t.get("name", ""),
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return out
+
+
 # ===== LLM Client =====
 
 class LLMClient:
@@ -206,12 +237,13 @@ class LLMClient:
         tools = kwargs.pop("tools", None)
         if tools:
             if self.api_style == "anthropic":
+                # Flat {name, description, input_schema} — see tools_for_style.
+                tools = [dict(t) for t in tools_for_style(tools, "anthropic")]
                 # Prompt-cache breakpoint on the last tool. Tools render BEFORE
                 # system and messages, so one breakpoint here caches the whole
                 # tool block alongside the system prompt below. Anthropic caches
                 # nothing without an explicit breakpoint, which would leave every
                 # round reporting a 0% hit rate.
-                tools = [dict(t) for t in tools]
                 tools[-1]["cache_control"] = {"type": "ephemeral"}
             body["tools"] = tools
 
@@ -325,7 +357,7 @@ class LLMClient:
                 "model": kwargs.get("model", cfg.model),
                 "max_tokens": kwargs.get("max_tokens", cfg.max_tokens),
                 "temperature": kwargs.get("temperature", cfg.temperature),
-                "tools": kwargs["tools"],
+                "tools": tools_for_style(kwargs["tools"], self.api_style),
             }
             if effort is not None:
                 body.update(effort_kwargs(self.api_style, effort))
