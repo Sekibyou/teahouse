@@ -1212,6 +1212,25 @@ export function WorkspacePage() {
     }
   }, [t])
 
+  // 下载单个文件到本地。统一走 readAsset（后端按魔数判 mime、任何类型都收），
+  // 二进制与文本同一条路，无需先试 readText 再回退——下载的是磁盘原字节。
+  const downloadEntry = useCallback(async (path: string, name: string) => {
+    if (!instId) return
+    const res = await instancesApi.readAsset(instId, path)
+    if (!res.ok || !res.data) {
+      toast.error(t("download.failed"))
+      return
+    }
+    const bytes = Uint8Array.from(atob(res.data.data), (c) => c.charCodeAt(0))
+    const url = URL.createObjectURL(new Blob([bytes], { type: res.data.mime }))
+    const a = document.createElement("a")
+    a.href = url
+    a.download = name
+    a.click()
+    // 立即 revoke 会让部分浏览器来不及取走 blob，延后一拍再释放。
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }, [instId, t])
+
   const copyEntry = useCallback((items: TreeNodeRef[]) => {
     const pruned = pruneNestedItems(items)
     if (!pruned.length) return
@@ -1744,6 +1763,7 @@ export function WorkspacePage() {
       onNewFolder={(parentPath) => { setShowCreate({ parentPath, type: "directory" }); setCreateName(""); setTreeMenu(null) }}
       onUpload={handleMenuUpload}
       onCopyPath={(path) => { copyPathEntry(path); setTreeMenu(null) }}
+      onDownload={(node) => { downloadEntry(node.path, node.name); setTreeMenu(null) }}
       onCopy={(node) => { copyFromNode(node); setTreeMenu(null) }}
       onCut={(node) => { cutFromNode(node); setTreeMenu(null) }}
       onPaste={(target) => { pasteEntry(target); setTreeMenu(null) }}
@@ -2070,6 +2090,7 @@ export function WorkspacePage() {
                     clipboard={clipboard}
                     cutSourcePaths={clipboard?.cut ? new Set(clipboard.items.map(i => i.path)) : null}
                     onCopyPath={copyPathEntry}
+                    onDownload={downloadEntry}
                     onCopy={copyFromNode}
                     onCut={cutFromNode}
                     onPaste={pasteEntry}
@@ -2265,6 +2286,7 @@ export function WorkspacePage() {
                   clipboard={clipboard}
                   cutSourcePaths={clipboard?.cut ? new Set(clipboard.items.map(i => i.path)) : null}
                   onCopyPath={copyPathEntry}
+                  onDownload={downloadEntry}
                   onCopy={copyFromNode}
                   onCut={cutFromNode}
                   onPaste={pasteEntry}

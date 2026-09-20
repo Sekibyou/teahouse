@@ -100,6 +100,11 @@ export const enWorkspace = {
     cutActive: "Cut \"{{name}}\" — right-click a target to paste",
     cutActiveMany: "Cut {{count}} item(s) — right-click a target to paste",
   },
+  // Right-click menu · download
+  download: {
+    title: "Download this file",
+    failed: "Download failed",
+  },
   // Drag-and-drop upload status
   dropUpload: {
     done: "Uploaded {{count}} file(s)",

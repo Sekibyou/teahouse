@@ -100,6 +100,11 @@ export const jaWorkspace = {
     cutActive: "「{{name}}」を切り取りました。貼り付け先を右クリックしてください",
     cutActiveMany: "{{count}} 件を切り取りました。貼り付け先を右クリックしてください",
   },
+  // 右クリックメニュー · ダウンロード
+  download: {
+    title: "このファイルをダウンロード",
+    failed: "ダウンロードに失敗しました",
+  },
   // ドラッグ&ドロップアップロード状態
   dropUpload: {
     done: "{{count}} 個のファイルをアップロードしました",

@@ -2,7 +2,7 @@ import { useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import {
   ChevronDown, ChevronRight, FileText, Folder, FolderOpen,
-  ClipboardCopy, ClipboardPaste, Scissors,
+  ClipboardCopy, ClipboardPaste, Download, Scissors,
 } from "lucide-react"
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
@@ -15,7 +15,7 @@ export function FileTreeView({
   nodes, expanded, selectedFile, selectionPaths, onToggle, onRowClick, onSelect,
   onCreateFile, onCreateFolder, onDelete, onRename, onUpload, fileStatuses, depth = 0, isMobile = false,
   isDragging = false, dropTargetPath = null, dragSource = null,
-  clipboard = null, cutSourcePaths = null, onCopyPath, onCopy, onCut, onPaste,
+  clipboard = null, cutSourcePaths = null, onCopyPath, onDownload, onCopy, onCut, onPaste,
   dragWasActiveRef, onOpenTreeMenu, menuNodePath,
 }: {
   nodes: FileTreeNode[]
@@ -39,6 +39,7 @@ export function FileTreeView({
   clipboard?: TreeClipboard
   cutSourcePaths?: Set<string> | null
   onCopyPath?: (path: string) => void
+  onDownload?: (path: string, name: string) => void
   onCopy?: (node: TreeNodeRef) => void
   onCut?: (node: TreeNodeRef) => void
   onPaste?: (targetParent: string) => void
@@ -313,6 +314,13 @@ export function FileTreeView({
                       <ClipboardCopy className="h-3.5 w-3.5" />
                       {t("clipboard.copyPath")}
                     </ContextMenuItem>
+                    {/* 下载只对文件有意义（目录是多个文件，不在菜单里打整包）。 */}
+                    {node.type === "file" && (
+                      <ContextMenuItem onClick={() => onDownload?.(node.path, node.name)}>
+                        <Download className="h-3.5 w-3.5" />
+                        {t("download.title")}
+                      </ContextMenuItem>
+                    )}
                     <ContextMenuItem onClick={() => onCopy?.({ path: node.path, type: node.type, name: node.name })}>
                       <ClipboardCopy className="h-3.5 w-3.5" />
                       {t("clipboard.copy")}
@@ -362,6 +370,7 @@ export function FileTreeView({
               clipboard={clipboard}
               cutSourcePaths={cutSourcePaths}
               onCopyPath={onCopyPath}
+              onDownload={onDownload}
               onCopy={onCopy}
               onCut={onCut}
               onPaste={onPaste}

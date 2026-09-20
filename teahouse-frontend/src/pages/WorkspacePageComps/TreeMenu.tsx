@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
-  ClipboardCopy, ClipboardPaste, FileText, Folder, FolderOpen,
+  ClipboardCopy, ClipboardPaste, Download, FileText, Folder, FolderOpen,
   Pencil, Plus, Scissors, Trash2, Upload,
 } from "lucide-react"
 import { UploadMenuItem } from "./UploadMenuItem"
@@ -22,6 +22,7 @@ export function TreeMenu({
   onNewFolder,
   onUpload,
   onCopyPath,
+  onDownload,
   onCopy,
   onCut,
   onPaste,
@@ -35,6 +36,7 @@ export function TreeMenu({
   onNewFolder: (parentPath: string) => void
   onUpload: (parentPath: string, file: File) => void
   onCopyPath: (path: string) => void
+  onDownload: (node: TreeMenuNode) => void
   onCopy: (node: TreeNodeRef) => void
   onCut: (node: TreeNodeRef) => void
   onPaste: (targetParent: string) => void
@@ -123,6 +125,13 @@ export function TreeMenu({
           <ClipboardCopy className="h-4 w-4 shrink-0" />
           {t("clipboard.copyPath")}
         </button>
+        {/* 下载只对文件有意义（目录是多个文件，不在菜单里打整包）。 */}
+        {node.type === "file" && (
+          <button className={itemCls} onClick={() => onDownload(node)}>
+            <Download className="h-4 w-4 shrink-0" />
+            {t("download.title")}
+          </button>
+        )}
         <button className={itemCls} onClick={() => onCopy(node)}>
           <ClipboardCopy className="h-4 w-4 shrink-0" />
           {t("clipboard.copy")}

@@ -100,6 +100,11 @@ export const zhWorkspace = {
     cutActive: "已剪切「{{name}}」，右键目标位置粘贴",
     cutActiveMany: "已剪切 {{count}} 项，右键目标位置粘贴",
   },
+  // 右键菜单 · 下载
+  download: {
+    title: "下载此文件",
+    failed: "下载失败",
+  },
   // 拖放上传状态
   dropUpload: {
     done: "已上传 {{count}} 个文件",
