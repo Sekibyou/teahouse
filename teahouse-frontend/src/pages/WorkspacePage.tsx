@@ -26,6 +26,7 @@ import { SandboxFileList } from "@/components/SandboxFileList"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { GitDialog } from "@/components/GitDialog"
 import { toast } from "sonner"
+import { notifyError } from "@/lib/notifyError"
 import { useWorkspaceRefresh } from "@/hooks/useWorkspaceRefresh"
 import { useSSERefresh } from "@/hooks/useSSERefresh"
 import { useIsMobile } from "@/hooks/useMediaQuery"
@@ -732,7 +733,7 @@ export function WorkspacePage() {
       pushUndo(uploadOp(fullPath, file))
     }
     if (okCount > 0) toast.success(t("dropUpload.done", { count: okCount }))
-    if (failNames.length) toast.error(t("dropUpload.fail", { names: failNames.join(", ") }))
+    if (failNames.length) notifyError(t("dropUpload.fail", { names: failNames.join(", ") }))
   }
 
 
@@ -1324,7 +1325,7 @@ export function WorkspacePage() {
         const srcPath = it.path
         const fromParent = parentOf(srcPath)
         const res = await instancesApi.moveEntry(instId, srcPath, target)
-        if (!res.ok) { toast.error(res.error || t("common:failed")); continue }
+        if (!res.ok) { notifyError(res.error || t("common:failed")); continue }
         // Remap any open tab under the moved entry / directory to its new location.
         const base = srcPath.split("/").pop() ?? srcPath
         const newPath = target ? `${target}/${base}` : base

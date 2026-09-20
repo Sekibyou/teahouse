@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import traceback
 import uuid
 from pathlib import Path
 
@@ -286,7 +287,12 @@ class SessionLoop:
         if loop is None or loop._task is None or loop._task.done():
             loop = cls(instance_dir, session_id, instance_id, user_id)
             cls._loops[key] = loop
-            asyncio.create_task(loop.run())
+            _task = asyncio.create_task(loop.run())
+            # Retrieve the exception (if any) so a failed loop never surfaces as an
+            # "exception was never retrieved" log line nobody reads — run() already
+            # turns real failures into visible events. Same belt as the runTool
+            # batch task in routes/workspaces.py.
+            _task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         return loop
 
     @classmethod
@@ -391,6 +397,13 @@ class SessionLoop:
             except asyncio.CancelledError:
                 self._interrupted = True
                 # loop back to step 1
+            except Exception as e:
+                # Second belt: _run_tool_loop already reports and broadcasts, so this
+                # only keeps an unexpected failure from tearing down the whole loop
+                # task (and thus killing the session's queue consumer).
+                _event_log(self.instance_dir, self.session_id, "loop_task_error", {
+                    "error": f"{type(e).__name__}: {e}",
+                })
             finally:
                 task_tracker.unregister(self.instance_dir.name, self.session_id)
                 task_tracker.stats_clear(self.instance_dir.name, self.session_id)
@@ -527,24 +540,52 @@ class SessionLoop:
             })
             state.broadcast("session_event", ev)
 
-        async for event in _tool_use_loop(
-            client,
-            [],  # no new input — context rebuilt from jsonl
-            self.instance_dir,
-            self.user_id,
-            self.instance_id,
-            session_id=self.session_id,
-            enabled_tools=enabled_tools,
-            order_allocator=self.next_order,
-            reasoning_effort=reasoning_effort,
-            pending_check=self.check_pending_user,
-            emit=_emit,
-        ):
-            _emit(event)
-
-        # Final done event so the frontend knows the run completed.
-        _event_log(self.instance_dir, self.session_id, "tool_loop_done", {"total_events": event_count})
-        self._broadcast_done()
+        cancelled = False
+        try:
+            async for event in _tool_use_loop(
+                client,
+                [],  # no new input — context rebuilt from jsonl
+                self.instance_dir,
+                self.user_id,
+                self.instance_id,
+                session_id=self.session_id,
+                enabled_tools=enabled_tools,
+                order_allocator=self.next_order,
+                reasoning_effort=reasoning_effort,
+                pending_check=self.check_pending_user,
+                emit=_emit,
+            ):
+                _emit(event)
+        except asyncio.CancelledError:
+            # User interrupt / session teardown: must propagate unchanged — run()
+            # relies on it to set _interrupted, write the "[auto] user interrupted"
+            # marker, and broadcast `done` itself. (Hence no done from the finally
+            # below on this path: it would arrive before that marker.)
+            cancelled = True
+            raise
+        except Exception as e:
+            # Safety net so an unforeseen error never leaves the session silently
+            # dead: previously it escaped _tool_use_loop → run() (which only caught
+            # CancelledError) → an unretrieved task exception, and the frontend got
+            # neither an error nor a `done` — stuck "running" forever, with the only
+            # clue buried in the server log.
+            _event_log(self.instance_dir, self.session_id, "tool_loop_error", {
+                "error": f"{type(e).__name__}: {e}",
+                "traceback": traceback.format_exc(),
+            })
+            _emit({
+                "type": "error",
+                "fatal": True,
+                "source": "engine",
+                "detail": f"引擎异常（{type(e).__name__}）：{e}",
+            })
+        finally:
+            # Final done event so the frontend knows the run completed — reached on
+            # every path except cancellation (see above). Without it the send button
+            # stays disabled until the page is reloaded.
+            if not cancelled:
+                _event_log(self.instance_dir, self.session_id, "tool_loop_done", {"total_events": event_count})
+                self._broadcast_done()
 
     async def _resolve_client(self):
         """Resolve this session's LLM slot client. Returns None if unconfigured.

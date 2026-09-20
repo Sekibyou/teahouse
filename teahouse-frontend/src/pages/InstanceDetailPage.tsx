@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router-dom"
 import { Loader2, ArrowLeft } from "lucide-react"
 import { toast } from "sonner"
+import { notifyError } from "@/lib/notifyError"
 import { Button } from "@/components/ui/button"
 import { instancesApi, prototypesApi, sessionApi } from "@/lib/api"
 import { useSessionStore } from "@/stores/sessionStore"
@@ -93,7 +94,7 @@ export function InstanceDetailPage() {
       setRenaming(false)
       toast.success(t("rename.renamed"))
     } else {
-      toast.error(res.error || t("rename.fail"))
+      notifyError(res.error || t("rename.fail"))
     }
   }
 

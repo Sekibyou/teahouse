@@ -1,4 +1,13 @@
 export const zhMisc = {
+  errorDetail: {
+    title: "错误详情",
+    viewDetails: "查看详情",
+    copy: "复制",
+    copied: "已复制",
+    copyFail: "复制失败，请手动选中上方文本",
+    close: "关闭",
+    sourceEngine: "引擎",
+  },
   sandbox: {
     waiting: "等待 AI 生成内容...",
     sessionCreateError: "缺少实例上下文，无法创建子会话",
@@ -186,6 +195,7 @@ export const zhMisc = {
   },
   assistant: {
     thinkingChain: "思维链",
+    errorTitle: "错误",
     thinking: "思考中...",
     interrupted: "已中断",
     waiting: "等待中...",
@@ -208,6 +218,8 @@ export const zhMisc = {
       refsOk: "全部有效",
       refsOkN: "全部有效 · 检查 {{n}} 处",
       refsBroken: "{{n}} 处失效引用",
+      dmConfigOk: "配置正常",
+      dmConfigIssues: "{{fatal}} 项会崩 · {{silent}} 项静默失效",
       writeStat: "{{lines}} 行 · {{chars}} 字符",
       writeBytes: "已写入 {{bytes}} 字节",
       linesRange: "第 {{a}}–{{b}} 行 · {{chars}} 字符",

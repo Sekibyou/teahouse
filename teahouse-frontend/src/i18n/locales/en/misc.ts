@@ -1,4 +1,13 @@
 export const enMisc = {
+  errorDetail: {
+    title: "Error details",
+    viewDetails: "Details",
+    copy: "Copy",
+    copied: "Copied",
+    copyFail: "Copy failed — select the text above manually",
+    close: "Close",
+    sourceEngine: "engine",
+  },
   sandbox: {
     waiting: "Waiting for AI to generate content...",
     sessionCreateError: "Missing instance context; cannot create sub-session",
@@ -185,6 +194,7 @@ export const enMisc = {
   },
   assistant: {
     thinkingChain: "Chain of thought",
+    errorTitle: "Error",
     thinking: "Thinking...",
     interrupted: "Interrupted",
     waiting: "Waiting...",
@@ -207,6 +217,8 @@ export const enMisc = {
       refsOk: "all valid",
       refsOkN: "all valid · {{n}} checked",
       refsBroken: "{{n}} broken refs",
+      dmConfigOk: "config OK",
+      dmConfigIssues: "{{fatal}} fatal · {{silent}} silent",
       writeStat: "{{lines}} lines · {{chars}} chars",
       writeBytes: "wrote {{bytes}} bytes",
       linesRange: "lines {{a}}–{{b}} · {{chars}} chars",

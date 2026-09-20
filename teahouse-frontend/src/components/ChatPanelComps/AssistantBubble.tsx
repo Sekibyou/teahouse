@@ -1,6 +1,6 @@
 import { useState, memo, useEffect, useRef, type ReactNode } from "react"
 import {
-  Loader2, ChevronDown, ChevronRight, Brain, Copy, Check,
+  Loader2, ChevronDown, ChevronRight, Brain, Copy, Check, TriangleAlert,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -198,9 +198,19 @@ export const AssistantBubble = memo(function AssistantBubble({
 
       {/* Fallback: plain text message (no blocks) */}
       {!hasBlocks && content && (
-        <div className="max-w-full rounded-lg px-3 py-2 text-base bg-muted whitespace-pre-wrap break-words">
-          {content}
-        </div>
+        message.error ? (
+          <div className="max-w-full rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words border border-destructive/50 bg-destructive/10 text-destructive">
+            <div className="mb-1 flex items-center gap-1 text-xs font-semibold">
+              <TriangleAlert className="h-3.5 w-3.5" />
+              {t("assistant.errorTitle")}
+            </div>
+            {content}
+          </div>
+        ) : (
+          <div className="max-w-full rounded-lg px-3 py-2 text-base bg-muted whitespace-pre-wrap break-words">
+            {content}
+          </div>
+        )
       )}
 
       {/* 本轮额外信息角标 — 后端只把它挂在轮次最后一个气泡上，故此处无需判末位 */}

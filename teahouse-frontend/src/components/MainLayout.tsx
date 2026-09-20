@@ -9,6 +9,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useThemeStore } from "@/stores/themeStore"
 import { useSettingsDialogStore } from "@/stores/settingsDialogStore"
 import { SettingsDialog } from "@/components/SettingsDialog"
+import { ErrorDetailDialog } from "@/components/ErrorDetailDialog"
 import { LoginPage } from "@/pages/LoginPage"
 import { useTranslation } from "react-i18next"
 import { LangSwitcher } from "@/components/LangSwitcher"
@@ -109,6 +110,7 @@ export function MainLayout() {
           </main>
         </div>
         <SettingsDialog />
+        <ErrorDetailDialog />
       </div>
     )
   }
@@ -210,6 +212,7 @@ export function MainLayout() {
         </main>
       </div>
       <SettingsDialog />
+      <ErrorDetailDialog />
     </div>
   )
 }

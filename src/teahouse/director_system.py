@@ -434,14 +434,83 @@ def render_user_tail(
     return _resolve_text(raw, variables, instance_dir, max_depth)
 
 
-def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH) -> tuple[str, list[dict], str | None]:
+class TemplateConfigError(Exception):
+    """提示词模板（dm.yaml / 导演 preset）的配置错误。
+
+    与裸 `yaml.YAMLError` 不同，它的 `str()` 是**给人看的**：含出错文件、行列号、
+    出错行原文与修复提示。`app.py` 捕获它，把消息原样送进会话（一条 `error` 事件 +
+    一条助手记录）——模板坏掉时作者必须立刻看到原因，而不是从服务端 traceback 里找。
+    """
+
+    def __init__(self, message: str, *, source: str = "提示词模板"):
+        super().__init__(message)
+        self.source = source
+
+
+# `messages:` 列表里允许的 role。引擎不转发非法 role，而是直接报错：非法 role 会被
+# 原样发给 LLM API 换回一个 400，远不如在本地指名道姓地说清楚。
+_VALID_MESSAGE_ROLES = ("user", "assistant", "system")
+
+_YAML_INDENT_HINT = (
+    "提示：本文件是 YAML，缩进只能用空格、同一层必须对齐。最常见的坑是 "
+    "`|` / `>` 块标量内每行缩进不一致——首行比其余行多（或少）一格，就会让**整个文件**"
+    "解析失败（不是只丢这一行）。"
+)
+
+
+def format_yaml_error(exc: yaml.YAMLError, yaml_text: str, source_label: str) -> str:
+    """把 yaml 解析异常格式化成带行号、出错行原文与修复提示的可读文本。"""
+    problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return f"{source_label} 解析失败：{problem}\n{_YAML_INDENT_HINT}"
+
+    lineno, col = mark.line + 1, mark.column + 1
+    out = [f"{source_label} 解析失败（第 {lineno} 行，第 {col} 列）：{problem}"]
+    lines = yaml_text.splitlines()
+    if 1 <= lineno <= len(lines):
+        gutter = f"  {lineno:>4} | "
+        out.append(gutter + lines[lineno - 1])
+        out.append(" " * len(gutter) + " " * (col - 1) + "^")
+    out.append(_YAML_INDENT_HINT)
+    return "\n".join(out)
+
+
+def _load_template_data(yaml_text: str, source_label: str) -> dict:
+    """把模板 YAML 解析成顶层映射，失败一律抛带定位信息的 `TemplateConfigError`。"""
+    try:
+        data = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as e:
+        raise TemplateConfigError(
+            format_yaml_error(e, yaml_text, source_label), source=source_label
+        ) from e
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise TemplateConfigError(
+            f"{source_label} 顶层必须是键值映射（system / messages / user / assistant / user_tail），"
+            f"当前解析出的是 {type(data).__name__}。",
+            source=source_label,
+        )
+    return data
+
+
+def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_dir: Path, max_depth: int = MAX_RESOLVE_DEPTH, source_label: str = "提示词模板") -> tuple[str, list[dict], str | None]:
     """Parse a YAML preset template and resolve variables + file slices.
 
     Returns (system_prompt, fake_messages_list, user_tail).
 
     Fake messages can be specified in two ways:
-    1. `messages:` key — a list of {role, content} dicts (same format as Generate config)
-    2. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange
+    1. Top-level `user:` and/or `assistant:` keys — shorthand for a single exchange.
+       **推荐**：缩进最浅，几乎写不坏。
+    2. `messages:` key — a list of {role, content} dicts (same format as Generate
+       config). 仅为多轮 few-shot 保留：多一层列表缩进、更容易写出 YAML 语法错，
+       单轮预设请用上面的简写。
+
+    Raises `TemplateConfigError` on any malformed template (YAML syntax error, a
+    top-level value that is not a mapping, a `messages:` key that is not a list, or
+    an illegal role) — every one of these used to either crash the session loop
+    with a bare traceback or silently produce an empty prompt.
 
     `user_tail` (optional) is the RAW template that wraps the trailing user message
     each turn — see `render_user_tail`. It is returned unresolved because it depends
@@ -453,7 +522,7 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
     sandbox vars). system: and fake-message contents are resolved via `_resolve_text`
     (both ${} and {{}}), so `{{teahouse.md}}` file slices work alongside ${...}.
     """
-    data = yaml.safe_load(yaml_text) or {}
+    data = _load_template_data(yaml_text, source_label)
     type_map = _build_type_map(instance_dir)
 
     def _resolve(content: str) -> str:
@@ -467,14 +536,36 @@ def resolve_preset_template(yaml_text: str, variables: dict[str, str], instance_
     # then fall back to top-level `user`/`assistant` shorthand
     fake_messages_raw = data.get("messages")
 
+    if fake_messages_raw is not None and not isinstance(fake_messages_raw, list):
+        # Previously this fell through to the shorthand branch and the `messages`
+        # block was dropped without a word — the author saw a prompt that had
+        # silently lost its few-shot exchange.
+        raise TemplateConfigError(
+            f"{source_label} 的 `messages:` 必须是列表（每项形如 `- role: user` 加 `content: ...`），"
+            f"当前是 {type(fake_messages_raw).__name__}。单轮预设建议改用顶层 `user:` / `assistant:` 简写。",
+            source=source_label,
+        )
+
     if isinstance(fake_messages_raw, list):
         fake_messages = []
-        for msg in fake_messages_raw:
-            if isinstance(msg, dict) and "role" in msg:
-                fake_messages.append({
-                    "role": msg["role"],
-                    "content": _resolve(msg.get("content", "") or ""),
-                })
+        for i, msg in enumerate(fake_messages_raw):
+            if not isinstance(msg, dict):
+                raise TemplateConfigError(
+                    f"{source_label} 的 `messages:` 第 {i + 1} 项不是映射"
+                    f"（每项应形如 `- role: user` 加 `content: ...`）。",
+                    source=source_label,
+                )
+            role = msg.get("role")
+            if role not in _VALID_MESSAGE_ROLES:
+                raise TemplateConfigError(
+                    f"{source_label} 的 `messages:` 第 {i + 1} 项 role 非法：{role!r}。"
+                    f"只能是 {', '.join(_VALID_MESSAGE_ROLES)} 之一。",
+                    source=source_label,
+                )
+            fake_messages.append({
+                "role": role,
+                "content": _resolve(msg.get("content", "") or ""),
+            })
     else:
         fake_messages = []
         user_text = data.get("user")
@@ -553,7 +644,7 @@ async def resolve_dm_system(
     tools_usage = await load_tools_usage(user_id=user_id, only=DM_TOOLS)
     variables = build_template_variables(instance_dir, tools_usage)
     system_prompt, fake_messages, user_tail = resolve_preset_template(
-        yaml_text, variables, instance_dir, max_depth=max_depth
+        yaml_text, variables, instance_dir, max_depth=max_depth, source_label=INSTANCE_DM_YAML
     )
     system_prompt = (system_prompt.rstrip() + "\n\n" + _DM_CONTRACT).strip()
     return system_prompt, fake_messages, user_tail

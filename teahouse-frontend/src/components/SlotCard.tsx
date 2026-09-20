@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react"
-import { toast } from "sonner"
+import { notifyError } from "@/lib/notifyError"
 import { AlertCircle } from "lucide-react"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
@@ -129,7 +129,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
       flashTimerRef.current = setTimeout(() => setSavedFlash(false), 1600)
     } else {
-      toast.error(result.error || t("slot.saveFailed"))
+      notifyError(result.error || t("slot.saveFailed"))
     }
   }
 

@@ -555,6 +555,7 @@ async def _tool_use_loop(
         order: int | None = None,
         usage: dict | None = None,
         elapsed: float | None = None,
+        error: bool = False,
     ) -> None:
         sessions.append_assistant(
             instance_dir,
@@ -565,47 +566,70 @@ async def _tool_use_loop(
             order=order,
             usage=usage,
             elapsed=elapsed,
+            error=error,
         )
         _pending["content"] = ""
         _pending["reasoning"] = ""
 
     from .routes.settings import _user_max_parse_depth
+    from .director_system import TemplateConfigError
     parse_depth = await _user_max_parse_depth(user_id)
 
     denied: set[str] | None = None
-    if is_dm:
-        # DM 的提示词来自实例根目录 dm.yaml（不是全局 preset），工具限 DM 白名单。
-        from .director_system import resolve_dm_system
-        from .tools import DM_TOOLS
-        tools = load_tools(user_id=user_id, only=DM_TOOLS)
-        # 执行层同样收窄到 DM 白名单（防御性；模型看不到的工具本就调不到）。
-        enabled_tools = sorted(DM_TOOLS)
-        dm_res = await resolve_dm_system(instance_dir, user_id, max_depth=parse_depth)
-        if dm_res is None:
-            raise HTTPException(
-                status_code=400,
-                detail="DM 未启用：实例根目录缺少 dm.yaml",
-            )
-        tool_system, fake_msgs, user_tail_tpl = dm_res
-    else:
-        # 导演侧排除 DM 呈现子系统（Output/OutputEdit）——导演误调会把气泡写进
-        # runtime/dm-output.jsonl。schema 摘掉 + 执行层拒绝（下方 execute_tool 的 denied）双层兜底。
-        from .tools import DIRECTOR_EXCLUDED_TOOLS
-        denied = DIRECTOR_EXCLUDED_TOOLS
-        tools = load_tools(user_id=user_id, exclude=denied)
-        tools_usage = await load_tools_usage(user_id=user_id, exclude=denied)
+    try:
+        if is_dm:
+            # DM 的提示词来自实例根目录 dm.yaml（不是全局 preset），工具限 DM 白名单。
+            from .director_system import resolve_dm_system
+            from .tools import DM_TOOLS
+            tools = load_tools(user_id=user_id, only=DM_TOOLS)
+            # 执行层同样收窄到 DM 白名单（防御性；模型看不到的工具本就调不到）。
+            enabled_tools = sorted(DM_TOOLS)
+            dm_res = await resolve_dm_system(instance_dir, user_id, max_depth=parse_depth)
+            if dm_res is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="DM 未启用：实例根目录缺少 dm.yaml",
+                )
+            tool_system, fake_msgs, user_tail_tpl = dm_res
+        else:
+            # 导演侧排除 DM 呈现子系统（Output/OutputEdit）——导演误调会把气泡写进
+            # runtime/dm-output.jsonl。schema 摘掉 + 执行层拒绝（下方 execute_tool 的 denied）双层兜底。
+            from .tools import DIRECTOR_EXCLUDED_TOOLS
+            denied = DIRECTOR_EXCLUDED_TOOLS
+            tools = load_tools(user_id=user_id, exclude=denied)
+            tools_usage = await load_tools_usage(user_id=user_id, exclude=denied)
 
-        # Resolve the director system prompt from the user's prompt preset. Every user
-        # has a built-in preset auto-created and auto-bound to the director slot, so this
-        # is the single, mandatory assembly path — there is no code-level fallback. A
-        # missing/empty preset is an error, never a silent fallback.
-        if not user_id:
-            raise HTTPException(status_code=500, detail="Director system prompt requires a user")
-        preset = await ensure_director_preset_binding(user_id)
-        variables = build_template_variables(instance_dir, tools_usage)
-        tool_system, fake_msgs, user_tail_tpl = resolve_preset_template(
-            preset["template_yaml"], variables, instance_dir, max_depth=parse_depth
-        )
+            # Resolve the director system prompt from the user's prompt preset. Every user
+            # has a built-in preset auto-created and auto-bound to the director slot, so this
+            # is the single, mandatory assembly path — there is no code-level fallback. A
+            # missing/empty preset is an error, never a silent fallback.
+            if not user_id:
+                raise HTTPException(status_code=500, detail="Director system prompt requires a user")
+            preset = await ensure_director_preset_binding(user_id)
+            variables = build_template_variables(instance_dir, tools_usage)
+            tool_system, fake_msgs, user_tail_tpl = resolve_preset_template(
+                preset["template_yaml"],
+                variables,
+                instance_dir,
+                max_depth=parse_depth,
+                source_label=f"导演提示词「{preset.get('name') or '未命名预设'}」",
+            )
+    except TemplateConfigError as e:
+        # 提示词配置坏掉是**配置**问题而非运行时问题：重试无用，必须让作者立刻看懂原因。
+        # 落一条助手记录供人看（刷新后仍在），再发一条 fatal 错误事件供前端弹提示。
+        # 记录只带 content、不带 blocks —— 刻意如此：`records_to_context` 的助手文本取自
+        # blocks，所以它不会进 LLM 上下文，不会伪造一条"模型说过"的发言。这里是生成器的
+        # 正常 return，故 SessionLoop 仍会广播 done —— 前端不会被永远留在"运行中"。
+        _err_order = order_allocator() if order_allocator else None
+        _flush_assistant(str(e), order=_err_order, error=True)
+        yield {
+            "type": "error",
+            "fatal": True,
+            "source": e.source,
+            "detail": str(e),
+            "order": _err_order,
+        }
+        return
     if fake_msgs:
         msg = fake_msgs + msg
 

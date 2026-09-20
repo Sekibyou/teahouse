@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
+import { notifyError } from "@/lib/notifyError"
 import { AnimatePresence } from "motion/react"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { prototypesApi, instancesApi, sessionApi } from "@/lib/api"
@@ -84,7 +85,7 @@ export function SessionSelectPage() {
     if (!name.trim()) return false
     const res = await instancesApi.create(protoId, name.trim())
     if (!res.ok || !res.data) {
-      toast.error(res.error || t("create.fail"))
+      notifyError(res.error || t("create.fail"))
       return false
     }
     const created = res.data
@@ -128,7 +129,7 @@ export function SessionSelectPage() {
       else toast.success(t("import.success"))
       await loadData()
     } else {
-      toast.error(res.error || t("import.fail"))
+      notifyError(res.error || t("import.fail"))
     }
     setImportState("idle")
     if (fileInputRef.current) fileInputRef.current.value = ""

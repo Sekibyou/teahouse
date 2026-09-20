@@ -89,6 +89,28 @@ def resolve_placeholders(text: str, instance_dir: Path, strict: bool = False) ->
     return _restore_escaped_placeholders(text, literals)
 
 
+def collect_unresolved_placeholders(text: str, instance_dir: Path) -> list[tuple[str, str]]:
+    """Enumerate EVERY `{{...}}` slice in `text` that fails to resolve.
+
+    Returns `[(raw_inner, reason), ...]` in source order — the whole list, not just
+    the first failure. Contrast `resolve_placeholders`, which either raises on the
+    first failure (strict) or silently keeps the literal; this backs the
+    CheckDMConfig tool's report of *silently dropped* content.
+
+    Escaped literals (`\\{{...}}`) are hidden before scanning, so deliberately
+    escaped teaching examples are never reported as broken.
+    """
+    hidden, _ = _hide_escaped_placeholders(text)
+    failures: list[tuple[str, str]] = []
+    for match in re.finditer(r"\{\{(.+?)\}\}", hidden):
+        raw = match.group(1).strip()
+        try:
+            _resolve_one(raw, instance_dir)
+        except Exception as e:  # PlaceholderError, plus any deeper read error
+            failures.append((raw, str(e) or type(e).__name__))
+    return failures
+
+
 # ---------------------------------------------------------------------------
 # 转义语法 — 前缀反斜杠保护占位符不被展开
 #

@@ -20,6 +20,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useDialogBackClose } from "@/hooks/useDialogBackClose"
 import { gitApi } from "@/lib/api"
+import { isLongError, showErrorDetail } from "@/lib/notifyError"
 import type { GitStatus, GitBranch, GitLogEntry, GitFileStatus } from "@/lib/types"
 import {
   ReactFlow,
@@ -406,6 +407,12 @@ export function GitDialog({ instanceId, open, onClose, refreshWorkspace }: GitDi
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-500 shrink-0 flex items-center gap-2">
             <AlertCircle className="h-3 w-3 shrink-0" />
             <span className="flex-1">{error}</span>
+            {/* git 的多行 stderr 在这条横幅里显示不全且难复制 → 挂个入口看全文 */}
+            {isLongError(error) && (
+              <button className="underline shrink-0" onClick={() => showErrorDetail(error, "Git")}>
+                {t("misc:errorDetail.viewDetails")}
+              </button>
+            )}
             <button className="underline shrink-0" onClick={() => setError("")}>{t("error.close")}</button>
           </div>
         )}

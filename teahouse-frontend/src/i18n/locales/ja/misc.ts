@@ -1,4 +1,13 @@
 export const jaMisc = {
+  errorDetail: {
+    title: "エラー詳細",
+    viewDetails: "詳細",
+    copy: "コピー",
+    copied: "コピーしました",
+    copyFail: "コピーに失敗しました。上のテキストを手動で選択してください",
+    close: "閉じる",
+    sourceEngine: "エンジン",
+  },
   sandbox: {
     waiting: "AI のコンテンツ生成を待機中...",
     sessionCreateError: "インスタンスコンテキストがありません。サブセッションを作成できません",
@@ -185,6 +194,7 @@ export const jaMisc = {
   },
   assistant: {
     thinkingChain: "思考チェーン",
+    errorTitle: "エラー",
     thinking: "思考中...",
     interrupted: "中断しました",
     waiting: "待機中...",
@@ -207,6 +217,8 @@ export const jaMisc = {
       refsOk: "すべて有効",
       refsOkN: "すべて有効 · {{n}} 件検査",
       refsBroken: "{{n}} 件の無効参照",
+      dmConfigOk: "設定は正常",
+      dmConfigIssues: "{{fatal}} 件が致命的 · {{silent}} 件が無効",
       writeStat: "{{lines}} 行 · {{chars}} 文字",
       writeBytes: "{{bytes}} バイト書込",
       linesRange: "{{a}}–{{b}} 行 · {{chars}} 文字",

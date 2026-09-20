@@ -3,7 +3,7 @@ import {
   Terminal, FileText, FilePlus, FileCode, PenLine, Search, FolderSearch, FolderPlus,
   Trash2, GitBranch, GitCommit, GitCompare, History, ListChecks, Undo2,
   Hash, Wrench, ListTodo, Sparkles, Layers, MessageSquare, Send, Flag, Scissors,
-  Timer, Dices, PackageCheck, BookOpen, ScrollText, type LucideIcon,
+  Timer, Dices, PackageCheck, BookOpen, ScrollText, ShieldAlert, type LucideIcon,
 } from "lucide-react"
 
 /**
@@ -163,6 +163,13 @@ function buildSummary({ name, args, result, t }: SummaryCtx): string | null {
       const checked = result.match(/（检查了 (\d+) 处引用）/)
       if (checked) return k("refsOkN", { n: n(Number(checked[1])) })
       if (result.startsWith("所有 ")) return k("refsOk")
+      return null
+    }
+    case "CheckDMConfig": {
+      const fatal = (result.match(/^\[✗ 会崩\]/gm) || []).length
+      const silent = (result.match(/^\[! 静默\]/gm) || []).length
+      if (fatal || silent) return k("dmConfigIssues", { fatal: n(fatal), silent: n(silent) })
+      if (/配置正常/.test(result)) return k("dmConfigOk")
       return null
     }
 
@@ -334,6 +341,7 @@ const ICONS: Record<string, LucideIcon> = {
   Glob: FolderSearch,
   Grep: Search,
   CheckPackageRefs: PackageCheck,
+  CheckDMConfig: ShieldAlert,
   SkillRead: BookOpen,
   Write: FilePlus,
   Edit: PenLine,
@@ -438,6 +446,8 @@ function buildTarget(
       return args.ms != null ? `${args.ms}ms` : ""
     case "Report":
       return str(args.filename)
+    case "CheckDMConfig":
+      return str(args.path) || "dm.yaml"
     case "FileOps":
       return str(args.path)
     case "StartSubSession":

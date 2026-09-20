@@ -188,6 +188,7 @@ def append_assistant(
     order: int | None = None,
     usage: dict | None = None,
     elapsed: float | None = None,
+    error: bool = False,
 ) -> int:
     """Persist one finished assistant record (reasoning + interleaved blocks).
 
@@ -204,6 +205,10 @@ def append_assistant(
 
     ``elapsed`` is the seconds that call took (request → end of stream). Kept
     apart from ``usage`` because it is our own measurement, not a vendor figure.
+
+    ``error`` marks an engine-written report (broken prompt config / engine
+    failure) rather than a model reply — same sibling-key trick: the frontend
+    renders it in warning colors, the LLM context is unchanged.
     """
     rec = {
         "role": "assistant",
@@ -215,6 +220,8 @@ def append_assistant(
         rec["usage"] = usage
     if elapsed is not None:
         rec["elapsed"] = elapsed
+    if error:
+        rec["error"] = True
     if order is not None:
         rec["order"] = order
     return append_record(instance_dir, rec, session_id=session_id)

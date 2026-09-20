@@ -56,6 +56,8 @@ export interface RichMessage {
   autoLabel?: string
   /** 当 autoKind==="script_done" 时，该脚本是否执行失败（失败用警示配色） */
   autoFailed?: boolean
+  /** 该助手记录是一条**错误报告**（提示词配置坏掉 / 引擎异常）：警示配色渲染 */
+  error?: boolean
   /** 用户气泡附带的图片（实例内路径，渲染时经 readAsset 取 data URI） */
   images?: { path: string; mime: string }[]
   /** 本轮的厂商真实用量；只挂在该轮**最后一个**气泡上，角标即在此渲染 */

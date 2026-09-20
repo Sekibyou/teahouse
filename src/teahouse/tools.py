@@ -1086,7 +1086,7 @@ async def execute_delete_sub_session(instance_dir: Path, args: dict[str, Any], s
 # A-class: read-only tool results, regenerable by re-running the tool / re-reading.
 _PRUNE_RESULT_TOOLS = {
     "Read", "SkillRead", "Grep", "Glob", "GitDiff", "GitLog", "GitStatus",
-    "GetRuntimeVars", "CheckPackageRefs",
+    "GetRuntimeVars", "CheckPackageRefs", "CheckDMConfig",
 }
 
 # B-class: write tools whose large INPUT fields are a redundant copy of disk state
@@ -1466,6 +1466,135 @@ async def execute_check_package_refs(instance_dir: Path, args: dict[str, Any]) -
         for lineno, raw, reason in hits:
             lines.append(f"{rel} : {lineno}  [{reason}]  ({{{{@{raw}}}}})")
     return "\n".join(lines)
+
+
+# `${name}` references that are plain variable names (no whitespace, no `@`/`:`
+# directives, no braces) — only those can silently render literally when undefined;
+# the directive/condition/code-block forms are handled by the placeholder framework.
+_PLAIN_VAR_REF_RE = _re.compile(r"\$\{([^{}]+)\}")
+_PLAIN_VAR_NAME_RE = _re.compile(r"[^\s@:{}]+")
+_TOP_LEVEL_KEY_RE = _re.compile(r"^([A-Za-z_][\w-]*)\s*:")
+_USER_TAIL_KEY_RE = _re.compile(r"^user_tail\s*:")
+
+
+async def execute_check_dm_config(instance_dir: Path, args: dict[str, Any]) -> str:
+    """Validate the instance's dm.yaml without starting a DM session.
+
+    dm.yaml is loaded on every DM turn, so a bad one makes the DM unusable — and
+    the failure modes are not equally loud. This tool separates them:
+
+    - 「会崩」: the DM dies the moment a message is sent (YAML syntax error, a
+      top-level value that is not a mapping, a `messages:` that is not a list, an
+      illegal role). Checked by actually running the same resolver the engine uses.
+    - 「静默」: nothing crashes, but content quietly never reaches the prompt —
+      unresolvable `{{}}` slices kept verbatim, undefined `${var}` rendered as
+      literal text, `${teahouse.*}` per-turn dynamic values written outside
+      `user_tail`, a mistyped top-level key, an empty `system:`.
+    """
+    from .director_system import (
+        INSTANCE_DM_YAML,
+        TemplateConfigError,
+        build_template_variables,
+        resolve_preset_template,
+    )
+    from .placeholder import collect_unresolved_placeholders
+
+    path = instance_dir / INSTANCE_DM_YAML
+    if not path.is_file():
+        return f"未找到 {INSTANCE_DM_YAML} —— DM 未启用（该文件存在即启用 DM）。"
+
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    fatal: list[str] = []
+    silent: list[str] = []
+    notes: list[str] = []
+
+    # ── 会崩项：用引擎同一套解析跑一遍（语法 / 顶层类型 / messages 形状 / role） ──
+    system_prompt: str | None = None
+    fake_msgs: list[dict] = []
+    user_tail: str | None = None
+    variables: dict[str, str] = {}
+    try:
+        variables = build_template_variables(instance_dir)
+        system_prompt, fake_msgs, user_tail = resolve_preset_template(
+            text, variables, instance_dir, source_label=INSTANCE_DM_YAML
+        )
+    except TemplateConfigError as e:
+        fatal.append(str(e))
+
+    # ── 顶层键拼写（只有顶格键算；messages 的列表项是缩进的，不会误判） ──
+    known_keys = ("assistant", "messages", "system", "user", "user_tail")
+    for lineno, line in enumerate(lines, 1):
+        m = _TOP_LEVEL_KEY_RE.match(line)
+        if m and m.group(1) not in known_keys:
+            silent.append(
+                f"第 {lineno} 行：未知顶层键 `{m.group(1)}:` —— 可用键为 {', '.join(known_keys)}（拼错等于少写一段）。"
+            )
+
+    if _re.search(r"^messages\s*:", text, _re.M):
+        notes.append(
+            "使用了 `messages:` 列表 —— 单轮预设推荐顶层 `user:` / `assistant:` 简写"
+            "（少一层缩进，几乎不会写出 YAML 语法错）。"
+        )
+
+    if system_prompt is not None and not system_prompt.strip():
+        silent.append("`system:` 缺失或为空 —— DM 没有系统提示词（人格与准则全缺）。")
+
+    # ── 失效切片：不报错，但那段内容不会进提示词 ──
+    broken: list[str] = []
+    for lineno, line in enumerate(lines, 1):
+        for raw, reason in collect_unresolved_placeholders(line, instance_dir):
+            broken.append(f"第 {lineno} 行  {{{{{raw}}}}}  [{reason}]")
+    if broken:
+        silent.append(f"{len(broken)} 处切片无法解析（原样保留、内容不进提示词）：")
+        silent.extend("  " + b for b in broken)
+
+    # ── 未定义变量：原样显示成 ${...}（解析失败时 variables 不可信，跳过） ──
+    if not fatal:
+        undefined: list[str] = []
+        seen: set[str] = set()
+        for m in _PLAIN_VAR_REF_RE.finditer(text):
+            name = m.group(1).strip()
+            if name.startswith("teahouse.") or not _PLAIN_VAR_NAME_RE.fullmatch(name):
+                continue
+            if name in variables or name in seen:
+                continue
+            seen.add(name)
+            undefined.append("${" + name + "}")
+        if undefined:
+            silent.append("未定义变量（会原样显示）：" + "、".join(undefined))
+
+    # ── 每轮动态值必须在 user_tail 内（写在 system 里不生效） ──
+    dynamic = ("${teahouse.user_input}", "${teahouse.usage}", "${teahouse.big_files}")
+    tail_start = next(
+        (n for n, line in enumerate(lines, 1) if _USER_TAIL_KEY_RE.match(line)), None
+    )
+    head = "\n".join(lines[: (tail_start - 1) if tail_start else len(lines)])
+    misplaced = [d for d in dynamic if d in head]
+    if misplaced:
+        silent.append(
+            "以下每轮动态值写在 `user_tail:` 之外（只有 user_tail 内的才会渲染）："
+            + "、".join(misplaced)
+        )
+    if user_tail is not None and "${teahouse.user_input}" not in user_tail:
+        notes.append(
+            "`user_tail:` 未含 ${teahouse.user_input} —— 引擎会自动在末尾补上玩家原文（正常，无需改）。"
+        )
+
+    if not fatal and not silent:
+        out = [f"{INSTANCE_DM_YAML} 配置正常。"]
+    else:
+        out = [f"CheckDMConfig: {INSTANCE_DM_YAML}"]
+        out.extend("[✗ 会崩] " + f.replace("\n", "\n    ") for f in fatal)
+        out.extend("[! 静默] " + s.replace("\n", "\n    ") for s in silent)
+    out.extend("[· 说明] " + n for n in notes)
+    if system_prompt is not None:
+        out.append(
+            f"system 解析后 {len(system_prompt)} 字符"
+            f"（不含引擎追加的呈现契约）、预设对话 {len(fake_msgs)} 条。"
+        )
+    out.append("会崩 = 玩家一发消息就会报错；静默 = 不报错但该段内容不生效。")
+    return "\n".join(out)
 
 
 # Placed before execute_generate. Content extraction + placeholder scan helpers
@@ -2597,6 +2726,7 @@ TOOL_EXECUTORS = {
     "Glob": execute_glob,
     "Grep": execute_grep,
     "CheckPackageRefs": execute_check_package_refs,
+    "CheckDMConfig": execute_check_dm_config,
     "Generate": execute_generate,
     "BatchGenerate": execute_batch_generate,
     "Output": execute_output,

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi, dmOutputApi } from "@/lib/api"
 import { wrapDmMessage, parseDmWrap, dmBadgeLabel } from "@/lib/dmWrap"
+import { notifyError } from "@/lib/notifyError"
 import { getApiBaseUrl } from "@/lib/apiBaseUrl"
 import { getActiveInstance, useSessionStore } from "@/stores/sessionStore"
 import { useGenerationStore } from "@/stores/generationStore"
@@ -550,6 +551,30 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
             }
           }
 
+          // Prompt-config errors (dm.yaml / director preset) and engine failures arrive
+          // as one dedicated event, paired with a persisted assistant record. Toast
+          // always — the user must learn about it even while looking at another session;
+          // the bubble itself is added here when viewing, or comes from the server when
+          // they switch to this session (the record is already on disk).
+          if (evType === "error") {
+            const source = String(data.source || "")
+            const detail = String(data.detail || "")
+            // 长错误（上游 API 原文等）在 toast 里会被截断且无法复制 → notifyError 会
+            // 附一个「查看详情」按钮，全文进可滚动的错误详情弹窗。
+            notifyError(detail, source)
+            if (activeSidRef.current === sid && typeof data.order === "number") {
+              const errOrder = data.order
+              setMessagesFor(sid, (prev) => {
+                if (prev.some(m => m.order === errOrder)) return prev
+                return insertBubbleSorted(prev, {
+                  id: nextId(), role: "assistant", content: detail, reasoning: "",
+                  status: "done", order: errOrder, sub: null, subRank: 0, error: true,
+                })
+              })
+            }
+            return
+          }
+
           if (activeSidRef.current === sid) {
             // ---- Currently viewing this session: real-time streaming ----
             // Positioning is driven entirely by the backend (order, sub) key —
@@ -888,7 +913,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
 
   // Convert a backend session record (already in bubble view, carrying
   // order/sub/subRank) or an in-flight local message into RichMessage shape.
-  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number; images?: { path: string; mime: string }[]; usage?: RoundUsage; elapsed?: number }): RichMessage {
+  function recordToRichMessage(rec: { role: string; content?: string; blocks?: ContentBlock[]; reasoning?: string; order?: number; sub?: number | string | null; subRank?: number; images?: { path: string; mime: string }[]; usage?: RoundUsage; elapsed?: number; error?: boolean }): RichMessage {
     const order = typeof rec.order === "number" ? rec.order : 0
     const sub: number | "r" | null = rec.sub === undefined || rec.sub === null ? null : (rec.sub === "r" ? "r" : (typeof rec.sub === "number" ? rec.sub : null))
     const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
@@ -907,6 +932,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       ...(rec.images && rec.images.length > 0 ? { images: rec.images } : {}),
       ...(rec.usage ? { usage: rec.usage } : {}),
       ...(rec.elapsed != null ? { elapsed: rec.elapsed } : {}),
+      ...(rec.error ? { error: true } : {}),
       ...(auto && rec.role === "user" ? autoKindFields(auto) : {}),
     }
   }
