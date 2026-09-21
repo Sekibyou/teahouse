@@ -7,6 +7,7 @@ export const enMisc = {
     copyFail: "Copy failed — select the text above manually",
     close: "Close",
     sourceEngine: "engine",
+    sourceWriter: "writer model",
   },
   sandbox: {
     waiting: "Waiting for AI to generate content...",

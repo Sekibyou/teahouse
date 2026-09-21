@@ -9,7 +9,10 @@ const TOAST_MAX = 120
 const PREVIEW_MAX = 100
 
 /** 后端的来源标识 → 可读名。未登记的标识原样显示。 */
-const SOURCE_LABELS: Record<string, string> = { engine: "sourceEngine" }
+const SOURCE_LABELS: Record<string, string> = {
+  engine: "sourceEngine",
+  writer: "sourceWriter",
+}
 
 /** 该错误文本是否超出 toast 的承载能力（需要走详情弹窗）。 */
 export function isLongError(detail: string): boolean {

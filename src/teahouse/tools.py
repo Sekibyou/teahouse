@@ -1679,6 +1679,7 @@ async def execute_generate(
     user_id: str | None = None,
     run_uuid: str | None = None,
     instance_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Generate tool — reads YAML config, resolves placeholders, calls writer LLM, writes result to file.
 
@@ -1901,6 +1902,29 @@ async def execute_generate(
             },
         )
 
+    def _announce_failure(detail: str) -> None:
+        # 正文模型失败原先只折成 tool result 字符串返回给导演，前端收不到任何
+        # 事件——"生成中"一闪就回待机，连 toast 都没有（错误只躺在导演栏的工具
+        # 结果气泡里）。补一次会话级 error 事件：导演照旧拿到 tool result，用户也能
+        # 看到 toast + 详情弹窗。不带 order，故不会多出一个错误气泡。
+        #
+        # 必须包成 `session_event` 且带 session_id —— 前端 ChatPanel 是在
+        # session_event 里按 data.type 分发的，且 session_id 缺失直接 return。
+        # 发成裸的 "error" 事件不会有人监听，等于没发。
+        from .sessions import MAIN_SESSION_ID
+
+        state.broadcast(
+            "session_event",
+            {
+                "type": "error",
+                "fatal": False,
+                "source": "writer",
+                "detail": detail,
+                "instance_id": instance_id or instance_dir.name,
+                "session_id": session_id or MAIN_SESSION_ID,
+            },
+        )
+
     async def _finalize_write() -> None:
         """Interrupt/error/complete path: write whatever has accumulated, broadcast
         file_changed once. Mid-stream there was no file, so this is the sole flush."""
@@ -1948,6 +1972,7 @@ async def execute_generate(
                 f"  已产出字数：{len(buffered)}\n"
                 f"  中断原因：{e}"
             )
+        _announce_failure(f"正文模型调用失败（未产生任何输出）：{e}")
         return (
             f"Error: 正文模型 API 调用失败（未产生任何输出）: {e}\n"
             f"请检查 writer slot 的 API key 和网络连接后重试。"
@@ -1960,10 +1985,12 @@ async def execute_generate(
                 pass
             _progress(done=True)
             return f"Generate 部分完成（生成中断，已落盘半成品）\n  输出文件：{output_path_str}\n  已产出字数：{len(buffered)}\n  意外错误：{e}"
+        _announce_failure(f"调用正文模型时发生意外错误（未产生任何输出）：{e}")
         return f"Error: 调用正文模型时发生意外错误（未产生任何输出）: {e}"
 
     # 流正常结束 — 若从未收到正文，不产出文件报错；否则最终落盘 + file_changed
     if not got_text:
+        _announce_failure("正文模型返回为空（未生成任何正文）")
         return "Error: 正文模型返回为空（未生成任何正文）"
 
     await _finalize_write()
@@ -1995,6 +2022,7 @@ async def execute_batch_generate(
     user_id: str | None = None,
     run_uuid: str | None = None,
     instance_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     """BatchGenerate — 一次发起 N 个 Generate，并行跑，全部结束后聚合返回。
 
@@ -2036,7 +2064,7 @@ async def execute_batch_generate(
     # 流式落盘。它只用局部状态（缓冲/客户端），天然可重入，故直接并发即可。
     tasks = [
         asyncio.ensure_future(
-            execute_generate(instance_dir, step, user_id, run_uuid, instance_id)
+            execute_generate(instance_dir, step, user_id, run_uuid, instance_id, session_id)
         )
         for step in normalized
     ]
@@ -2837,7 +2865,7 @@ async def execute_tool(
     if executor:
         try:
             if name in ("Generate", "BatchGenerate"):
-                result = await executor(instance_dir, args, user_id, run_uuid, instance_id)
+                result = await executor(instance_dir, args, user_id, run_uuid, instance_id, session_id)
             elif name == "GitCommit":
                 result = await executor(instance_dir, args, instance_id)
             elif name in ("EndSession", "StartSubSession", "SendToSubSession", "DeleteSubSession") or name == "PruneContext":

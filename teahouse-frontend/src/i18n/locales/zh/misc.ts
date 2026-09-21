@@ -7,6 +7,7 @@ export const zhMisc = {
     copyFail: "复制失败，请手动选中上方文本",
     close: "关闭",
     sourceEngine: "引擎",
+    sourceWriter: "正文模型",
   },
   sandbox: {
     waiting: "等待 AI 生成内容...",

@@ -34,6 +34,89 @@ class LLMError(Exception):
     """Base exception for LLM API errors."""
 
 
+# ===== Upstream error body rendering =====
+
+# Upper bound on the error body kept in an LLMError message. Generous on purpose:
+# the frontend shows a short toast preview but puts the full text in a scrollable
+# dialog, so the only cost of a long body is a bigger payload — whereas cutting it
+# short (200 chars, as it once did) can hide the actual cause entirely.
+_ERROR_BODY_MAX = 4000
+
+
+def _deepest_error(value: Any, depth: int = 0) -> tuple[str | None, Any]:
+    """Descend into a (possibly doubly-encoded) error payload.
+
+    Returns `(message, container)` — the innermost human message plus the object it
+    was found in. The container is what's worth showing as structured context: the
+    outer wrapper is gateway noise, and its nested string is precisely the layer
+    that keeps the `\\"` escapes which made the raw body unreadable.
+    """
+    if depth > 8:
+        return None, None
+    if isinstance(value, str):
+        s = value.strip()
+        if s[:1] in ("{", "["):
+            try:
+                return _deepest_error(json.loads(s), depth + 1)
+            except (json.JSONDecodeError, ValueError):
+                return None, None
+        return (s or None), None
+    if isinstance(value, dict):
+        for key in ("message", "detail", "error", "msg", "reason"):
+            if key in value:
+                message, container = _deepest_error(value[key], depth + 1)
+                if message:
+                    # A leaf string has no container of its own — this dict is the
+                    # most specific object that holds the message.
+                    return message, (container if container is not None else value)
+        return None, None
+    if isinstance(value, list):
+        for item in value:
+            message, container = _deepest_error(item, depth + 1)
+            if message:
+                return message, container
+    return None, None
+
+
+def format_error_body(raw: bytes | str) -> str:
+    """Render an upstream error body as readable text.
+
+    Two things routinely make these bodies unreadable as-is:
+
+    1. `resp.aread()` hands back `bytes`; dropping that straight into an f-string
+       yields Python's bytes repr (`b'...'`, non-ASCII as `\\xe8\\xaf\\xa5`).
+    2. Gateways often carry their error payload *as a string* inside the outer
+       JSON document, so the real message sits behind a layer of `\\"` escapes.
+
+    Decode, peel the nesting, and lead with the innermost message with the parsed
+    payload underneath (which keeps the code/status/type the message alone drops).
+    """
+    if isinstance(raw, (bytes, bytearray)):
+        text = bytes(raw).decode("utf-8", errors="replace")
+    else:
+        text = str(raw)
+    text = text.strip()
+    if not text:
+        return "(empty response body)"
+
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text[:_ERROR_BODY_MAX]
+
+    if isinstance(parsed, str):
+        return parsed[:_ERROR_BODY_MAX]
+
+    message, container = _deepest_error(parsed)
+    # Dump the *innermost* object, not the raw body: that is the layer that has
+    # already been unescaped, so nothing shows up as `\"` soup.
+    pretty = json.dumps(
+        container if container is not None else parsed, ensure_ascii=False, indent=2
+    )
+    out = f"{message}\n\n{pretty}" if message else pretty
+    return out[:_ERROR_BODY_MAX]
+
+
 # ===== URL normalization (from take_out model_config.py) =====
 
 def normalize_api_url(url: str, api_format: str = "openai") -> str:
@@ -334,7 +417,7 @@ class LLMClient:
         body = self._request_body(messages, system, stream=False, **kwargs)
         resp = await self._retry_request(body)
         if resp.status_code >= 400:
-            raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
+            raise LLMError(f"LLM API error {resp.status_code}: {format_error_body(resp.text)}")
         data = resp.json()
         return _extract_text(data, self.api_style)
 
@@ -376,7 +459,7 @@ class LLMClient:
 
         resp = await self._retry_request(body)
         if resp.status_code >= 400:
-            raise LLMError(f"LLM API error {resp.status_code}: {resp.text[:500]}")
+            raise LLMError(f"LLM API error {resp.status_code}: {format_error_body(resp.text)}")
         return resp.json()
 
     async def send_message_stream(
@@ -400,7 +483,7 @@ class LLMClient:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
-                    raise LLMError(f"API error ({resp.status_code}): {text[:200]}")
+                    raise LLMError(f"API error ({resp.status_code}): {format_error_body(text)}")
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -426,7 +509,7 @@ class LLMClient:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
-                    raise LLMError(f"Anthropic API error ({resp.status_code}): {text[:200]}")
+                    raise LLMError(f"Anthropic API error ({resp.status_code}): {format_error_body(text)}")
                 current_event = None
                 # Track block types for content_block_delta routing
                 block_types: dict[int, str] = {}
@@ -519,7 +602,7 @@ class LLMClient:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
-                    raise LLMError(f"API error ({resp.status_code}): {text[:200]}")
+                    raise LLMError(f"API error ({resp.status_code}): {format_error_body(text)}")
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -627,7 +710,7 @@ class LLMClient:
             async with client.stream("POST", self._api_url, headers=self._headers(), json=body) as resp:
                 if resp.status_code >= 400:
                     text = await resp.aread()
-                    raise LLMError(f"Anthropic API error ({resp.status_code}): {text[:200]}")
+                    raise LLMError(f"Anthropic API error ({resp.status_code}): {format_error_body(text)}")
                 current_event = None
                 block_types: dict[int, str] = {}
                 block_index = -1

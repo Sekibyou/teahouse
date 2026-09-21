@@ -7,6 +7,7 @@ export const jaMisc = {
     copyFail: "コピーに失敗しました。上のテキストを手動で選択してください",
     close: "閉じる",
     sourceEngine: "エンジン",
+    sourceWriter: "本文モデル",
   },
   sandbox: {
     waiting: "AI のコンテンツ生成を待機中...",
