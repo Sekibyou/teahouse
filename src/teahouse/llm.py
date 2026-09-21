@@ -357,6 +357,20 @@ class LLMClient:
                 m.pop("id", None)
                 if m.get("role") == "assistant" and reasoning:
                     m["reasoning_content"] = reasoning
+                # Our internal key is `extra`; the wire name is the vendor's
+                # (`extra_content` for Gemini's OpenAI-compat layer). Mapped here
+                # because this is the one place BOTH paths pass through: replayed
+                # history (already mapped by sessions._api_tool_call) and the
+                # in-turn tool loop, which appends the streamed calls straight into
+                # `msg` carrying `extra`. Leaving it unmapped sent an unknown field
+                # the vendor ignored, so the signature was effectively absent —
+                # 400 "Function call is missing a thought_signature".
+                for tc in m.get("tool_calls") or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    extra = tc.pop("extra", None)
+                    if extra is not None:
+                        tc["extra_content"] = extra
                 # A tool-call turn with no prose must NOT carry a `content` key at
                 # all. Gemini's OpenAI-compat layer turns a present-but-empty
                 # content into an extra text part, and the functionCall beside it
@@ -588,6 +602,9 @@ class LLMClient:
     async def _stream_openai_tools(self, body: dict) -> AsyncGenerator[dict, None]:
         """Stream OpenAI response, accumulating tool_call fragments. Yields text chunks and final tool_calls."""
         tool_call_acc: dict[int, dict] = {}
+        # Next ordinal to hand out when a vendor omits `index` (see the fragment
+        # loop below). Unused when the vendor does send indexes.
+        next_idx = 0
         # Last usage block seen this stream (see the choices guard below).
         usage: dict | None = None
         # Ordinals (0-based position among this round's tool calls) already
@@ -666,7 +683,20 @@ class LLMClient:
                     tc_deltas = delta.get("tool_calls", [])
                     _max_idx = None
                     for tc_delta in tc_deltas:
-                        idx = tc_delta.get("index", 0)
+                        if "index" in tc_delta:
+                            idx = tc_delta["index"]
+                            next_idx = max(next_idx, idx + 1)
+                        elif not tool_call_acc or tc_delta.get("id"):
+                            # Vendor omitted `index` — Gemini's OpenAI-compat layer
+                            # does. Fall back to "an `id` starts a new call, a bare
+                            # fragment continues the current one"; defaulting every
+                            # fragment to 0 merged parallel calls into one entry
+                            # (two Read calls became name "ReadRead" with the two
+                            # argument strings concatenated into invalid JSON).
+                            idx = next_idx
+                            next_idx += 1
+                        else:
+                            idx = next_idx - 1
                         if idx not in tool_call_acc:
                             tool_call_acc[idx] = {
                                 "id": "", "function": {"name": "", "arguments": ""},
