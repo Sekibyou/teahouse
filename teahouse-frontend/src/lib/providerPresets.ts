@@ -5,7 +5,7 @@
  * 只需粘贴 api_key 即可一键创建供应商。
  *
  * ⚠️ api_url 这里给的是【基础 URL】（如 https://api.deepseek.com），而非完整端点。
- * 后端 normalize_api_url（src/teahouse/routes/llm_providers.py）会根据 api_format 与
+ * 后端 normalize_api_url（src/teahouse/llm.py）会根据 api_format 与
  * 是否已含版本路径，自动派生出两个链接：
  *   - 聊天端点：   https://api.deepseek.com/v1/chat/completions
  *   - 模型列表：   https://api.deepseek.com/v1/models（由前端 computeModelFetchUrl 派生）

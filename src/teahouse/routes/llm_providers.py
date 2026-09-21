@@ -4,13 +4,13 @@ LLM Provider API routes.
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ..llm import VERSIONED_BASE_RE, normalize_api_url
 from ..database.llm_providers import (
     create_provider, get_provider, list_providers,
     update_provider, delete_provider,
@@ -48,32 +48,10 @@ class ImportModelsRequest(BaseModel):
 
 
 # ===== URL normalization =====
+# normalize_api_url / VERSIONED_BASE_RE 唯一定义在 llm.py（发请求时也用它），此处只复用，
+# 避免两份实现漂移——曾因 llm.py 那份缺版本路径判断而把 Gemini 拼成 404。
 
 VALID_FORMATS = {"openai", "openai_strict", "anthropic"}
-
-
-# 匹配已带 API 版本路径的 base URL：`/v1`、`/v4`、`/v3`、`/v2`、`/v1beta/` 等。
-# 这类 base 直接追加端点即可，不应再补 `/v1`（否则智谱 `/v4`、火山 `/v3`、千帆 `/v2` 会被拼错）。
-_VERSIONED_BASE = re.compile(r"/v\d+(?:/|$)|/v1beta/")
-
-
-def normalize_api_url(url: str, api_format: str) -> str:
-    url = url.strip().rstrip("/")
-    if api_format == "anthropic":
-        if "/messages" in url:
-            return url
-        if url.endswith("/v1"):
-            return url + "/messages"
-        return url + "/v1/messages"
-
-    # openai / openai_strict
-    if "/chat/completions" in url:
-        return url
-    # 已带版本路径（/vN 或 /v1beta/）→ 直接追加 chat 端点
-    if _VERSIONED_BASE.search(url):
-        return url + "/chat/completions"
-    # 裸 host（如 https://api.deepseek.com）→ 默认走 OpenAI 标准的 /v1
-    return url + "/v1/chat/completions"
 
 
 # ===== Helper =====
@@ -245,27 +223,22 @@ def _fetch_available_models(api_url: str, api_key: str, api_format: str, is_cust
             {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
         ]
 
-    if "generativelanguage.googleapis.com" in api_url:
-        return [
-            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash"},
-            {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash (Experimental)"},
-            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro"},
-            {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash"},
-            {"id": "gemini-1.0-pro", "name": "Gemini 1.0 Pro"},
-        ]
-
     # For all other providers (OpenAI-compatible + third-party Anthropic-compatible):
     try:
         if is_custom_url:
             models_url = api_url
         else:
-            for suffix in ["/v1/chat/completions", "/chat/completions", "/v1/messages", "/messages"]:
-                if api_url.endswith(suffix):
-                    base_url = api_url[:-len(suffix)].rstrip("/")
+            base_url = api_url.rstrip("/")
+            for suffix in ["/chat/completions", "/messages"]:
+                if base_url.endswith(suffix):
+                    base_url = base_url[:-len(suffix)].rstrip("/")
                     break
+            # 只剥端点、保留版本段：已带版本路径（Gemini `/v1beta/openai`、智谱 `/v4`、
+            # 通义 `/compatible-mode/v1` …）直接追加 `/models`；裸 host 才补 OpenAI 标准的 `/v1`。
+            if VERSIONED_BASE_RE.search(base_url):
+                models_url = base_url + "/models"
             else:
-                base_url = api_url.rstrip("/")
-            models_url = base_url + "/v1/models"
+                models_url = base_url + "/v1/models"
 
         headers = {
             "Authorization": f"Bearer {api_key}",

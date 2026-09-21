@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -119,25 +120,34 @@ def format_error_body(raw: bytes | str) -> str:
 
 # ===== URL normalization (from take_out model_config.py) =====
 
+# 匹配已带 API 版本路径的 base URL：`/v1`、`/v4`、`/v3`、`/v2`、`/v1beta/` 等。
+# 这类 base 直接追加端点即可，不应再补 `/v1`（否则智谱 `/v4`、火山 `/v3`、千帆 `/v2`、
+# Gemini `/v1beta/openai` 会被拼成 `.../v4/v1/chat/completions` 而 404）。
+VERSIONED_BASE_RE = re.compile(r"/v\d+(?:/|$)|/v1beta/")
+
+
 def normalize_api_url(url: str, api_format: str = "openai") -> str:
     """
     Intelligently complete API URL endpoint.
 
-    OpenAI format:   append /v1/chat/completions
+    OpenAI format:   append /v1/chat/completions（base 已带版本路径时只补 /chat/completions）
     Anthropic format: append /v1/messages
-    Handles variants: bare domain, /v1, /v1/ already present, etc.
+    Handles variants: bare domain, /v1, /v1/, /v4, /v1beta/openai, full endpoint already present.
     """
     url = url.strip().rstrip("/")
     if api_format == "anthropic":
-        if url.endswith("/messages"):
-            return url
-        return url + "/messages"
-    else:
-        if "/chat/completions" in url:
+        if "/messages" in url:
             return url
         if url.endswith("/v1"):
-            return url + "/chat/completions"
-        return url + "/v1/chat/completions"
+            return url + "/messages"
+        return url + "/v1/messages"
+
+    # openai / openai_strict
+    if "/chat/completions" in url:
+        return url
+    if VERSIONED_BASE_RE.search(url):
+        return url + "/chat/completions"
+    return url + "/v1/chat/completions"
 
 
 # ===== Usage normalization =====
