@@ -99,6 +99,10 @@ export interface LLMProvider {
   api_key: string
   api_format: "openai" | "openai_strict" | "anthropic"
   model_fetch_url: string
+  /** JSON override blob for non-standard request fields; "" = follow the built-in table. */
+  capabilities: string
+  /** Server-resolved capability flags actually used for requests (read-only). */
+  resolved_capabilities?: Record<string, boolean>
   is_enabled: number
   created_at: number
   updated_at: number

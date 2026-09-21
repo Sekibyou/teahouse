@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import provider_caps
 from .sessions import MAIN_SESSION_ID, load_meta
 
 EFFORT_VALUES = ("none", "low", "mid", "high", "max")
@@ -96,28 +97,41 @@ async def ensure_dm_effort(
     return effort
 
 
-def effort_kwargs(api_style: str, effort: str | None) -> dict:
+def effort_kwargs(api_style: str, effort: str | None, capabilities: dict | None = None) -> dict:
     """Return the extra LLM body kwargs for an effort under an API style.
 
     ``None`` / invalid effort → ``{}`` (field omitted, model default).
+
+    ``capabilities`` is the endpoint's capability set (see ``provider_caps``); it
+    gates the non-standard fields per vendor. Merged over the conservative default
+    set, so a caller that omits it (or passes a partial dict) still gets the
+    default behaviour rather than accidentally disabling everything.
     """
+    caps = {**provider_caps.DEFAULTS, **(capabilities or {})}
     effort = validate_effort(effort)
     if not effort or effort == "none":
         # "none" must turn thinking OFF, not just omit the knob — otherwise
         # reasoning-default models (e.g. DeepSeek-V4) keep their default chain
-        # of thought. DeepSeek's OpenAI-compat endpoint exposes the same
-        # ``thinking: {type: "disabled"}`` as Anthropic.
-        if api_style in ("openai", "anthropic"):
+        # of thought. But only DeepSeek is known to expose the Anthropic-shaped
+        # ``thinking: {type: "disabled"}`` on an OpenAI-compat endpoint; sending
+        # it blind 400s on strict vendors (Gemini: 'Unknown name "thinking"').
+        if api_style == "anthropic":
+            return {"thinking": {"type": "disabled"}}
+        if api_style == "openai" and caps.get("thinking"):
             return {"thinking": {"type": "disabled"}}
         return {}
 
     if api_style == "anthropic":
+        # `thinking` is native to this API rather than a vendor extension, so it
+        # is not capability-gated.
         tokens = _ANTHROPIC_BUDGET.get(effort)
         if tokens:
             return {"thinking": {"type": "enabled", "budget_tokens": tokens}}
         return {}
 
     if api_style == "openai":
+        if not caps.get("reasoning_effort"):
+            return {}
         mapped = _OPENAI_REASONING.get(effort)
         if mapped:
             return {"reasoning_effort": mapped}

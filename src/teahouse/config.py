@@ -24,6 +24,10 @@ class LLMConfig(BaseModel):
     top_p: float | None = None
     frequency_penalty: float | None = None
     presence_penalty: float | None = None
+    capabilities: dict = Field(
+        default_factory=dict,
+        description="Endpoint capability flags (see provider_caps); gates non-standard request fields per vendor",
+    )
 
 
 class ServerConfig(BaseModel):

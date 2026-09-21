@@ -23,6 +23,7 @@ from . import __version__
 from .config import Config, LLMConfig as ConfigLLMConfig
 from .llm import LLMClient
 from .llm import _extract_text, _extract_tool_calls
+from .provider_caps import parse_overrides, resolve_capabilities
 from .tools import execute_tool, load_tools, load_tools_usage
 from .director_system import build_template_variables, resolve_preset_template, render_user_tail
 from .database.director_prompt_presets import ensure_director_preset_binding
@@ -264,6 +265,9 @@ async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
         top_p=profile.get("top_p") if profile else None,
         frequency_penalty=profile.get("frequency_penalty") if profile else None,
         presence_penalty=profile.get("presence_penalty") if profile else None,
+        capabilities=resolve_capabilities(
+            provider["api_url"], parse_overrides(provider.get("capabilities"))
+        ),
     ), max_retries=await _user_max_retries(user_id))
 
 
@@ -287,6 +291,7 @@ async def _resolve_llm_config(llm_config_id: str | None, user_id: str | None) ->
         api_style=cfg["api_format"],
         max_tokens=cfg["max_tokens"] if cfg["max_tokens"] else 50000,
         temperature=cfg["temperature"],
+        capabilities=resolve_capabilities(cfg["api_url"], parse_overrides(cfg.get("capabilities"))),
     ), max_retries=await _user_max_retries(user_id))
 
 

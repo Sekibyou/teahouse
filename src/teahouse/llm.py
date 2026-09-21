@@ -320,7 +320,7 @@ class LLMClient:
             **kwargs,
         }
         if effort is not None:
-            body.update(effort_kwargs(self.api_style, effort))
+            body.update(effort_kwargs(self.api_style, effort, self.config.capabilities))
         if stream:
             body["stream"] = True
             if self.api_style == "openai":
@@ -462,7 +462,7 @@ class LLMClient:
                 "tools": tools_for_style(kwargs["tools"], self.api_style),
             }
             if effort is not None:
-                body.update(effort_kwargs(self.api_style, effort))
+                body.update(effort_kwargs(self.api_style, effort, self.config.capabilities))
             if self.api_style == "anthropic":
                 body["messages"] = messages
                 if system:

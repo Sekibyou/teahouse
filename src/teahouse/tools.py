@@ -25,6 +25,7 @@ from typing import Any
 from .placeholder import resolve_placeholders, resolve_variables, validate_var_name, drop_unmatched_mentions, strip_placeholder_shells, resolve_slice_spans, MAX_RESOLVE_DEPTH
 from .config import LLMConfig
 from .llm import LLMClient, LLMError
+from .provider_caps import parse_overrides, resolve_capabilities
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
 from .prose_vars import register_instance as _register_instance
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
@@ -1818,6 +1819,9 @@ async def execute_generate(
             top_p=profile.get("top_p") if profile else None,
             frequency_penalty=profile.get("frequency_penalty") if profile else None,
             presence_penalty=profile.get("presence_penalty") if profile else None,
+            capabilities=resolve_capabilities(
+                provider["api_url"], parse_overrides(provider.get("capabilities"))
+            ),
         ))
     except Exception as e:
         return f"Error: 解析 writer slot 配置失败: {e}"
@@ -1850,7 +1854,8 @@ async def execute_generate(
                 "frequency_penalty": writer_client.config.frequency_penalty,
                 "presence_penalty": writer_client.config.presence_penalty,
                 "reasoning_effort": effort,
-                "api_fields": effort_kwargs(writer_client.api_style, effort),
+                "capabilities": writer_client.config.capabilities,
+                "api_fields": effort_kwargs(writer_client.api_style, effort, writer_client.config.capabilities),
                 "messages": resolved,
             }
             payload_full.write_text(

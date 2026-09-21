@@ -35,6 +35,7 @@ async def create_provider(
     api_key: str,
     api_format: str = "openai",
     model_fetch_url: str = "",
+    capabilities: str = "",
 ) -> dict:
     provider_id = generate_uuid()
     now = current_timestamp()
@@ -42,9 +43,9 @@ async def create_provider(
 
     await execute(
         """INSERT INTO llm_providers
-           (id, user_id, name, api_url, encrypted_api_key, api_format, model_fetch_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (provider_id, user_id, name, api_url, encrypted, api_format, model_fetch_url, now, now),
+           (id, user_id, name, api_url, encrypted_api_key, api_format, model_fetch_url, capabilities, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (provider_id, user_id, name, api_url, encrypted, api_format, model_fetch_url, capabilities, now, now),
     )
     return await get_provider(provider_id)
 
@@ -70,6 +71,7 @@ async def update_provider(
     api_format: Optional[str] = None,
     is_enabled: Optional[bool] = None,
     model_fetch_url: Optional[str] = None,
+    capabilities: Optional[str] = None,
 ) -> bool:
     fields = []
     values = []
@@ -86,6 +88,8 @@ async def update_provider(
         fields.append("is_enabled = ?"); values.append(1 if is_enabled else 0)
     if model_fetch_url is not None:
         fields.append("model_fetch_url = ?"); values.append(model_fetch_url)
+    if capabilities is not None:
+        fields.append("capabilities = ?"); values.append(capabilities)
 
     if not fields:
         return False

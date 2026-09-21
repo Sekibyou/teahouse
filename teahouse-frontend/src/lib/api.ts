@@ -748,7 +748,10 @@ export const sandboxVarsApi = {
 // LLM Providers API
 export const llmProvidersApi = {
   list: () => get<{ providers: LLMProvider[] }>("/api/llm/providers/"),
-  create: (data: { name: string; api_url: string; api_key: string; api_format?: string }) =>
+  create: (data: {
+    name: string; api_url: string; api_key: string; api_format?: string
+    model_fetch_url?: string; capabilities?: string
+  }) =>
     post<{ provider: LLMProvider }>("/api/llm/providers/", data),
   update: (id: string, data: Record<string, unknown>) =>
     put<{ provider: LLMProvider }>(`/api/llm/providers/${id}`, data),

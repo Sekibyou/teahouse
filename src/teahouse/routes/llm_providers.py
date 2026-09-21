@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..llm import VERSIONED_BASE_RE, normalize_api_url
+from ..provider_caps import parse_overrides, resolve_capabilities
 from ..database.llm_providers import (
     create_provider, get_provider, list_providers,
     update_provider, delete_provider,
@@ -32,6 +33,7 @@ class CreateProviderRequest(BaseModel):
     api_key: str
     api_format: str = "openai"
     model_fetch_url: str = ""
+    capabilities: str = ""
 
 
 class UpdateProviderRequest(BaseModel):
@@ -41,6 +43,7 @@ class UpdateProviderRequest(BaseModel):
     api_format: Optional[str] = None
     is_enabled: Optional[bool] = None
     model_fetch_url: Optional[str] = None
+    capabilities: Optional[str] = None
 
 
 class ImportModelsRequest(BaseModel):
@@ -52,6 +55,23 @@ class ImportModelsRequest(BaseModel):
 # 避免两份实现漂移——曾因 llm.py 那份缺版本路径判断而把 Gemini 拼成 404。
 
 VALID_FORMATS = {"openai", "openai_strict", "anthropic"}
+
+
+def _validate_capabilities(raw: str | None) -> None:
+    """Reject a malformed capability override up front.
+
+    ``provider_caps.parse_overrides`` degrades silently on the request path (a bad
+    stored value must never break a generation), so without this check a typo
+    would simply do nothing, with no feedback at all.
+    """
+    if not raw:
+        return
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="capabilities must be valid JSON")
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="capabilities must be a JSON object")
 
 
 # ===== Helper =====
@@ -77,6 +97,11 @@ def _mask_provider(p: dict) -> dict:
     p = dict(p)
     if p.get("api_key"):
         p["api_key"] = _mask_api_key(p["api_key"])
+    # What the request builders will actually emit for this endpoint, resolved
+    # here so the UI can display it without duplicating the host table.
+    p["resolved_capabilities"] = resolve_capabilities(
+        p.get("api_url") or "", parse_overrides(p.get("capabilities"))
+    )
     return p
 
 
@@ -98,6 +123,7 @@ async def api_create_provider(body: CreateProviderRequest, user: UserInfo = Depe
     if body.api_format not in VALID_FORMATS:
         raise HTTPException(status_code=400, detail=f"Invalid api_format. Must be one of {VALID_FORMATS}")
     api_url = normalize_api_url(body.api_url, body.api_format)
+    _validate_capabilities(body.capabilities)
     provider = await create_provider(
         user_id=user.user_id,
         name=body.name,
@@ -105,6 +131,7 @@ async def api_create_provider(body: CreateProviderRequest, user: UserInfo = Depe
         api_key=body.api_key,
         api_format=body.api_format,
         model_fetch_url=body.model_fetch_url,
+        capabilities=body.capabilities,
     )
     return {"provider": _mask_provider(provider)}
 
@@ -133,6 +160,8 @@ async def api_update_provider(provider_id: str, body: UpdateProviderRequest, use
         kwargs["api_url"] = normalize_api_url(kwargs["api_url"], new_format)
     if "api_format" in kwargs and kwargs["api_format"] not in VALID_FORMATS:
         raise HTTPException(status_code=400, detail=f"Invalid api_format. Must be one of {VALID_FORMATS}")
+    if "capabilities" in kwargs:
+        _validate_capabilities(kwargs["capabilities"])
 
     ok = await update_provider(provider_id, **kwargs)
     if not ok:

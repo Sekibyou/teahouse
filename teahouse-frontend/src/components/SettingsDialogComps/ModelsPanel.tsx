@@ -33,6 +33,29 @@ function computeModelFetchUrl(apiUrl: string): string {
   return `${base}/models`
 }
 
+// Capability flags a provider may override. Keys must match the backend's
+// provider_caps.DEFAULTS; the backend resolves the effective set (this override
+// → built-in host table → conservative default) and returns it as
+// `resolved_capabilities`, so the host table is never duplicated here.
+const CAPABILITY_FLAGS = ["thinking", "reasoning_effort"] as const
+
+function parseCapOverrides(raw: string): Record<string, boolean> {
+  try {
+    const parsed = JSON.parse(raw || "{}")
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+// "" (no keys set) means "follow the built-in default" rather than an empty override.
+function setCapOverride(raw: string, key: string, choice: string): string {
+  const flags = parseCapOverrides(raw)
+  if (choice === "inherit") delete flags[key]
+  else flags[key] = choice === "on"
+  return Object.keys(flags).length ? JSON.stringify(flags) : ""
+}
+
 export function ModelsPanel() {
   const { t } = useTranslation("settings")
   const isMobile = useIsMobile()
@@ -53,7 +76,7 @@ export function ModelsPanel() {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
   const [importModelLoading, setImportModelLoading] = useState(false)
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set())
-  const [providerFormOverrides, setProviderFormOverrides] = useState<Record<string, { api_url?: string; api_key?: string; api_format?: string; model_fetch_url?: string }>>({})
+  const [providerFormOverrides, setProviderFormOverrides] = useState<Record<string, { api_url?: string; api_key?: string; api_format?: string; model_fetch_url?: string; capabilities?: string }>>({})
   const [error, setError] = useState("")
 
   const loadAll = useCallback(async () => {
@@ -82,6 +105,7 @@ export function ModelsPanel() {
       api_key: override.api_key !== undefined ? override.api_key : p.api_key,
       api_format: override.api_format !== undefined ? override.api_format : p.api_format,
       model_fetch_url: modelFetchUrl,
+      capabilities: override.capabilities !== undefined ? override.capabilities : (p.capabilities || ""),
     }
   }
 
@@ -103,7 +127,8 @@ export function ModelsPanel() {
     return (override.api_url !== undefined && override.api_url !== p.api_url) ||
       (override.api_key !== undefined && override.api_key !== p.api_key) ||
       (override.api_format !== undefined && override.api_format !== p.api_format) ||
-      (override.model_fetch_url !== undefined && override.model_fetch_url !== (p.model_fetch_url || ""))
+      (override.model_fetch_url !== undefined && override.model_fetch_url !== (p.model_fetch_url || "")) ||
+      (override.capabilities !== undefined && override.capabilities !== (p.capabilities || ""))
   }
 
   const saveProviderOverrides = async (providerId: string) => {
@@ -115,6 +140,7 @@ export function ModelsPanel() {
       api_url: override.api_url !== undefined ? override.api_url : p.api_url,
       api_format: override.api_format !== undefined ? override.api_format : p.api_format,
       model_fetch_url: override.model_fetch_url !== undefined ? override.model_fetch_url : (p.model_fetch_url || ""),
+      capabilities: override.capabilities !== undefined ? override.capabilities : (p.capabilities || ""),
     }
     if (override.api_key !== undefined) payload.api_key = override.api_key
     const res = await llmProvidersApi.update(providerId, payload)
@@ -317,6 +343,10 @@ export function ModelsPanel() {
             const preset = matchProviderPreset(p.api_url)
             const expanded = expandedProviderId === p.id
             const enabledModelNames = new Set(providerModels.filter(mm => mm.is_enabled).map(mm => mm.model_name))
+            // Server-resolved baseline, overlaid with unsaved edits so the hint
+            // tracks the selects live.
+            const capFlags = parseCapOverrides(form.capabilities)
+            const effectiveCaps = { ...(p.resolved_capabilities || {}), ...capFlags }
 
             return (
               <div key={p.id} className={`rounded-lg border p-4 space-y-3 mb-5 break-inside-avoid ${p.is_enabled ? "border-border" : "border-muted opacity-60"}`}>
@@ -409,6 +439,29 @@ export function ModelsPanel() {
                         placeholder={t("provider.modelFetchUrlPH")}
                         className="text-sm font-mono"
                       />
+                    </Field>
+                    <Field label={t("provider.capabilities")} className="col-span-3">
+                      <div className="flex items-center gap-4 flex-wrap">
+                        {CAPABILITY_FLAGS.map(flag => (
+                          <div key={flag} className="flex items-center gap-1.5">
+                            <span className="text-xs font-mono text-muted-foreground">{flag}</span>
+                            <Select
+                              value={capFlags[flag] === undefined ? "inherit" : (capFlags[flag] ? "on" : "off")}
+                              onValueChange={v => setProviderFormField(p.id, "capabilities", setCapOverride(form.capabilities, flag, v ?? "inherit"))}
+                            >
+                              <SelectTrigger className="h-8 w-[112px] text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="inherit">{t("provider.capInherit")}</SelectItem>
+                                <SelectItem value="on">{t("provider.capOn")}</SelectItem>
+                                <SelectItem value="off">{t("provider.capOff")}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        {t("provider.capEffective")}: {CAPABILITY_FLAGS.map(f => `${f} ${effectiveCaps[f] ? "✓" : "✗"}`).join("　")}
+                      </p>
                     </Field>
                   </div>
 
