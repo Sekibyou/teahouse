@@ -795,10 +795,17 @@ async def _tool_use_loop(
                     # record pairs assistant tool_calls with tool results one to
                     # one, and an unpaired call makes the next request invalid.
                     result = f"Error: 工具执行异常: {e}"
-                _blocks_by_index[_ti] = {
+                block = {
                     "type": "tool_call", "id": tc_id, "name": name,
                     "args": args, "result": result,
                 }
+                # Provider metadata the vendor attached to this call (Gemini's
+                # thought_signature) must survive into the persisted block: the next
+                # request replays it, and the vendor 400s without it.
+                _extra = (_announced.get(_ti) or {}).get("extra")
+                if _extra is not None:
+                    block["extra"] = _extra
+                _blocks_by_index[_ti] = block
                 emit(_tag({"type": "tool_result", "id": tc_id, "name": name, "result": result}, _sub))
 
         async def _stop_exec_task() -> None:
@@ -831,10 +838,13 @@ async def _tool_use_loop(
                     blocks.append(done)
                     continue
                 info = _announced[_i]
-                blocks.append({
+                block = {
                     "type": "tool_call", "id": info["id"], "name": info["name"],
                     "args": info["args"], "result": "(interrupted)",
-                })
+                }
+                if info.get("extra") is not None:
+                    block["extra"] = info["extra"]
+                blocks.append(block)
                 # Flip the still-pending bubble to 已中断 without waiting for the
                 # frontend's own running→idle sweep.
                 emit(_tag({
@@ -912,7 +922,10 @@ async def _tool_use_loop(
                             _args = {}
                     except json.JSONDecodeError:
                         _args, _bad_args = {}, True
-                    _announced[_ti] = {"id": _tc_id, "name": _name, "args": _args}
+                    _announced[_ti] = {
+                        "id": _tc_id, "name": _name, "args": _args,
+                        "extra": event.get("extra"),
+                    }
                     emit(_tag({"type": "tool_call", "id": _tc_id, "name": _name, "args": _args}, 1 + _ti))
                     if not _bad_args and _name not in DEFERRED_TOOLS:
                         _held[_ti] = (_ti, _tc_id, _name, _args)
@@ -1005,7 +1018,7 @@ async def _tool_use_loop(
                 args = {}
             if _ti not in _announced:
                 # Its bubble was never announced mid-stream — create it now.
-                _announced[_ti] = {"id": tc["id"], "name": name, "args": args}
+                _announced[_ti] = {"id": tc["id"], "name": name, "args": args, "extra": tc.get("extra")}
                 emit(_tag({"type": "tool_call", "id": tc["id"], "name": name, "args": args}, 1 + _ti))
             _enqueued.add(_ti)
             _ensure_exec_task()

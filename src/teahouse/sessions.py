@@ -406,11 +406,17 @@ def _api_tool_call(b, api_style: str) -> dict:
     b_args = b.get("args") or {}
     if api_style == "anthropic":
         return {"type": "tool_use", "id": b_id, "name": b_name, "input": b_args}
-    return {
+    out = {
         "id": b_id,
         "type": "function",
         "function": {"name": b_name, "arguments": json.dumps(b_args)},
     }
+    # Provider metadata the vendor sent alongside this call, echoed back verbatim.
+    # Gemini's OpenAI-compat layer requires it (notably thought_signature) — a
+    # functionCall replayed without its signature is rejected with 400.
+    if b.get("extra") is not None:
+        out["extra_content"] = b["extra"]
+    return out
 
 
 def _api_tool_result(b, api_style: str) -> dict:

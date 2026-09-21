@@ -357,6 +357,15 @@ class LLMClient:
                 m.pop("id", None)
                 if m.get("role") == "assistant" and reasoning:
                     m["reasoning_content"] = reasoning
+                # A tool-call turn with no prose must NOT carry a `content` key at
+                # all. Gemini's OpenAI-compat layer turns a present-but-empty
+                # content into an extra text part, and the functionCall beside it
+                # then loses its thought_signature — the request 400s with
+                # "Function call is missing a thought_signature in functionCall
+                # parts". Omitting the key entirely is what the vendor's own
+                # examples show. (OpenAI itself accepts either form.)
+                if m.get("tool_calls") and not m.get("content"):
+                    m.pop("content", None)
         else:
             # anthropic style: strip internal keys, thinking is represented via
             # content blocks (already handled by the caller upstream).
@@ -603,6 +612,7 @@ class LLMClient:
                     # Raw fragment; the caller parses it and falls back to the
                     # end-of-round path when the JSON is not usable.
                     "arguments": tc["function"]["arguments"],
+                    "extra": tc.get("extra"),
                 })
             return out
 
@@ -658,10 +668,19 @@ class LLMClient:
                     for tc_delta in tc_deltas:
                         idx = tc_delta.get("index", 0)
                         if idx not in tool_call_acc:
-                            tool_call_acc[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
+                            tool_call_acc[idx] = {
+                                "id": "", "function": {"name": "", "arguments": ""},
+                                # Some vendors (Gemini's OpenAI-compat layer) attach
+                                # provider metadata here — notably thought_signature,
+                                # which MUST be echoed back on replay or the next
+                                # request 400s. Opaque to us; carried verbatim.
+                                "extra": None,
+                            }
                         tc = tool_call_acc[idx]
                         if tc_delta.get("id"):
                             tc["id"] = tc_delta["id"]
+                        if tc_delta.get("extra_content") is not None:
+                            tc["extra"] = tc_delta["extra_content"]
                         if tc_delta.get("function", {}).get("name"):
                             tc["function"]["name"] += tc_delta["function"]["name"]
                         if tc_delta.get("function", {}).get("arguments"):
@@ -683,10 +702,12 @@ class LLMClient:
                 if tool_call_acc:
                     for ev in _take_ready(None):
                         yield ev
-                    calls = [
-                        {"id": tc["id"], "type": "function", "function": tc["function"]}
-                        for _idx, tc in sorted(tool_call_acc.items())
-                    ]
+                    calls = []
+                    for _idx, tc in sorted(tool_call_acc.items()):
+                        call = {"id": tc["id"], "type": "function", "function": tc["function"]}
+                        if tc.get("extra") is not None:
+                            call["extra"] = tc["extra"]
+                        calls.append(call)
                     yield {"type": "tool_calls", "calls": calls}
 
     async def _stream_anthropic_tools(self, body: dict) -> AsyncGenerator[dict, None]:
