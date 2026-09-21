@@ -52,6 +52,7 @@ export const jaChat = {
   startHint: "メッセージを送信して会話を開始",
   interruptBubble: "ユーザーが生成を中断しました",
   endsessionBubble: "セッションは EndSession で終了しました",
+  endTurnBubble: "ターン終了",
   compactingBubble: "セッションコンテキストを圧縮中…",
   autoContinueBubble: "セッションを圧縮したため、自動的に作業を継続します",
   subSessionEnd: "サブセッション終了：",

@@ -1050,6 +1050,19 @@ async def execute_end_session(instance_dir: Path, args: dict[str, Any], session_
     return f"Session {sid or '(main)'} marked done and parent notified. The session is NOT destroyed — destroy it explicitly if the caller wants to reclaim it."
 
 
+async def execute_end_turn(instance_dir: Path, args: dict[str, Any]) -> str:
+    """DM tool: an inert marker — the round-termination decision lives in the loop.
+
+    ``app._tool_use_loop`` inspects the round's tool calls and returns as soon as one
+    of them is ``EndTurn``. This executor exists only to supply the paired
+    tool_result the protocol demands (every announced call must have exactly one),
+    and to give the call something readable to replay from the session record on
+    later turns. Keep it side-effect free: nothing here may depend on being run
+    exactly once.
+    """
+    return "本轮结束标记已确认（等待新的输入）。"
+
+
 async def execute_delete_sub_session(instance_dir: Path, args: dict[str, Any], session_id: str | None = "", instance_id: str | None = None, user_id: str | None = None) -> str:
     """Director tool: destroy a sub-session (delete its JSONL + meta) and broadcast session_destroyed.
 
@@ -2775,6 +2788,7 @@ TOOL_EXECUTORS = {
     "Wait": execute_wait,
     "Report": execute_report,
     "EndSession": execute_end_session,
+    "EndTurn": execute_end_turn,
     "StartSubSession": execute_start_sub_session,
     "SendToSubSession": execute_send_to_sub_session,
     "DeleteSubSession": execute_delete_sub_session,
@@ -2818,14 +2832,20 @@ DM_TOOLS = {
     "Generate", "BatchGenerate",
     "SkillRead", "TodoWrite", "Wait",
     "PruneContext", "RunScript",
+    # 轮次终止符：DM 的呈现一律走工具、不以纯文本收尾，故需要一个显式的「本轮说完了」，
+    # 否则后端只能多花一次空请求去问。导演不需要它（见 DIRECTOR_EXCLUDED_TOOLS）。
+    "EndTurn",
 }
 
 
-# 导演**排除**集 —— DM 呈现子系统的两个工具，导演（含其子会话）一律不得调用。
-# 导演的正交线路是 floors（Generate/Write），呈现归 DM 独占；导演误调 Output 会把气泡
-# 写进 runtime/dm-output.jsonl，污染玩家视图（Roll 不排：导演可用骰子做随机判定）。
+# 导演**排除**集 —— DM 专属工具，导演（含其子会话）一律不得调用。两类：
+# ① Output/OutputEdit：DM 呈现子系统。导演的正交线路是 floors（Generate/Write），
+#    呈现归 DM 独占；导演误调 Output 会把气泡写进 runtime/dm-output.jsonl，污染玩家视图。
+#    （Roll 不排：导演可用骰子做随机判定。）
+# ② EndTurn：DM 的轮次终止符。导演一轮正常以正文文本收尾，天然就会终止，用不上它；
+#    给了反而可能把一轮还没写完的正文提前掐断。
 # schema 层摘掉（load_tools/load_tools_usage）+ 执行层拒绝（execute_tool）双层兜底。
-DIRECTOR_EXCLUDED_TOOLS = {"Output", "OutputEdit"}
+DIRECTOR_EXCLUDED_TOOLS = {"Output", "OutputEdit", "EndTurn"}
 
 
 async def execute_tool(

@@ -98,7 +98,10 @@ const markdownComponents: Components = {
 // 本轮额外信息角标：缓存命中率 / 本轮输出 token / 调用耗时，明细挂 title。
 // input_total 为 0 说明这次调用没回传可用计量，此时直接不显示而不是画一个 0%。
 // 是否显示由用户偏好（设置→通用）决定——store 在此订阅，开关一拨即时生效。
-function UsageFooter({ usage, elapsed }: { usage: RoundUsage; elapsed?: number }) {
+// 导出供 ChatPanel 的 `end_turn` 分支复用：轮次用量挂在该轮**最后一个**气泡上，
+// 而 DM 的最后一个气泡恰是 EndTurn 标记泡（见 ChatPanel 的 usage 事件处理），
+// 那条分支不渲染 AssistantBubble，若不自行渲染就会丢掉角标。
+export function UsageFooter({ usage, elapsed }: { usage: RoundUsage; elapsed?: number }) {
   const { t } = useTranslation("misc")
   const showExtra = useExtraInfoStore((s) => s.show)
   if (!showExtra || !usage.input_total) return null

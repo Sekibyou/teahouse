@@ -141,6 +141,16 @@ export function parsePasteNotice(content: string): PasteNoticeInfo {
 }
 
 /**
+ * `EndTurn` 是 DM 的轮次终止符——纯标记、零信息量（后端见它就结束本轮）。
+ * 它不该渲染成工具气泡，而是像 `[auto]` 系统消息那样居中显示，故归入 autoKind。
+ * 与文本判别的那批不同，它由**工具名**判定，因此在 live 事件与回放两条路径上
+ * 都要显式带上（两处的调用点见 ChatPanel）。
+ */
+export function endTurnFields(name: unknown): { autoKind: "end_turn" } | Record<string, never> {
+  return name === "EndTurn" ? { autoKind: "end_turn" as const } : {}
+}
+
+/**
  * 从长消息指针消息内容里提取落盘的 temp 文件名（如 ``temp/长消息-xxxx.md``）。
  * 返回 null 表示没匹配到标准格式。
  */

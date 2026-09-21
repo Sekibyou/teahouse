@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, X, CheckCircle2, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert } from "lucide-react"
+import { Loader2, X, CheckCircle2, CheckCheck, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi, dmOutputApi } from "@/lib/api"
 import { wrapDmMessage, parseDmWrap, dmBadgeLabel } from "@/lib/dmWrap"
 import { notifyError } from "@/lib/notifyError"
@@ -14,8 +14,8 @@ import { toast } from "sonner"
 import { ContextUsageBar } from "./ChatPanelComps/ContextUsageBar"
 import { FloorSummaryText } from "./ChatPanelComps/FloorSummaryText"
 import type { MsgStatus, ContentBlock, RichMessage, RoundUsage } from "./ChatPanelComps/types"
-import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, longMsgPath } from "./ChatPanelComps/utils"
-import { AssistantBubble } from "./ChatPanelComps/AssistantBubble"
+import { nextId, mergeConsecutiveSameRole, updateMessage, formatCommitPreview, compareBubbles, insertBubbleSorted, autoMsgKind, autoKindFields, endTurnFields, longMsgPath } from "./ChatPanelComps/utils"
+import { AssistantBubble, UsageFooter } from "./ChatPanelComps/AssistantBubble"
 import { ChatHeader } from "./ChatPanelComps/ChatHeader"
 import { ChatInput } from "./ChatPanelComps/ChatInput"
 import type { PendingImage } from "./ChatPanelComps/ChatInput"
@@ -712,6 +712,9 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
             if (evType === "tool_call") {
               setMessagesFor(sid, (prev) => bubbleFor(prev, (m) => ({
                 ...m,
+                // EndTurn 泡在此定型为居中系统泡（后续 tool_start/tool_result 只更新
+                // blocks，字段会保留）。
+                ...endTurnFields(data.name),
                 status: "streaming",
                 blocks: [{
                   type: "tool_call" as const,
@@ -921,6 +924,9 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     const subRank = typeof rec.subRank === "number" ? rec.subRank : (sub === null ? 0 : (sub === "r" ? -1 : (sub as number)))
     const content = rec.content || ""
     const auto = content ? autoMsgKind(content) : null
+    // 回放侧：EndTurn 的气泡（后端把每个块拆成独立气泡，故首块即该泡的内容）
+    // 同样标记为居中系统泡，否则重开会话后它又变回工具气泡。
+    const firstBlock = rec.blocks?.[0]
     return {
       id: nextId(),
       role: rec.role === "user" ? "user" : "assistant",
@@ -936,6 +942,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
       ...(rec.elapsed != null ? { elapsed: rec.elapsed } : {}),
       ...(rec.error ? { error: true } : {}),
       ...(auto && rec.role === "user" ? autoKindFields(auto) : {}),
+      ...(rec.role !== "user" && firstBlock?.type === "tool_call" ? endTurnFields(firstBlock.name) : {}),
     }
   }
 
@@ -1988,7 +1995,18 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
             <>
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.autoKind && msg.autoKind !== "long_msg" ? "justify-center" : (msg.role === "user" ? "justify-end" : "justify-start")}`}>
-                  {msg.role === "assistant" ? (
+                  {msg.autoKind === "end_turn" ? (
+                    // EndTurn 标记泡：居中、无信息量，同 [auto] 系统泡的样式。必须排在
+                    // assistant 分支之前——它本身也是 assistant 气泡。用量角标本轮挂在
+                    // 最后一个气泡上，而 DM 的最后一个气泡正是它，故在此自行渲染。
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="max-w-fit rounded-md px-2.5 py-1 text-[11px] text-muted-foreground/70 bg-muted/40 flex items-center gap-1.5">
+                        <CheckCheck className="h-3 w-3 text-muted-foreground/60" />
+                        <span>{t("endTurnBubble")}</span>
+                      </div>
+                      {msg.usage && <UsageFooter usage={msg.usage} elapsed={msg.elapsed} />}
+                    </div>
+                  ) : msg.role === "assistant" ? (
                     <AssistantBubble
                       message={msg}
                       isLatest={msg.id === lastAssistantId}

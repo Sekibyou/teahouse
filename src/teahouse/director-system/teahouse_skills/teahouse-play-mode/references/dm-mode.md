@@ -49,6 +49,7 @@ DM 是**实例级的单例 agent**：玩家在**游玩视图**与它对话，它
 - **`chara`** 是发言者：`narrator` 用于旁白，角色名用于角色台词。**不要用保留值 `user`**——玩家发言由系统自动写入，重复 Output 会显得重复。
 - **`kind`** 是消息类型（可选）；当前惯例三类：`say`（默认，角色对话）、`narrate`（旁白/场景叙述）、`roll`（掷骰结果）。**引擎侧无枚举**——`chara` 与 `kind` 都是**开放值**，但改它们必须**两处同步**：`dm.yaml`（要求 DM 产出）+ 沙盒渲染器（怎么渲染）。详见 `teahouse-sandbox-builder` skill 的 `references/dm-api.md`。
 - **`OutputEdit(seq, old_string, new_string)`** 改**最新批次**的已呈现内容（历史批次已冻结）。
+- **`EndTurn()`** 宣告**本轮**结束——后端见到它就停止本轮，不再多问一次（只结束本轮，会话照常存活，玩家下次发言照接）。**扮演回合必须用它收尾**：那条通道禁止 DM 写正文（见第五节），于是本轮以工具调用结束，后端无从判断 DM 是否还想继续，只能再发一次**只有输入、没有输出**的请求去问；`EndTurn` 省掉这趟空转（一次上下文费用 + 一次往返延迟）。放在本轮**最后一个**工具调用之后。它与 `EndSession` 不是一回事——后者是受限子会话用来结束**整个会话**并通知父会话的，DM 没有这个工具。
 - **`content` / `new_string` 支持文件切片 `{{path}}`**（同 Write/Edit 的写法：`{{temp/gen/a.md}}`、`|from="## 秦悠"`、`:10-30` 等）。这让 DM 可以「先落盘、再引用呈现」，不必把长文本整段复制进工具参数；`old_string` 作锚点**不解析**。解析失败会报错并拒绝呈现。**不解析 `${}`**——呈现的是成品正文。要展示字面 `{{` 需在开括号前加反斜杠转义。
 - **`Roll(dice)`** 掷骰（`Roll("2d6+1")`、`Roll("4d6k3")`）。**结果不会自动呈现**——要按规则写进 `Output`（可作 `kind:"roll"` 的气泡，或融入叙述）。转述错了可用 `OutputEdit` 改。
 - **`Generate(source_file, path, overwrite?, reasoning_effort?)`** 单发一次正文生成，落盘到你指定的 `path`。`path` 是自由的——产素材就落 `temp/`，再用 `Output` 的 `{{}}` 切片引用呈现。**`Generate` 流式在生成中不落盘**，结束/中断/报错才落盘并广播一次 `file_changed`；默认**拒绝覆盖**已存在的文件（要覆盖传 `overwrite=true`）。
@@ -62,8 +63,8 @@ DM 是**实例级的单例 agent**：玩家在**游玩视图**与它对话，它
 
 | 通道 | 玩法侧入口 | 控制台侧入口 | 去向 |
 |---|---|---|---|
-| **扮演**（剧情内） | 沙盒输入 `Teahouse.sessionSend('dm', text)`（参考渲染器里默认模式） | `/say 内容` | 进 `dm-output.jsonl`（开新批次）再交给 DM；DM 这一回合只准调工具、不写正文 |
-| **局外** | 沙盒输入 `Teahouse.sessionSendOoc('dm', text)`（参考渲染器的「局外」开关） | DM 控制台输入框（默认语义） | 只进会话、**不进** dm-output；DM 可以回正文（只在 DM 栏可见） |
+| **扮演**（剧情内） | 沙盒输入 `Teahouse.sessionSend('dm', text)`（参考渲染器里默认模式） | `/say 内容` | 进 `dm-output.jsonl`（开新批次）再交给 DM；DM 这一回合只准调工具、不写正文，故须以 `EndTurn` 收尾 |
+| **局外** | 沙盒输入 `Teahouse.sessionSendOoc('dm', text)`（参考渲染器的「局外」开关） | DM 控制台输入框（默认语义） | 只进会话、**不进** dm-output；DM 可以回正文（只在 DM 栏可见），以正文自然收尾，无需 `EndTurn` |
 
 两条通道靠前端加的系统前缀区分（`[[TH-SYS presence N]]` / `[[TH-SYS ooc]]`），前缀只为 DM 的会话上下文服务，后端写呈现记录时会剥掉。详见 `teahouse-sandbox-builder` skill 的 `references/dm-api.md`。
 

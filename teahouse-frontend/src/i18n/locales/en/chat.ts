@@ -52,6 +52,7 @@ export const enChat = {
   startHint: "Send a message to start the conversation",
   interruptBubble: "The user interrupted generation",
   endsessionBubble: "Session ended via EndSession",
+  endTurnBubble: "Turn ended",
   compactingBubble: "Compacting session context…",
   autoContinueBubble: "Session compacted, automatically continuing",
   subSessionEnd: "Sub-session ended: ",

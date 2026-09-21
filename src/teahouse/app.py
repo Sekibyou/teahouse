@@ -1048,6 +1048,17 @@ async def _tool_use_loop(
             stats["instance_id"] = instance_id or instance_dir.name
             state.broadcast("floors_changed", stats)
 
+        # ── Round terminator: EndTurn ──
+        # The model's explicit "nothing further to say this turn". Without it a
+        # session that presents only through tools (DM: plain text is forbidden by
+        # prompt) forces one more request that can only ever come back empty —
+        # input-only cost and a round trip for zero information. The tool itself is
+        # inert (see tools.execute_end_turn); the decision belongs here, where the
+        # round's complete call list is known. Everything the round called has
+        # already been executed and persisted above, so returning now is safe.
+        if any(tc["function"]["name"] == "EndTurn" for tc in all_tool_calls):
+            return
+
     # Max rounds exhausted
     msg.append({
         "role": "user",
