@@ -855,7 +855,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
   }, [instId, instName])
 
   // Slot state — lightweight model info display
-  const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null })
+  const [slotModels, setSlotModels] = useState<Record<string, string | null>>({ director: null, writer: null, dm: null })
   const settingsOpen = useSettingsDialogStore((s) => s.open)
   const openSettings = useSettingsDialogStore((s) => s.openSettings)
   const [enabledPluginCount, setEnabledPluginCount] = useState(0)
@@ -864,17 +864,19 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     const res = await llmSlotsApi.getAll()
     if (!res.ok) return
     const slots = res.data!.slots
-    const modelIds = [slots.director.model_id, slots.writer.model_id].filter(Boolean) as string[]
+    const modelIds = [slots.director.model_id, slots.writer.model_id, slots.dm.model_id].filter(Boolean) as string[]
     if (modelIds.length === 0) {
-      setSlotModels({ director: null, writer: null })
+      setSlotModels({ director: null, writer: null, dm: null })
       return
     }
     const mRes = await llmModelsApi.list()
     if (!mRes.ok) return
     const modelMap = new Map(mRes.data!.models.map(m => [m.id, m.name]))
+    const name = (id: string | null) => (id ? modelMap.get(id) || id : null)
     setSlotModels({
-      director: slots.director.model_id ? modelMap.get(slots.director.model_id) || slots.director.model_id : null,
-      writer: slots.writer.model_id ? modelMap.get(slots.writer.model_id) || slots.writer.model_id : null,
+      director: name(slots.director.model_id),
+      writer: name(slots.writer.model_id),
+      dm: name(slots.dm.model_id),
     })
   }, [])
 

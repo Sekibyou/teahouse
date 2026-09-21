@@ -126,6 +126,11 @@ export function ChatHeader({
   const directorHasNew = isDmMode && directorSessions.some((s) => newMsgMap[s.session_id])
   const dmHasNew = !isDmMode && !!newMsgMap[DM_SID]
 
+  // DM 轨显示 DM 槽位模型；DM 槽位未指定时名字回退到导演模型（与后端 session_loop._resolve_client
+  // 的回退一致），但前缀始终是 DM——避免"明明在 DM 栏却写着导演"。
+  const activeSlotLabel = isDmMode ? t("dmColon") : t("directorColon")
+  const activeSlotModel = (isDmMode ? slotModels.dm || slotModels.director : slotModels.director) || t("unset")
+
   // 抽屉两阶段显隐：menuOpen = 意图（立即反映到标题/返回），renderDrawer = DOM 是否挂载。
   // 关闭时保留 DOM 一段动画时长播放退场，结束后才真正卸载（closing 用于挂退场类）。
   const [menuOpen, setMenuOpen] = useState(false)
@@ -323,8 +328,10 @@ export function ChatHeader({
                   onClick={() => onOpenSettings("slots")}
                 >
                   <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="flex-1 text-left">{t("directorModel")}</span>
-                  <span className="text-xs text-muted-foreground max-w-[120px] truncate">{slotModels.director || t("unset")}</span>
+                  <span className="flex-1 text-left">{isDmMode ? t("dmModel") : t("directorModel")}</span>
+                  <span className="text-xs text-muted-foreground max-w-[120px] truncate">
+                    {(isDmMode ? slotModels.dm || slotModels.director : slotModels.director) || t("unset")}
+                  </span>
                 </button>
                 <button
                   className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted rounded-md"
@@ -398,7 +405,7 @@ export function ChatHeader({
             onClick={() => onOpenSettings("slots")}
             title={t("openSettingsSlots")}
           >
-            {t("directorColon")}<span className="text-foreground font-medium">{slotModels.director || t("unset")}</span>
+            {activeSlotLabel}<span className="text-foreground font-medium">{activeSlotModel}</span>
           </button>
           <div className="flex items-center gap-1.5 border-l border-border pl-3">
             <span>{t("autoCommit")}</span>
