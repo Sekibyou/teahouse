@@ -117,6 +117,11 @@ class SessionLoop:
         self._interrupted = False
         self._interrupt_reason: str | None = None  # "user" | "endsession"
         self._task: asyncio.Task | None = None
+        # Set by wake(): run the tool loop once more over the *existing* persisted
+        # context (no new record). Consumed (and cleared) by run() before it
+        # decides to exit, so a wake that lands while the loop is still busy is
+        # honoured on the next iteration instead of being lost.
+        self._wake = False
         # Session-wide monotonic order watermark. Initialised from the current
         # on-disk record count and bumped by every append AND every in-memory
         # reservation (queued bubble / streaming round). This keeps the reserved
@@ -147,12 +152,12 @@ class SessionLoop:
         ``pastes`` is the frontend's "paste blocks" — flat list of ``{id, content}``
         for oversized pasted chunks, kept separate from what the user typed by
         hand (``content``). One enqueue may expand to TWO independent user
-        records: the first is the raw hand-typed text, the second is an ``[auto]``
-        notice describing the spilled/inlined pasted content (the frontend renders
-        it as a centred system badge). When the pasted bodies exceed
-        BIG_INPUT_CHAR_LIMIT chars they are spilled together to a single temp/
-        file and the notice points at it, so a giant paste cannot flood the next
-        generation round's context.
+        records: an ``[auto]`` notice describing the pasted content comes first,
+        the raw hand-typed text last (see ``_compose_messages`` for why the
+        hand-typed record must be last). When the pasted bodies exceed
+        ``PASTE_SPILL_CHAR_LIMIT`` chars they are spilled together to a single
+        temp/ file and the notice points at it, so a giant paste cannot flood the
+        next generation round's context.
 
         ``images`` is the frontend's attached-image list — ``{path, mime}`` for
         files already uploaded to ``temp/pasted/``. They ride on the hand-typed
@@ -188,9 +193,15 @@ class SessionLoop:
         Returns a list of ``{"content": str, "images": list|None}`` in send order:
         - Without pastes: ``[content]``; if content alone exceeds the cap it is
           spilled wholesale (defensive backstop) and ``[spill pointer]`` is returned.
-        - With pastes: ``[manual_text]`` (omitted when empty) then an ``[auto]``
-          notice carrying either the inline pasted bodies or — when they exceed
-          ``PASTE_SPILL_CHAR_LIMIT`` — a pointer to the single spill file.
+        - With pastes: the ``[auto]`` notice first, then ``[manual_text]`` (omitted
+          when empty). **The hand-typed record must come last**: the session's
+          persisted tail then stays a real user message, which is what lets the
+          director panel's "resend" button light up after an upstream failure that
+          produced nothing (see ``sessions.last_record_awaits_reply``). It also
+          reads better — a manual text referring to 「粘贴1」 now follows the paste
+          instead of preceding it. The notice carries either the inline pasted
+          bodies or — when they exceed ``PASTE_SPILL_CHAR_LIMIT`` — a pointer to
+          the single spill file.
 
         Each paste body is prefixed with an ``【粘贴N】`` label (N by array
         position, matching the frontend badge number) so the director can be
@@ -210,10 +221,6 @@ class SessionLoop:
                 return [{"content": "", "images": images}]
             return [{"content": content, "images": images}]
 
-        out: list[dict] = []
-        if content or images:
-            out.append({"content": content, "images": images})
-
         labeled = "\n\n".join(
             f"【粘贴{i}】\n{t}" for i, t in enumerate(paste_texts, start=1)
         )
@@ -221,10 +228,14 @@ class SessionLoop:
         # Spill once the pasted bodies alone exceed the cap (~3000 chars) — the
         # threshold is about the paste itself, not the notice's total length.
         if len(labeled) <= PASTE_SPILL_CHAR_LIMIT:
-            out.append({"content": f"[auto] {intro}\n\n{labeled}", "images": None})
+            notice = {"content": f"[auto] {intro}\n\n{labeled}", "images": None}
         else:
             rel = self._spill_pastes(labeled)
-            out.append({"content": f"[auto] {intro}\n文本过长，已被暂存至 {rel}，请阅读", "images": None})
+            notice = {"content": f"[auto] {intro}\n文本过长，已被暂存至 {rel}，请阅读", "images": None}
+
+        out: list[dict] = [notice]
+        if content or images:
+            out.append({"content": content, "images": images})
         return out
 
     def _spill_pastes(self, body: str) -> str:
@@ -257,6 +268,20 @@ class SessionLoop:
             f"[auto] 用户发送消息过长（{len(content):,} 字符），已在完整阅读前落盘为 "
             f"`{rel}`（原始文本）。请用 Read 读取并自行处理。"
         )
+
+    def wake(self) -> None:
+        """Run the tool loop once more over the *existing* persisted context.
+
+        Used by the director panel's "resend" affordance: after an upstream failure
+        left the session idle with the last request unanswered, re-fire it without
+        the user retyping anything. Nothing is appended here — the loop rebuilds its
+        context from the jsonl (see ``_run_tool_loop`` passing ``[]``), so a retry
+        leaves no trace in the history, unlike a typed "继续".
+
+        Idempotent by construction: a boolean flag rather than a queue entry, so a
+        double click yields one extra round, not two replies.
+        """
+        self._wake = True
 
     def interrupt(self, reason: str = "user") -> None:
         """Set the interrupt flag and cancel the in-flight tool-loop task.
@@ -337,8 +362,14 @@ class SessionLoop:
             #    this only catches messages queued in the short window between
             #    the last mid-loop check and loop exit. Idempotent — nothing to
             #    drain is a normal no-op.
+            #    A pending wake() is consumed here too: it means "run the tool
+            #    loop again over the existing context" even though nothing was
+            #    enqueued. Cleared unconditionally so it can never leak into a
+            #    later iteration.
+            wake = self._wake
+            self._wake = False
             msgs = self._drain_and_persist()
-            if not msgs:
+            if not msgs and not wake:
                 _event_log(self.instance_dir, self.session_id, "loop_idle_exit", {})
                 break  # session idle — loop exits
 
@@ -663,6 +694,11 @@ class SessionLoop:
             "type": "done",
             "running": running,
             "force_close_incomplete": True,
+            # 会话回到空闲时，这一轮是否「还欠一个回答」——前端据此决定要不要在最后
+            # 一条 user 气泡旁亮出「重发」按钮。判据只有一条：已持久化的末尾是一条
+            # 真实 user 消息（上游 503/429/断网导致什么都没产出时就长这样）。后端自己
+            # 写的 [auto]/[compact] 标记同样是 role=user，但不算「在等回答」。
+            "retryable": sessions.last_record_awaits_reply(self.instance_dir, self.session_id),
             "stats": {
                 "elapsed": stats.elapsed if stats else 0,
                 "token_count": stats.token_count if stats else 0,

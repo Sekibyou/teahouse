@@ -51,6 +51,7 @@ export const zhChat = {
   },
   startHint: "发送消息开始对话",
   interruptBubble: "用户中断了生成",
+  resendLast: "重发上一条消息",
   endsessionBubble: "会话经 EndSession 结束",
   endTurnBubble: "本轮已结束",
   compactingBubble: "正在压缩会话上下文…",

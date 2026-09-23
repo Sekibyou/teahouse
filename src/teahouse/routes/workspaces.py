@@ -1793,6 +1793,12 @@ async def sessions_status(instance_id: str, user: UserInfo = Depends(require_use
     Returns ``{sessions: {sid: bool}, stats: {sid: {elapsed, token_count}}}`` so
     the frontend can restore the running/elapsed/token state for every session
     in a single request (e.g. after page refresh or SSE reconnect).
+
+    ``retryable: {sid: bool}`` says whether that session's last persisted record
+    is a real user message still awaiting an answer — i.e. an upstream failure
+    produced nothing at all, so the "resend" affordance should show. Persisted
+    state is the only signal available across a page reload; while the page stays
+    open the same flag rides the `done` event.
     """
     u = await require_user_info(user)
     inst = await get_instance(instance_id)
@@ -1801,9 +1807,14 @@ async def sessions_status(instance_id: str, user: UserInfo = Depends(require_use
     instance_dir = _resolve_instance_dir(inst)
 
     from ..session_tracker import task_tracker
+    from ..sessions import last_record_awaits_reply, list_sessions as _list_sessions
     running = task_tracker.running_sessions(instance_dir.name)
     stats = task_tracker.get_stats_map(instance_dir.name)
-    return {"sessions": running, "stats": stats}
+    retryable = {
+        s["session_id"]: last_record_awaits_reply(instance_dir, s["session_id"])
+        for s in _list_sessions(instance_dir)
+    }
+    return {"sessions": running, "stats": stats, "retryable": retryable}
 
 
 @router.get("/instances/{instance_id}/sessions")

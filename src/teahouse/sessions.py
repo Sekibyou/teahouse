@@ -134,6 +134,54 @@ def _count_records(path: Path) -> int:
     return n
 
 
+def _last_record(instance_dir: Path, session_id: str) -> dict | None:
+    """Parse the session's last persisted record (``None`` when empty/absent).
+
+    Read-only (never creates ``.sessions/``). Malformed trailing lines are skipped
+    so a half-written record can't mask the real tail.
+    """
+    path = instance_dir / SESSION_DIR / f"{session_id}.jsonl"
+    if not path.exists():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            return rec
+    return None
+
+
+def last_record_awaits_reply(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> bool:
+    """Is the session's last persisted record a real user message with no answer?
+
+    True only when the tail is a *hand-typed* user record — the state an upstream
+    failure leaves behind when it produced nothing at all (503 / 429 / network
+    drop), where the director panel offers a one-click "resend". Backend-authored
+    ``[auto] `` / ``[compact]`` records also carry ``role:"user"`` but are engine
+    actions (interrupt, paste spill, post-compact continuation, script wake-up,
+    sub-session end …), not a pending request — resending those would replay the
+    wrong thing. The frontend's ``autoMsgKind()`` keys off the same two prefixes;
+    keep the two in sync.
+    """
+    rec = _last_record(instance_dir, session_id)
+    if not rec or rec.get("role") != "user":
+        return False
+    content = rec.get("content")
+    # No content = an image-only send (images ride as a sibling key). Still a real
+    # user message, so it must not be excluded by the marker check below.
+    if not isinstance(content, str):
+        return True
+    return not content.lstrip().startswith(("[auto] ", "[compact]"))
+
+
 def next_order(instance_dir: Path, session_id: str = MAIN_SESSION_ID) -> int:
     """Return the next unused ``order`` for a session, without persisting.
 

@@ -227,6 +227,7 @@ class ChatRequest(BaseModel):
     instance_id: str | None = None  # Required when tools=True
     session_id: str | None = None  # None or "main" = main session; else a child sub-session
     dm_ooc: bool = False  # DM 会话专用：True = 局外发言（只进会话，不进 dm-output）
+    retry: bool = False  # 重发：不追加任何记录，直接以 jsonl 现状为上下文再跑一轮
 
 
 async def _resolve_slot_client(user_id: str, slot_id: str) -> LLMClient:
@@ -1161,6 +1162,15 @@ async def chat(body: ChatRequest, request: Request):
         from . import sessions as _sessions
         from .session_loop import SessionLoop
         sid = (body.session_id or _sessions.MAIN_SESSION_ID)
+
+        # 重发：不落任何记录（不 append_user、不进 dm-output），只把会话从空闲
+        # 唤醒，让它以 jsonl 里现有的上下文再跑一轮 tool loop。前端在「已持久化的
+        # 末尾是一条真实 user 消息」（上游 503/429/断网导致什么都没产出）且会话空闲
+        # 时给出这个入口，省去用户手打「继续」——打「继续」会作为一条新 user 记录留在
+        # 历史里，这个不会。
+        if body.retry:
+            SessionLoop.get_or_create(instance_dir, sid, body.instance_id, user_id).wake()
+            return {"queued": True, "session_id": sid, "retry": True}
 
         # Extract user content from frontend messages and enqueue.
         # The frontend may send either a plain string content, or — when paste

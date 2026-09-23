@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, X, CheckCircle2, CheckCheck, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert } from "lucide-react"
+import { Loader2, X, CheckCircle2, CheckCheck, Flag, ArrowRight, FileText, SquareTerminal, TriangleAlert, RotateCcw } from "lucide-react"
 import { chatApi, llmSlotsApi, llmModelsApi, instancesApi, gitApi, pluginsApi, toolsApi, dmOutputApi } from "@/lib/api"
 import { wrapDmMessage, parseDmWrap, dmBadgeLabel } from "@/lib/dmWrap"
 import { notifyError } from "@/lib/notifyError"
@@ -87,6 +87,9 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     waiting: boolean
     waitingSince: number   // Date.now() when enqueue was sent
     compacting: boolean    // true during session compact
+    // 已持久化的末尾是一条「真实 user 消息」（未得到任何产出，通常是上游 503/429/
+    // 断网）。由后端判定：`done` 事件带此字段，刷新页面后由 sessions/status 补齐。
+    retryable: boolean
   }
   const [sessionStateMap, setSessionStateMap] = useState<Record<string, SessionUIState>>({})
   const sessionStateRef = useRef<Record<string, SessionUIState>>({})
@@ -103,7 +106,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
 
   // Convenience getter/setter for the currently-viewed session
   const activeState: SessionUIState = sessionStateMap[activeSid] ?? {
-    running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
+    running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false, retryable: false,
   }
   const isStreaming = activeState.running
   const isWaiting = activeState.waiting && !activeState.running
@@ -111,7 +114,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
 
   const patchSessionState = useCallback((sid: string, patch: Partial<SessionUIState>) => {
     const prev = sessionStateRef.current[sid] ?? {
-      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false, retryable: false,
     }
     const next = { ...sessionStateRef.current, [sid]: { ...prev, ...patch } }
     sessionStateRef.current = next
@@ -121,7 +124,7 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
   // Update running+stats from backend-authoritative sources (SSE / API)
   const applyBackendState = useCallback((sid: string, running: boolean, stats?: { elapsed?: number; token_count?: number }) => {
     const prev = sessionStateRef.current[sid] ?? {
-      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false,
+      running: false, elapsed: 0, tokenCount: 0, waiting: false, waitingSince: 0, compacting: false, retryable: false,
     }
     // If backend says running, clear any stale waiting flag
     const next: SessionUIState = {
@@ -227,16 +230,21 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
         if (res.ok) {
           const running = res.data?.sessions || {}
           const stats = res.data?.stats || {}
+          // 后端按持久化末尾算出的「该会话还欠一个回答」——空闲会话不在 running 里，
+          // 所以这里取两者的并集建表，否则刷新页面后「重发」按钮就丢了。
+          const retryable = res.data?.retryable || {}
           const map: Record<string, SessionUIState> = {}
-          for (const [sid, isRunning] of Object.entries(running)) {
+          const sids = new Set([...Object.keys(running), ...Object.keys(retryable)])
+          for (const sid of sids) {
             const s = stats[sid]
             map[sid] = {
-              running: isRunning === true,
+              running: running[sid] === true,
               elapsed: s?.elapsed ?? 0,
               tokenCount: s?.token_count ?? 0,
               waiting: false,
               waitingSince: 0,
               compacting: false,
+              retryable: retryable[sid] === true,
             }
           }
           // Merge with any local waiting state (API doesn't know about waiting)
@@ -641,6 +649,11 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
               // Final done carries force_close semantics: the backend round is
               // over; close every still-open assistant bubble (drop empty ones).
               refreshContextUsageRef.current()
+              // 后端权威的「这一轮还欠一个回答」——只在这个会话空闲时才可能有值。
+              // 与查看哪个会话无关：切回来时状态要是对的。
+              if (typeof data.retryable === "boolean") {
+                patchSessionState(sid, { retryable: data.retryable })
+              }
               setMessagesFor(sid, (prev) => {
                 const closer = [...prev]
                 let changed = false
@@ -1851,6 +1864,28 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
     }
   }
 
+  // 重发：上游 503/429/断网导致这一轮什么都没产出时，末尾那条 user 消息旁会出现
+  // ⟳。点它不需要再打「继续」——后端不追加任何记录，直接以 jsonl 现状重跑一轮。
+  const handleRetry = useCallback(async () => {
+    const inst = getActiveInstance()
+    if (!inst) {
+      toast.error(t("noInstanceSay"))
+      return
+    }
+    const sid = activeSid
+    setError("")
+    // 与 _doSend 的 tools 分支一致：先落 waiting，首个 session_event 转 running。
+    patchSessionState(sid, { waiting: true, waitingSince: Date.now(), elapsed: 0, tokenCount: 0 })
+    stickRef.current = true
+    scrollToBottom()
+    try {
+      await chatApi.retryDirectorMessage(inst.id, sid)
+    } catch {
+      patchSessionState(sid, { waiting: false })
+      setError(t("requestFail"))
+    }
+  }, [activeSid, patchSessionState, scrollToBottom, t])
+
   // 沙盒 Teahouse.send() / sessionSend('dm', …) / sessionSendOoc('dm', …) → 入队列
   // (no polling, fire-and-forget)。ooc=true 走局外通道：不落 dm-output、DM 可回正文。
   const handleSandboxSend = useCallback(async (msg: string, targetSid?: string, ooc?: boolean) => {
@@ -1991,6 +2026,12 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
           const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id
           // 待发送（灰色）用户消息：单独垫在"生成中"指示器下方
           const queuedMsgs = messages.filter(m => m.status === "queued")
+          // 「重发」入口：挂在最后一条**真实** user 消息旁（排除 [auto]/[compact]
+          // 系统泡——那些也是 role=user，但不是用户在等回答）。是否可重发由后端判定
+          // （末尾记录是真实 user 消息 = 这一轮什么都没产出），前端只在空闲时显示。
+          const lastUserId = [...messages].reverse()
+            .find(m => m.role === "user" && !m.autoKind && m.status === "done")?.id
+          const canRetry = isIdle && !isWaiting && !isCompacting && activeState.retryable
           return (
             <>
               {messages.map((msg) => (
@@ -2076,25 +2117,40 @@ export function ChatPanel({ onClosePanel, dmOpenNonce }: { onClosePanel?: () => 
                       const badge = dmBadgeLabel(marker)
                       const imgs = msg.images || []
                       return (
-                        <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
-                          {badge && (
-                            <span className="block mb-1 text-[10px] leading-none font-mono opacity-70">{badge}</span>
+                        <>
+                          {msg.id === lastUserId && canRetry && (
+                            // 重发：本轮什么都没产出（503/429/断网），一键重跑，
+                            // 省去手打「继续」。
+                            <button
+                              type="button"
+                              onClick={handleRetry}
+                              title={t("resendLast")}
+                              aria-label={t("resendLast")}
+                              className="self-center mr-1 shrink-0 flex items-center justify-center h-11 w-11 sm:h-8 sm:w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                            </button>
                           )}
-                          {imgs.length > 0 && instId && (
-                            <div className="mb-1.5 flex flex-wrap gap-1.5">
-                              {imgs.map((img, i) => (
-                                <MessageImage
-                                  key={`${img.path}-${i}`}
-                                  instanceId={instId}
-                                  path={img.path}
-                                  mime={img.mime}
-                                  index={i + 1}
-                                />
-                              ))}
-                            </div>
-                          )}
-                          {body}
-                        </div>
+                          <div className="max-w-[85%] rounded-lg px-3 py-2 text-base whitespace-pre-wrap break-words bg-primary text-primary-foreground">
+                            {badge && (
+                              <span className="block mb-1 text-[10px] leading-none font-mono opacity-70">{badge}</span>
+                            )}
+                            {imgs.length > 0 && instId && (
+                              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                                {imgs.map((img, i) => (
+                                  <MessageImage
+                                    key={`${img.path}-${i}`}
+                                    instanceId={instId}
+                                    path={img.path}
+                                    mime={img.mime}
+                                    index={i + 1}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                            {body}
+                          </div>
+                        </>
                       )
                     })()
                   )}

@@ -57,8 +57,8 @@ export function autoMsgKind(content: string): { kind: "interrupt" } | { kind: "e
   // Oversized user message spilled to a temp/ file — render as a user-aligned
   // bubble carrying the pointer, flagged with a "长消息" corner badge.
   if (trimmed.startsWith("用户发送消息过长")) return { kind: "long_msg" }
-  // Paste-block notice (the second record of a paste enqueue) — centred system
-  // badge; the manual text stays as its own preceding user bubble.
+  // Paste-block notice (the first record of a paste enqueue) — centred system
+  // badge; the hand-typed text follows it as its own user bubble.
   if (trimmed.startsWith("用户在本次输入时粘贴了长文本")) return { kind: "paste_notice" }
   if (trimmed.trim() === "user interrupted") return { kind: "interrupt" }
   if (trimmed.trim() === "interrupted by EndSession tool") return { kind: "endsession" }

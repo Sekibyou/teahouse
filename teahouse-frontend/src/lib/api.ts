@@ -435,7 +435,7 @@ export const instancesApi = {
   },
 
   getSessionsStatus: async (instanceId: string) => {
-    return get<{ sessions: Record<string, boolean>; stats: Record<string, { elapsed: number; token_count: number }> }>(`/api/instances/${instanceId}/sessions/status`)
+    return get<{ sessions: Record<string, boolean>; stats: Record<string, { elapsed: number; token_count: number }>; retryable?: Record<string, boolean> }>(`/api/instances/${instanceId}/sessions/status`)
   },
 
   contextUsage: async (instanceId: string, sessionId = "main") => {
@@ -563,6 +563,34 @@ export const chatApi = {
     }
     const data = await response.json()
     return data as { queued: boolean; session_id: string; count?: number }
+  },
+
+  /** Resend the session's pending request without retyping it: the backend appends
+   *  nothing and simply re-runs the loop over the context already in the jsonl.
+   *  Used when an upstream failure (503/429/网络中断) produced no output at all. */
+  retryDirectorMessage: async (instanceId: string, sessionId?: string) => {
+    const token = getAuthToken()
+    const response = await fetch(`${getApiBaseUrl()}/v1/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        messages: [],
+        retry: true,
+        stream: true,
+        tools: true,
+        instance_id: instanceId,
+        session_id: sessionId || "main",
+      }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: "请求失败" }))
+      throw new Error(err.detail || `HTTP ${response.status}`)
+    }
+    const data = await response.json()
+    return data as { queued: boolean; session_id: string; retry?: boolean }
   },
 }
 
