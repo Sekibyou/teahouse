@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { notifyError } from "@/lib/notifyError"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, Loader2 } from "lucide-react"
 import type { SlotBinding, LLMModel, ModelProfile, DirectorPromptPreset } from "@/lib/types"
 import { llmSlotsApi } from "@/lib/api"
 import { profileDisplayName, presetDisplayName } from "@/lib/builtinNames"
@@ -17,6 +17,8 @@ interface SlotCardProps {
   models: LLMModel[]
   profiles: ModelProfile[]
   presets?: DirectorPromptPreset[]
+  /** 选项列表（模型/参数预设/导演预设）正在重新拉取：在展开的下拉框内部显示 spinner */
+  optionsLoading?: boolean
   onChange: (binding: SlotBinding) => void
   /** 任意下拉框展开时调用，用于刷新最新数据（模型/参数预设/导演预设可能在本弹窗其他页或外部新增） */
   onRefresh?: () => void
@@ -62,7 +64,34 @@ function ModelLabel({ model }: { model: LLMModel }) {
   )
 }
 
-export function SlotCard({ slotId, label, binding, models, profiles, presets, onChange, onRefresh }: SlotCardProps) {
+/** 下拉框展开时的拉取态：只落在展开的那个下拉框内部，不遮挡面板其余部分 */
+function OptionsLoading() {
+  return (
+    <div className="flex items-center justify-center py-3">
+      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
+
+/** 首屏占位：与 SlotCard 同结构同高，数据到达前后 section 高度不变 */
+export function SlotCardSkeleton({ withPreset }: { withPreset?: boolean }) {
+  return (
+    <div className="border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between h-5">
+        <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+      </div>
+      {Array.from({ length: withPreset ? 3 : 2 }).map((_, i) => (
+        <div key={i}>
+          {/* 空行占位：沿用 label 的字号，随字号档位一起缩放 */}
+          <div className="text-xs mb-1">&nbsp;</div>
+          <div className="h-8 rounded-lg bg-muted animate-pulse" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function SlotCard({ slotId, label, binding, models, profiles, presets, optionsLoading, onChange, onRefresh }: SlotCardProps) {
   const { t } = useTranslation("misc")
   const [selectedModelId, setSelectedModelId] = useState<string>(binding.model_id || "")
   const [selectedProfileId, setSelectedProfileId] = useState<string>(binding.profile_id || "")
@@ -187,7 +216,9 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {enabledModels.length === 0 ? (
+            {optionsLoading ? (
+              <OptionsLoading />
+            ) : enabledModels.length === 0 ? (
               <div className="px-3 py-2.5 text-xs text-muted-foreground leading-relaxed">
                 {t("slot.noModelEmpty")}
               </div>
@@ -214,7 +245,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {profiles.map(p => (
+            {optionsLoading ? <OptionsLoading /> : profiles.map(p => (
               <SelectItem key={p.id} value={p.id}>
                 <span className={matchedProfileIds.has(p.id) ? matchedClass : undefined}>{profileDisplayName(p, t)}</span>
               </SelectItem>
@@ -236,7 +267,7 @@ export function SlotCard({ slotId, label, binding, models, profiles, presets, on
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {presets!.map(p => (
+              {optionsLoading ? <OptionsLoading /> : presets!.map(p => (
                 <SelectItem key={p.id} value={p.id}>
                   <span className={matchedPresetIds.has(p.id) ? matchedClass : undefined}>{presetDisplayName(p, t)}</span>
                 </SelectItem>

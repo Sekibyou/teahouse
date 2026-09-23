@@ -88,6 +88,8 @@ export const jaSettings = {
     selectedXofY: "{{selected}}/{{total}} 選択中",
     alreadyActive: "有効",
     importSelected: "選択分をインポート ({{n}})",
+    searchPH: "モデルを検索（スペース区切りで複数キーワード）",
+    noMatch: "一致するモデルがありません",
   },
 
   // ─── Profiles tab ───

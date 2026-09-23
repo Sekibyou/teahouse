@@ -33,6 +33,14 @@ function computeModelFetchUrl(apiUrl: string): string {
   return `${base}/models`
 }
 
+// Space-separated terms are ANDed, each matched as a substring — "a c" hits "abcde".
+function matchesModelQuery(query: string, ...fields: (string | undefined)[]): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return true
+  const hay = fields.filter(Boolean).join(" ").toLowerCase()
+  return terms.every(term => hay.includes(term))
+}
+
 // Capability flags a provider may override. Keys must match the backend's
 // provider_caps.DEFAULTS; the backend resolves the effective set (this override
 // → built-in host table → conservative default) and returns it as
@@ -76,6 +84,7 @@ export function ModelsPanel() {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
   const [importModelLoading, setImportModelLoading] = useState(false)
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set())
+  const [importSearch, setImportSearch] = useState("")
   const [providerFormOverrides, setProviderFormOverrides] = useState<Record<string, { api_url?: string; api_key?: string; api_format?: string; model_fetch_url?: string; capabilities?: string }>>({})
   const [error, setError] = useState("")
 
@@ -208,6 +217,7 @@ export function ModelsPanel() {
     setImportingFromProvider(providerId)
     setImportModelLoading(true)
     setSelectedModels(new Set())
+    setImportSearch("")
     const form = getProviderFormFor(providers.find(p => p.id === providerId)!)
     const res = await llmProvidersApi.availableModels(providerId, form.model_fetch_url)
     if (res.ok) setAvailableModels(res.data!.models)
@@ -232,6 +242,7 @@ export function ModelsPanel() {
       setImportingFromProvider(null)
       setAvailableModels([])
       setSelectedModels(new Set())
+      setImportSearch("")
       await loadAll()
     } else setError(res.error || t("errImport"))
     setImportModelLoading(false)
@@ -343,6 +354,7 @@ export function ModelsPanel() {
             const preset = matchProviderPreset(p.api_url)
             const expanded = expandedProviderId === p.id
             const enabledModelNames = new Set(providerModels.filter(mm => mm.is_enabled).map(mm => mm.model_name))
+            const availableShown = availableModels.filter(m => matchesModelQuery(importSearch, m.id, m.name))
             // Server-resolved baseline, overlaid with unsaved edits so the hint
             // tracks the selects live.
             const capFlags = parseCapOverrides(form.capabilities)
@@ -525,26 +537,42 @@ export function ModelsPanel() {
                       <p className="text-xs text-muted-foreground">{t("provider.noModelsFromApi")}</p>
                     ) : (
                       <>
+                        <Input
+                          value={importSearch}
+                          onChange={e => setImportSearch(e.target.value)}
+                          placeholder={t("provider.searchPH")}
+                          className="h-8 text-xs"
+                        />
                         <div className="flex items-center gap-2">
                           <button
                             className="text-xs text-primary hover:underline"
                             onClick={() => {
-                              const selectable = availableModels.filter(m => !enabledModelNames.has(m.id))
-                              if (selectable.every(m => selectedModels.has(m.id))) setSelectedModels(new Set())
-                              else setSelectedModels(new Set(selectable.map(m => m.id)))
+                              const selectable = availableShown.filter(m => !enabledModelNames.has(m.id))
+                              if (selectable.length > 0 && selectable.every(m => selectedModels.has(m.id))) {
+                                const next = new Set(selectedModels)
+                                selectable.forEach(m => next.delete(m.id))
+                                setSelectedModels(next)
+                              } else {
+                                setSelectedModels(new Set([...selectedModels, ...selectable.map(m => m.id)]))
+                              }
                             }}
                           >
                             {(() => {
-                              const selectable = availableModels.filter(m => !enabledModelNames.has(m.id))
+                              const selectable = availableShown.filter(m => !enabledModelNames.has(m.id))
                               return selectable.length > 0 && selectable.every(m => selectedModels.has(m.id)) ? t("provider.unselectAll") : t("provider.selectAll")
                             })()}
                           </button>
                           <span className="text-xs text-muted-foreground">
-                            {t("provider.selectedXofY", { selected: selectedModels.size, total: availableModels.filter(m => !enabledModelNames.has(m.id)).length })}
+                            {t("provider.selectedXofY", {
+                              selected: availableShown.filter(m => !enabledModelNames.has(m.id) && selectedModels.has(m.id)).length,
+                              total: availableShown.filter(m => !enabledModelNames.has(m.id)).length,
+                            })}
                           </span>
                         </div>
                         <div className="max-h-48 overflow-auto space-y-0.5">
-                          {availableModels.map(m => {
+                          {availableShown.length === 0 ? (
+                            <p className="text-xs text-muted-foreground py-2">{t("provider.noMatch")}</p>
+                          ) : availableShown.map(m => {
                             const alreadyEnabled = enabledModelNames.has(m.id)
                             if (alreadyEnabled) {
                               return (
@@ -575,7 +603,7 @@ export function ModelsPanel() {
                             {importModelLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <Download className="h-3 w-3 mr-1.5" />}
                             {t("provider.importSelected", { n: selectedModels.size })}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setImportingFromProvider(null); setAvailableModels([]); setSelectedModels(new Set()) }}>
+                          <Button size="sm" variant="outline" onClick={() => { setImportingFromProvider(null); setAvailableModels([]); setSelectedModels(new Set()); setImportSearch("") }}>
                             {t("common:cancel")}
                           </Button>
                         </div>

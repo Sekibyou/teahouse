@@ -88,6 +88,8 @@ export const zhSettings = {
     selectedXofY: "已选 {{selected}}/{{total}}",
     alreadyActive: "已激活",
     importSelected: "导入选中 ({{n}})",
+    searchPH: "搜索模型（空格分隔多个关键词）",
+    noMatch: "没有匹配的模型",
   },
 
   // ─── Profiles tab ───

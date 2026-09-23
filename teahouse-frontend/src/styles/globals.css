@@ -61,7 +61,7 @@
   --foreground: oklch(0.24 0.02 55);
   --card: oklch(0.995 0.003 90);
   --card-foreground: oklch(0.24 0.02 55);
-  --popover: oklch(0.995 0.003 90);
+  --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.24 0.02 55);
   --primary: oklch(0.50 0.12 55);
   --primary-foreground: oklch(0.985 0.005 95);
@@ -69,7 +69,8 @@
   --secondary-foreground: oklch(0.35 0.04 55);
   --muted: oklch(0.94 0.01 80);
   --muted-foreground: oklch(0.50 0.02 60);
-  --accent: oklch(0.93 0.02 75);
+  /* 高亮行：须区别于 muted(0.94，即控件填充色)，否则下拉里的聚焦行与浮层下方的输入框同色 */
+  --accent: oklch(0.90 0.024 76);
   --accent-foreground: oklch(0.35 0.04 55);
   --destructive: oklch(0.58 0.22 27);
   --destructive-foreground: oklch(0.985 0.005 95);
@@ -97,7 +98,8 @@
   --foreground: oklch(0.93 0.010 150);
   --card: oklch(0.155 0.013 158);
   --card-foreground: oklch(0.93 0.010 150);
-  --popover: oklch(0.155 0.013 158);
+  /* 浮起面：须明显亮于 card(0.155)，否则弹出层与卡片同色、只靠 1px 边分辨 */
+  --popover: oklch(0.235 0.016 158);
   --popover-foreground: oklch(0.93 0.010 150);
   --primary: oklch(0.78 0.11 75);
   --primary-foreground: oklch(0.16 0.02 150);
@@ -105,7 +107,8 @@
   --secondary-foreground: oklch(0.93 0.010 150);
   --muted: oklch(0.225 0.016 158);
   --muted-foreground: oklch(0.68 0.014 155);
-  --accent: oklch(0.225 0.016 158);
+  /* 高亮行：须区别于 muted(0.225，即控件填充色)，否则下拉里的聚焦行与浮层下方的输入框同色 */
+  --accent: oklch(0.29 0.018 158);
   --accent-foreground: oklch(0.93 0.010 150);
   --destructive: oklch(0.60 0.22 27);
   --destructive-foreground: oklch(0.985 0.005 95);

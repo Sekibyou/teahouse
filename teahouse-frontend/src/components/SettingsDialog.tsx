@@ -18,7 +18,6 @@ import { PluginsPanel } from "@/components/SettingsDialogComps/PluginsPanel"
 import { SkillsPanel } from "@/components/SettingsDialogComps/SkillsPanel"
 import { PackagesPanel } from "@/components/SettingsDialogComps/PackagesPanel"
 import { UsersPanel } from "@/components/SettingsDialogComps/UsersPanel"
-import { SettingsDialogContext } from "@/components/SettingsDialogComps/SettingsContext"
 import { WizardFloatingPanel } from "@/components/WizardFloatingPanel/WizardFloatingPanel"
 
 interface SettingsDialogProps {
@@ -334,9 +333,7 @@ export function SettingsDialog({ open: openProp, onClose: onCloseProp, defaultTa
                       Icon={meta.Icon}
                       sectionRef={(el) => { sectionRefs.current[key] = el }}
                     >
-                      <SettingsDialogContext.Provider value={{ activeSection }}>
-                        <Panel />
-                      </SettingsDialogContext.Provider>
+                      <Panel />
                     </SettingsSection>
                   )
                 })}

@@ -66,7 +66,7 @@ export function TreeMenu({
       <div className="fixed inset-0 z-[70]" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
       <div
         ref={treeMenuRef}
-        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 overflow-y-auto"
+        className="fixed z-[71] min-w-48 max-w-56 rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-foreground/10 ring-1 ring-foreground/15 overflow-y-auto dark:shadow-black/60 dark:ring-foreground/25"
         style={
           (() => {
             // Edge-avoidance for the fixed menu. The menu is taller than the

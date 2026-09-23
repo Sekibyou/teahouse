@@ -26,7 +26,7 @@ export function RootContextMenu({
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
       <div
-        className="fixed z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+        className="fixed z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-foreground/10 ring-1 ring-foreground/15 dark:shadow-black/60 dark:ring-foreground/25"
         style={{ left: x, top: y }}
         onContextMenu={(e) => e.preventDefault()}
       >

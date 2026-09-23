@@ -88,6 +88,8 @@ export const enSettings = {
     selectedXofY: "{{selected}}/{{total}} selected",
     alreadyActive: "Active",
     importSelected: "Import selected ({{n}})",
+    searchPH: "Search models (space separates keywords)",
+    noMatch: "No matching models",
   },
 
   // ─── Profiles tab ───
