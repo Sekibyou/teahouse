@@ -45,6 +45,10 @@
   // false —— 此后到达的才是真·新消息，正常走入场。
   var firstPaint = true;
 
+  // 是否「钉底」：初次加载直接滚到最下方，且内容异步增高（富文本 / 图片入位 /
+  // 面板展开）时继续贴底。玩家一旦上滑离开底部即解除，免得把正在翻历史的玩家拽回来。
+  var pinned = true;
+
   // 发送按钮纸飞机图标（同 input-bar 的 feather send，颜色随 currentColor）
   var SEND_ICON =
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -361,7 +365,7 @@
   function paint(messages, htmls) {
     var stream = root.querySelector('.th-dm-stream');
     if (!stream) return;
-    var wasNear = nearBottom();   // 入场前是否贴底 → 决定末尾要不要跟着滚
+    var wasNear = pinned;   // 钉底中 → 末尾跟着滚到底
     var touched = Object.create(null);
     var pending = [];
 
@@ -445,7 +449,7 @@
       p.node.dataset.entering = '1';
       setTimeout(function() {
         if (!p.node.isConnected) return;
-        var stick = nearBottom();
+        var stick = pinned;
         reveal(p.node, p.node.__html || '');
         if (stick) scrollBottom();
       }, p.idx * STAGGER_MS + ENTER_MS);
@@ -521,6 +525,17 @@
       '<button class="th-dm-send" type="button" title="发送">' + SEND_ICON + '</button>' +
       '</div></div>';
     document.body.appendChild(root);
+
+    // 钉底：初次加载滚到最下方，并随内容异步增高持续贴底。
+    var list = root.querySelector('.th-dm-list');
+    list.addEventListener('scroll', function() { pinned = nearBottom(); });
+    if (window.ResizeObserver) {
+      // 观察内容列本身：正文/图片撑高、iframe 由隐藏转可见都会触发一次。
+      new ResizeObserver(function() {
+        if (pinned) scrollBottom();
+      }).observe(root.querySelector('.th-dm-stream'));
+    }
+    scrollBottom();   // 首帧先滚一次（此时可能还没内容，无副作用）
     var input = root.querySelector('.th-dm-input');
     var sendBtn = root.querySelector('.th-dm-send');
     var openDmBtn = root.querySelector('.th-dm-open');
