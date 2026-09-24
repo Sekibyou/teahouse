@@ -653,7 +653,7 @@ async def resolve_dm_system(
     from .tools import load_tools_usage, DM_TOOLS
 
     yaml_text = p.read_text(encoding="utf-8")
-    tools_usage = await load_tools_usage(user_id=user_id, only=DM_TOOLS)
+    tools_usage = await load_tools_usage(user_id=user_id, only=DM_TOOLS, dm=True)
     variables = build_template_variables(instance_dir, tools_usage)
     system_prompt, fake_messages, user_tail = resolve_preset_template(
         yaml_text, variables, instance_dir, max_depth=max_depth, source_label=INSTANCE_DM_YAML

@@ -2388,7 +2388,10 @@ async def api_git_commit(instance_id: str, body: GitCommitRequest, user: UserInf
             raise HTTPException(status_code=400, detail="summary type requires start and end parameters")
         update_summary_index(instance_dir, body.start, body.end)
     try:
-        result = git_commit(instance_dir, git_message, paths=body.paths)
+        from ..prose_vars import freeze_on_commit
+        # DM 实例：存档点即快照点（见 prose_vars.freeze_on_commit）；novel 模式无副作用。
+        paths = freeze_on_commit(instance_dir, body.paths)
+        result = git_commit(instance_dir, git_message, paths=paths)
         state.broadcast("workspace_changed", {"tool": "GitCommit", "branch": result.get("branch", ""), "instance_id": instance_id})
         _broadcast_floors(instance_dir, instance_id)
 

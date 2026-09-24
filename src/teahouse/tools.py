@@ -27,7 +27,7 @@ from .config import LLMConfig
 from .llm import LLMClient, LLMError
 from .provider_caps import parse_overrides, resolve_capabilities
 from .database.workspaces import read_sandbox_vars as _read_sandbox_vars, write_sandbox_vars as _write_sandbox_vars, build_type_map as _build_type_map
-from .prose_vars import register_instance as _register_instance
+from .prose_vars import register_instance as _register_instance, freeze_on_commit as _freeze_on_commit
 from .git_utils import git_commit as _git_commit, git_branch as _git_branch, git_log as _git_log, git_branch_rename as _git_branch_rename, git_branch_create as _git_branch_create, git_rev_parse as _git_rev_parse, git_branch_switch_with_cleanup as _git_branch_switch_with_cleanup, git_status_porcelain, git_diff
 from .state import state
 
@@ -155,6 +155,7 @@ async def load_tools_usage(
     user_id: str | None = None,
     only: set[str] | None = None,
     exclude: set[str] | None = None,
+    dm: bool = False,
 ) -> str:
     """Build the natural-language tool usage guide from tools.json.
 
@@ -167,6 +168,9 @@ async def load_tools_usage(
     ``only`` (optional) restricts the guide to that name set — used to build the
     DM's lean usage guide. Plugin usage guides are omitted when set.
     ``exclude`` (optional) drops that name set — see DIRECTOR_EXCLUDED_TOOLS.
+    ``dm`` (optional) prefers each tool's ``usage_dm`` variant — the DM shares the
+    tool set but not the novel-mode machinery (floors / drafts / promotion) that the
+    director-facing text is written around.
     """
     p = path or _TOOLS_JSON_PATH
     raw = json.loads(p.read_text(encoding="utf-8"))
@@ -178,7 +182,7 @@ async def load_tools_usage(
     sections = ["# 工具使用指南\n"]
     for tool in raw:
         name = tool["name"]
-        usage = tool.get("usage", "")
+        usage = (tool.get("usage_dm") if dm else None) or tool.get("usage", "")
         if not usage:
             continue
 
@@ -2451,6 +2455,9 @@ async def execute_git_commit(instance_dir: Path, args: dict[str, Any], instance_
         git_message = f"other: {message}"
 
     try:
+        # DM 实例：存档点即快照点——提交前把权威快照推进到当前状态，并保证它进本次
+        # 提交。novel 模式无副作用（其锚点是转正）。见 prose_vars.freeze_on_commit。
+        paths = _freeze_on_commit(instance_dir, paths)
         # For summary commits, advance the archive boundary in summary/index.json
         # BEFORE commit so `git add -A` captures it in this commit.
         if commit_type == "summary":

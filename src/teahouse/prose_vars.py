@@ -8,6 +8,8 @@
 - 正文里的 ``<!-- teahouse-vars: [...] -->`` 块**永远保留在正文**、永不改写（缓存命中 + 示范效应）。
 - **重算**分两模式：软（保留非正文变量的最新值，只回退"后缀提到过"的变量）／硬（整体回到快照）。
 - **bootstrap**：live 缺失或损坏 → 硬重建。这也是导出/导入后重建初始变量的路径。
+- **DM 实例**没有转正动作（没有楼层），快照改由每次 ``GitCommit`` 顺带推进
+  （``freeze_on_commit``）——存档点 = 快照点，否则快照会永远停在首次 seed。
 - 快照缺失（老实例 / 新原型）→ 以「当前正式楼层 F + 当前 live」为快照基底，等价于"从那时的状态起算"。
 """
 
@@ -280,8 +282,16 @@ def read_snapshot(instance_dir: Path) -> tuple[int, dict[str, dict]]:
 
 
 def write_snapshot(instance_dir: Path, floor: int, vars: dict[str, dict]) -> None:
+    """Atomically write the authoritative snapshot. A no-op when unchanged — DM instances
+    freeze on every commit, so an identical rewrite would needlessly bump the file."""
     body = json.dumps({"_snapshot": {"floor": floor}}, ensure_ascii=False) + "\n" + _dump_var_lines(vars)
-    _atomic_write(snapshot_path(instance_dir), body)
+    path = snapshot_path(instance_dir)
+    try:
+        if path.exists() and path.read_text(encoding="utf-8") == body:
+            return
+    except OSError:
+        pass
+    _atomic_write(path, body)
 
 
 def ensure_var_gitignore(instance_dir: Path) -> None:
@@ -663,6 +673,31 @@ def freeze_snapshot(instance_dir: Path, floor: int) -> list[str]:
     errors.extend(apply_actions(formal_actions, seed))
     write_snapshot(instance_dir, floor, seed)
     return errors
+
+
+def freeze_on_commit(instance_dir: Path, paths: list[str] | None) -> list[str] | None:
+    """DM 实例专用：提交前把权威快照推进到「此刻正要存档的状态」，并确保它进本次提交。
+
+    Novel 模式的快照锚点是转正。DM 没有转正（没有楼层/草稿），若不在提交时推进，快照
+    会永远停在首次 seed 的那一刻，而工作值成了唯一的状态载体——偏偏它是 gitignored、
+    且切分支/丢弃时会被删掉重建，DM 的变量进度会整体丢失。把快照绑到提交上即
+    「存档点 = 快照点」；这在 DM 下安全，因为没有草稿层，工作值就是要提交的那份状态。
+
+    **仅 dm_enabled 实例生效**：novel 模式下 `other`（临时存档）提交发生在楼层中途，
+    此时工作值带草稿效应，冻进权威快照正是要避免的污染。
+
+    返回本次提交该用的 paths：显式 paths 不会顺带 stage 快照，故补上；`None`
+    （= `git add -A`）本就涵盖它。
+    """
+    from .director_system import dm_enabled
+
+    if not dm_enabled(instance_dir):
+        return paths
+    refresh(instance_dir)  # 混合实例（DM + 楼层）的工作值可能落后于正文，先对齐
+    freeze_snapshot(instance_dir, formal_floor(instance_dir))
+    if paths is None or SNAPSHOT_REL in paths:
+        return paths
+    return [*paths, SNAPSHOT_REL]
 
 
 def refresh(instance_dir: Path) -> list[str]:
